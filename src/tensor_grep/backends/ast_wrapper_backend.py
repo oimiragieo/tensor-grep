@@ -10,9 +10,9 @@ from typing import Any
 
 from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
-from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.subprocess_decoding import decode_diagnostic_output, decode_protocol_output
 
 # Per-path I/O problems ast-grep reports while still scanning the rest of the
 # tree (a permission-denied system directory, a locked or vanished file, etc.).
