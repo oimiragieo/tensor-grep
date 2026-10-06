@@ -1,9 +1,19 @@
 # Daemon stop CI recurrence — 2026-10-06
 
-DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in PR #1218 (PR history: #1218), owned by the Runtime/CI maintainer. It blocks publication
-of checkpoint labels, which merged as `7ef470fe1880825c32af8e124104e8a90391d14d` in #1216.
-No labels release or root cause is claimed. The four requested product implementations are
-complete; this necessary main-CI diagnosis remains separate from the 44 strategic rows.
+DOGFOOD-CI-DAEMON-STOP: diagnostic capture landed through PR #1218 (PR history: #1218);
+the historical cause remains unproved. Owner: Runtime/CI maintainer. Reviewed head
+`6f7a54a3855958ed928f258449b3f4c7e63c2c29` merged as `bd368355f3dd58906cf8dd3b3bbd21675d4fc377`; exact diagnostic CI
+`37464813923` and recovery release CI `37486528327` completed successfully.
+Checkpoint labels are published and verified in v1.124.0, release commit `c19930256cc26a628e061cdad3d5f96df06b9350`.
+The four recovery Windows captures and 53 published cases remain distinct observations;
+neither establishes the historical daemon cause. Failed main `37453425025` remains FAILED.
+Reopen trigger: any recurrence requires full stop-result, proof/ACK/refusal and thread-transition
+evidence before a new fix or retry plan. The 44 strategic rows and two GPU followups are unchanged.
+
+## Historical incident and pending-stage evidence
+
+All statements below, including earlier pending reviews, publication blocks and main-red
+instructions, describe their historical checkpoint rather than the current disposition.
 
 | Artifact | Actual outcome |
 |---|---|

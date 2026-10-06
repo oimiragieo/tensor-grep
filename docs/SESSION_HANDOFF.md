@@ -2,22 +2,33 @@
 
 Last updated: 2026-10-06
 
-Bounded dogfood campaign: diagnostics #1214 is SHIPPED in v1.123.22, with release CI
-`37422114884` completed (44 jobs) and eight published Windows replay cases passing.
-Subprocess #1217 (`c0e8449`) and ranking #1215 (`47700556`) are SHIPPED in v1.123.23.
-Combined main CI `37437549841` completed 44 jobs; 33 published Windows cases passed.
-[Live ledger](audits/2026-10-05-dogfood-fixes.md) separates source, installed and CI identities.
-The original detached checkout and untracked files are preserved.
+Bounded dogfood campaign: all four scoped changes are SHIPPED and published-verified in
+v1.124.0. Diagnostics #1214 first shipped in v1.123.22; subprocess #1217 (`c0e8449`),
+ranking #1215 (`47700556`) and labels #1216 (`7ef470fe`) have exact reviewed/CI heads
+and actual merged-source verification. [Published report](audits/2026-10-06-dogfood-published.md)
+records 8 distinct successful CI runs, failed-main history, downloaded Windows wheel/native checksums, installed-byte
+identity and 53 unique passing replay cases. The restored mandatory Opus review cleared the
+final labels artifact; the earlier quota-failed invocation remains failed historical evidence.
 
-Labels #1216 is MERGED, UNPUBLISHED (`7ef470fe`): exact `e6f180fe` independent and restored
-Opus reviews cleared, and PR CI passed after one recorded diagnostic retry. Main run
-`37453425025` then failed the same unchanged daemon signed-version stop test on Windows
-Python 3.11; the same-main Python 3.12 lane passed all seven module cases. No release ran.
-DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in #1218, owned by the Runtime/CI maintainer. The immediate task is
-bounded test-only tracing with unchanged deadlines/assertions, followed by a measured fix
-decision; no additional blind retry is cleared. The [recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md)
-preserves both failures and the intervening retry. Other work stays parked while main is red.
-Labels still needs successful exact-artifact release CI and all published Windows replays.
+At the published-artifact verification checkpoint, the primary checkout was clean on
+`refs/heads/main` at `7ef470fe1880825c32af8e124104e8a90391d14d` following user-authorized cleanup.
+Initial detached `d60aff0047893db26c1f0592a92ac3c5110dd132`
+and the intermediate detached checkout at 7ef with untracked docs remain historical identities.
+These external recovery helpers do not change or rewind the primary checkout. Canonical venv metadata 1.123.19
+and intake launcher 1.123.20 are separate from source pyproject1.123.23 and the isolated published
+verification environment. All 44 strategic rows are unchanged. The two diagnostic research
+followups and the unresolved DOGFOOD-CI-DAEMON-STOP observation remain owned in the [live ledger](audits/2026-10-05-dogfood-fixes.md).
+Labels' first main run 37453425025 on merge `7ef470fe1880825c32af8e124104e8a90391d14d` FAILED and remains failed
+historical evidence, with no additional main retry. Test/docs-only diagnostic PR #1218,
+reviewed `6f7a54a3855958ed928f258449b3f4c7e63c2c29`, merged as `bd368355f3dd58906cf8dd3b3bbd21675d4fc377` with labels'
+merge as its sole parent. The complete recovery release CI and its four Windows observations
+(Python 3.11/3.12, natural subject and controlled shutdown hold) passed. These observations
+establish capture behavior, not the historical cause. Eight distinct successful CI roles are
+retained separately from the failed main. Diagnostic capture landed; cause remains unproved.
+Production daemon behavior, the one-second stop deadline and cooperative predicate were unchanged.
+Fresh same-head Sol/Opus diagnostic reviews and hash-bound helper review are separate from labels'
+earlier clearance; failed 529 and 429 review invocations remain failures.
+Wave 3, the five next-generation capabilities and unrelated PR #1212 remain outside scope.
 
 **2026-09-22 map dogfood correction:** PR #1164 merged as
 `1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure
