@@ -3,7 +3,7 @@
 Everything here is JS/TS dialect knowledge -- ESM/CJS import-binding extraction, tsconfig-aware
 module candidate resolution, re-export chasing, default-export naming, dynamic `import()` hits,
 and the test-runner command shapes -- plus the private helpers only those paths call. Split out
-of `repo_map.py` under docs/design/2026-08-19-split-floor-escape.md.
+of `repo_map.py` using late-bound `_self` attribute reads.
 
 `_javascript_parser`, `_js_ts_classify_ref_kind`, `_javascript_test_function_candidates` and
 `_javascript_test_file_uses_node_test` deliberately stay in `repo_map`: the test suite
@@ -24,7 +24,7 @@ from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_ca
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 from tensor_grep.cli.repo_map_shell_inert import Derived, DerivedFilter, Omission, render_command
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its

@@ -428,7 +428,7 @@ from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
 # globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
@@ -13167,8 +13167,7 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     # unresolved (never a fabricated `resolved` path or a fabricated `external=True`). TRUE
     # import-string -> target-file resolution (and the `tg importers` reverse-edge CONFIRM step,
     # gated separately by `_confirm_import_edges`'s own language tuple below) stays deferred for
-    # all three -- see docs/BACKLOG.md and this PR's body for the per-language resolver scope
-    # that is still missing.
+    # all three: parser-backed per-file facts do not provide cross-file target resolution.
     "go",
     "php",
     "csharp",
@@ -13177,7 +13176,7 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     # lang_cpp.cpp_imports_with_lines, `_resolve_raw_import_entry` reporting them honestly
     # unresolved. TRUE `#include` -> file resolution is deferred and harder than go/php/csharp's
     # own deferred resolvers -- C/C++ have no standardized manifest (no
-    # go.mod/composer.json/.csproj equivalent) to resolve against; see docs/BACKLOG.md.
+    # go.mod/composer.json/.csproj equivalent) to resolve against.
     "c",
     "cpp",
 })

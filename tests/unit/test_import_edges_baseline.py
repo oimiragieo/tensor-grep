@@ -2,8 +2,8 @@
 service extraction can't silently introduce a new cross-package edge. This does NOT enforce a
 layering direction (some baseline edges below are pre-existing violations of the intended
 direction, e.g. core->cli) -- it only catches a NEW edge that wasn't here when frozen. Burning
-down the pre-existing violations is separate, unstarted P13 scope (adopting import-linter with
-an enforced direction), tracked in docs/BACKLOG.md.
+down pre-existing violations requires direction-enforcing checks; the package-pair
+baseline alone cannot distinguish a new import along an already-recorded edge.
 """
 
 from __future__ import annotations

@@ -2,8 +2,8 @@
 
 These are the payload-shaping passes that run AFTER the symbol graph is built: per-command
 output caps (repo map, source blocks, symbol fields, blast radius) and the token-budgeted
-context renderer's part scoring, sorting and string assembly. Split out of `repo_map.py` under
-docs/design/2026-08-19-split-floor-escape.md.
+context renderer's part scoring, sorting and string assembly. Extracted from `repo_map.py`
+using late-bound `_self` attribute reads.
 
 `_render_context_string_and_sections` deliberately stays in `repo_map`: the test suite
 monkeypatches it there, so a moved copy would be the unpatched one.
@@ -27,7 +27,7 @@ from tensor_grep.cli.repo_map_lang_rust import (
     _rust_ast_omitted_relative_lines as _rust_ast_omitted_relative_lines,
 )
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its

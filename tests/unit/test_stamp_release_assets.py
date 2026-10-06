@@ -272,7 +272,7 @@ def test_stamp_release_assets_preserves_verified_release_proof_blocks(tmp_path):
 def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
     # Regression test for audit #71/#73: the old unanchored `post-`vX`` sweep rewrote EVERY
     # occurrence of the phrase on every release, including dated historical notes in
-    # docs/PAPER.md and dated audit entries in docs/gpu_crossover.md, silently marching a frozen
+    # dated technical notes, silently marching a frozen
     # historical version forward release after release (e.g. a 2026-05-14 note ending up stamped
     # `post-`v1.51.4``, a much later release). The fix anchors the sweep to the small number of
     # genuine "current state" live-pointer line shapes (verified against real doc history to be

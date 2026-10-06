@@ -1,6 +1,6 @@
 """`tg doctor`: every probe that feeds the diagnostics payload, and the text renderer.
 
-Split out of `cli/main.py` (see `docs/design/2026-08-19-split-floor-escape.md`). Holds the
+Split out of `cli/main.py` (see `src/tensor_grep/cli/_main_binding.py`). Holds the
 whole `_doctor_*` probe family -- installation health, PATH/launcher shadowing, the LSP and
 ast-grep provider probes, GPU tier and runtime probes, cache and daemon status -- plus
 `_build_doctor_payload` and `_render_doctor_payload`. The `doctor` COMMAND itself stays in

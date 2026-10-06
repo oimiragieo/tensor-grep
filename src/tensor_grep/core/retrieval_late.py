@@ -1,8 +1,5 @@
 """Late-interaction (MaxSim / ColBERT-style) rerank stage for `tg search --semantic`
-(roadmap docs/plans/design-tensor-grep-late-rerank-2026-07-09.md).
-
-RETIRED 2026-08-05 (task F10, docs/BACKLOG.md dated entry "F10 MaxSim: caller/installability
-census + RETIRE disposition"): kept in place, not deleted (the wiring in ``core/reranker.py`` is
+This optional stage is RETIRED as a default product feature: kept in place, not deleted (the wiring in ``core/reranker.py`` is
 too load-bearing to touch for a demand-gated feature), but this is a validated dead end, not a
 paused build. Reachable ONLY behind the undocumented ``TG_LATE_RERANK=1`` env var (no CLI flag,
 no `tg` command sets it) from two call sites in `cli/main.py`, and the required `rerank` extra is
@@ -13,7 +10,7 @@ The identified limitation is model capacity (the 17M-param int8
 in-repo code) -- NOT the role-aware query/document encoding bug this module already fixed (see
 `load_late_reranker`'s docstring), so re-flipping the same encoder will not change the verdict.
 Reopen only on BOTH a real `tg`-command install path AND a different encoder clearing the design
-doc's T8 golden-set thresholds; do not re-enable by default off a partial win on either alone.
+retrieval-quality acceptance thresholds; do not re-enable by default off a partial win on either alone.
 
 T0-T2 (foundation): pure MaxSim math (:func:`maxsim_scores`, :func:`rank_by_maxsim`) plus the
 :class:`LateReranker` contract against an INJECTED token encoder.

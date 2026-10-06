@@ -8,11 +8,10 @@ that calls a monkeypatched name as a bare identifier must stay physically co-loc
 module the tests patch. Measured, that locked closure is 4-7x the limit on its own
 (`scripts/measure_split_floor.py`).
 
-`docs/design/2026-08-19-split-floor-escape.md` picks Route A: convert those bare calls to late
-attribute reads (`_self.X()`), after which the function is free to move. This script is that
-design's **step 1** -- the gate that has to exist BEFORE any conversion, so a half-finished
-conversion cannot be believed complete, and so a future edit cannot quietly reintroduce a bare
-call into a module that has been cleaned.
+Convert those bare calls to late attribute reads (`_self.X()`) so extracted functions
+continue using the original module's patch targets. This gate counts the remaining bare calls
+before and after conversion; a partial conversion cannot be mistaken for completion, and a
+future edit cannot quietly reintroduce a bare call into a module that has been cleaned.
 
 WHAT IT ASSERTS
 ---------------

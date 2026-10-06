@@ -1,7 +1,7 @@
 """MCP tool family: native AST rewrite (plan/apply/diff), inline/ruleset ast-grep
 scanning, index search, rewrite audit manifests, review bundles, and edit checkpoints.
 
-Split out of mcp_server.py (docs/design/2026-08-19-split-floor-escape.md, Route A) as a
+Split out of mcp_server.py (late-bound module attribute reads) as a
 pure code move: no wire-surface change. Every relocated function keeps its original
 ``_self.NAME(...)`` calls verbatim, but ``_self`` here is bound to the mcp_server module
 object (not this one) -- so a test that patches ``mcp_server.tg_rewrite_apply`` still

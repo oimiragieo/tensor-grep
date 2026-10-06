@@ -100,7 +100,7 @@ class WriteAuthorization:
     directory's ``(st_dev, st_ino)`` (``stat``, i.e. what the parent RESOLVES to); the write is
     refused if the parent now resolves elsewhere (symlink/junction swap) or the file changed.
 
-    Residual R-11 (accepted, docs/audits/2026-10-03-bughunt-tracker.md): a sub-millisecond window
+    Residual filesystem race: a window
     between the final identity re-check and ``os.replace`` is not closed. Windows has no
     handle-relative conditional replace, and an attacker who can rename or replace files in the
     user's workspace can overwrite the target directly without tg. This guard defends against an

@@ -1,7 +1,7 @@
 """Windows launcher repair: stale `tg.exe` COM bridges, Python-Scripts shadows, user PATH.
 
 The tail half of the `cli/native_frontdoor.py` split (2026-08-20,
-`docs/design/2026-08-19-split-floor-escape.md`). Everything that keeps a Windows install
+`src/tensor_grep/cli/_main_binding.py`). Everything that keeps a Windows install
 resolving `tg` to the managed native front door rather than to a stale
 `...\\Python\\Scripts\\tg.exe`: the COM-bridge marker files, the Scripts-launcher scan and
 removal, the user-PATH reordering, the subprocess-resolution blocker probe, and the scheduled

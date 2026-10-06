@@ -1,6 +1,6 @@
 """The managed native front door: PyPI version discovery, asset install, Windows launcher repair.
 
-Split out of `cli/main.py` (see `docs/design/2026-08-19-split-floor-escape.md`). Everything
+Split out of `cli/main.py` (see `src/tensor_grep/cli/_main_binding.py`). Everything
 `tg upgrade` / `tg repair-launcher` need in order to put a verified native `tg` binary on PATH
 and keep a stale Python-Scripts launcher from shadowing it: PyPI candidate-version discovery,
 checksum-gated asset download, the managed metadata file, the Windows `tg.exe` COM-bridge and

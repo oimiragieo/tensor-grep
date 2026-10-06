@@ -65,7 +65,7 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     #   - `tg search --ndjson`, `tg_agent_capsule` -> SKILL.md / AGENTS.md / docs/harness_api.md
     #   - native GPU engine (`NativeGpuBackend`) -> docs/gpu_crossover.md, docs/routing_policy.md
     #   - 100 MB large-file/binary skip -> docs/harness_api.md, docs/CONTRACTS.md (binary-skip)
-    #   - `tg run --rewrite` / `--apply` / atomic temp-file rename -> docs/PAPER.md, docs/harness_api.md
+    #   - `tg run --rewrite` / `--apply` / atomic temp-file rename -> docs/architecture.md, docs/harness_api.md
     #   - multi-project workspace roots / broad generated-root scan -> docs/CONTRACTS.md (below)
     #   - PowerShell `$NAME` expansion / `cmd.exe` metacharacters -> docs/CONTRACTS.md (below)
     #   - open a session once / daemon-routed edit-plan/context -> docs/CONTRACTS.md (warm-path)
@@ -160,15 +160,14 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     # mirrors that ledger; it was a maintenance trap that drifted every release. Those facts remain
     # governed by their single sources of truth:
     #   - current-release-state facts (tag, agent-readiness gate, dogfood) -> handoff_docs loop above
-    #     plus the docs/SESSION_HANDOFF.md `handoff` block above (latest tag / PyPI / GitHub release).
+    #     together with release version markers (latest tag / published artifacts).
     #   - per-version "What `vX` closed" / fix-commit ledger -> CHANGELOG.md and GitHub releases.
     #   - the behavioral/capability fragments that used to be pinned into the README block (e.g.
     #     `native front door`, `tg classify --format json`, `classification_backend`,
     #     `top-level validation_commands`, `path_tg_first_launcher_kind`, `tg_launcher_command_kind`,
     #     `Actionable Context Capsule`, `validation_alignment`, `public managed GPU is not
     #     promotion-ready`, `NativeCpuBackend`, `GpuSidecar`, `Aho-Corasick`, etc.) are each governed
-    #     against the dedicated docs (SKILL.md / AGENTS.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md
-    #     / docs/CONTINUATION_PLAN.md / docs/gpu_crossover.md / docs/benchmarks.md) in this file.
+    #     against the dedicated docs (SKILL.md / AGENTS.md / docs/CONTRACTS.md / docs/gpu_crossover.md / docs/benchmarks.md) in this file.
     # The negative `not in` README checks above (no "Latest complete public release PR/commit") are
     # retained so the README cannot silently re-grow an incorrect release ledger.
 
@@ -434,7 +433,7 @@ def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
 def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None:
     # The agent context/validation contract (`context_consistency`, executable body lines,
     # `validation_plan[].detection`, `validation_alignment`) is governed against the dedicated agent
-    # docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md) below. The README is a
+    # docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md) below. The README is a
     # marketing doc now; it still surfaces `validation_alignment` but is not pinned to the rest.
     agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
@@ -473,8 +472,7 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
 
     # `route rationale` and `omission counts` are detailed capsule-contract terms. The marketing
     # README summarizes the capsule without that exact wording, so they are governed against the
-    # dedicated agent docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md / docs/SESSION_HANDOFF.md /
-    # docs/CONTINUATION_PLAN.md) instead of being re-pinned into the README.
+    # dedicated agent docs (AGENTS.md / SKILL.md / docs/CONTRACTS.md) instead of being re-pinned into the README.
     for doc in (agents, skill, contracts):
         assert "route rationale" in doc
         assert "omission counts" in doc
@@ -507,7 +505,7 @@ def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
 
     # The exact `tg ast-info --json` language-identifier wording is governed against the dedicated
-    # docs (SKILL.md / docs/SESSION_HANDOFF.md); the marketing README does not carry that prose.
+    # docs (SKILL.md); the marketing README does not carry that prose.
     for doc in (skill,):
         assert "`tg ast-info --json` exposes AST language identifiers" in doc
 

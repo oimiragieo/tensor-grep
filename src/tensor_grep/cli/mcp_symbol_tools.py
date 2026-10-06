@@ -1,7 +1,7 @@
 """MCP tool family: pure symbol-graph navigation (defs/source/impact/refs/callers,
 file imports/importers, symbol blast-radius).
 
-Split out of mcp_server.py (docs/design/2026-08-19-split-floor-escape.md, Route A) as a
+Split out of mcp_server.py (late-bound module attribute reads) as a
 pure code move: no wire-surface change. See mcp_rewrite_tools.py module docstring for
 the full rationale of the _self-points-at-mcp_server pattern used here.
 """

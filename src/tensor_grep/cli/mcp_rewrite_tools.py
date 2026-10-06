@@ -1,7 +1,7 @@
 """Native AST rewrite (plan/apply/diff) and trigram index-search ENGINE: pure
 computation/subprocess helpers with no MCP tool decorators.
 
-Split out of mcp_server.py (docs/design/2026-08-19-split-floor-escape.md, Route A) as a
+Split out of mcp_server.py (late-bound module attribute reads) as a
 pure code move: no wire-surface change. Every relocated function keeps its original
 ``_self.NAME(...)`` calls verbatim, but ``_self`` here is bound to the mcp_server module
 object (not this one) -- so a test that does

@@ -3,8 +3,8 @@
 WHY THIS IS ITS OWN MODULE
 --------------------------
 `_mtime_aware_cache` is applied as a DECORATOR, i.e. it is evaluated while the module that
-uses it is being imported. The split of `repo_map.py` (docs/design/2026-08-19-split-floor-
-escape.md) moves decorated functions into sibling modules that `repo_map` imports at its top,
+uses it is being imported. Decorated functions live in sibling modules that
+`repo_map` imports at its top,
 so those siblings cannot reach back into `repo_map` for the decorator -- `repo_map` is only
 part-way through its own body at that moment and the name does not exist yet. Hoisting the
 decorator into a leaf module both `repo_map` and its siblings import breaks that cycle without

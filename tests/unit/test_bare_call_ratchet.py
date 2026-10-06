@@ -1,6 +1,6 @@
 """Tests for the bare-call ratchet (scripts/bare_call_ratchet.py).
 
-The design this gate serves (docs/design/2026-08-19-split-floor-escape.md, §4) requires it to be
+The design this gate serves (src/tensor_grep/cli/_main_binding.py, §4) requires it to be
 SEEN TO FAIL on a deliberately reintroduced bare call before it is trusted, per the repo's
 standing rule that a gate never observed firing is a comment.
 

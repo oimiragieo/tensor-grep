@@ -30,7 +30,7 @@ It does NOT assert a floor on confidence, does not pin any particular symbol as 
 primary target, and says nothing about RANKING quality. The reporter's other finding -- a
 short lexical token like `_add` winning as primary for the query word "add" -- is a ranking
 concern, not a contract concern, and needs a corpus-based golden set rather than an
-invariant. It is filed separately in docs/BACKLOG.md.
+invariant. These tests do not measure or claim to fix that ranking concern.
 """
 
 from __future__ import annotations

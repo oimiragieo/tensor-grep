@@ -110,7 +110,7 @@ from tensor_grep.core.pipeline import (
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
 # welding the calling function to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time against the
@@ -1519,7 +1519,7 @@ _MAX_INLINE_RULES = 100
 
 
 # --- MCP tool families extracted to sibling modules ---
-# (docs/design/2026-08-19-split-floor-escape.md, Route A). Pure code move, no wire-surface
+# (late-bound module attribute reads). Pure code move, no wire-surface
 # change: the tool functions below are re-exported so every remaining `_self.tg_X(...)`
 # composition call (meta-tools) and every `monkeypatch.setattr(mcp_server, "tg_X", ...)`
 # test in this repo keeps resolving against THIS module's namespace, unchanged. This import

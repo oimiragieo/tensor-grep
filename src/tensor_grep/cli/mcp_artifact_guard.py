@@ -49,7 +49,7 @@ def _authorize_artifact_write_path(
     no-clobber, and an approved existing artifact is re-identified immediately before the
     replace. Without it the approval would be lost before the write (check-then-write race).
 
-    Residual R-11 (accepted; docs/audits/2026-10-03-bughunt-tracker.md): a sub-millisecond window
+    Residual filesystem race: a window
     remains between the writer's final identity re-check (run before EACH replace attempt) and
     ``os.replace``. Windows has no handle-relative conditional replace, and an attacker who can
     rename or replace files in the user's workspace can overwrite the target directly without tg.

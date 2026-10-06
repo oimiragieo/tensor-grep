@@ -98,7 +98,7 @@ from tensor_grep.io.scan_limits import (
 )
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
 # globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
@@ -121,7 +121,7 @@ if TYPE_CHECKING:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # Re-exports from the modules split out of this file on 2026-08-20 (see
-# docs/design/2026-08-19-split-floor-escape.md and cli/_main_binding.py). EVERY moved name is
+# cli/_main_binding.py). EVERY moved name is
 # rebound here, not only the ones a scan can prove are read. The test suite patches many of
 # them on `main` and the moved code reads them back through `_self`, so the patch target must
 # not move with the code -- and tests reach them through local aliases, so 'nothing references
@@ -1814,7 +1814,7 @@ def find(
         command invokes;
       * its only control is the undocumented env var `TG_LATE_RERANK=1` -- there is no flag;
       * and the stage is deliberately HELD as measurably regressing on the retrieval-quality
-        benchmark (`docs/BACKLOG.md`), so this is a hold, not an oversight.
+        evaluation; an install path alone is not sufficient to advertise it.
 
     Do not re-add it to the advertised feature list without an install path a user can follow and
     a benchmark result that justifies the stage. See task #15.
@@ -5250,14 +5250,11 @@ def _daemon_directory_path(path: str) -> str | None:
 def _session_daemon_autostart_enabled() -> bool:
     """TG_SESSION_DAEMON_AUTOSTART opt-out for the default Tier-1 warm-daemon fast path.
 
-    Task #94 PR-1 (the conscious default flip flagged by the original Part A comment; cleared
-    after #498 landed the daemon response-cache correctness fix docs/BACKLOG.md's #94 entry
-    gated the flip on). DEFAULT ON: unset -- or any value other than an explicit falsy token
+    DEFAULT ON: unset -- or any value other than an explicit falsy token
     (``0``/``false``/``no``/``off``, see ``env_flag_disabled`` in runtime_paths.py) -- routes
     defs/impact/refs/callers/blast-radius through a running ``tg session daemon``, non-blocking
-    auto-spawning one on a miss. This is the ~20x warm-vs-cold latency win: the cold path pays a
-    6-33s repo-map build on every call. Set the flag to an explicit falsy token to opt back out
-    to the always-cold path, byte-for-byte unchanged from before this PR.
+    auto-spawning one on a miss. Repeated requests can reuse the daemon snapshot; actual
+    latency depends on the workload. Set an explicit falsy token to use the cold path.
 
     Auto-forced OFF whenever CI or GITHUB_ACTIONS is set, regardless of the flag's own value,
     so a CI job can never leave a background session-daemon process (idle-lived up to

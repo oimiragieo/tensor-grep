@@ -3,7 +3,7 @@
 Everything here is Python dialect knowledge -- module-path candidate roots, `sys.path` hack
 detection, relative-import bases, dynamic `importlib` calls, decorator qualnames, and the
 pytest function/parametrize candidate scan -- plus the private helpers only those paths call.
-Split out of `repo_map.py` under docs/design/2026-08-19-split-floor-escape.md.
+Extracted from `repo_map.py` using late-bound `_self` attribute reads.
 
 `_python_references_and_calls` deliberately stays in `repo_map`: the test suite monkeypatches
 it there, so a moved copy would be the unpatched one.
@@ -22,7 +22,7 @@ from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_ca
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 from tensor_grep.core.python_parse import parse_python
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its

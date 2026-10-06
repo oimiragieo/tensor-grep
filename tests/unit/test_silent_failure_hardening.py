@@ -9,7 +9,7 @@ modules a concurrent audit owned; the W1 campaign (docs/plans/2026-08-20-worldcl
 plan.md) retired every entry in four serialized slices and the set is now EMPTY -- kept as an
 append point rather than deleted, per that plan's note in the block below.
 
-THE AUDIT (full classification table in ``docs/audits/2026-08-20-handler-dispositions.json``,
+THE AUDIT (full classification table in ``tests/fixtures/governance/handler-dispositions.json``,
 not restated here). Every broad handler in scope was read in its enclosing function, not just
 grepped, and classified into exactly one of:
 
@@ -40,7 +40,7 @@ added to the tree is not free to regress the population size silently.
 W1-d (docs/plans/2026-08-20-worldclass-closeout-plan.md) removed ten modules from
 ``_EXCLUDED_MODULES``: ``cli/repo_map_lang_js.py`` and ``cli/repo_map_lang_rust.py`` (2 broad
 handlers between them, both classified INTENTIONAL-BOUNDARY -- see
-``docs/audits/2026-08-20-handler-dispositions.json``), plus eight modules with ZERO broad
+``tests/fixtures/governance/handler-dispositions.json``), plus eight modules with ZERO broad
 handlers each (``cli/_main_binding.py``, ``cli/doctor_payload.py``, ``cli/repo_map.py``,
 ``cli/repo_map_cache.py``, ``cli/repo_map_lang_java.py``, ``cli/repo_map_lang_python.py``,
 ``cli/repo_map_output_budget.py``, ``cli/repo_map_regex_fallback.py`` -- confirmed by
@@ -65,7 +65,7 @@ PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 
 # W1 excluded-handler audit (docs/plans/2026-08-20-worldclass-closeout-plan.md, W1). All
 # modules this census once excluded have now been read and dispositioned in
-# `docs/audits/2026-08-20-handler-dispositions.json`; this set is retained EMPTY (rather than
+# `tests/fixtures/governance/handler-dispositions.json`; this set is retained EMPTY (rather than
 # deleted) so a future split/relocation cannot silently reopen an audited module without a
 # reviewer noticing the pattern. Adding a module back here requires the same disposition-ledger
 # treatment the four waves below used, not a bare re-exclusion.
@@ -73,7 +73,7 @@ _EXCLUDED_MODULES = frozenset({
     # W1-a (2026-08-20) RETIRED the four `cli/mcp_*` exclusions -- `cli/mcp_server.py`,
     # `cli/mcp_rewrite_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_symbol_tools.py`. All 57
     # of their broad handlers were read in their enclosing functions and dispositioned in
-    # `docs/audits/2026-08-20-handler-dispositions.json` (55 INTENTIONAL-BOUNDARY, each with a
+    # `tests/fixtures/governance/handler-dispositions.json` (55 INTENTIONAL-BOUNDARY, each with a
     # behavioural fail-closed arm in `tests/unit/test_w1a_mcp_handler_fail_closed.py`;
     # 2 SILENT-SWALLOW, both hardened, RED arms in
     # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
@@ -84,13 +84,13 @@ _EXCLUDED_MODULES = frozenset({
     # `except Exception` added by this PR's own A3 round-1 MEDIUM hardening of
     # `_install_release_native_frontdoor`'s checksum-fetch call, itself dispositioned
     # LOGGED-DEGRADE) were read in their enclosing functions and dispositioned in
-    # `docs/audits/2026-08-20-handler-dispositions.json` (14 INTENTIONAL-BOUNDARY, 9
+    # `tests/fixtures/governance/handler-dispositions.json` (14 INTENTIONAL-BOUNDARY, 9
     # LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
     # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
     # ceiling bump to absorb a `git mv`.
     # W1-c (2026-08-20) RETIRED the final exclusion -- `cli/main.py`. All 46 of its broad
     # handlers were read in their enclosing functions and dispositioned in
-    # `docs/audits/2026-08-20-handler-dispositions.json` (12 not-provably-disclosing at
+    # `tests/fixtures/governance/handler-dispositions.json` (12 not-provably-disclosing at
     # audit time, all 12 classified INTENTIONAL-BOUNDARY -- 5 are the daemon-fast-path
     # `_maybe_*_via_running_daemon` helpers whose fail-open `None` return always falls
     # through to an independently-correct cold path; the remaining 7 are best-effort
@@ -145,12 +145,12 @@ _EXCLUDED_MODULES = frozenset({
 # `_fetch_native_frontdoor_checksums` still produces a disclosed refusal instead of an unwrapped
 # exception. Re-derived via `python scripts/handler_census.py --include-excluded --by-slice`
 # immediately before this commit: W1-b handlers=24 (was 23), dispositioned 14/9/1 in
-# `docs/audits/2026-08-20-handler-dispositions.json` (INTENTIONAL-BOUNDARY/LOGGED-DEGRADE/
+# `tests/fixtures/governance/handler-dispositions.json` (INTENTIONAL-BOUNDARY/LOGGED-DEGRADE/
 # SILENT-SWALLOW). Ceiling raised by exactly that one handler:
 #     219 + 1 (native_frontdoor.py checksum-fetch except, LOGGED-DEGRADE)              220
 #
 # 2026-08-21: +1 for `ast_scan._ruleset_backend_available` (INTENTIONAL-BOUNDARY, record in
-# `docs/audits/2026-08-20-handler-dispositions.json`). It answers 'can the advertised built-in
+# `tests/fixtures/governance/handler-dispositions.json`). It answers 'can the advertised built-in
 # rulesets actually RUN on this install?' by importing AstGrepWrapperBackend and calling
 # is_available(); both the import and the probe fail on a stock install, which is the ORDINARY
 # case it exists to detect. It fails CLOSED -- any error reports unavailable, so `tg rulesets`

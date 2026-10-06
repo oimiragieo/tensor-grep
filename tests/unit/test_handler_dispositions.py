@@ -1,4 +1,4 @@
-"""Gate for the W1 disposition ledger (docs/audits/2026-08-20-handler-dispositions.json).
+"""Gate for the W1 disposition ledger (tests/fixtures/governance/handler-dispositions.json).
 
 WHY THIS EXISTS. `test_silent_failure_hardening.py`'s ratchet is arithmetically satisfiable by a
 no-op audit: classify all formerly-excluded handlers as INTENTIONAL-BOUNDARY, raise the ceiling

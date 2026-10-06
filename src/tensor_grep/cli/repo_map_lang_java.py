@@ -1,6 +1,6 @@
 """Java-specific import and symbol extraction lifted out of `repo_map`.
 
-Split out of `repo_map.py` under docs/design/2026-08-19-split-floor-escape.md. `_java_parser`
+Extracted from `repo_map.py` using late-bound `_self` attribute reads. `_java_parser`
 deliberately stays in `repo_map`: the test suite monkeypatches it there, so a moved copy would
 be the unpatched one.
 """
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from tensor_grep.cli import lang_java
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its

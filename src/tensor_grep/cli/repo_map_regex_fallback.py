@@ -2,8 +2,8 @@
 
 `_regex_imports_and_symbols`, `_regex_references_and_calls` and `_regex_symbol_sources` are the
 grammar-free tier of the symbol graph -- pattern-matched definitions, imports and call sites for
-files whose language has no registered parser. Split out of `repo_map.py` under
-docs/design/2026-08-19-split-floor-escape.md.
+files whose language has no registered parser. Extracted from `repo_map.py`
+using late-bound `_self` attribute reads.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_lang_js import _js_ts_dynamic_import_hit as _js_ts_dynamic_import_hit
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its

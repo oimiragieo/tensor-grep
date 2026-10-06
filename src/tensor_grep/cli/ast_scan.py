@@ -1,6 +1,6 @@
 """`tg scan` / `tg test` ruleset loading, suppression, and AST-scan payload construction.
 
-Split out of `cli/main.py` (see `docs/design/2026-08-19-split-floor-escape.md`). This is the
+Split out of `cli/main.py` (see `src/tensor_grep/cli/_main_binding.py`). This is the
 whole `--ruleset` pipeline behind `tg scan`: reading `sgconfig.yml` and inline rule specs,
 resolving baselines and suppressions, running the scan, and shaping the JSON payload.
 
