@@ -2391,7 +2391,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1235,
+    "lineno": 1293,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",

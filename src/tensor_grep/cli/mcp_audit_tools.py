@@ -1166,12 +1166,15 @@ def tg_checkpoint_create(path: str = ".", label: str | None = None) -> str:
 
         try:
             label = normalize_checkpoint_label(label)
-        except ValueError as exc:
+        except ValueError:
             return json.dumps(
                 {
                     "version": _json_output_version(),
                     "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": str(exc)},
+                    "error": {
+                        "code": "invalid_input",
+                        "message": "Checkpoint label must contain 1 to 120 printable characters.",
+                    },
                     "path": "[refused]",
                 },
                 indent=2,

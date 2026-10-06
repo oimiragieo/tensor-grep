@@ -291,6 +291,62 @@ def test_mcp_label_bad_types_are_structured_invalid_input_for_direct_legacy_call
     assert payload["error"]["code"] == "invalid_input"
 
 
+@pytest.mark.parametrize("public_tool", ["legacy", "meta"])
+def test_mcp_label_validation_error_does_not_disclose_exception_or_write_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, public_tool: str
+) -> None:
+    from tensor_grep.cli import checkpoint_labels, mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    project = _project(tmp_path / "project")
+    private_path = r"C:\private\label-secret.txt"
+    sentinel = "LABEL_NORMALIZER_SENTINEL"
+
+    def _fixture_snapshot() -> dict[str, tuple[str, bytes | None]]:
+        snapshot: dict[str, tuple[str, bytes | None]] = {}
+        for entry in sorted(tmp_path.rglob("*")):
+            relative = entry.relative_to(tmp_path).as_posix()
+            if entry.is_dir():
+                snapshot[relative] = ("directory", None)
+            elif entry.is_file():
+                snapshot[relative] = ("file", entry.read_bytes())
+        return snapshot
+
+    before = _fixture_snapshot()
+
+    def _raise_private_error(_label: object) -> str:
+        raise ValueError(f"{private_path} {sentinel}")
+
+    monkeypatch.setattr(
+        checkpoint_labels,
+        "normalize_checkpoint_label",
+        _raise_private_error,
+    )
+
+    def _unexpected_store_call(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("label validation must happen before checkpoint storage is invoked")
+
+    monkeypatch.setattr(checkpoint_store, "create_checkpoint", _unexpected_store_call)
+    if public_tool == "legacy":
+        response = mcp_server.tg_checkpoint_create(path=str(project), label="bad")
+    else:
+        response = mcp_server.tg_checkpoint(action="create", path=str(project), label="bad")
+
+    payload = json.loads(response)
+    assert payload == {
+        "version": mcp_server._json_output_version(),
+        "mcp_contract_version": mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
+        "error": {
+            "code": "invalid_input",
+            "message": "Checkpoint label must contain 1 to 120 printable characters.",
+        },
+        "path": "[refused]",
+    }
+    assert private_path not in response
+    assert sentinel not in response
+    assert _fixture_snapshot() == before
+
+
 @pytest.mark.parametrize(
     ("action", "arguments"),
     [
