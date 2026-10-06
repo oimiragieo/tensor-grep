@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v1.123.22 (2026-10-06)
+
+### Bug Fixes
+
+- Harden installer diagnostics and doctor GPU probe
+  ([#1214](https://github.com/oimiragieo/tensor-grep/pull/1214),
+  [`d0d9f7e`](https://github.com/oimiragieo/tensor-grep/commit/d0d9f7e960622f868a4a41c14c8d21a6e81ac1c8))
+
+* fix: harden dogfood installer and GPU diagnostics
+
+* docs: track bounded dogfood implementation and artifact evidence
+
+* fix: require explicit native GPU sidecar proof
+
+* docs: retain diagnostic control and verification results
+
+* fix: clarify native GPU probe proof diagnostics
+
+* docs: bind diagnostic review amendment to source evidence
+
+
 ## v1.123.21 (2026-10-06)
 
 ### Bug Fixes
