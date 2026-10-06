@@ -1,0 +1,169 @@
+{
+  "implementation_sha": "1936f7c1db278da8a63b72caf098290d3f429366",
+  "base_sha": "99c1ea17e30a57043051673dbfcd9750c4497373",
+  "receipts": {
+    "ranking-pin-control-isolated": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-control",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_dogfood_ranking_baseline_pins.py",
+          "-q",
+          "--maxfail=0"
+        ],
+        "exit_code": 0,
+        "seconds": 2.33,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-pin-control-isolated.log"
+      },
+      "raw_output": "...                                                                      [100%]\n3 passed in 1.02s\n"
+    },
+    "ranking-final-focused": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_filename_phrase_ranking.py",
+          "tests/unit/test_repo_map_lexical_ranking.py",
+          "tests/unit/test_agent_capsule_symbol_priority.py",
+          "tests/unit/test_repo_map_targets.py",
+          "-q",
+          "--maxfail=0"
+        ],
+        "exit_code": 0,
+        "seconds": 5.92,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-final-focused.log"
+      },
+      "raw_output": "....................................................................     [100%]\n68 passed in 4.47s\n"
+    },
+    "ranking-real-source": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/ranking_smoke.py",
+          "C:/dev/projects/tg-dogfood-ranking-deliver"
+        ],
+        "exit_code": 0,
+        "seconds": 39.77,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-real-source.log"
+      },
+      "raw_output": "{\n  \"render\": {\n    \"files\": [\n      \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\"\n    ],\n    \"symbols\": [\n      {\n        \"name\": \"repair_env_command\",\n        \"kind\": \"function\",\n        \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n        \"line\": 86,\n        \"start_line\": 86,\n        \"end_line\": 173,\n        \"score\": 11,\n        \"filename_phrase_match\": true\n      }\n    ],\n    \"file_matches\": [\n      {\n        \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n        \"score\": 98,\n        \"reasons\": [\n          \"path\",\n          \"import\",\n          \"source\",\n          \"graph-centrality\",\n          \"filename-phrase\"\n        ],\n        \"provenance\": [\n          \"filename-convention\",\n          \"parser-backed\",\n          \"heuristic\",\n          \"graph-derived\"\n        ],\n        \"graph_score\": 0.012998\n      }\n    ],\n    \"scan_truncated\": null,\n    \"incomplete\": null,\n    \"truncation_cause\": null,\n    \"primary_symbol\": {\n      \"name\": \"repair_env_command\",\n      \"kind\": \"function\",\n      \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n      \"line\": 86,\n      \"start_line\": 86,\n      \"end_line\": 173,\n      \"score\": 11,\n      \"filename_phrase_match\": true\n    }\n  },\n  \"edit\": {\n    \"files\": [\n      \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\"\n    ],\n    \"symbols\": [\n      {\n        \"name\": \"repair_env_command\",\n        \"kind\": \"function\",\n        \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n        \"line\": 86,\n        \"start_line\": 86,\n        \"end_line\": 173,\n        \"score\": 11,\n        \"filename_phrase_match\": true\n      }\n    ],\n    \"file_matches\": [\n      {\n        \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n        \"score\": 98,\n        \"reasons\": [\n          \"path\",\n          \"import\",\n          \"source\",\n          \"graph-centrality\",\n          \"filename-phrase\"\n        ],\n        \"provenance\": [\n          \"filename-convention\",\n          \"parser-backed\",\n          \"heuristic\",\n          \"graph-derived\"\n        ],\n        \"graph_score\": 0.012998\n      }\n    ],\n    \"scan_truncated\": null,\n    \"incomplete\": null,\n    \"truncation_cause\": null,\n    \"primary_symbol\": {\n      \"name\": \"repair_env_command\",\n      \"kind\": \"function\",\n      \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-ranking-deliver\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n      \"line\": 86,\n      \"start_line\": 86,\n      \"end_line\": 173,\n      \"score\": 11,\n      \"filename_phrase_match\": true\n    }\n  }\n}\n"
+    },
+    "ranking-real-baseline": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-control",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/ranking_smoke.py",
+          "C:/dev/projects/tg-dogfood-control"
+        ],
+        "exit_code": 1,
+        "seconds": 51.12,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-real-baseline.log"
+      },
+      "raw_output": "{\n  \"render\": {\n    \"files\": [\n      \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py\"\n    ],\n    \"symbols\": [],\n    \"file_matches\": [\n      {\n        \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py\",\n        \"score\": 233,\n        \"reasons\": [\n          \"import-graph\",\n          \"graph-centrality\"\n        ],\n        \"provenance\": [\n          \"graph-derived\"\n        ],\n        \"graph_score\": 0.103022\n      }\n    ],\n    \"scan_truncated\": null,\n    \"incomplete\": null,\n    \"truncation_cause\": null,\n    \"primary_symbol\": null\n  },\n  \"edit\": {\n    \"files\": [\n      \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py\"\n    ],\n    \"symbols\": [\n      {\n        \"name\": \"repair_env_command\",\n        \"kind\": \"function\",\n        \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n        \"line\": 86,\n        \"start_line\": 86,\n        \"end_line\": 173,\n        \"score\": 11\n      }\n    ],\n    \"file_matches\": [\n      {\n        \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py\",\n        \"score\": 233,\n        \"reasons\": [\n          \"import-graph\",\n          \"graph-centrality\"\n        ],\n        \"provenance\": [\n          \"graph-derived\"\n        ],\n        \"graph_score\": 0.103022\n      }\n    ],\n    \"scan_truncated\": null,\n    \"incomplete\": null,\n    \"truncation_cause\": null,\n    \"primary_symbol\": {\n      \"name\": \"repair_env_command\",\n      \"kind\": \"function\",\n      \"file\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\repair_env.py\",\n      \"line\": 86,\n      \"start_line\": 86,\n      \"end_line\": 173,\n      \"score\": 11\n    }\n  }\n}\nTraceback (most recent call last):\n  File \"C:\\dev\\projects\\tg-dogfood-evidence\\ranking_smoke.py\", line 19, in <module>\n    assert primary is not None, (mode, output)\n           ^^^^^^^^^^^^^^^^^^^\nAssertionError: ('render', {'files': ['C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py'], 'symbols': [], 'file_matches': [{'path': 'C:\\\\dev\\\\projects\\\\tg-dogfood-control\\\\src\\\\tensor_grep\\\\cli\\\\mcp_server.py', 'score': 233, 'reasons': ['import-graph', 'graph-centrality'], 'provenance': ['graph-derived'], 'graph_score': 0.103022}], 'scan_truncated': None, 'incomplete': None, 'truncation_cause': None, 'primary_symbol': None})\n"
+    },
+    "ranking-final-lint": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.23,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-final-lint.log"
+      },
+      "raw_output": "All checks passed!\n"
+    },
+    "ranking-final-format": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "format",
+          "--check",
+          "--preview",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.23,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-final-format.log"
+      },
+      "raw_output": "1215 files already formatted\n"
+    },
+    "ranking-final-mypy": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "mypy",
+          "src/tensor_grep"
+        ],
+        "exit_code": 0,
+        "seconds": 31.05,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-final-mypy.log"
+      },
+      "raw_output": "Success: no issues found in 174 source files\n"
+    },
+    "ranking-size": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/file_size_budget.py",
+          "--report"
+        ],
+        "exit_code": 0,
+        "seconds": 1.5,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-size.log"
+      },
+      "raw_output": "scanned 1113 in-scope tracked files\nviolations: 25   grandfathered: 25\n\n   15228  limit=1500  core      pinned=15243 src/tensor_grep/cli/repo_map.py\n   14895  limit=1500  core      pinned=14899 rust_core/src/main.rs\n   13452  limit=1500  core      pinned=13523 src/tensor_grep/cli/main.py\n    5700  limit=1500  core      pinned=5701  src/tensor_grep/cli/mcp_server.py\n    4952  limit=1500  core      pinned=4952  rust_core/src/gpu_native.rs\n    4412  limit=2000  test      pinned=4412  rust_core/tests/test_schema_compat.rs\n    3337  limit=2000  test      pinned=3337  tests/unit/test_session_cli.py\n    2995  limit=2000  test      pinned=2995  rust_core/tests/test_routing.rs\n    2987  limit=2000  test      pinned=2987  tests/unit/test_cli_bootstrap.py\n    2901  limit=2000  test      pinned=2901  tests/unit/test_file_deps.py\n    2686  limit=1500  core      pinned=2686  rust_core/src/native_search.rs\n    2553  limit=1500  core      pinned=2553  rust_core/src/backend_ast.rs\n    2516  limit=2000  test      pinned=2518  tests/unit/test_mcp_error_sanitization.py\n    2509  limit=2000  test      pinned=2509  rust_core/tests/test_ast_rewrite.rs\n    2375  limit=2000  test      pinned=2375  tests/unit/test_apply_policy.py\n    2356  limit=2000  test      pinned=2356  rust_core/tests/test_index.rs\n    2318  limit=2000  test      pinned=2318  rust_core/tests/test_public_native_cli_parity.rs\n    2250  limit=2000  test      pinned=2251  tests/unit/test_semantic_provider_navigation.py\n    2244  limit=2000  test      pinned=2244  tests/unit/test_gpu_benchmark_scale_contracts.py\n    2121  limit=1500  core      pinned=2137  src/tensor_grep/cli/session_daemon.py\n    2109  limit=1500  core      pinned=2109  rust_core/src/backend_ast_workflow.rs\n    1919  limit=1500  core      pinned=1919  benchmarks/run_gpu_native_benchmarks.py\n    1828  limit=1500  core      pinned=1828  src/tensor_grep/cli/session_store.py\n    1817  limit=1500  core      pinned=1817  rust_core/src/backend_cpu.rs\n    1756  limit=1500  core      pinned=1756  rust_core/src/index.rs\nfile-size budget OK: 1113 files scanned, 25 grandfathered, 0 regressions\n"
+    },
+    "ranking-final-bare": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-ranking-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/bare_call_ratchet.py",
+          "--report"
+        ],
+        "exit_code": 0,
+        "seconds": 15.76,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\ranking-final-bare.log"
+      },
+      "raw_output": "module                                    bare calls    pinned\n--------------------------------------------------------------\nsrc/tensor_grep/cli/main.py                        0         -\nsrc/tensor_grep/cli/mcp_server.py                  0         -\nsrc/tensor_grep/cli/repo_map.py                    0         -\n--------------------------------------------------------------\nbare-call ratchet OK: 3 modules, 0 bare calls, 0 regressions\n"
+    }
+  }
+}
