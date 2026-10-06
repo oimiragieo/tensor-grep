@@ -35,6 +35,7 @@ from tensor_grep.cli.runtime_paths import (
     gpu_probe_timeout_s,
     iter_in_tree_native_tg_binaries,
 )
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 
 
 def _doctor_installed_version() -> str:
@@ -480,11 +481,11 @@ def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
             [str(native_tg_binary), "--version"],
             env=probe,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=2,
         )
         if res.returncode == 0:
-            return res.stdout.strip()
+            return decode_protocol_output(res.stdout).strip()
         return None
     except Exception:
         return None
@@ -801,14 +802,18 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
             [str(candidate), "--version"],
             capture_output=True,
             env=env,
-            text=True,
+            text=False,
             timeout=2,
         )
     except Exception:
         return None
     if res.returncode != 0:
         return None
-    for line in res.stdout.splitlines():
+    try:
+        stdout = decode_protocol_output(res.stdout)
+    except UnicodeDecodeError:
+        return None
+    for line in stdout.splitlines():
         stripped = line.strip()
         if stripped:
             return stripped
@@ -1285,18 +1290,10 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             "--json",
             "--no-ignore",
             # End-of-options sentinel (CWE-88 class, AGENTS.md), BEFORE EVERY POSITIONAL.
-            #
-            # The first cut of this put it BETWEEN `sentinel` and `probe_target`, terminating
-            # options for the path while leaving the PATTERN unguarded. A sentinel in the wrong
-            # place reads as protection and is not -- and the source-scanning census I shipped
-            # alongside it could not tell the difference, because it only asked whether `--`
-            # appeared somewhere in the function. Caught by an independent adversarial review, and
-            # the reason the test is now BEHAVIOURAL: position is the property, presence is only a
-            # proxy for it.
-            #
-            # Both positionals here are tg-generated, so the live risk is low -- but uniformity IS
-            # the security property. A sweep whose members each carry a private risk assessment is
-            # a sweep nobody can check.
+            # A prior placement between pattern and path left the pattern unguarded.
+            # Behavioral tests pin both positions; mere presence of `--` is insufficient.
+            # Keep the same rule even for generated positionals so the whole argv-builder
+            # population shares one checkable contract.
             "--",
             sentinel,
             probe_target,
@@ -1315,9 +1312,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
                 env=probe_env,
                 check=False,
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                text=False,
                 timeout=probe_timeout_s,
             )
         except _self.subprocess.TimeoutExpired:
@@ -1329,18 +1324,30 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             base["error"] = str(exc)
             return base
 
+        stderr = decode_diagnostic_output(result.stderr)
+
     base["exit_code"] = result.returncode
+    try:
+        stdout = decode_protocol_output(result.stdout)
+    except UnicodeDecodeError as exc:
+        base["status"] = "failed"
+        base["error"] = (
+            stderr.strip()
+            if result.returncode != 0 and stderr.strip()
+            else f"GPU runtime probe returned invalid UTF-8 JSON: {exc}"
+        )
+        return base
     if result.returncode != 0:
-        native_error_kind = _doctor_gpu_probe_native_error_kind(result.stdout)
+        native_error_kind = _doctor_gpu_probe_native_error_kind(stdout)
         base["native_error_kind"] = native_error_kind
         base["status"] = _doctor_gpu_probe_failure_status(
             native_error_kind, cross_domain=cross_domain
         )
-        base["error"] = (result.stderr or "").strip() or "GPU runtime probe failed"
+        base["error"] = stderr.strip() or "GPU runtime probe failed"
         return base
 
     try:
-        payload = json.loads(result.stdout or "{}")
+        payload = json.loads(stdout or "{}")
     except json.JSONDecodeError as exc:
         base["status"] = "failed"
         base["error"] = f"GPU runtime probe returned invalid JSON: {exc}"

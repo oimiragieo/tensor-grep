@@ -35,6 +35,103 @@ def _project_onto(actual: dict, expected: dict) -> dict:
     }
 
 
+def test_rewrite_transport_keeps_exit_and_tolerant_stderr_when_stdout_is_irrelevant(
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import mcp_server, subprocess_policy
+
+    completed = CompletedProcess(
+        args=["native-tg", "rewrite"],
+        returncode=2,
+        stdout=b"{\xff}",
+        stderr=b"permission denied \xff",
+    )
+    monkeypatch.setattr(subprocess_policy, "run_subprocess", lambda *_a, **_k: completed)
+
+    result = mcp_server._run_rewrite_subprocess(["native-tg", "rewrite"])
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == "permission denied \ufffd"
+
+
+def test_index_transport_keeps_disclosed_partial_results_on_exit_two(monkeypatch) -> None:
+    from tensor_grep.cli import mcp_rewrite_tools, subprocess_policy
+
+    payload = {
+        "matches": [{"file": "a.py", "line": 1, "text": "needle"}],
+        "result_incomplete": True,
+        "incomplete_reason_class": "scan_limit",
+    }
+    completed = CompletedProcess(
+        args=["native-tg", "search"],
+        returncode=2,
+        stdout=json.dumps(payload).encode("utf-8"),
+        stderr=b"",
+    )
+    monkeypatch.setattr(subprocess_policy, "run_subprocess", lambda *_a, **_k: completed)
+
+    result = json.loads(
+        mcp_rewrite_tools._execute_index_search_command(
+            ["native-tg", "search"], pattern="needle", path="."
+        )
+    )
+
+    assert result["result_incomplete"] is True
+    assert result["incomplete_reason_class"] == "scan_limit"
+    assert result["matches"] == payload["matches"]
+
+
+def test_diff_transport_decodes_malformed_preview_as_diagnostic_text(monkeypatch) -> None:
+    from tensor_grep.cli import mcp_rewrite_tools, subprocess_policy
+
+    completed = CompletedProcess(
+        args=["native-tg", "rewrite", "--diff"],
+        returncode=0,
+        stdout=b"--- a\n+++ b\n-\xff\n",
+        stderr=b"",
+    )
+    monkeypatch.setattr(subprocess_policy, "run_subprocess", lambda *_a, **_k: completed)
+
+    result = json.loads(mcp_rewrite_tools._execute_rewrite_diff_command(["native-tg"]))
+
+    assert "-\ufffd" in result["diff"]
+
+
+def test_index_transport_rejects_malformed_success_protocol_output(monkeypatch) -> None:
+    from tensor_grep.cli import mcp_rewrite_tools, subprocess_policy
+
+    completed = CompletedProcess(
+        args=["native-tg", "search"], returncode=0, stdout=b"{\xff}", stderr=b""
+    )
+    monkeypatch.setattr(subprocess_policy, "run_subprocess", lambda *_a, **_k: completed)
+
+    result = json.loads(
+        mcp_rewrite_tools._execute_index_search_command(
+            ["native-tg", "search"], pattern="needle", path="."
+        )
+    )
+
+    assert result["error"]["code"] == "invalid_output"
+
+
+def test_rewrite_nonzero_malformed_stdout_keeps_stderr_error_classification(monkeypatch) -> None:
+    from tensor_grep.cli import mcp_rewrite_tools, subprocess_policy
+
+    completed = CompletedProcess(
+        args=["native-tg", "rewrite"],
+        returncode=2,
+        stdout=b"{\xff}",
+        stderr=b"permission denied \xff",
+    )
+    monkeypatch.setattr(subprocess_policy, "run_subprocess", lambda *_a, **_k: completed)
+
+    result = json.loads(mcp_rewrite_tools._execute_rewrite_json_command(["native-tg"]))
+
+    assert result["error"]["code"] == "io_error"
+    assert result["error"]["retryable"] is True
+
+
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server

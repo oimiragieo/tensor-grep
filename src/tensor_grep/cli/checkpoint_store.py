@@ -316,18 +316,18 @@ def _detect_checkpoint_scope(path: Path) -> _CheckpointScope:
         completed = run_subprocess(
             ["git", "-C", str(probe_root), "rev-parse", "--show-toplevel"],
             capture_output=True,
-            text=True,
+            text=False,
             check=True,
             timeout_seconds=configured_git_timeout_seconds(),
         )
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError, UnicodeDecodeError):
         return _CheckpointScope(
             root=resolved if resolved.is_dir() else resolved.parent,
             mode="filesystem-snapshot",
             original_path=resolved,
         )
 
-    git_root = Path(completed.stdout.strip())
+    git_root = Path(os.fsdecode(completed.stdout).removesuffix("\n"))
     if resolved == git_root:
         return _CheckpointScope(
             root=git_root,

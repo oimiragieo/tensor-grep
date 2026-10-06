@@ -29,6 +29,7 @@ from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
+    decode_diagnostic_output,
     run_subprocess,
 )
 from tensor_grep.core.python_parse import parse_python
@@ -613,9 +614,7 @@ def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
             cwd=str(root),
             stdout=-1,
             stderr=-1,
-            text=True,
-            encoding="utf-8",
-            errors="surrogateescape",
+            text=False,
             env=_git_env(),
             timeout_seconds=timeout,
         )
@@ -623,9 +622,12 @@ def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
         raise DiffError("git_diff_timeout") from exc
     except (OSError, ValueError, TimeoutError) as exc:
         raise DiffError("git_diff_failed", str(exc)) from exc
-    top = (proc.stdout or "").rstrip("\r\n")
+    top = os.fsdecode(proc.stdout or b"").removesuffix("\n")
     if proc.returncode != 0 or not top:
-        raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500] or "no git top level")
+        raise DiffError(
+            "git_diff_failed",
+            decode_diagnostic_output(proc.stderr).strip()[:500] or "no git top level",
+        )
     return Path(top).resolve()
 
 

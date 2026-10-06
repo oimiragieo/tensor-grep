@@ -45,6 +45,8 @@ from tensor_grep.cli.audit_manifest import (
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
+    decode_diagnostic_output,
+    decode_protocol_output,
     run_subprocess,
 )
 
@@ -197,14 +199,20 @@ def _repo_revision_identity(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
             timeout_seconds=commit_call_timeout,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
         return {"status": "unavailable", "reason": f"git rev-parse could not run: {exc}"}
     if commit_result.returncode != 0:
-        return {"status": "unavailable", "reason": _last_stderr_line(commit_result.stderr)}
-    commit_sha = commit_result.stdout.strip()
+        return {
+            "status": "unavailable",
+            "reason": _last_stderr_line(decode_diagnostic_output(commit_result.stderr)),
+        }
+    try:
+        commit_sha = decode_protocol_output(commit_result.stdout).strip()
+    except UnicodeDecodeError as exc:
+        return {"status": "unavailable", "reason": f"git rev-parse returned invalid UTF-8: {exc}"}
     if not commit_sha:
         return {"status": "unavailable", "reason": "git rev-parse HEAD returned no output"}
 
@@ -230,17 +238,25 @@ def _repo_revision_identity(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-b"],
             timeout_seconds=status_call_timeout,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
         return {"status": "unavailable", "reason": f"git status could not run: {exc}"}
     if status_result.returncode != 0:
-        return {"status": "unavailable", "reason": _last_stderr_line(status_result.stderr)}
+        return {
+            "status": "unavailable",
+            "reason": _last_stderr_line(decode_diagnostic_output(status_result.stderr)),
+        }
+
+    try:
+        status_stdout = decode_protocol_output(status_result.stdout)
+    except UnicodeDecodeError as exc:
+        return {"status": "unavailable", "reason": f"git status returned invalid UTF-8: {exc}"}
 
     branch: str | None = None
     dirty_lines: list[str] = []
-    for line in status_result.stdout.splitlines():
+    for line in status_stdout.splitlines():
         if line.startswith("## "):
             branch = _parse_branch_header(line[3:])
         elif line.strip():
@@ -257,7 +273,7 @@ def _repo_revision_identity(
     }
 
 
-def _parse_porcelain_z(raw: str) -> tuple[str | None, list[tuple[str, str]]]:
+def _parse_porcelain_z(raw: bytes | str) -> tuple[str | None, list[tuple[str, str]]]:
     """Parse `git status --porcelain=v1 -b -z` stdout into `(branch, [(XY, path), ...])`.
 
     `-z` NUL-terminates every record instead of LF and never quotes special characters, so paths
@@ -267,8 +283,10 @@ def _parse_porcelain_z(raw: str) -> tuple[str | None, list[tuple[str, str]]]:
     NUL-terminated ORIG_PATH field follows only when the status contains R or C, and is consumed
     here without being mistaken for its own record.
     """
-    tokens = raw.split("\0")
-    if tokens and tokens[-1] == "":
+    tokens: list[bytes] | list[str] = (
+        raw.split(b"\0") if isinstance(raw, bytes) else raw.split("\0")
+    )
+    if tokens and not tokens[-1]:
         tokens.pop()
     branch: str | None = None
     entries: list[tuple[str, str]] = []
@@ -277,6 +295,18 @@ def _parse_porcelain_z(raw: str) -> tuple[str | None, list[tuple[str, str]]]:
         token = tokens[i]
         i += 1
         if not token:
+            continue
+        if isinstance(token, bytes):
+            if token.startswith(b"## "):
+                branch = _parse_branch_header(os.fsdecode(token[3:]))
+                continue
+            if len(token) < 3:
+                continue
+            status_bytes, path_bytes = token[:2], token[3:]
+            status = status_bytes.decode("ascii", errors="strict")
+            entries.append((status, os.fsdecode(path_bytes)))
+            if b"R" in status_bytes or b"C" in status_bytes:
+                i += 1
             continue
         if token.startswith("## "):
             branch = _parse_branch_header(token[3:])
@@ -331,27 +361,37 @@ def _repo_revision_identity_excluding(
             ["git", "-C", str(root), "status", "--porcelain=v1", "-b", "-z"],
             timeout_seconds=timeout_seconds,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"status": "unavailable", "reason": f"git status could not run: {exc}"}
     if status_result.returncode != 0:
-        return {"status": "unavailable", "reason": _last_stderr_line(status_result.stderr)}
+        return {
+            "status": "unavailable",
+            "reason": _last_stderr_line(decode_diagnostic_output(status_result.stderr)),
+        }
 
-    branch, entries = _parse_porcelain_z(status_result.stdout)
-    dirty_lines = [
-        f"{status} {path}" for status, path in entries if not _path_excluded(path, exclude_prefixes)
-    ]
-
-    dirty_tree_sha256 = hashlib.sha256("\n".join(sorted(dirty_lines)).encode("utf-8")).hexdigest()
+    try:
+        branch, entries = _parse_porcelain_z(status_result.stdout)
+        dirty_records = [
+            status.encode("ascii") + b" " + os.fsencode(path)
+            for status, path in entries
+            if not _path_excluded(path, exclude_prefixes)
+        ]
+        dirty_tree_sha256 = hashlib.sha256(b"\n".join(sorted(dirty_records))).hexdigest()
+    except UnicodeError as exc:
+        return {
+            "status": "unavailable",
+            "reason": f"git status path could not be represented: {exc}",
+        }
     return {
         "status": "present",
         "commit_sha": commit_sha,
         "branch": branch,
-        "dirty": bool(dirty_lines),
+        "dirty": bool(dirty_records),
         "dirty_tree_sha256": dirty_tree_sha256,
-        "dirty_file_count": len(dirty_lines),
+        "dirty_file_count": len(dirty_records),
     }
 
 

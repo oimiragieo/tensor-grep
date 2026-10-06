@@ -13,6 +13,7 @@ from typing import Any
 
 from tensor_grep.cli._index_lock import atomic_write_bytes
 from tensor_grep.cli.progress import ProgressReporter
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 
 ARTIFACT_TAIL_LINE_LIMIT = 20
 ARTIFACT_TAIL_LINE_CHAR_LIMIT = 4000
@@ -478,19 +479,22 @@ def _derive_readiness_timeout_s(
             command,
             cwd=repo_root,
             env=env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=False,
             capture_output=True,
             timeout=TIMEOUT_BUDGET_CHILD_TIMEOUT_S,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, str(exc)
-    if completed.returncode != 0:
-        return None, f"exit {completed.returncode}: {completed.stderr.strip() or '<empty>'}"
     try:
-        raw_budget_s = _json_from_stdout(completed.stdout)["budget_s"]
+        stdout_text = decode_protocol_output(completed.stdout)
+    except UnicodeDecodeError as exc:
+        return None, f"invalid UTF-8 timeout-budget JSON: {exc}"
+    stderr_text = decode_diagnostic_output(completed.stderr)
+    if completed.returncode != 0:
+        return None, f"exit {completed.returncode}: {stderr_text.strip() or '<empty>'}"
+    try:
+        raw_budget_s = _json_from_stdout(stdout_text)["budget_s"]
     except (ValueError, KeyError, TypeError) as exc:
         return None, str(exc)
     # Codex Sol PR #1176 R1: `budget_s` must be a genuine JSON number, never `bool` (a
@@ -622,9 +626,6 @@ def run_dogfood_readiness(
             popen_kwargs: dict[str, Any] = {
                 "cwd": repo_root,
                 "env": env,
-                "text": True,
-                "encoding": "utf-8",
-                "errors": "replace",
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
             }
@@ -634,9 +635,20 @@ def run_dogfood_readiness(
                 popen_kwargs["start_new_session"] = True
             process = subprocess.Popen(command, **popen_kwargs)
             try:
-                stdout, stderr = process.communicate(timeout=effective_timeout_s)
+                raw_stdout, raw_stderr = process.communicate(timeout=effective_timeout_s)
+                protocol_decode_error: UnicodeDecodeError | None = None
+                try:
+                    stdout = decode_protocol_output(raw_stdout)
+                except UnicodeDecodeError as exc:
+                    stdout = ""
+                    protocol_decode_error = exc
+                stderr = decode_diagnostic_output(raw_stderr)
                 returncode = int(process.returncode or 0)
                 try:
+                    if protocol_decode_error is not None:
+                        raise ValueError(
+                            f"agent-readiness JSON is not UTF-8: {protocol_decode_error}"
+                        )
                     agent_readiness = _json_from_stdout(stdout)
                 except ValueError as exc:
                     file_readiness = _read_json_object(child_output)
@@ -659,15 +671,15 @@ def run_dogfood_readiness(
                         }
                         returncode = 1
             except subprocess.TimeoutExpired as exc:
-                stdout = str(exc.stdout or "")
-                stderr = str(exc.stderr or "")
+                stdout = decode_diagnostic_output(exc.stdout)
+                stderr = decode_diagnostic_output(exc.stderr)
                 killed_process_ids = _terminate_process_tree(int(process.pid))
                 try:
                     more_stdout, more_stderr = process.communicate(
                         timeout=POST_TIMEOUT_COMMUNICATE_SECONDS
                     )
-                    stdout = stdout or str(more_stdout or "")
-                    stderr = stderr or str(more_stderr or "")
+                    stdout = stdout or decode_diagnostic_output(more_stdout)
+                    stderr = stderr or decode_diagnostic_output(more_stderr)
                 except Exception:
                     pass
                 agent_readiness = _timeout_agent_readiness_report(

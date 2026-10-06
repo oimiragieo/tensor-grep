@@ -561,7 +561,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 670,
+    "lineno": 707,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -571,7 +571,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 689,
+    "lineno": 726,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1403,
+    "lineno": 1414,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -931,7 +931,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11563,
+    "lineno": 11640,
     "enclosing_symbol": "_run_install_dense",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1161,7 +1161,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11751,
+    "lineno": 11828,
     "enclosing_symbol": "audit_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1171,7 +1171,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11803,
+    "lineno": 11880,
     "enclosing_symbol": "audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1181,7 +1181,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11865,
+    "lineno": 11942,
     "enclosing_symbol": "audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1221,7 +1221,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12471,
+    "lineno": 12548,
     "enclosing_symbol": "evidence_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1241,7 +1241,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12796,
+    "lineno": 12873,
     "enclosing_symbol": "ledger_release",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1251,7 +1251,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12882,
+    "lineno": 12959,
     "enclosing_symbol": "ledger_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1261,7 +1261,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12981,
+    "lineno": 13058,
     "enclosing_symbol": "ledger_record",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1271,7 +1271,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13072,
+    "lineno": 13149,
     "enclosing_symbol": "ledger_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1451,7 +1451,7 @@
   },
   {
     "module": "backends/ripgrep_backend.py",
-    "lineno": 669,
+    "lineno": 795,
     "enclosing_symbol": "_search_counts",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2441,7 +2441,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 832,
+    "lineno": 869,
     "enclosing_symbol": "execute_rewrite_plan_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3031,7 +3031,7 @@
   },
   {
     "module": "cli/evidence_receipt.py",
-    "lineno": 525,
+    "lineno": 561,
     "enclosing_symbol": "_blast_radius_block_recomputed",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",

@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli._index_lock import atomic_write_json
-from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+from tensor_grep.cli.subprocess_policy import (
+    configured_git_timeout_seconds,
+    decode_diagnostic_output,
+    decode_protocol_output,
+    run_subprocess,
+)
 from tensor_grep.core import result as _json_version_contract
 
 _AUDIT_INDEX_VERSION = 1
@@ -330,16 +335,19 @@ def _resolve_git_ref_commit_sha(
             ["git", "-C", str(resolved_root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
             timeout_seconds=timeout_seconds,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
         return None, f"git rev-parse could not run: {exc}"
     if result.returncode != 0:
-        stderr_text = result.stderr.strip()
+        stderr_text = decode_diagnostic_output(result.stderr).strip()
         stderr_tail = stderr_text.splitlines()[-1] if stderr_text else "unknown error"
         return None, f"Could not resolve --against ref {ref!r}: {stderr_tail}"
-    commit_sha = result.stdout.strip()
+    try:
+        commit_sha = decode_protocol_output(result.stdout).strip()
+    except UnicodeDecodeError as exc:
+        return None, f"git rev-parse returned invalid UTF-8 output: {exc}"
     if not commit_sha:
         return None, f"git rev-parse returned no output for ref {ref!r}"
     return commit_sha, None

@@ -86,16 +86,45 @@ and output; artifact identity is recorded separately from installed version.
 
 The initial Opus review hit HTTP 429. After its reset, Opus cleared exact `7c657aa` with 37
 independently run tests. Its misleading rejection-message finding was folded with a non-object
-JSON failure guard in `f57bebc`; the changed artifact needs fresh review. Nothing has merged.
+JSON failure guard in `f57bebc`. Sol and Opus cleared the resulting diagnostics head `d96bb9e`;
+its exact-head CI remains pending. Nothing has merged.
 
 Independent Sol review of `87cdbd9` found an unchanged missing-boolean proof gap. The reviewed
 amendment requires explicit JSON `sidecar_used=false` for native GPU success and preserves unknown
 values as null in doctor and agent evidence. Implementation `6e7ec8d` also hardens the agent twin;
 110 focused diagnostic, doctor, and agent GPU tests passed in the canonical Windows venv.
 Sol cleared `7c657aa`; CI `37411308960` completed with 38 terminal jobs and zero failures.
-That run does not clear the later `f57bebc` amendment. Final review and CI remain required.
+Any subsequent source amendment needs new exact-head review and CI before merge.
 
-DOGFOOD-AGENT-GPU-FLAGS is research-gated, owned by the runtime maintainer: agent sentinel
-and evidence commands retain `-F`. Evidence terms have a literal-match contract. Reopen
-with a native routing/escaping contract and positive plus negative controls; native-proof
-rejection currently fails closed. This follow-up is not claimed shipped with these fixes.
+## Subprocess implementation evidence
+
+PR #1217 starts with implementation `88f11df70e49442a02476b3c13ed1dc4def784a4`, stacked
+on diagnostics `7c657aa`. [Decoding receipt](dogfood-subprocess-receipt.md) and
+[raw verification](evidence/2026-10-05-dogfood/subprocess.json) record bounded Windows checks.
+The final census has 72 sinks, 16 explicit text-mode calls, and 12 generated-helper calls;
+the earlier 32/23 inventory was a candidate list, not a confirmed-defect count.
+Independent transport and census reviews found five and eight issues respectively; their
+amendments are now undergoing exact-artifact review. No earlier self-gate clears this head.
+
+The Opus pass on `b286e51` returned FIX-FIRST for partial MCP output loss, preview/protocol
+decoding boundaries, Windows Git path failures and a latent strict-text guard allowance.
+The corrected integrated source `1f3a442026d450a5b19c7ddcc6c0fc0dff633d99` passes 102 MCP/GPU,
+28 path, and 69 guard tests plus 30 source replay rows. Reviews and CI are refreshed against
+the final artifact; prior Sol clearance is not treated as specialist approval.
+Guard-only follow-up `4fbb2c4` also closes implicit text activation through encoding/errors/
+universal-newlines flags, with 82 guard tests and exact-prior acceptance/refusal controls.
+
+## Deferred diagnostic behavior
+
+DOGFOOD-AGENT-GPU-FLAGS is research-gated, owned by the runtime maintainer: the agent's
+sentinel and query-evidence commands retain `-F`. The sentinel is plain text, but evidence
+terms have a literal-match contract; removing flags without checking pattern semantics is
+outside the approved doctor-probe fix. Reopen with a native routing/escaping contract and
+positive plus negative controls. Existing native-proof rejection fails closed. This item
+does not block the four approved deliveries and is not claimed shipped with them.
+
+DOGFOOD-BENCH-GPU-PROOF is research-gated, owned by the benchmark maintainer: the existing
+`benchmarks/gpu_native_bench_support.py` helper treats absent sidecar proof as false. Reopen
+before using that helper for a native-GPU promotion claim, with explicit-boolean negative
+controls. This campaign's production diagnostic and real artifact observations do not use
+that benchmark helper as proof. Its behavior is not claimed fixed here.

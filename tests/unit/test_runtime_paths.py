@@ -966,7 +966,7 @@ class TestTranslatePathForWindowsBinary:
             assert command[0] == "/usr/bin/wslpath"
             assert command[1] == "-w"
             return subprocess.CompletedProcess(
-                command, 0, "C:\\Users\\x\\AppData\\Local\\Temp\\probe.log\r\n", ""
+                command, 0, "C:\\Users\\x\\AppData\\Local\\Temp\\probe.log\n", ""
             )
 
         monkeypatch.setattr(runtime_paths.subprocess, "run", fake_run)
@@ -1015,6 +1015,19 @@ class TestTranslatePathForWindowsBinary:
             raise OSError("exec format error")
 
         monkeypatch.setattr(runtime_paths.subprocess, "run", raise_os_error)
+        assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
+
+    def test_returns_none_on_invalid_utf8_output(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda name: "/usr/bin/wslpath" if name == "wslpath" else None,
+        )
+        monkeypatch.setattr(
+            runtime_paths.subprocess,
+            "run",
+            lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, b"\xff", b""),
+        )
         assert runtime_paths.translate_path_for_windows_binary(tmp_path / "probe.log") is None
 
 
