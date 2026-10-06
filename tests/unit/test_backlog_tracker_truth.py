@@ -702,7 +702,9 @@ def test_f10_maxsim_retirement() -> None:
     row = _board_index().rows["F10"]
     assert row.status == "RETIRED"
     assert "TG_LATE_RERANK=1" in row.trigger
-    assert "0.068" in row.trigger and "0.305" in row.trigger
+    assert "retrieval quality below the RRF baseline" in row.trigger
+    assert "reopen only on both" in row.trigger
+    assert "install path" in row.trigger and "stronger encoder" in row.trigger
     backlog = BACKLOG_PATH.read_text(encoding="utf-8")
     assert "F10 MaxSim: caller/installability census + RETIRE disposition" in backlog
     assert "Disposition: RETIRE" in backlog
@@ -879,10 +881,8 @@ def test_handoff_version_and_current_prose() -> None:
     assert "canonical index" in live
     assert CEO_AUDIT_PATH.name in live
     ceo_audit = CEO_AUDIT_PATH.read_text(encoding="utf-8")
-    assert "Every unfinished backlog item (17)" in ceo_audit
-    assert "Blocked — not build licenses (6)" in ceo_audit
-    assert "CEO decision-gated — nonfinancial (4)" in ceo_audit
-    assert "CEO financial stop (1)" in ceo_audit
-    assert "Demand / research gated (6)" in ceo_audit
-    assert "Terminal rows (12)" in ceo_audit
-    assert "A77" in ceo_audit and "A82" in ceo_audit
+    assert "Historical project status" in ceo_audit
+    assert "../TASK_BOARD.md" in ceo_audit
+    assert "#89, #90, F5, F6, F8, and MCP-SURFACE were BLOCKED" in ceo_audit
+    assert "#48, #72, #77, #131, and #169 remained CEO_GATED" in ceo_audit
+    assert "Demand-gated work remained deferred" in ceo_audit

@@ -1,163 +1,52 @@
 ---
 name: tensor-grep
-description: Use tensor-grep for repository code search, symbol lookup, blast-radius analysis, and edit planning when solving codebase tasks or preparing patches.
+description: Search a repository, inspect symbols and callers, and prepare a bounded edit investigation with tensor-grep.
 ---
 
-# Tensor-Grep Skill
+# Use tensor-grep
 
-Use this skill when you need to locate code precisely, understand likely edit impact, or prepare a minimal patch in a real repository.
+Use `tg` to find relevant files and inspect the evidence before editing. Start with
+`tg --version` and `tg --help`; installed entry points and optional dependencies
+affect available features.
 
-## When To Use
+## Choose a command
 
-- You need the primary definition or source block for a symbol.
-- You need references or likely callers before editing code.
-- You need an edit plan, blast radius, or validation target instead of ad hoc grep loops.
-- You are preparing a patch and want a smaller, more accurate context bundle.
-- You need a fast codebase orientation capsule (central files, entry points, symbol map) before diving into symbol lookup.
-- You need to find code by text/content relevance rather than an exact symbol name.
-- You need structured, cross-cutting questions over symbols and imports (e.g. "which files
-  defining a `class` import module X?") that a single grep/`tg search` can't express — see
-  `tg sql` (`symbols` JOIN `imports`) in REFERENCE.md.
-- You need to resume or persist cross-session repo-map context — use `tg session` to cache the repo-map, then call session-scoped commands (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) without re-indexing on each invocation.
+```text
+tg orient REPO_PATH --json
+tg search 'pattern' REPO_PATH --rank --json
+tg source REPO_PATH SYMBOL
+tg callers REPO_PATH SYMBOL --json
+tg prepare REPO_PATH 'task description' --json
+```
 
-## Argument Order
+Symbol commands use path-first order. Search takes the pattern before the path.
+Pass an explicit project or source directory; narrow large scans to a subtree.
+Quote structural patterns containing `$NAME`, especially in PowerShell.
 
-All symbol commands are **path-first**: `tg <command> <REPO_PATH> <SYMBOL>`.
-A reversed `<SYMBOL> <REPO_PATH>` call is auto-corrected with a stderr hint, and
-a single `tg <command> <SYMBOL>` resolves against the current directory — but
-prefer the canonical path-first form.
+Inspect the selected file and line before making a change. Ranking identifies
+candidates; it does not establish correctness. A zero-caller result is not proof
+of dead code: callbacks, decorators, dispatch tables, and dynamic imports may not
+be resolved.
 
-## Default Workflow
+## Interpret bounded output
 
-1. Confirm the installed CLI is available:
-   - `tg --version`
-0. (Unfamiliar repo) Orient — single repo preferred; workspace root works (~4.9s cold-scan, last measured v1.95.0; a warm session-daemon hit is faster still):
-   - `tg orient REPO_PATH`
-   - `tg inventory REPO_PATH --json`
-2. File deps (cheap):
-   - `tg imports FILE` / `tg importers FILE [ROOT]` — absolute paths; importers may be deadline-partial
-3. Content search then source:
-   - `tg search PATTERN REPO_PATH --rank`
-   - Vocabulary mismatch: `tg find "intent" REPO_PATH/src --deadline 20 --json` (run `tg install-dense` once; see `tensor-grep-find-and-route`)
-   - Multi-project: `tg search PATTERN . --glob "*.py" --max-depth 3` (bare text/`--json` without PATH: exit 1 + note; `--json` also sets `path_was_defaulted`/`scope_note` @ 1.101.31 — always pass PATH; unscoped multi-project parent refuses exit 2 with `incomplete_reason_class`/`error.code`=`workspace_root_refused` @ 1.110.x — not generic `scan_limit`)
-   - `tg source REPO_PATH/src SYMBOL`
-4. Symbol navigation — prefer `src/`:
-   - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
-5. Edit readiness — **prefer `tg prepare REPO/src`** (~5–22s PASS on gotcontext-saddle / tg `src` @ 1.110.14+; ~27s on larger src @ 1.91.0):
-   - `tg prepare REPO_PATH/src "task" --json`  # primary + blast floor + validation + coordination hooks
-   - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
-   - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
-   - Fallback loop: `tg agent` + `tg route-test` (budget 90s) if prepare unavailable
-   - Whole-repo: pass an explicit `--deadline N` on prepare/agent. `--deadline` stops new work starting but is not a wall-clock cap, so set the caller's own timeout above it.
-   - Mega-repos: narrow PATH; deadline partials often null symbol
-5a. Multi-agent ledger — see `tensor-grep-ledger`. Claim/release/list canonicalize to the nearest
-   `.git` entry (a worktree's `.git` FILE is a boundary: each worktree has its OWN store; sibling
-   worktrees do not see each other's claims) — `list` rolls scope UP within that store:
-   - `tg ledger claim REPO --symbol SYM --agent-id AGENT --json`
-   - `tg ledger list REPO --json`  # or any subtree PATH under REPO — rolls up to the same store
-   - `tg ledger record REPO --receipt receipt.json --symbol SYM --agent-id AGENT --json`
-   - `tg ledger find REPO --symbol SYM --fresh-only --json` then `release` (a zero-match release with
-     `--claim-id`/`--symbol` emits `unmatched_reason` + `live_claims_elsewhere`; a bare-path release
-     with neither fails closed)
-5b. Evidence receipt:
-   - `tg evidence emit REPO_PATH --capsule capsule.json --query "task" --json --agent-id AGENT`
-   - Note `TG_CAPSULE_INLINE_CALLERS` (default-OFF): when set, `tg agent`/`tg prepare` prepend
-     `# tg: callers=N (top: a, b)` to the primary snippet and add `snippets[i].inline_structural_annotation`
-     (~+2.8% tokens) — reuses already-collected blast-radius evidence, no new scan.
-5c. `tg codemap` whole-repo takes ~30-40s natively; under WSL /mnt/c it is much slower (9p). Scope PATH or run from a native path.
-5d. GPU: see `tensor-grep-gpu` — default loops stay CPU
-6. Make the smallest correct edit from primary targets.
-7. Run only the returned validation commands.
-8. Cached loops: `tg session open --json REPO_PATH` then `tg session context-render SESSION_ID ABS_ROOT "query"`
-9. Enterprise: `tg review-bundle create --manifest … --json`
+Check `result_incomplete` for incomplete analysis. Separately, `output_limit`
+describes display-only omissions such as caller, file, test-file, and import-consumer
+counts. Text output prints `OUTPUT LIMITED` on stdout for this condition.
+Increase the corresponding output limit when needed; do not treat an omitted
+entry as evidence of absence.
 
-## Registration-Audit Workflow (blast-radius before claiming done)
+A command deadline may stop new work without imposing a hard process timeout.
+Automation should impose its own external timeout.
 
-When you add an entity that must be registered in multiple places (a command, a flag, a route, a hook), enumerate ALL its registration sites BEFORE claiming the change is done — missing one fails *quietly*. The default audit path:
+## Prepare and verify changes
 
-1. **Blast radius** — `tg callers PATH SYMBOL --json` lists every call site (file:line). On a real billing repo it surfaced 2 webhook handlers + 1 reconcile cron in ~1s — a 10-minute grep-and-read became a one-second decision.
-   `result_incomplete: true` means the analysis/scan itself stopped early and exits 2. A display-only cap instead keeps `result_incomplete: false` and exit 0, with exact caller/file/test-file/import-consumer omissions in `output_limit`; treat any such subset as partial and raise the named `--max-callers`, `--max-files`, or `--max-tests` knob. Human text prints the same `INCOMPLETE RESULT` warning or `OUTPUT LIMITED` advisory on stdout.
-2. **Pattern bugs** — `tg scan PATH --ruleset RULESET` runs a built-in security/compliance rule pack across those sites (see `tg rulesets` for pack names). `--config sgconfig.yml` and `--rule FILE` are separate options for a custom ast-grep config or a single rule file — not for built-in packs.
-3. **Diagnostics** — `tg doctor --with-lsp`.
+Use returned validation suggestions as a starting point, then run checks appropriate
+to the actual diff. Review proposed edits and checkpoint scope before applying them.
+For already-authorized, reversible edits in non-interactive automation, do not ask for confirmation again: make the change directly and report the result instead of
+ending with "want me to apply this?". This does not authorize destructive operations.
 
-For registration-completeness specifically: `tg callers PATH REGISTRATION_FUNCTION` lists *callable* registrations — but the call graph can't see set/list/decorator registrations (allow-lists, `@router.post`, dispatch tables), which are often the missed site, so grep / `tg scan` those too. Your new entry must appear in ALL sites. (General principle: `verify-plan-against-code` Hard Rule 6; call-graph blind spots: `tensor-grep-code-audit` P7.)
-A resolved zero-caller result is NOT dead code either — the call graph can't see set/list/decorator/dispatch-table registrations; cross-check with `tg scan` or grep before removing a zero-caller symbol. As of v1.17.1 the registration-completeness checker (`extract_members`) is string/comment-aware, so `#`-commented entries are no longer surfaced as false members.
-
-`tg imports`/`tg importers`/`tg blast-radius` now report a relative dynamic import (`import_module(".x", package=...)`, `__import__(..., level>=1)`) as `dynamic_unresolved` — the literal text is preserved in `unresolved`, and it is NEVER silently resolved to a same-named decoy top-level file (both forward and reverse directions, and excluded from blast-radius's reverse scoring prefilter too). A wrong edge is worse than a missing one; treat `dynamic_unresolved` as "re-check yourself," not as a resolved dependency.
-
-## Non-Interactive Mode
-
-- When running in `claude -p` or other non-interactive automation, do not ask for confirmation.
-- Use `tg` against the repository path that was added via `--add-dir`.
-- After `tg` identifies the likely file/span, make the change directly instead of stopping at analysis.
-- If direct editing is unavailable, emit a clean `git`-style unified diff only.
-
-## Rules
-
-- Prefer `tg` over repeated manual grep loops when working inside a real repository.
-- Run `tg orient REPO_PATH` first when entering an unfamiliar repo — it gives centrality, entry points, and a symbol map in one call, and costs no API key or GPU.
-- Use `tg search PATTERN PATH --rank` for content/text search; prefer it over raw grep loops when relevance ranking matters. The `--bm25` flag is an alias for `--rank`.
-- Keep edits narrow and grounded in the files `tg` ranks highest.
-- Do not expand context blindly if `tg` already identified the primary file and span.
-- Use provider-backed modes only when a task is clearly about semantic ambiguity.
-- In non-interactive mode, do not return “want me to apply this?” style responses.
-
-## Known Issues
-
-**Last CUJ dogfood: v1.110.13** (2026-08-11, Windows `uvx`, artifact
-`C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**; not re-run since -- re-run the CUJ on the
-current published wheel before citing it as current). Core CUJ + M16/M17 green at that version.
-**A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
-(`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for
-`--json`, `nearest: []`). Typo + `--help` suggests nearest (`searhc` → search). Bare
-`tg edit-ready` *without* a flag still searches that token by design (escape: `tg search edit-ready`).
-Live callers coverage still 10/10 parser-backed. Parent refuse still `workspace_root_refused`.
-See `tensor-grep-workspace-dogfood`.
-
-**Parent refuse vs scoped empty:** unscoped `tg search needle C:\dev\projects --json` → exit 2 +
-`workspace_root_refused`. Scoped `… --glob "*.py" --max-depth N` does **not** hard-refuse (may
-exit 1 with zero matches = complete empty). Skill text that said parent class=`scan_limit` is stale.
-
-**Historical:** last full workspace+GPU sweep was v1.91.0 (WSL). Language campaign closed through
-Task 10E + F7 Task 11 (#957). Prefer the 1.110.13 CUJ table over older 1.95.0 “7 of 10” prose.
-
-**Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol.
-
-**`tg install-dense`:** once per host; post-install `tg find` drops the BM25-only `rank_fallback_reason` (the fallback message itself now leads with `tg install-dense` when dense is absent).
-
-**`tg ledger`:** claim/release/list/record/find — see `tensor-grep-ledger`. Slice 1 + Slice 2 PATH-canonicalization fixed (A13 / #850).
-
-**Unscoped multi-project search refuses fast (~1–2s).** Workspace-root safety refuse uses
-`workspace_root_refused`; the generic >1500-file defaulted-PATH ceiling is a separate gate.
-Escape hatches: explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/`--type`
-alone do NOT bypass the defaulted-PATH ceiling. Prefer per-repo for deep `--type ts`.
-
-**`tg codemap` on WSL /mnt/c is slow (9p filesystem), not a tg hang** -- native whole-repo runs complete in ~30-40s. Importers/callers-at-root may be deadline-partial.
-
-**CLI traps:** `tg classify` has no `--json`; scan ruleset names from `tg rulesets`; session
-`context-render` needs absolute session-root PATH; reserved+flag refuses (A90); bare unknown tokens may still search.
-
-## GPU (experimental) — verified on v1.91.0, no change through v1.93.2
-SUPERSEDED stamp (2026-08-11, append-only): unchanged through v1.110.14 -- GPU remains experimental/unpromoted (no crossover proven; see `tensor-grep-gpu` + `docs/gpu_crossover.md`). Re-verify every release.
-
-Hardware visible (2× ~12GB). Build without CUDA: calibrate FAIL; search GPU → CPU fallback; doctor `search_ready=false`. v1.93.0 (A11) fixed the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found`; full detail in `tensor-grep-gpu`.
-
-
-## Provider Modes
-
-- Default: `native`
-- Optional:
-  - `tg defs REPO_PATH SYMBOL --provider lsp`
-  - `tg blast-radius REPO_PATH SYMBOL --provider hybrid`
-
-Use `lsp` or `hybrid` only if native lookup seems ambiguous or incomplete.
-
-## Patch Guidance
-
-- Prefer editing files directly if your tools allow it.
-- If you must emit a patch, make it a `git`-style unified diff with `diff --git` headers and enough context lines to apply cleanly.
-- Avoid unrelated files, caches, summaries, or prose.
-
-## Reference
-
-See [REFERENCE.md](REFERENCE.md) for current command patterns and examples.
+Use [REFERENCE.md](REFERENCE.md) for sessions, checkpoints, and structural search.
+For response contracts and optional features, read
+[the harness API](../../../docs/harness_api.md) and
+[experimental features](../../../docs/EXPERIMENTAL.md).

@@ -88,7 +88,7 @@ The first PR head `099709fd70581023507656fd832aced824b718de` failed
 Ubuntu Python 3.11 because an old contract test still expected 512; this was fixed
 before merge, not waved away as a flaky check. The new regression was independently
 proved RED under the old default (`scanned_files=512`, incomplete, exit 2) and GREEN
-under 2,000. Post-merge targeted tests passed 26/26 on main. The Fable approval seat
+under 2,000. Post-merge targeted tests passed 26/26 on main. The independent reviewer approval seat
 was explicitly waived by the user; the failed full council attempt is not an approval.
 Main release run `35725520334` completed 44 terminal jobs (43 success, 1 skipped,
 zero failed) on the merge SHA;
@@ -136,20 +136,20 @@ the exercised surface.
    dogfood (currently `--help`-smoke only).
 6. Keep the `.claude/skills/tensor-grep` usage skill in the SAME PR as any new command -- it was
    7 minor versions stale (`v1.119.8` -> `.15`) before this audit, the same drift class
-   `tensor-grep-release-drift-check` exists to catch.
+   private maintainer notes exists to catch.
 
 **Not verified or acted on this session, explicitly deferred (genuinely multi-turn design work,
-not a receipt-carrying blocker):** the Exa-sourced "world-class agentic search" ideas table
+not a receipt-carrying blocker):** the external research-sourced "world-class agentic search" ideas table
 (agentic-grep-over-stale-RAG, multi-view neighborhood packs, `simulate_edit`,
 freshness-as-first-class-agent-guard, signature-first reads, explicit `retrieval_mode`,
-architecture knowledge graph) -- these are roadmap proposals from an external session's own Exa
-research, not yet cross-checked against this repo's `tensor-grep-research-frontier` /
-`tensor-grep-demand-gate-measurement` skills for demand-gating before any build authorization.
+architecture knowledge graph) -- these are roadmap proposals from an external session's own external research
+research, not yet cross-checked against this repo's private maintainer notes /
+private maintainer notes skills for demand-gating before any build authorization.
 
 ## Agentic quality audit (2026-09-07)
 
 **New planning snapshot:** audited main `5d67210`; open-PR query returned **0** at inspection. This is not CI/release clearance. Earlier dated counts below are historical; live ownership is in [TASK_BOARD.md](TASK_BOARD.md). No production fixes have shipped from this audit.
-**Deliverables:** [source-cited audit and Exa research](audits/2026-09-07-agentic-quality-audit.md) and [junior-followable implementation plan](plans/2026-09-07-agentic-quality-simplification.md). **16 packages: 8 new AGT owners + 8 extensions to existing owners.** READY means start baseline/design work; BLOCKED names a dependency, not a request for repeated user permission. Formal design/security gates remain.
+**Deliverables:** [source-cited audit and external research](audits/2026-09-07-agentic-quality-audit.md) and [junior-followable implementation plan](plans/2026-09-07-agentic-quality-simplification.md). **16 packages: 8 new AGT owners + 8 extensions to existing owners.** READY means start baseline/design work; BLOCKED names a dependency, not a request for repeated user permission. Formal design/security gates remain.
 
 | Owner ID | Work and acceptance | Plan |
 |---|---|---|
@@ -172,22 +172,22 @@ research, not yet cross-checked against this repo's `tensor-grep-research-fronti
 
 **Ownership/status:** the canonical board records the owner role and prerequisite for every row above. New AGT rows are open findings, not claims that the source is already fixed. S3/S4/S6 residuals remain linked to their original AUDIT-FOLLOWUP history; AGT IDs provide stable sub-item ownership.
 **Research corrections to older proposals:** P7 has existing caches; P12's ONNX/AVX-512 speed target is unmeasured and not the selected solution; P14's entire-market/first-to-market claim is unsupported; P10 must distinguish test association from runtime coverage. The plan supersedes those premises while retaining the old entries as history. #72 publication, #169 spend, DD-006/CONTINUOUS-REFRESH, MCP-LEAN-DEFAULT and F5/F6 gates are unchanged.
-**Scope:** audit and plan only. Apply behavior-preserving refactors separately from intentional correctness changes; no speedup or world-best claim without matched-task evidence. Detailed steps, source/test paths, controls, dependencies, rollback and Exa links live in the plan/report rather than expanding this size-gated ledger.
+**Scope:** audit and plan only. Apply behavior-preserving refactors separately from intentional correctness changes; no speedup or world-best claim without matched-task evidence. Detailed steps, source/test paths, controls, dependencies, rollback and external research links live in the plan/report rather than expanding this size-gated ledger.
 
-## Competitive feature research (2026-09-08, Exa) & P13-EXT2 architecture follow-on
+## Competitive feature research (2026-09-08, external research) & P13-EXT2 architecture follow-on
 
-**F1-F3 (new, unstarted, demand-gated, no design doc yet):** Exa research against 2026
+**F1-F3 (new, unstarted, demand-gated, no design doc yet):** external research against 2026
 agent-native code-search competitors found 3 gaps — F1 a bundled AST security-detector pack
-(seat: Codex Sol), F2 a git-SHA-pinned agent decision-memory log (seat: Codex Astra/Fable xhigh,
+(seat: Codex Sol), F2 a git-SHA-pinned agent decision-memory log (seat: Codex Astra/independent reviewer xhigh,
 needs design-authorization pass), F3 a published reproducible comparative benchmark (seat: agy
-Gemini 3.8 Flash). Full detail, competitor citations, and dependencies in
+independent reviewer 3.8 Flash). Full detail, competitor citations, and dependencies in
 [the plan doc's Research Addenda](plans/2026-09-07-agentic-quality-simplification.md#2026-09-08-research-addenda).
 **P13-EXT2 (new, unstarted):** baseline-dev-architecture audit confirmed `cli/main.py` (13,517
 lines) as the dominant violation and found real backward import edges (`core->cli`,
 `backends->cli`) in the frozen P13 graph, already tracked as debt. Ranked extraction targets
 (2 low/moderate-risk, 1 explicitly do-not-attempt-casually) in the same addenda section.
 
-**F4-F6 (new, unstarted, demand-gated, 2026-09-10 CEO-update Exa research):** survey of the 2026
+**F4-F6 (new, unstarted, demand-gated, 2026-09-10 CEO-update external research):** survey of the 2026
 agent-code-intelligence category (Serena 25.2k stars/MIT/LSP-over-MCP, Aider repo-map, Sverklo MCP,
 mache/ley-line-open, gps, CodeGraph, claude-context, grepai) found three gaps, none yet designed:
 - **F4 — symbol-level atomic edit primitives** (`tg edit symbol replace-body|insert-after|safe-delete|rename`).
@@ -211,9 +211,9 @@ mache/ley-line-open, gps, CodeGraph, claude-context, grepai) found three gaps, n
   `tg prepare`'s existing `ask_user_before_editing` gesture with a real data source). Seat:
   design-authorization ladder first -- new file format, new CLI surface, new trust boundary.
 
-Sources (Exa): mache/gps competitive-landscape.md; sverklo.com/vs/matrix; Ry Walker 14-tool survey.
+Sources (external research): mache/gps competitive-landscape.md; sverklo.com/vs/matrix; Ry Walker 14-tool survey.
 
-**F7-F8 (new, demand-gated, Exa round 2):** **F7** git-diff-to-symbol mapping (`tg diff-symbols`),
+**F7-F8 (new, demand-gated, external research round 2):** **F7** git-diff-to-symbol mapping (`tg diff-symbols`),
 shares AGT-04's git identity layer. **F8** index/session integrity self-check with explicit
 `status:"degraded"`, matching `result_incomplete`.
 
@@ -243,7 +243,7 @@ shares AGT-04's git identity layer. **F8** index/session integrity self-check wi
 > backlog row or blocker. A60 is the prevention rule: never point WSL `uv` at the Windows checkout,
 > and treat worktree-local no-sync output as a hypothesis until it is replayed in the real main venv
 > or CI. Current validation belongs in the dated audit/session handoff, not this historical ledger.
-> Round-18 thinktank findings are retained as plan-owned work, not lost review prose: prerequisite
+> Round-18 independent review findings are retained as plan-owned work, not lost review prose: prerequisite
 > prepare-service extraction before edit verification; behavior-specific Python/native/evidence REDs;
 > a fully typed workspace-prepare schema; handle-relative first-use claims-fence creation plus
 > `flock`/`LockFileEx` held across RMW; bounded/confined project-config readers; real-PR tracker
@@ -265,7 +265,7 @@ shares AGT-04's git identity layer. **F8** index/session integrity self-check wi
 
 
 
-**F7-F9 (2026-09-12, Graft teardown + Exa; design stolen, never code).** Mined
+**F7-F9 (2026-09-12, Graft teardown + external research; design stolen, never code).** Mined
 [Graft](https://github.com/NanoNets/Graft) (NanoNets, MIT, TypeScript code-graph context layer) for
 transferable DESIGN per `port-a-competitors-design-not-implementation`. Three of four candidate gaps
 were real; the fourth was **already shipped and I nearly duplicated it** -- see below, it is the
@@ -667,12 +667,6 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   for the stated reason "every read-only command was rejected by the workspace policy" — an
   abstention wearing a verdict token, excluded on its own grounds; see A160 in `AGENTS.md`).
 
-  **Do not edit this plan before round 7 runs.** Two seats noted `docs/BACKLOG.md` is missing
-  from Task 2's `Files:` block; it IS in File Structure and in the `git add`, and Step 6 names it
-  explicitly, so a builder cannot miss it — by the does-it-change-the-BUILD test that is a NOTE,
-  not a defect. Editing it would change the hash and reset the clean-round counter for a line
-  that alters nothing about the built artifact.
-
   The plan's own approach changed substantially across rounds 4→5: v4 put the new native-door
   test inside `tests/e2e/test_routing_parity.py` and extended the `native-build-smoke` CI glob
   with a literal path. Round 5 (`droid_kimi`) found that would sit outside the
@@ -683,18 +677,7 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   is needed at all** — the fix-site pin above (which still frames the CI glob edit as the plan of
   record) is superseded by this note, not the other way around.
 
-  **Next action for a fresh session:** run council round 7 against hash `b86a7e47` unchanged.
-  Build the brief with `python C:/tmp/tensor-grep/hunt/build_hunt_r6_brief.py` (retarget the
-  round number inside the script) and the inlined-source brief with
-  `python C:/tmp/tensor-grep/hunt/build_hunt_codex_sub_brief.py <brief> <out>` (fails closed on a
-  missing region; carries 7 regions as of this session, including
-  `tests/unit/test_native_e2e_ci_coverage_contract.py` so a seat can verify the census claim
-  above without guessing). Run the seat-health gate first
-  (`bash ~/.claude/skills/use-thinktank/tt_smoke.sh`), dispatch `codex_sub` WITH the council (not
-  late), and this time also dispatch the MAIN `codex` seat with an inlined brief or name it a
-  known non-voter up front — its sandbox blocks reads, which produced the misleading verdict
-  token in round 6. If round 7 is clean (two consecutive clean rounds on this SAME hash),
-  implement TDD-first with a half-fix control, then move to HUNT-5 below.
+  **Historical status:** this plan was subsequently superseded by the HUNT-4 implementation recorded below.
 
 **Ruled out during the hunt (recorded so they are not re-chased):** the bare-reserved-command
 fall-through (`tg edit-ready` in a small dir) is DELIBERATE and pinned at `main.rs:8028`,
@@ -823,26 +806,22 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 - **[ ] P9 — Memory-Resident Watcher & Cache Daemon for Agent Multi-Turn Loops (`tg daemon --watch`)**
   - **Objective:** Eliminate repetitive cold-scan and AST parse latency across consecutive agent edit rounds.
   - **Scope:** Provide a lightweight background watcher service holding parsed AST and symbol tables in memory, invalidating only touched files on filesystem events.
-  - **Seat & Cost:** Opus 5 design pass (Claude Max $200/mo flat plan) -> Sonnet 5 build (Droid Plus $100/mo flat plan); $0.00 marginal overage.
   - **Acceptance:** Turnaround time for `tg prepare` drops from ~2.5s to <150ms on warm multi-turn agent turns; fail-closed fallback if daemon crashes.
 
 - **[ ] P10 — Verified Test-Execution Evidence Enclave (`tg verify --enforce-evidence`)**
   - **Objective:** Guarantee that agent claims of passing tests are backed by cryptographically verifiable execution hashes before git commit.
   - **Scope:** Extend `tg evidence` to execute designated test commands in an isolated subprocess, capture signed execution metadata, and output a tamper-evident `.evidence.json` receipt.
-  - **Seat & Cost:** Codex Pro $200/mo flat plan; deterministic subshell harness; $0.00 marginal overage.
   - **Acceptance:** Deterministic verification gate; prevents "false-green" agent completion claims.
-  - **Competitive research (Exa, 2026-09-05):** `getprusik/prusik` (Apache-2.0, 1,300+ tests, GitHub Action) already ships almost exactly this — deterministic "prove tests executed not just discovered," SARIF output, git-tracked findings that reopen on regression. Building P10 from scratch would reinvent a mature free tool. **Prusik's real gap**: its evidence extraction is "Python/JS-deep" only (pytest, vitest, mypy, tsc, ruff, eslint) with NO symbol/blast-radius awareness — it can prove a test ran, but not which symbols that test's pass/fail result actually covers. Differentiation angle: tie a verified-execution receipt to the AST blast-radius of the diff it verifies (`tg verify --enforce-evidence` outputs "these N tests executed AND covered these M affected symbols from the diff"), across all 10 parser-backed languages, not just Python/JS. **Before scoping new work: audit `tensor-grep-enterprise-review-bundle`'s existing `audit-history`/review-bundle surface — it may already partially exist.**
+  - **Competitive research (external research, 2026-09-05):** `getprusik/prusik` (Apache-2.0, 1,300+ tests, GitHub Action) already ships almost exactly this — deterministic "prove tests executed not just discovered," SARIF output, git-tracked findings that reopen on regression. Building P10 from scratch would reinvent a mature free tool. **Prusik's real gap**: its evidence extraction is "Python/JS-deep" only (pytest, vitest, mypy, tsc, ruff, eslint) with NO symbol/blast-radius awareness — it can prove a test ran, but not which symbols that test's pass/fail result actually covers. Differentiation angle: tie a verified-execution receipt to the AST blast-radius of the diff it verifies (`tg verify --enforce-evidence` outputs "these N tests executed AND covered these M affected symbols from the diff"), across all 10 parser-backed languages, not just Python/JS. **Before scoping new work: audit private maintainer notes's existing `audit-history`/review-bundle surface — it may already partially exist.**
 
 - **[ ] P11 — CI PR Blast-Radius & Risk Gate GitHub Action (`tg action pr-gate`)**
   - **Objective:** Gate pull requests and pre-commit hooks on transitive downstream impact and review risk, competing directly with `ehermanson/blast-radius` and Gortex `pr_risk`.
   - **Scope:** Package an official GitHub Action and pre-commit hook runner wrapping `tg diff-impact` that evaluates PR diffs against configurable risk thresholds (e.g. `--fail-threshold 50`, `--fail-on-risk risky`), posting an automated Mermaid caller-graph summary comment on PRs.
-  - **Seat & Cost:** Sonnet 5 build (Droid Plus $100/mo flat plan) -> Opus 5 review (Claude Max $200/mo); $0.00 marginal overage.
   - **Acceptance:** Exits 0 on acceptable changes, exit 2 on exceeded blast-radius threshold; renders interactive Markdown/Mermaid dependency trees on GitHub PR comments.
 
 - **[ ] P12 — Zero-Shot Semantic Re-ranking with Model2Vec Onnx Quantization (`tg find --dense-fast`)**
   - **Objective:** Cut semantic embedding latency from ~80ms to <10ms for multi-symbol queries on CPU.
   - **Scope:** Distill and export the default `potion-code-16M` model into an ONNX-runtime int8 format integrated with native SIMD/AVX-512 extensions in `rust_core`, bypassing Python interpreter overhead during dense fusion passes.
-  - **Seat & Cost:** Sonnet 5 build (Droid Plus $100/mo) -> Fable 5.1 audit; $0.00 marginal overage.
   - **Acceptance:** 8x faster embedding vector inference; zero quality degradation on `find_realquery_golden.jsonl` benchmark suite.
 
 - **[ ] P13 — Adopt `import-linter` with a Frozen Baseline for Module Boundaries**
@@ -850,21 +829,18 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Add `import-linter` (or `pytestarch`), generate a baseline file capturing every CURRENT violation (freeze, do not fix in this PR), wire it into CI so only NEW violations fail the build, then burn the baseline down incrementally in follow-up PRs.
   - **Acceptance:** CI fails on any new cross-layer import that isn't in the frozen baseline; baseline file is reviewed like code with stable per-entry identities.
   - **Progress (2026-09-07, `e7ee4f0`):** the freeze half shipped as a dependency-free equivalent — `src/tensor_grep/core/import_edges.py` (ast-based, `Import`/`ImportFrom` including relative cross-package resolution) + `docs/design/2026-09-07-import-edges-baseline.json` + `tests/unit/test_import_edges_baseline.py`, pinning the current graph (including pre-existing `core->cli`/`backends->cli` violations, frozen not fixed). Adopting `import-linter` itself and enforcing a direction remain open.
-  - **Seat & Cost:** Sonnet 5 build (baseline generation is mechanical) -> Codex Sol review (CI-gating change). $0.00 marginal overage.
 
 - **[ ] P14 — Fact-Level Confidence/Freshness/Provenance Envelope on Symbol-Graph Results**
-  - **Objective:** Close a named gap this codebase's own defs/refs/callers surfaces currently have (2026-09-07 census, [docs/design/2026-09-07-p14-provenance-census.md](design/2026-09-07-p14-provenance-census.md)): no result currently distinguishes an AST-verified fact from a regex-fallback guess. One piece of secondary research (Exa, Anthony West, "Code Intelligence & Code-Graph Indexing for AI Agents," 2026-06-03) names this as a general MCP-ecosystem gap and states four other tools (Serena, claude-context, GitNexus, CodeGraph) lack it as of that survey's own scope and date — that is evidence the gap is real and named elsewhere, not a documented competitor census of the current market, so no first-to-market or entire-market claim is made here.
+  - **Objective:** Close a named gap this codebase's own defs/refs/callers surfaces currently have (2026-09-07 census, [docs/design/2026-09-07-p14-provenance-census.md](design/2026-09-07-p14-provenance-census.md)): no result currently distinguishes an AST-verified fact from a regex-fallback guess. One piece of secondary research (external research, Anthony West, "Code Intelligence & Code-Graph Indexing for AI Agents," 2026-06-03) names this as a general MCP-ecosystem gap and states four other tools (Serena, claude-context, GitNexus, CodeGraph) lack it as of that survey's own scope and date — that is evidence the gap is real and named elsewhere, not a documented competitor census of the current market, so no first-to-market or entire-market claim is made here.
   - **Scope:** Extend `defs`/`refs`/`callers` (and related symbol-graph) results with a `provenance: {source: "ast"|"regex_fallback"|"cache", confidence: float, index_fingerprint_age_s: int}` field — the natural generalization of the `incomplete{}` envelope pattern P3 just shipped (PR #1135) for MCP tool-level completeness, applied instead at the individual-fact level.
   - **Acceptance:** Every symbol-graph result carries the provenance object; a client can distinguish an AST-verified fact from a regex-fallback guess without re-deriving it from `_symbol_navigation_descriptor()` or reading docs.
-  - **Seat & Cost:** Sonnet 5 design + build, additive/non-breaking, no external review needed. $0.00 marginal overage.
   - **Progress (2026-09-07):** census-only slice — [docs/design/2026-09-07-p14-provenance-census.md](design/2026-09-07-p14-provenance-census.md) inventories the existing per-file/per-target `"provenance"` string (`_symbol_navigation_provenance_for_path`, `repo_map.py:2416`) and confirms `defs`/`refs`/`callers` and `mcp_symbol_tools.py` carry NO per-fact provenance today; `tests/unit/test_symbol_fact_provenance.py` pins the first-to-market claim removed above. The actual per-fact envelope, `method`/`freshness`/`confidence_kind` fields, and the LSP precise-provider pilot are unstarted.
 
 - **[ ] P15 — README Tagline Repositioning & Auto-Generated Language Tier Table**
   - **Objective:** Split off from P4 (2026-09-06) — the residual, larger-scope half of the front-door positioning work that isn't a same-turn writing fix.
-  - **Scope:** (1) Rewrite `README.md`'s opening tagline (currently "Fast text, AST, indexed, and GPU-aware search CLI") to lead with the agent edit-readiness framing (`tg prepare`/`tg agent`) per `docs/tool_comparison.md`'s own "Where tensor-grep Is Stronger" section, demoting cold-search-speed framing to an appendix — a taste/positioning call, route through Exa research + council per this session's standing process, not a unilateral rewrite. (2) Build an actual generation step (script + CI wiring) that emits `docs/tool_comparison.md`'s language tier table from `LANGUAGE_REGISTRY`/`_symbol_navigation_descriptor()` at doc-build or CI time, replacing the current "re-derive via this grep command" manual-refresh convention — this closes the exact drift class that bit this session (`8e25c23`) permanently rather than relying on the next session to remember to re-check it.
-  - **Acceptance:** README tagline reviewed by council/Exa-informed positioning call, not just Claude's own taste; `docs/tool_comparison.md`'s language table is generated (not hand-maintained) and a CI check fails if it drifts from `LANGUAGE_REGISTRY`.
-  - **Seat & Cost:** Positioning half — Exa research + council (per `tensor-grep-release-and-positioning`'s public-positioning checklist). Generation-tooling half — Sonnet 5 build, Codex Sol review (touches CI).
-  - **Progress (2026-09-07):** drift-check slice, `a075264` — `docs/tool_comparison.md` already carried the generation functions (`_language_scope_descriptor`/`_symbol_navigation_descriptor` in `repo_map.py`) and a rerunnable one-liner, but nothing MACHINE-CHECKED that the embedded JSON block and prose count stayed in sync with them; `tests/unit/test_public_docs_governance.py::test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed` now fails the moment either drifts, closing the exact four-documents-four-values failure class this doc names in its own prose. README tagline repositioning (a taste/positioning call needing Exa + council, deliberately not made unilaterally) and the CI wiring to run this check on every PR remain open.
+  - **Scope:** (1) Rewrite `README.md`'s opening tagline (currently "Fast text, AST, indexed, and GPU-aware search CLI") to lead with the agent edit-readiness framing (`tg prepare`/`tg agent`) per `docs/tool_comparison.md`'s own "Where tensor-grep Is Stronger" section, demoting cold-search-speed framing to an appendix — a taste/positioning call, route through external research + council per this session's standing process, not a unilateral rewrite. (2) Build an actual generation step (script + CI wiring) that emits `docs/tool_comparison.md`'s language tier table from `LANGUAGE_REGISTRY`/`_symbol_navigation_descriptor()` at doc-build or CI time, replacing the current "re-derive via this grep command" manual-refresh convention — this closes the exact drift class that bit this session (`8e25c23`) permanently rather than relying on the next session to remember to re-check it.
+  - **Acceptance:** README tagline reviewed by council/external research-informed positioning call, not just Claude's own taste; `docs/tool_comparison.md`'s language table is generated (not hand-maintained) and a CI check fails if it drifts from `LANGUAGE_REGISTRY`.
+  - **Progress (2026-09-07):** drift-check slice, `a075264` — `docs/tool_comparison.md` already carried the generation functions (`_language_scope_descriptor`/`_symbol_navigation_descriptor` in `repo_map.py`) and a rerunnable one-liner, but nothing MACHINE-CHECKED that the embedded JSON block and prose count stayed in sync with them; `tests/unit/test_public_docs_governance.py::test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed` now fails the moment either drifts, closing the exact four-documents-four-values failure class this doc names in its own prose. README tagline repositioning (a taste/positioning call needing external research + council, deliberately not made unilaterally) and the CI wiring to run this check on every PR remain open.
 
 
 
@@ -1240,8 +1216,8 @@ exactly equals the daemon root**.
 
 ### Why this matters more than the reported symptom
 
-The tool's own guidance tells agents to scope queries to a subdirectory — `tensor-grep-prepare`
-says *"Prefer `REPO/src`"*, and `tensor-grep-find-and-route` says *"always scope `tg find` to a
+The tool's own guidance tells agents to scope queries to a subdirectory — private maintainer notes
+says *"Prefer `REPO/src`"*, and private maintainer notes says *"always scope `tg find` to a
 PATH"*. Following that advice **silently disables the warm-daemon moat**. An agent doing exactly
 what the docs recommend gets cold-path latency and a daemon reporting `hits=0`, with no signal
 explaining why.
@@ -1433,7 +1409,7 @@ tested at all.
 - **The ranking fix (their NFR-1/NFR-5, stop-symbol filter).** A short lexical token winning as
   primary is a RANKING concern, not a contract concern, and an invariant cannot express it. It
   needs a corpus-based golden set with known-bad queries — the same discipline
-  `tensor-grep-semantic-search-campaign` already uses for retrieval quality. Filed, not guessed at.
+  private maintainer notes already uses for retrieval quality. Filed, not guessed at.
   **Their proposed discriminator is good and should be reused verbatim:** a known-bad query must
   either set `ask.required=true` or refuse to name a primary.
 - **Anything for rows 5-9.** Unverified findings do not get fixes; that is how a wrong fix ships.
@@ -1913,10 +1889,10 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
   now SATISFIED; the row stays open with the reproduction as its trigger, mechanism hypothesis =
   default request_queue_size=5 accept backlog under concurrency. The DD-006 design packet merged as
   PR #1015; reopening product work requires deliberate authorization for the PERF + HONESTY build.
-  AST-DSL-PARITY Exa delta ->
-  LEAVE (peers reach for DSL/parity, not metavariable performance). MCP-LEAN-DEFAULT Exa delta ->
+  AST-DSL-PARITY external research delta ->
+  LEAVE (peers reach for DSL/parity, not metavariable performance). MCP-LEAN-DEFAULT external research delta ->
   direction now SPEC-LEVEL (official MCP progressive discovery / programmatic tool calling),
-  still Task-2C-fenced (contract 1.7.0 re-verified). CONTINUOUS-REFRESH Exa delta -> warm serving
+  still Task-2C-fenced (contract 1.7.0 re-verified). CONTINUOUS-REFRESH external research delta -> warm serving
   demonstrably table stakes (TriSeek v0.4.2, cgh, seekr, Cursor warm builds); scoping-pass reopen
   stands.
 - **A101 recurrence receipt (W8 acceptance):** `public-version-powershell` flaked **3 times in 3
@@ -1926,8 +1902,8 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
   F5/F6/F8 shared-box ban, MCP-SURFACE 1.7.0 fence); per-row receipt table in
   `docs/audits/2026-08-13-demand-gated-dispositions.md`. Zero status flips.
 - **W7 CEO packets** (`docs/audits/2026-08-13-ceo-gated-packets.md`): 2026-08-13 deltas on the
-  2026-08-06 base; 8-seat thinktank (7 verdict-bearing, copilot TIMEOUT failed-seat, claude seat
-  substituted sonnet for quota-blocked Fable 5) -> 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY; council
+  2026-08-06 base; 8-seat independent review (7 verdict-bearing, copilot TIMEOUT failed-seat, claude seat
+  substituted implementation reviewer for quota-blocked independent reviewer) -> 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY; council
   named the concrete seams (frozen: `~/.tensor-grep/bin/tg.exe` order, installer,
   `rust_core/src/main.rs`; rejected: ledger blocking-gate / exit-code path; accepted: ADR +
   benchmark cold-start stamp; advisory overlap hint + exit-code pin test). #169 pointer only, no
@@ -1940,7 +1916,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 ## Recent campaign notes (2026-08-14) - W5-W8 closeout + session capture
 
 - **Session-capture receipt:** everything learned this session (shipped state, DD-006
-  measured method + run matrix, codex gate rounds, council seat accounting, Exa deltas,
+  measured method + run matrix, codex gate rounds, independent review and research updates,
   A111-A116 provenance, follow-ups) is captured in
   `docs/audits/2026-08-14-session-capture.md`, written so a junior analyst can pick it up.
 - **Codex 4-round audit receipt:** gpt-5.6-sol audited the docs branch in four rounds -
@@ -1950,48 +1926,11 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
   round-by-round closure and the plan hash chain survive in the disposition doc's
   Codex-audit-closure section (the raw reports were scratch in the removed
   w8-docs-closeout worktree).
-- **Thinktank seat accounting:** 8 seats, 7 verdict-bearing, 7/7 HYBRID-ACCEPTED /
-  ADVISORY-ONLY; copilot TIMEOUT recorded as a FAILED seat, not a blocker; the claude seat
-  sat `sonnet` because Fable 5 was quota-blocked at dispatch (substitution recorded in the
-  synthesis header + CEO packet doc, never presented as a Fable verdict).
-- **Landed skill:** `tensor-grep-demand-gate-measurement` documents the bounded demand-gate
-  measurement method with the DD-006 worked example (frozen thresholds, single-shot vs looped
-  control arms, discriminated failure classes, positive control, CANNOT_MEASURE, honest-soft
-  severity). The docs-artifact audit-loop learnings FOLD into the existing
-  `tensor-grep-codex-gated-audit-loop` skill (FOLD_INTO_EXISTING bias; no second new skill).
+- Independent review completed; internal review-provider records are retained privately.
 
 ## Recent campaign notes (2026-08-13) - session-retention campaign: 35/35 skill accuracy audit + never-committed lesson capture
 
-- **Scope:** independent accuracy audit of ALL 35 tracked `.claude/skills/*/SKILL.md` (7 waves,
-  artifact-specific receipts) + capture of the 2026-08-12 campaign's lessons across docs/AGENTS/
-  skills/workflows/tools/paper. Base `568065a` (v1.110.14). No release; no spend.
-- **Result:** 7 CLEAN / 28 DRIFT_FOUND / 0 CANNOT_VERIFY; zero new skills justified
-  (fold-over-fragmentation per the Exa "coherent unit" guidance). Every HIGH/MED substantive
-  drift repaired with file:line-verified edits (MaxSim HELD→RETIRED; TG_FIND_DENSE_WEIGHT
-  default-OFF→adaptive-5.0-shipped; Battle 29/28/20/23 statuses; junction-rule mechanism;
-  worktree-store overclaim; installation_health enum; exit-2 wording; MCP 5th registration site;
-  ~20 more). Dated receipts SUPERSEDED/annotated, never rewritten; drifted anchors converted to
-  grep-the-symbol form, never re-stamped bare.
-- **Never-committed capture:** the dirty `audit/h6-cudf-backend` tree carried the 2026-08-07
-  Session Lessons + CI Cost Discipline sections that were never committed to any ref
-  (pickaxe-verified); landed verbatim into AGENTS.md + SESSION_HANDOFF.md with provenance.
-  Reconciliation carries ERRATUM-2 (the one-file spot-check that misclassified them as stale).
-- **Tooling:** `tg-skill-audit.js` hardened (artifact binding: root/SHA/blob manifest; exact
-  coverage equality; evidence floor; CANNOT_VERIFY); `tg-audit-fix-loop.js` five advertised phases
-  wired (Seam/RED/GREEN/Gate/Verify) with FIX-FIRST verdict vocabulary; new
-  `tests/unit/test_skill_rules_registry.py` (schema + regex-compile + dangling-key governance).
-- **Gates:** 117 governance tests passed in the real venv; ruff + mypy clean on the new test;
-  both workflows pass a wrapped `node --check`. Independent adversarial gate FIX-FIRST (8) →
-  repaired → re-gate SHIP-WITH-NITS. PR CI: one known `public-version-powershell` flake,
-  rerun green.
-- **Landed:** PR #1005 (`docs:`), commit `f7bcc9a`, squash-merged `5148664` (2026-08-13).
-  Receipt: `docs/audits/2026-08-12-session-retention-audit.md`.
-- **Lessons retained (2026-08-13 follow-up):** the campaign's own failure modes became **A97-A102**
-  (interrupted-edit-may-have-applied; spot-check-census-of-N-files; verifier-must-be-artifact-bound;
-  advertised-capability-must-execute; third-flake-=fix-signal; input-brief-facts-are-hypotheses),
-  folded into `tensor-grep-docs-and-writing` / `-validation-and-qa` / `-change-control` /
-  `-debugging-playbook`. The fresh-context adversarial gate that caught these is the A18/A29
-  discipline re-confirmed (author self-verification reported zero; the independent gate found 8).
+Documentation maintenance corrected stale skill descriptions and synchronized the contributor guidance. Historical private audit procedures are retained outside the repository. PR #1005 (`f7bcc9a`, squash merge `5148664`, 2026-08-13) delivered this documentation update. No product release or task disposition changed.
 
 ## Recent campaign notes (2026-08-12) - backlog-closeout campaign: Task 2A resume + reconciliation + research receipts
 
@@ -2018,7 +1957,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 - **Stale-checkout reconciliation:** the main checkout's `audit/h6-cudf-backend` branch + 21
   dirty files contain ZERO unlanded product work (H3/H6 shipped; blob-identity receipts in the
   audit doc). The `nul` artifact was removed; all other cleanup PROPOSED only.
-- **Research receipts** (`docs/audits/2026-08-12-research-receipts.md`, 17 Exa queries, 47
+- **Research receipts** (`docs/audits/2026-08-12-research-receipts.md`, 17 external research queries, 47
   sources): frontier scan CONFIRMS the edit-control-plane thesis (retrieval commoditizing;
   receipts/verification is where 2025-26 activity is; nearest neighbor arXiv:2606.04193 is
   generic-agent, not repo-edit - whitespace remains). Demand rows: #255/DD-006/AST-DSL-PARITY
@@ -2031,9 +1970,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 
 ## Recent campaign notes (2026-08-11 late) — skill coverage wave (post-#1001)
 
-- **Post-merge coverage audit** of the 34-skill library vs the A83-A96 / M16-M17 / doctor-3 / world-class wave: 6 gaps found (A87 static-SHIP-provisional, A89 real-artifact parity, A92 escrowed evidence, A96 byte-exact-edit, M16 scan rule preservation, world-class roadmap).
-- **Five lesson-gaps folded into existing skills; one NEW skill: `tensor-grep-worldclass-roadmap`** (S1-S7 edit-control-plane spine, Exa-grounded: Occasio OIDC attestation / AET evidence-freshness / Anthropic harness papers). Index 33 -> 34; skill_rules.json 22; workflow 35/35; gates 16/16.
-- Laws A94-A96 were captured in #1001; this wave converts the remaining audit finding into skill coverage so `tg-skill-audit` and future sessions find the disciplines without re-deriving from AGENTS.md.
+Follow-up documentation maintenance corrected missing descriptions of artifact validation, write-safety contracts, and Rust scan behavior. The current approved skill set is listed in AGENTS.md.
 
 ## Recent campaign notes (2026-08-11 PM) — CEO update to v1.110.14
 
@@ -2041,30 +1978,11 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 - **Skill-library evolution (#999 #1001 #1002):** dogfood refreshes + full-library audit (21 stale stamps, 7 tier contradictions) + coverage-gap wave (worldclass-roadmap skill, five skills extended). All post-merge verified.
 - **Closed world unchanged:** 28 rows / 17 unfinished (0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). No new rows; no status flips. Open PRs: only #966 (Task 2A parked). No spend; #169 only money stop. No nonfinancial CEO question.
 - **CEO packet (live):** `docs/audits/2026-08-11-ceo-backlog-update.md`.
-- **Next after the next code release:** run the `tensor-grep-release-drift-check` sweep (A94) before further skill work.
+- **Next after the next code release:** run the private maintainer notes sweep (A94) before further skill work.
 
 ## Recent campaign notes (2026-08-11) — skill-library audit + freshness mechanism
 
-- **Skill-library audit (all 33 in-repo `.claude/skills/*/SKILL.md` files, 3 parallel subagent waves):**
-  library found stale ONE release after the last refresh — 21 version stamps below the v1.110.14
-  current tag, 7 language-tier contradictions (foundational-vs-parser-backed surviving the C/C++
-  promotion; ground truth now 10 parser-backed / 0 foundational via `_symbol_navigation_descriptor()`),
-  2 stale state facts (M17 index-fingerprint, doctor schema-3), 1 dangling prose contradiction.
-- **Fixes:** mechanical stamp bumps (generated edit scripts, byte-safe); append-only dated SUPERSEDED
-  blocks in `code-search-and-retrieval-reference` + `tensor-grep-add-language` for the retired tier
-  claims; doctor-3 fields (`pypi_latest`/`installed_behind_pypi`/`shadow_launchers`/
-  `installation_health` + `TG_DOCTOR_OFFLINE`) added to `tensor-grep-config-and-flags` +
-  `tensor-grep-diagnostics-and-tooling`; index count re-derived 32 → 33 (new folder) in AGENTS.md +
-  CLAUDE.md; `.claude/skill_rules.json` now 21 entries.
-- **Standing mechanism created: `tensor-grep-release-drift-check` skill** — mechanical post-release
-  governance sweep (stamps ≥ current tag, derived counts, known-state facts, SUPERSEDED discipline).
-  Deliberately NOT a pytest (numbers drift by design; a hard gate reddens every PR) — a maintenance
-  command like `.claude/skill_anchor_audit.py`. Run it after every release.
-- **Laws A94–A96** captured (stamp rot is a maintenance sweep; a "verified correct" note is part of
-  the contract it guards and must be updated in the same change; non-ASCII punctuation defeats
-  byte-exact edit-tool matches — splice by line index from a python script).
-- **Ledgers:** `docs/audits/2026-08-11-skill-audit-findings.md` (27-item fix list +
-  new-skill decision, Exa-grounded) and `docs/audits/2026-08-11-skill-audit-facts.md` (ground truth).
+Documentation maintenance corrected stale version, language, and doctor schema statements. The reviewed public skills are now explicitly allowlisted; internal procedures are maintained privately.
 
 ## Recent campaign notes (2026-08-10) — M16/M17 first-CI-row drain (plan Round 3)
 
@@ -2109,7 +2027,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
   `zdir*` sorted AFTER the target, so it passed on the bug; renamed to `adir*` + Unix-gated symlink
   arm) → R3 SHIP → final-head SHIP (one LOW: `docs/routing_policy.md` hardcoded format 4; folded
   in-PR). Independent-gate SHIP was re-earned after every CI-surfaced fix (A18).
-- Execution plan: `docs/plans/2026-08-10-backlog-completion-plan.md` (2-seat thinktank-approved
+- Execution plan: `docs/plans/2026-08-10-backlog-completion-plan.md` (2-seat independent review-approved
   Round 3: codex-sol + agy unanimous APPROVED, no MUST-FIX). Next buildable per plan: none — the two
   Rust rows are closed; remaining rows are CEO/demand/research-gated (see header snapshot).
 
@@ -2135,7 +2053,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 - **H2 residual (recorded, not fixed):** `--format rg --json -l` keeps rg-parity raw paths (rg
   itself emits plain paths for `--json -l`). Tracked as a named follow-up; #979 deliberately does
   not refuse it.
-- Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved
+- Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens independent review-approved
   Round 3). Next buildable per plan: M1 (checkpoint create-side symlink/junction containment).
 
 ## Recent campaign notes (2026-08-08 late) — audit-fix wave receipts
@@ -2210,7 +2128,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 - Plan `docs/plans/2026-08-13-backlog-completion-plan.md` council-approved 7/7 after 5 rounds.
 - PRs merged: #1008 (W1 premise receipt), #1009 (W2 A101 probe retry -> v1.110.15), #1010
   (W3 RUST-REPLACE-SYMLINK symlink/junction guard -> v1.110.16, Merged SHA d31a051).
-- A3 adversarial gate: 13 opus rounds converged SHIP; codex security audit cleared. Junction fact
+- A3 adversarial gate: 13 security reviewer rounds converged SHIP; codex security audit cleared. Junction fact
   settled by bounded pinned-toolchain probe (A107); RUST-REPLACE-TOCTOU row filed for the residuals.
 - W4 Task 2A: Sol re-audit 9/10 HIGH fixed; round-1 F1 untyped-JUnit fix pushed to #966 head
   1210d8e; parked with receipt (union-merge onto current main is the next Task 2A action).
@@ -2224,7 +2142,7 @@ Full historical council record: [2026-08-22 CEO gate council](audits/2026-08-22-
 - F7 / CPU-BACKEND / REF-CALL-REGISTRY → SHIPPED (impl already on main; closure #963).
 - Laws A70–A76 retained in AGENTS.md / MEMORY.md / skills.
 - Closeout plan: `docs/plans/2026-08-06-enterprise-backlog-closeout-plan.md`
-  (Round-1 AMEND_SPINE absorbed; Round-2 orchestrator SHIP substitute — Opus/Sonnet quota until 2026-08-14).
+  (Round-1 AMEND_SPINE absorbed; Round-2 orchestrator SHIP substitute — security reviewer/implementation reviewer quota until 2026-08-14).
 - R0 packets: `docs/audits/2026-08-06-ceo-gated-recommendation-packets.md`,
   `docs/audits/2026-08-06-demand-gated-research-receipts.md`.
 
@@ -2382,7 +2300,7 @@ Recommendations only. No silent reclassification. No question asked for the non-
 | id | topic | recommendation | status |
 |---|---|---|---|
 | **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CLOSED 2026-08-24` — GitHub issue #48 closed "not planned" applying this standing verdict; reopen if the rewrite is later authorized on its own merits |
-| **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope. **MEASURED 2026-08-23: the number is on NO public surface** — root `README.md`, the PyPI long description (`rust_core/README.md`, the file `pyproject.toml`'s `readme =` actually points at), `pyproject.toml`, and the GitHub About blurb all carry no headline multiple, and `include = ["LICENSE", "NOTICE"]` means `docs/` never ships. So there is nothing public to withdraw; the 7.5x/6.4x pair lives only in this board, `TASK_BOARD.md`, and one audit. The CEO gate is on PUBLISHING a number, not on retracting one. | `CEO_GATED` |
+| **#72** | public benchmark claim | Publication remains held pending current reproducible evidence and explicit approval. Historical private measurements are not approved public claims. | `CEO_GATED` |
 | **#77** / F9 | ledger enforcement scope | Local opt-in advisory only; no auth/CI blocking. | `CEO_GATED` |
 | **#131** | GPU-flavor native assets | Optional experimental NVIDIA asset with CPU default/fallback and **no** speed claim. Physical proof/spend stays under **#169**. | `CEO_GATED` |
 
@@ -2454,9 +2372,7 @@ closure change may mark it `SHIPPED`.
 - **#48** native-front-door startup architecture. Recommendation only: accept shipped hybrid native
   managed front door + Python sidecar; retire larger rewrite unless pip/uv parity is prioritized.
   Status stays `CEO_GATED`; no question asked under the current instruction.
-- **#72** public benchmark claim. Recommendation only: HOLD public 7.5x (conflicts with later 6.4x;
-  no committed current harness); allow only a zero-spend fresh six-repo/180-task quality-gated
-  benchmark. Status stays `CEO_GATED`. **MEASURED 2026-08-23: no public surface carries the number (root README, the PyPI long description rust_core/README.md, pyproject, the GitHub About blurb; docs/ never ships). Nothing to withdraw -- the gate is on PUBLISHING a number, not on retracting one.**
+- **#72** public benchmark claim. Publication remains held pending current reproducible evidence and explicit approval. Status stays `CEO_GATED`.
 - **#77** / F9 ledger enforcement scope. Recommendation only: local opt-in advisory only; no auth/CI
   blocking. Status stays `CEO_GATED`.
 - **#131** GPU-flavor native-asset publication. Recommendation only: optional experimental NVIDIA
@@ -2480,7 +2396,7 @@ closure change may mark it `SHIPPED`.
   unhonoured GPU routing stays an in-band disclosure and does not independently change the code.
 - **F2** `RETIRED`: legacy anonymous-agent compatibility deliberately retains the sentinel.
 - **F10** `RETIRED` 2026-08-05: MaxSim late-rerank — unreachable via any `tg` install/command path
-  and measured DROP on the golden set (ndcg@10 0.068 vs RRF 0.305); see dated census below.
+  and measured DROP on the golden set (retrieval quality below the baseline); see dated census below.
 - **DD-004** `RETIRED` 2026-08-05: standalone typed backend-error boundary — bank the AGENTS.md
   Backend Fail-Closed Contract; remaining `cpu_backend.py:811` `RuntimeError` is loud re-raise
   hygiene (INFO/WEAKENED), not a empty-success defect; see dated receipt below.
@@ -2656,7 +2572,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > receipts in CURRENT STATE below. PR queue at reconcile time: #757 (draft, gated).
 > Prior refresh 2026-07-24 (post-v1.98.3 — reconciling #735's v1.98.1 baseline forward four items:
 > **#736** (C file-scope function-pointer VARIABLE, e.g. `void (*handler)(int);`, was mis-kinded
-> `"function"`, now excluded — v1.98.2, two independent Opus gates; the banked one-line fix hypothesis
+> `"function"`, now excluded — v1.98.2, two independent security reviewer gates; the banked one-line fix hypothesis
 > "require `function_declarator` outermost" was WRONG, since a fn-ptr variable has it outermost too —
 > the real tell is what that node's own `declarator` field WRAPS, a `parenthesized_declarator` around
 > a `pointer_declarator` = variable vs. around a bare identifier = a redundant-paren REAL function
@@ -2676,7 +2592,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > foundational tier (#728, v1.96.1) and a coverage-honesty + payload-invariant fix (#733+#734,
 > v1.98.1); prior: v1.93.2 — the CEO v1.92.1-dogfood "fix all + implement + dogfood" goal campaign (v1.93.0, #702-#706), executed end-to-end with a published-wheel 7/7 dogfood verdict, followed by the v1.93.1 (#708) banked-nit close-out and the v1.93.2 (#709) blast-radius scoring-prefilter fix + a session-capture skill/doc-library reconcile; before that v1.92.2 world-class-tier #249 + deep-research #251). **Live PyPI is v1.98.3 (2026-07-24). TOP-10 SYMBOL-GRAPH LANGUAGE CAMPAIGN COMPLETE — the top-10 language campaign (CEO-approved design plan, v1.93.10->v1.98.1) shipped 5 new languages this pass, java/c#/php/c/cpp, all FOUNDATIONAL tier (defs + imports; regex-fallback refs/callers) alongside the existing parser-backed py/js/ts/rust/go, closing the long-CEO-gated "next-language expansion" item (Ruby was not part of this wave). The symbol-graph tier split stays UNEVEN — java/c#/php/c/cpp are foundational (defs + imports, regex-fallback refs); python/js/ts/rust/go are parser-backed refs/callers — do not read "10/10 languages" as uniform depth. The two C/C++ function-pointer mis-kinding bugs disclosed during that campaign are now BOTH FIXED (#736 -> v1.98.2, #737 -> v1.98.3); true C/C++ `#include` resolution and true go/php/csharp import->file resolution remain DEFERRED to backlog (no manifest for C/C++; each of go/php/csharp needs its own project-config reader). Full per-release receipts in CURRENT STATE below. Fully published (verify `/simple`/`gh run list` before citing a version live if you are reading this soon after a fresh push — runner-scarcity can stretch a release to 30-60min queued, this is healthy not stuck). PR queue: EMPTY (0 open) before this reconcile PR opens.** The CEO `/goal`
 > #232 campaign (2026-07-20) mapped the CEO's 9-point spec ("make tg REQUIRED vs rg/ast") one
-> gap-point per release, one-per-publish, each independent-Opus-gated, all CPU-safe cloud+CI (never
+> gap-point per release, one-per-publish, each independent-security reviewer-gated, all CPU-safe cloud+CI (never
 > the shared desktop): **8 releases v1.84.0 -> v1.91.0, ZERO broken *published* releases, drain now
 > CLEAR (0 open PRs).** **CEO#9 GPU-honesty:** `tg calibrate --json` now emits a structured
 > `{"calibration_status": "skipped_no_cuda_build", ...}` line on a CPU-only build (a new
@@ -2728,7 +2644,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > a calibrate-stdout-JSON-only contract pin + daemon-deadline-route de-flake test nit -> **#685** --
 > all three releasing together as **v1.91.0** (`#687`'s Rust command-enum collision with the
 > same-day `#682` merge was keep-both-resolved at `bd3a142`, both `install-dense` and `prepare` enum
-> variants + dispatch arms retained, re-verified CI-green across the full platform matrix, Opus-gated
+> variants + dispatch arms retained, re-verified CI-green across the full platform matrix, security reviewer-gated
 > for the stale-venv trap + subprocess-safety + fail-closed model-fetch behavior). **Two headline
 > fixes were BINARY-VERIFIED**, not just code-reviewed -- a clean-room `uvx --from
 > tensor-grep@1.87.0 tg ...` dogfood confirmed both the GPU-calibrate structured skip on stdout and
@@ -2754,7 +2670,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > `receipt_digest` + `hmac.compare_digest`, refcount-safe blob GC) = **#675 -> v1.83.0**. Both compose ONLY
 > existing primitives (`atomic_write_json`/`_index_lock` RMW, cross-process `index_lock`, evidence receipts,
 > `_repo_revision_identity`) -- no new crypto/transport, no network/bus/task-queue, never a blocking lock --
-> and each earned an INDEPENDENT adversarial Opus gate (path-confinement + cross-process concurrency for
+> and each earned an INDEPENDENT adversarial security reviewer gate (path-confinement + cross-process concurrency for
 > claims; integrity tamper-detect + revision-freshness for findings), then a **published-binary dogfood**
 > (#225: agent-b sees agent-a's `overlaps` in production, exit-2 traversal; #227: record/find round-trips on
 > the shipped wheel). **The deadline-SLA wave that preceded the ledger (#668-#672, v1.81.17-.21)** closed the
@@ -2768,7 +2684,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > partial-honest agreement under concurrent load; **#668/v1.81.17** shipped the LOW LSP follow-ups the prior
 > reconcile had flagged as "queued not started" (exact `rustup component add` remediation + a `pygls>=2.0`
 > floor). **#674/v1.82.1** (between the two ledger slices) bounds `tg codemap`'s git-identity calls + kills a
-> `resolve()` storm so large workspaces degrade honestly -- and its Opus gate CAUGHT an incomplete
+> `resolve()` storm so large workspaces degrade honestly -- and its security reviewer gate CAUGHT an incomplete
 > `_excluded_by_output_str` signature migration (a `tg codemap --check` TypeError) that CI would have
 > shipped. **Creative-GPU ideation** (the un-gated half of #169) produced 3 amortization-passing Tier-A ideas
 > (GPU corpus-embedding index-build; reframe the already-built+correctness-proven native CUDA many-string
@@ -2784,7 +2700,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > flips before the abi3 wheels finish CDN propagation, so `tag==PyPI` per JSON != pip-installable yet).
 > The prior senior-review + Rust-dogfood campaign (2026-07-17/18, CEO directive "review + fix
 > + find dead/unused code + clean up", then a same-session Rust-repo dogfood) shipped 11 PRs -- **#655-#666**
-> -- one-per-publish, ZERO broken releases, each independently Opus-gated pre-merge. **#655/v1.81.6** defers
+> -- one-per-publish, ZERO broken releases, each independently security reviewer-gated pre-merge. **#655/v1.81.6** defers
 > the fast-path-unused `directory_scanner` import in `bootstrap.py`: measured -24% (18.8ms off ~78.1ms)
 > `import tensor_grep.cli.bootstrap` cost, but scoped ONLY to `--version`/`-V` and native `run`/`scan`/
 > `test`/`ast-info` fast-dispatch (NOT `search`/`--help`, which still hit the broad-scan guard first) --
@@ -2823,7 +2739,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > zero-reference removals + 3 cascaded orphans found while removing their sole caller); 10 of the task's 11
 > seed candidates were FALSE POSITIVES on inspection (dispatch-table signatures, a stdlib callback
 > contract, a Python protocol method, one already fixed by #661) and were deliberately kept --
-> independent-Opus-gate proved every removal dead against the real tree. Flagged (not removed)
+> independent-security reviewer-gate proved every removal dead against the real tree. Flagged (not removed)
 > `_negotiate_position_encoding` as an incomplete LSP feature needing a follow-up, which became #663.
 > **#663/v1.81.13 (audit B13)** -- `_negotiate_position_encoding()` had zero call sites and no
 > `@server.feature(INITIALIZE)` handler, so `ls._position_encoding` stayed permanently stuck at
@@ -2873,7 +2789,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > --deadline` silently ignored on the default warm-daemon path -> #642 (cold residual) + #200-A/#647 (warm
 > default deadline, v1.81.2) + #200-B/#648 (front-door anchor, v1.81.3), dogfood-VERIFIED on the published wheel
 > (warm `tg agent --deadline 3` -> exit-2 + 'deadline' partial, 0/4 silent). **#203/#652 (v1.81.4):** bound the
-> ~9 remaining warm cmds (context/defs/impact/refs/callers/file_importers/blast_radius family), independent-Opus
+> ~9 remaining warm cmds (context/defs/impact/refs/callers/file_importers/blast_radius family), independent-security reviewer
 > -gated (all 9 non-vacuous, fail-closed holds). **#205/#653 (v1.81.5):** the refs internal-context-pack parity
 > nit. **Two recurring release-flakes permanently killed:** #646/#202 (test_lifecycle TCP-connect) + #650/#204
 > (test_index_lock_is_per_root_not_global wall-clock ratio -> overlap-invariant, validated on the flake runner).
@@ -2898,12 +2814,7 @@ receipts are in `docs/audits/2026-08-02-backlog-reconciliation.md`.
 > Prior: v1.75.0->v1.75.4 GPU Phase-0 (#593/#594/#595/#596/#597, #173 reconcile); v1.73.0->v1.74.4
 > (#584/#585/#131-F3/#164/#166/#591); v1.70.0->v1.72.1; v1.69.0-.3; #142.
 
-**Process:** deep-dive/audit (cite `file:line`) → verify-against-code → Sonnet TDD build in
-`isolation:'worktree'` → real-venv verify (`uv run --active --no-sync`; copy `rust_core.pyd`, set
-VIRTUAL_ENV+PYTHONPATH — a worktree "tests pass" is a hypothesis) → `ruff check` + `ruff format
---preview` + `mypy` (+ `cargo fmt --check`/`clippy` for Rust) → **mandatory adversarial Opus gate** if
-it touches apply_policy/mcp/cpu_backend/index_lock/session_daemon/backends → PR → drain
-(one-merge-per-publish). Match model to task. Common-sense gate before pending the CEO.
+**Contributor process:** see [AGENTS.md](../AGENTS.md).
 
 **Legend:** `P0` ship-blocking/#1 gap · `P1` HIGH bug/moat · `P2` MED · `P3` LOW. Status:
 `[shipping]` open PR · `[ready]` buildable · `[wip-blocked]` cap-blocked (>5 PRs) · `[blocked]` gated · `[done]`.
@@ -3028,7 +2939,7 @@ asked for"; (c) widen exit 2's meaning and accept the blast radius.
 ### F2 — anonymous `--claim` — CLOSED as a non-issue, 2026-08-03 (the guard already shipped)
 
 **RESOLVED. No design call is needed, and the "default-refuse vs default-allow" framing below was
-answered by reading the code.** Three independent seats (an opus design council seat, a codex
+answered by reading the code.** Three independent seats (an security reviewer design council seat, a codex
 `gpt-5.6-sol` xhigh seat, and a direct source read) each verified the same thing.
 
 The original entry reasoned from this suppression condition:
@@ -3119,7 +3030,7 @@ GPU: already CEO-gated (#131/#169, deliberate HOLD). No change.
 ### 2026-08-05 — F10 MaxSim: caller/installability census + RETIRE disposition
 
 **Gate (from the row above): run a caller/installability census, then retire if unreachable.**
-Nothing here re-runs the settled retrieval-quality experiment (`tensor-grep-maxsim-late-rerank-negative-2026-07-17`,
+Nothing here re-runs the settled retrieval-quality experiment (private maintainer notes,
 banked so it is never re-chased) or any benchmark/eval harness — this is a static code/doc census
 only, per the shared-dev-box rule.
 
@@ -3176,7 +3087,7 @@ are always skipped in CI; they exist for local dev only.
 
 **5. Measured quality (already banked, not re-run here).** `docs/PAPER.md:469` records the
 DECISIVE NEGATIVE, measured AFTER the role-aware query/document encoding fix landed (`retrieval_late.py`'s
-`encode_query` param, #189 Item 1): rrf+maxsim ndcg@10 **0.068 vs plain rrf 0.305** on the 40-query
+`encode_query` param, #189 Item 1): rrf+maxsim had lower retrieval quality than the baseline on the historical
 golden set (`CHANGELOG.md:20003`), and it actively HARMS the two lexical slices it was measured
 against separately (`literal_golden.jsonl` / `identifier3_golden.jsonl`, delta -0.92/-0.97 vs bm25,
 `CHANGELOG.md:20009-20010`). Root cause is diagnosed, not merely observed: raw MaxSim's mean rank of
@@ -3197,7 +3108,7 @@ in this PR) so the next reader does not have to re-derive this census from call 
 over-claim this census would otherwise have missed: `docs/harness_api.md:1514` still described the
 MCP `tg_find` tool as "(BM25 [+ dense [+ MaxSim]])" -- the exact advertised-but-unreachable pattern
 already fixed in the CLI's `find --help` and the skill index (Battle 28 in
-`tensor-grep-failure-archaeology`, #15 in `TASK_BOARD.md`), just missed there. Fixed in this PR
+private maintainer notes, #15 in `TASK_BOARD.md`), just missed there. Fixed in this PR
 (`docs/harness_api.md`'s tool listing now reads "BM25 [+ local CPU dense embedding]" and notes
 MaxSim is unreachable from the MCP surface). Every other MaxSim mention left in the repo now
 either omits it or states the hold/retirement explicitly, so there is nothing else to purge.
@@ -3292,10 +3203,7 @@ enumerations above).
   never builds the PyO3 extension. Measured against the published wheel first to confirm real users
   were unaffected, then split into a routing arm (always) and an evaluation arm (engine-gated).
 
-**Method note worth keeping.** The 8-seat council and the codex pass overlapped on exactly ONE
-finding out of nine. Six seats across five providers all missed the 15-test collision and the
-unfalsifiable red arm — they converged on the most legible defect and stopped. Consensus is not
-coverage; two structurally different audits were.
+Independent review found additional validation defects; the technical corrections are recorded above.
 
 ---
 
@@ -3327,7 +3235,7 @@ Three findings were substantive, not cosmetic:
   `_symbol_navigation_descriptor()` → 5 parser-backed (go/js/python/rust/ts) + 5 foundational
   (c/cpp/csharp/java/php). A reader would have re-done shipped work, or scoped task #31 as
   "register C/C++" when it is "upgrade the five foundational languages to parser-backed".
-- **HIGH — `tensor-grep-run-and-operate` §3 said `defs`/`source` do not take `--deadline`.** Both do
+- **HIGH — private maintainer notes §3 said `defs`/`source` do not take `--deadline`.** Both do
   (`tg defs --help | grep deadline`). §12's own table listed them as taking it, and the pitfall
   table warned against believing a stale "these don't take it" claim. **The document carried its own
   correction and its own error simultaneously**, 530 lines apart.
@@ -3501,7 +3409,7 @@ still-open item — which is why the check came first.
   limitation from #731/v1.97.0, now closed.** **#736** fixes the file-scope C function-pointer
   VARIABLE mis-kinding (`void (*handler)(int);` was emitted as kind `"function"`) flagged as a
   known limitation when C landed (see the v1.97.0 entry below, now superseded). Two independent
-  Opus gates. **The notable part: the BANKED one-line fix hypothesis was WRONG.** The original
+  security reviewer gates. **The notable part: the BANKED one-line fix hypothesis was WRONG.** The original
   writeup guessed the fix was "require `function_declarator` outermost-direct" — but a
   live-verified real tree-sitter-c 0.24.2 AST dump shows a fn-ptr variable's declarator chain
   *also* has `function_declarator` outermost, same as a real prototype; that is not the
@@ -3647,9 +3555,9 @@ still-open item — which is why the check came first.
 - **PR #728 (opened as a draft mid-campaign, referenced here when this section was last touched
   mid-flight) shipped as v1.96.1 — full receipt in the v1.96.1 entry above; this stub line is kept
   only so the historical draft-state framing below it doesn't read as still-current.**
-- **Live PyPI: v1.93.9 (2026-07-23). Post-campaign optimization pass — a fresh `cProfile` probe of the published v1.93.8 hot paths (orient/callers/imports/agent/prepare) found 2 levers; the clean one SHIPPED and is DOGFOOD-VERIFIED ~54% faster on its target function.** **#719/v1.93.9** merges the 3 redundant full-tree `ast.walk()` passes in `_python_imports_and_symbols` (repo_map.py) into ONE — measured **82% of `tg orient`'s cold wall** (also ~53-67% of callers/agent). BYTE-IDENTICAL by construction (Import/ImportFrom/ClassDef/FunctionDef/AsyncFunctionDef/Call are mutually-exclusive node types; the trailing `sorted(dict.fromkeys)`/`symbols.sort` make interleaved append-order irrelevant); INDEPENDENT-OPUS-GATED **SHIP** via a 386-file OLD-vs-NEW differential (4960 imports + 10220 symbols compared, **0 mismatches**); the build also removed the now-orphaned `_python_dynamic_import_entries` (its last live caller went away -- #716 removed the other). **DOGFOOD-VERIFIED on the published wheels:** a microbench isolating the function (ast-parse lru-cached, so it times only the walk-merge) = v1.93.8 961ms -> v1.93.9 446ms across 80 files = **~54% faster (>2x)**. The 2nd probe lever (framework-test AST scan in `_discover_validation_tests_for_primary_file`, 23.9% of prepare) was measure-first **DEFERRED** -- no clean path (gate-it = validation-test recall regression risk; parallelize = GIL-uncertain + `@_mtime_aware_cache` thread-safety). Walk-merge lever class now EXHAUSTED (all `ast.walk` sites in repo_map.py swept; the hot redundant-walk fns were #716 `_python_imports_with_lines` + #719). Also this pass: **#720** (test-only, NON-releasing) de-flaked the 2 uncontended hot-path perf-floor asserts in `test_index_lock_concurrency.py` (the #244 ratio form itself flaked at elapsed=4.531s vs the flat 4.0s floor on a loaded runner -- root cause #244 missed: `baseline_elapsed` omits the snapshot-WRITE I/O that `elapsed` pays; widened to `max(baseline*6, 8.0)`, bidirectional guard preserved; the 2 stale-lock-reclaim asserts KEEP flat `<4.0` -- there 4.0 is SEMANTIC, must beat the 5s acquire timeout). LESSON: a WARM `tg orient` dogfood measured the CACHED repo-map path (the function never runs) -> a false -36% artifact; verify a COLD-path optimization by microbenching the function (parse-cached) or clearing `.tensor-grep` between reps, NOT a warm end-to-end run. Both #719/#720 worktrees pruned; drain clear. Tools: scratchpad/opt10/{microbench_astwalk,dogfood_v1939_orient}.py.
+- **Live PyPI: v1.93.9 (2026-07-23). Post-campaign optimization pass — a fresh `cProfile` probe of the published v1.93.8 hot paths (orient/callers/imports/agent/prepare) found 2 levers; the clean one SHIPPED and is DOGFOOD-VERIFIED ~54% faster on its target function.** **#719/v1.93.9** merges the 3 redundant full-tree `ast.walk()` passes in `_python_imports_and_symbols` (repo_map.py) into ONE — measured **82% of `tg orient`'s cold wall** (also ~53-67% of callers/agent). BYTE-IDENTICAL by construction (Import/ImportFrom/ClassDef/FunctionDef/AsyncFunctionDef/Call are mutually-exclusive node types; the trailing `sorted(dict.fromkeys)`/`symbols.sort` make interleaved append-order irrelevant); INDEPENDENT-security reviewer-GATED **SHIP** via a 386-file OLD-vs-NEW differential (4960 imports + 10220 symbols compared, **0 mismatches**); the build also removed the now-orphaned `_python_dynamic_import_entries` (its last live caller went away -- #716 removed the other). **DOGFOOD-VERIFIED on the published wheels:** a microbench isolating the function (ast-parse lru-cached, so it times only the walk-merge) = v1.93.8 961ms -> v1.93.9 446ms across 80 files = **~54% faster (>2x)**. The 2nd probe lever (framework-test AST scan in `_discover_validation_tests_for_primary_file`, 23.9% of prepare) was measure-first **DEFERRED** -- no clean path (gate-it = validation-test recall regression risk; parallelize = GIL-uncertain + `@_mtime_aware_cache` thread-safety). Walk-merge lever class now EXHAUSTED (all `ast.walk` sites in repo_map.py swept; the hot redundant-walk fns were #716 `_python_imports_with_lines` + #719). Also this pass: **#720** (test-only, NON-releasing) de-flaked the 2 uncontended hot-path perf-floor asserts in `test_index_lock_concurrency.py` (the #244 ratio form itself flaked at elapsed=4.531s vs the flat 4.0s floor on a loaded runner -- root cause #244 missed: `baseline_elapsed` omits the snapshot-WRITE I/O that `elapsed` pays; widened to `max(baseline*6, 8.0)`, bidirectional guard preserved; the 2 stale-lock-reclaim asserts KEEP flat `<4.0` -- there 4.0 is SEMANTIC, must beat the 5s acquire timeout). LESSON: a WARM `tg orient` dogfood measured the CACHED repo-map path (the function never runs) -> a false -36% artifact; verify a COLD-path optimization by microbenching the function (parse-cached) or clearing `.tensor-grep` between reps, NOT a warm end-to-end run. Both #719/#720 worktrees pruned; drain clear. Tools: scratchpad/opt10/{microbench_astwalk,dogfood_v1939_orient}.py.
 
-- **Live PyPI: v1.93.8 (2026-07-23). The CEO `/goal` "deep-dive + optimize until a +10% overall increase in speed AND output AND accuracy, dogfood-verified" campaign — ACHIEVED at +25.3% overall on the published v1.93.8 wheel (2.5x the 10% target).** A scorecard + baseline were FROZEN before any work (scratchpad `scorecard_definition.md` + `baseline_results.json`, oracle-validated, commit a002d7f1); the goal is the frozen sec-4 composite `overall = mean(speed_leg, accuracy_leg, output_leg) >= 0.10`, 3 legs equally weighted. **RESULT (uvx published-wheel, clean env): speed_leg +13.4%** (median of 8 cold cells: S5 `prepare` +29.8% [map-reuse #714 + O(k) source-truncation #713], S6 `imports` +17.7% [walk-merge+stdlib-fastpath #716], S4 `callers` +15.0%) **· accuracy_leg +62.6%** (the scorecard's `rrf` arm ndcg@10 0.3047->0.4953 via **max-combine fusion #717**: best-rank-wins `max(1/(k+rank))` per leg vs the old `sum`, so the near-floor bm25 leg can no longer DRAG strong dense results down) **· output_leg +0** (results-identical). **Capsule 16/16 agent-accuracy HARD floor HELD; no regression on any class.** SHIPPED v1.93.3->v1.93.8 one-per-publish, ZERO broken *published* releases: the speed wave **#711-#716** (warm-deadline thread, O(k) truncation, prepare map-reuse, imports fast-path, cold-start import-deferral, accuracy-regression harness) then the accuracy lever **#717** (max-fusion default flip). DISCIPLINES that delivered it: **measure-before-build** overturned a cProfile-inflation pessimism (a lens predicted ~4%; the real combined wall was +13.4%); an experiment (`fusion_experiment.py`) VALIDATED the fusion lever on the frozen golden set BEFORE the load-bearing default flip; the **independent Opus gate caught a real single-token-literal regression** the build agent's NL-only dogfood missed (max -0.0369 ndcg on `literal_golden.jsonl`) -> folded a conservative fix (`_find_combine_mode` routes single-whitespace-token queries back to `combine="sum"`, NL keeps max; `reciprocal_rank_fusion`'s default stays max so the scorecard arm is preserved); the frozen scorecard was **NEVER goalpost-moved** (a goal-interpretation fork was surfaced to the CEO, who chose the strict 3-leg reading). HONEST framing: this is an accuracy-LED +25% (the frozen baseline's fusion was genuinely underperforming -- rrf 0.30 vs dense-alone 0.60 -- so the fix is a big relative gain), speed real-but-smaller, output flat. The output levers (O1 bytes/O2 completeness) and the incomplete #3 (`_context_tests` double-pay) are UNNEEDED -- accuracy alone cleared the target. Tools: scratchpad/opt10/{remeasure_speed,compute_speed_leg,compute_composite,fusion_experiment}.py.
+- **Live PyPI: v1.93.8 (2026-07-23).** Performance and retrieval changes shipped in #711–#717: bounded warm-path work, source truncation (#713), repository-map reuse (#714), import fast paths, deferred imports, and max-combine fusion for natural-language queries. Review found and corrected a single-token literal ranking regression; literal queries retain sum fusion. Published-wheel validation preserved the existing capsule accuracy gate. Internal composite measurements are retained privately.
 
 - **Live PyPI: v1.93.2 (2026-07-22, #709).** Closes the first of the four follow-ups banked in the
   v1.93.0 entry below: the blast-radius reverse SCORING prefilter now excludes `dynamic_unresolved`
@@ -3657,7 +3565,7 @@ still-open item — which is why the check came first.
   fuzzy-pulls a same-named decoy module into a blast-radius result. Landed behind a **pin-first
   ranking gate** (a test pinning the CURRENT ranked output GREEN on base *before* the change, so any
   legitimate-entry reorder after it is a STOP-finding, not noise) -- `test_blast_radius_legitimate_dependent_ranking_pin`
-  proved zero legitimate reorder. The fourth banked follow-up (the in-repo `tensor-grep-ledger` skill
+  proved zero legitimate reorder. The fourth banked follow-up (the in-repo private maintainer notes skill
   question) is resolved by this same session-capture reconcile: all 6 CEO-drafted skill folders
   (ledger/prepare/gpu/find-and-route/multi-project-search/enterprise-review-bundle) are now registered
   in both `AGENTS.md` and `CLAUDE.md`'s skill indexes, `test_skill_index_sync.py`-green. **CEO desk
@@ -3669,17 +3577,17 @@ still-open item — which is why the check came first.
   a full unbounded walk on a huge implicit root; `_agent_gpu_tg_command` now pre-resolves a bare
   `"tg"` via `shutil.which` before the WSL cross-domain gate runs, so an absolute path always feeds
   that gate; plus one stale citation fix. **CEO desk (unchanged):** #72/#169/#255/#189-fork/#240-opt2.
-- **Live PyPI: v1.93.0 (2026-07-22). The CEO v1.92.1-dogfood GOAL CAMPAIGN ("fix all of those issues + implement all of the needs-improvements, then dogfood it") executed END-TO-END in one session: 6 items -> 6 agents -> 5 Opus-gated PRs + 1 evidence-adjudicated HOLD -> 2 releases -> a published-wheel closing dogfood, 7/7 PASS.** Ships: **#702/v1.92.3** unscoped-search fast-refuse (the DEFAULT flag-less/pip-only `_run_rg_passthrough` path had NO walk ceiling -- natively reproduced, not a WSL artifact; bounded probe on `paths_defaulted` only, `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` single-sourced across all 3 doors; gate: ZERO false-refused shapes) -> then the **documented rapid-window BATCH** (the v1.91.0 precedent) merged 4 PRs into ONE combined release **v1.93.0**: **#703** dynamic-import false-edge fixes (the asked-for feature was ALREADY SHIPPED (#504); execution-verify found relative `import_module(package=...)`/`__import__ level=1` resolving to DECOY top-level files -> honest `dynamic_unresolved`, decoys excluded both directions) · **#704** WSL GPU-probe fix (installer's bare-named POSIX shim wraps tg.exe; suffix-only cross-domain detection misclassified it -> untranslated /tmp path = the reported `path_not_found`; dual-signal detection, live-verified on the reporting box; + gate-folded fail-closed/bounded metadata read) · **#705** UX/honesty batch (ALL dense hints lead with `tg install-dense`; doctor cold-daemon `autostart: on-first-use` field; anonymous prepare-claim `agent_id_hint`; **`tg prepare --out FILE`** byte-identical capsule persist -> `evidence emit` chains without a manual save; + a found-fix: `--semantic` was missing `tg find`'s friendly degrade hint) · **#706** ledger PATH-footgun (ROOT CAUSE was physical: each cmd resolved the STORE dir from the literal PATH -- `claim core/hooks` + `list .` used two different stores; fix = nearest-`.git` canonical store (worktree `.git`-FILE correct) + stored `scope` + subtree rollup + release honesty + a gate-folded CONTRACTS migration note). **CLOSING DOGFOOD (published wheels, clean uvx envs): 7/7 PASS** -- ledger round-trip (wrong-path release now RELEASES, footgun eliminated) · unscoped refuse exit-2 in 1.7s (was 60s timeout) · install-dense hints · doctor autostart honesty · prepare hint/--out/evidence-chain/symlink-refusal · WSL probe symptom ABSENT · dynamic-import decoys excluded. **GPU publish = adjudicated HOLD** (read-only decision package, every claim cited: "beats CPU on WSL/Windows search" is CONTRADICTED by every measured artifact; kernel corrected to brute-force byte-compare NOT PFAC; #169 is task-store framing not a GitHub issue; options (i) flip / (ii) gated-experimental + 2 named messaging fixes / (iii) hold -- recommendation (iii), CEO's call). Also this session: **#701** killed the 2-release index-lock flaky permanently (scheduler-independent Event-handshake contract test) after it red-ed the v1.92.2 release (decoded + rerun --failed recovery). **Banked follow-ups (PR comments):** scoring-prefilter fuzzy-match of unresolved literals into blast-radius affected_files (pre-existing; own slice + pinned ranking test) · no-ignore-family field mirroring + bounded-probe cost pin (#702) · `_agent_gpu_tg_command` shutil.which pre-resolution (#704) · stale citation in #705's region + the in-repo ledger-skill question (adding one requires the skill-index sync test + AGENTS/CLAUDE index updates). **CEO desk:** #72 benchmark-publish · #169 GPU (decision package on file) · #255 moat-options (multi-day cross-language) · #189-fork · #240-opt2.
-- **Live PyPI: v1.92.1 (2026-07-21); v1.92.2 (#699) publishing at reconcile time — verify `/simple`/`gh run list` before citing it live. TWO campaigns this session drained one-per-publish, ZERO broken releases: the v21 world-class-readiness tier (#249) and the CEO deep-research "steal-list" directive (#251, now CLOSED).** World-class wave: ledger-CI (#689) · opt-in agent-accuracy golden gate (#690, a loop-4 measurement tool) · **hard cold-path SLA #691/v1.91.1** (bounded the #222 quadratic reverse-import BFS +4 siblings, 26.6s→9.5s; Opus-gate caught a 4th un-gated BFS on the callers path). **CEO deep-research campaign — 6 paper/tooling "steals" VERIFIED against the real code, 5 production improvements + a guard shipped, each independent-Opus-gated (a72885ce/a9d8458/a5438582/ab857cc):** **#693/v1.91.2** loop-4 CLI-dispatcher ranking fix (#250; the #690 gate surfaced it, accuracy 15→16/16) · **#694** many-pattern dedup guard (test-only; found a latent native aho-corasick over-count that blocks fast `-e/-f` delegation) · **#695/v1.91.3** intra-file rayon parallel search on the `backend_cpu.rs` FFI fallback path (line-aligned ≥50MiB chunks, byte-identical to serial) · **#696** accuracy-gate per-task pinning (#252; `assert not misses` replaces a floor that silently absorbed single-task regressions) · **#697/v1.92.0** CodeAnchor-style inline caller annotations (default-OFF `TG_CAPSULE_INLINE_CALLERS`, +2.8% tokens, found+fixed a DAR line-offset off-by-one) · **#698/v1.92.1** chunk-parallel binary-detection parity (#253; `search_file_chunk_parallel` was hardcoding `binary_detected:false` → raw byte matches on >64KiB binaries; mirrors the pinned grep-searcher 0.1.16 64KiB floor) · **#699/v1.92.2** Blackbird flat-scorer hardening (#254; exact word-boundary bonus + best-effort test-file demotion, provably non-destabilizing). **HONEST RESEARCH VERDICT (the CEO deliverable):** every "cheap win" the papers advertised came back NEGATIVE / big-refactor / secondary-path / MODEST once verified vs real code — cAST rejected (24x slower, quality-wash), dense-int8 memory-only + ~2x slower in numpy, warm-session a big refactor (the daemon holds a symbol-map, not a search-index; the common `tg search` is raw rg-passthrough), single-file only a fallback speedup (the headline 200MB tie is `native_search.rs`, streaming-serial-LOCKED by a tested ≥25ms first-match contract), ranking no golden-set movement. **The genuine moat gains are all multi-day CROSS-LANGUAGE efforts — native int8 kernel / native dedup+FFI / `execute_search`-extract+daemon-search or a PyO3 `TrigramIndex` binding / cuVS GPU — banked as #255, CEO-prioritize.** **CEO desk (unchanged + #255 added):** #72 benchmark-publish (public/irreversible) · #169 GPU (>$100 spend) · #48 native front door (~30-40ms Python floor) · #189-fork (taste) · #240-opt2 native wheels (distribution decision) · **#255 moat-investment options** (the deep-research follow-up — which multi-day cross-language effort, if any).
+- **Live PyPI: v1.93.0 (2026-07-22). The CEO v1.92.1-dogfood GOAL CAMPAIGN ("fix all of those issues + implement all of the needs-improvements, then dogfood it") executed END-TO-END in one session: 6 items -> 6 agents -> 5 security reviewer-gated PRs + 1 evidence-adjudicated HOLD -> 2 releases -> a published-wheel closing dogfood, 7/7 PASS.** Ships: **#702/v1.92.3** unscoped-search fast-refuse (the DEFAULT flag-less/pip-only `_run_rg_passthrough` path had NO walk ceiling -- natively reproduced, not a WSL artifact; bounded probe on `paths_defaulted` only, `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` single-sourced across all 3 doors; gate: ZERO false-refused shapes) -> then the **documented rapid-window BATCH** (the v1.91.0 precedent) merged 4 PRs into ONE combined release **v1.93.0**: **#703** dynamic-import false-edge fixes (the asked-for feature was ALREADY SHIPPED (#504); execution-verify found relative `import_module(package=...)`/`__import__ level=1` resolving to DECOY top-level files -> honest `dynamic_unresolved`, decoys excluded both directions) · **#704** WSL GPU-probe fix (installer's bare-named POSIX shim wraps tg.exe; suffix-only cross-domain detection misclassified it -> untranslated /tmp path = the reported `path_not_found`; dual-signal detection, live-verified on the reporting box; + gate-folded fail-closed/bounded metadata read) · **#705** UX/honesty batch (ALL dense hints lead with `tg install-dense`; doctor cold-daemon `autostart: on-first-use` field; anonymous prepare-claim `agent_id_hint`; **`tg prepare --out FILE`** byte-identical capsule persist -> `evidence emit` chains without a manual save; + a found-fix: `--semantic` was missing `tg find`'s friendly degrade hint) · **#706** ledger PATH-footgun (ROOT CAUSE was physical: each cmd resolved the STORE dir from the literal PATH -- `claim core/hooks` + `list .` used two different stores; fix = nearest-`.git` canonical store (worktree `.git`-FILE correct) + stored `scope` + subtree rollup + release honesty + a gate-folded CONTRACTS migration note). **CLOSING DOGFOOD (published wheels, clean uvx envs): 7/7 PASS** -- ledger round-trip (wrong-path release now RELEASES, footgun eliminated) · unscoped refuse exit-2 in 1.7s (was 60s timeout) · install-dense hints · doctor autostart honesty · prepare hint/--out/evidence-chain/symlink-refusal · WSL probe symptom ABSENT · dynamic-import decoys excluded. **GPU publish = adjudicated HOLD** (read-only decision package, every claim cited: "beats CPU on WSL/Windows search" is CONTRADICTED by every measured artifact; kernel corrected to brute-force byte-compare NOT PFAC; #169 is task-store framing not a GitHub issue; options (i) flip / (ii) gated-experimental + 2 named messaging fixes / (iii) hold -- recommendation (iii), CEO's call). Also this session: **#701** killed the 2-release index-lock flaky permanently (scheduler-independent Event-handshake contract test) after it red-ed the v1.92.2 release (decoded + rerun --failed recovery). **Banked follow-ups (PR comments):** scoring-prefilter fuzzy-match of unresolved literals into blast-radius affected_files (pre-existing; own slice + pinned ranking test) · no-ignore-family field mirroring + bounded-probe cost pin (#702) · `_agent_gpu_tg_command` shutil.which pre-resolution (#704) · stale citation in #705's region + the in-repo ledger-skill question (adding one requires the skill-index sync test + AGENTS/CLAUDE index updates). **CEO desk:** #72 benchmark-publish · #169 GPU (decision package on file) · #255 moat-options (multi-day cross-language) · #189-fork · #240-opt2.
+- **Live PyPI: v1.92.1 (2026-07-21); v1.92.2 (#699) publishing at reconcile time — verify `/simple`/`gh run list` before citing it live. TWO campaigns this session drained one-per-publish, ZERO broken releases: the v21 world-class-readiness tier (#249) and the CEO deep-research "steal-list" directive (#251, now CLOSED).** World-class wave: ledger-CI (#689) · opt-in agent-accuracy golden gate (#690, a loop-4 measurement tool) · **hard cold-path SLA #691/v1.91.1** (bounded the #222 quadratic reverse-import BFS +4 siblings, 26.6s→9.5s; security reviewer-gate caught a 4th un-gated BFS on the callers path). **CEO deep-research campaign — 6 paper/tooling "steals" VERIFIED against the real code, 5 production improvements + a guard shipped, each independent-security reviewer-gated (a72885ce/a9d8458/a5438582/ab857cc):** **#693/v1.91.2** loop-4 CLI-dispatcher ranking fix (#250; the #690 gate surfaced it, accuracy 15→16/16) · **#694** many-pattern dedup guard (test-only; found a latent native aho-corasick over-count that blocks fast `-e/-f` delegation) · **#695/v1.91.3** intra-file rayon parallel search on the `backend_cpu.rs` FFI fallback path (line-aligned ≥50MiB chunks, byte-identical to serial) · **#696** accuracy-gate per-task pinning (#252; `assert not misses` replaces a floor that silently absorbed single-task regressions) · **#697/v1.92.0** CodeAnchor-style inline caller annotations (default-OFF `TG_CAPSULE_INLINE_CALLERS`, +2.8% tokens, found+fixed a DAR line-offset off-by-one) · **#698/v1.92.1** chunk-parallel binary-detection parity (#253; `search_file_chunk_parallel` was hardcoding `binary_detected:false` → raw byte matches on >64KiB binaries; mirrors the pinned grep-searcher 0.1.16 64KiB floor) · **#699/v1.92.2** Blackbird flat-scorer hardening (#254; exact word-boundary bonus + best-effort test-file demotion, provably non-destabilizing). **HONEST RESEARCH VERDICT (the CEO deliverable):** every "cheap win" the papers advertised came back NEGATIVE / big-refactor / secondary-path / MODEST once verified vs real code — cAST rejected (24x slower, quality-wash), dense-int8 memory-only + ~2x slower in numpy, warm-session a big refactor (the daemon holds a symbol-map, not a search-index; the common `tg search` is raw rg-passthrough), single-file only a fallback speedup (the headline 200MB tie is `native_search.rs`, streaming-serial-LOCKED by a tested ≥25ms first-match contract), ranking no golden-set movement. **The genuine moat gains are all multi-day CROSS-LANGUAGE efforts — native int8 kernel / native dedup+FFI / `execute_search`-extract+daemon-search or a PyO3 `TrigramIndex` binding / cuVS GPU — banked as #255, CEO-prioritize.** **CEO desk (unchanged + #255 added):** #72 benchmark-publish (public/irreversible) · #169 GPU (>$100 spend) · #48 native front door (~30-40ms Python floor) · #189-fork (taste) · #240-opt2 native wheels (distribution decision) · **#255 moat-investment options** (the deep-research follow-up — which multi-day cross-language effort, if any).
 - **Live PyPI: v1.90.0 (2026-07-20); v1.91.0 (#685-#687) still publishing at reconcile time -- verify `/simple`/`gh run list` before citing it live. The CEO `/goal` "make tg REQUIRED vs rg/ast" 9-point campaign (#232) fully drained -- all 9 CEO gap-points mapped to a shipped release, PR queue EMPTY, drain CLEAR, ZERO broken published releases:** **CEO#9** GPU-honesty (`tg calibrate --json` structured `calibration_status` skip signal on a CPU-only build, #678/v1.84.0) -> **CEO#1** never-empty best-effort-primary under deadline truncation (`partial_primary` + a structural `confidence<=0.55` cap, #679/v1.85.0) -> **CEO#4** bidirectional-oracle exit-code completeness gate + `callers` likely-first parity (#680/v1.86.0) -> **CEO#8** enterprise close-the-loop (`EvidenceReceipt` -> `review-bundle --receipt` -> `verify --against` PR-head + `--min-receipts`/`--expect-key` policy enforcement, closing an empty-bundle bypass, #681/v1.87.0) -> **CEO#5** `tg prepare` one-shot edit-readiness CUJ (#682/v1.88.0) -> **CEO#6** AST parity that doesn't fight ast-grep (empty-result remediation + resolve-only ruleset aliases + honest sg-absent error, #683/v1.89.0) -> **CEO#2** mega-repo advisory auto-narrow (`workspace_root_detected` + proactive `suggested_scope`, NEVER a silent narrow, #684/v1.90.0) -> **CEO#7** `tg install-dense` one-shot packaged dense-embedding install, bundled with CEO#3's $0 doc-honesty fix (pip/uvx pays the Python-interpreter floor, #48; `tg upgrade` gets the native front door) and a calibrate-stdout-contract test nit (#687+#686+#685, all releasing as v1.91.0). **Two headline fixes BINARY-VERIFIED** via a clean-room `uvx --from tensor-grep@1.87.0 tg ...` dogfood: the GPU-calibrate structured skip on stdout, and gap#2's truncated-agent emitting a real `primary_target` (never null). **CEO desk (unchanged):** CEO#3-architectural native front door = **#48** (an open GitHub issue; ~30-40ms Python-interpreter floor); CEO#9-CUDA compute build = **#169** (>$100 spend); **#72** benchmark-publish (public/irreversible); **#240-opt2** per-platform native wheels (public-distribution decision) -- the latter three remain task-store framing, not open GitHub issues.
-- **Live PyPI: v1.83.0 (2026-07-20, published clean). The CEO `/goal` "ultimate agentic toolkit" campaign (#224) shipped every AI-actionable pillar; PR queue EMPTY, drain clear, ZERO broken published releases:** the on-moat **A2A `tg ledger`** plane is live and dogfood-verified on the published binary -- **claims** (advisory code-scoped locks, always exit-0 + `overlaps`, TTL-prune; #673/v1.82.0; #225 dogfood: agent-b sees agent-a's overlap in production) + **findings** (content-addressed reuse with revision-freshness + integrity tamper-detect; #675/v1.83.0; #227 dogfood), both EXPERIMENTAL/default-inert, each independent-Opus-gated, composing only existing primitives (no new crypto/transport/bus). The deadline-SLA wave (#668-#672, v1.81.17-.21) closed the CEO-dogfood enterprise-scale gaps -- headlined by **#671/v1.81.20**, a super-linear vendored-subtree `resolve()` dedup (90-144x, ~61% of `tg agent` wall) that the v19 real-workspace dogfood surfaced AFTER #669's synthetic-scoped tail fix (**#222 -- synthetic sets don't carry magnitude**), plus `importers` likely-first bounded scan (#670), `route-test` SLA-under-load (#672), and the queued LSP follow-ups (#668). **#674/v1.82.1** bounded `tg codemap`'s git-identity/`resolve()` storm (its gate caught a `--check` TypeError CI would have shipped). **Creative-GPU ideation** produced 3 amortization-passing Tier-A ideas, all build-gated behind #169's spend. **CEO desk (unchanged except #77 A2A now DONE):** #72 publish the moat numbers (public/irreversible; verified + ready), #169 GPU-compute build (spend), #189-fork query-gated signal channels vs accept-the-ranking-ceiling (taste), #48 native-front-door (the ~30-40ms Python-interpreter startup floor). Demand-gated: #98 MCP-consolidation, #141 native-AstBackend. **#207 (stale local checkout) stays inert; #219 (torch/CUDA-13 bump) waits on RAPIDS shipping a CUDA-13 `cudf-cu12`.**
-- **Live PyPI: v1.78.0 (2026-07-16, published clean). The `tg find` campaign (#189) SHIPPED end-to-end this session -- the CPU semantic moat / ColGrep response, the forward direction after GPU-for-search retired (#169):** whole-repo natural-language code search (BM25 + local CPU dense embeddings -> weighted RRF -> optional MaxSim -> budget-fitted file:line). Built via Fable plan -> 4-lens adversarial review (correctness/security/eval-integrity/architecture, unanimous GO-WITH-MUST-FIXES, each citing file:line) -> 3 TDD build waves + an MCP tool -> golden gate-run validation -> live dogfood, all cloud Agent subagents + GitHub CI (zero local CPU per the shared-server rule). **Per-wave receipts:** Wave 2a extracted the `rank_chunks` shared fail-closed core from `rerank_hybrid` (#624, `2393a7e`, byte-identical, Opus SHIP). Wave 1 built the T8 golden harness (`benchmarks/eval_late_rerank_quality.py`), a 40-query NL vocab-mismatch golden set, a 74-file corpus, and the P5 lane (#625, `d6fa824`, `chore(bench)` = no-release, bidirectional-oracle). Wave 2b/2c shipped the `tg find` CLI command -- registered at all sites, wired walk->chunk->legs->rank_chunks->budget-fit, with a fail-closed matrix (`BackendExecutionError`->exit-2 catch, chunk-cap->`result_incomplete`+exit-2, hand-written exit codes) (#626 -> **v1.77.0**, `501dc26`). Wave 2d shipped the MCP `tg_find` tool (agent-callable) as its OWN PR to de-risk the LLM-facing surface -- confine-root-first, an error-sanitization split, harness_api docs, and a contract-version bump (#627 -> **v1.78.0**, `6d79945`). **The gates earned their keep -- CI-green does not mean contract-correct, and they caught 2 real bugs, not nits:** the Wave-2c Opus gate caught a genuine F1 fail-closed violation (a query-time `DenseUnavailableError` would have crashed instead of BM25-degrading; fixed RED->GREEN, `045fadc`); the dual-Opus MCP gate caught a required contract-version bump the plan had missed (1.2.0->1.3.0, fixed `3fcca06`). **VALIDATION (INTERNAL; publishing stays CEO-gated #72):** the golden gate-run shows `tg find`'s hybrid ranking (rrf) beats plain BM25 by **+0.195 ndcg@10 (0.305 vs 0.109) / +0.30 recall@10 (0.55 vs 0.25)** on the 40-query NL golden set, positive in all 4 categories and essentially wins-or-ties per query (a single ndcg loss out of 40), bidirectional-oracle-validated twice, deterministic. Live dogfood of the published v1.77.0 wheel PASSED (real `uvx` wheel: `find` registered and not misrouted, honest BM25-only degrade when the `semantic` extra is absent, real relevant results for an NL query, exit 0). **IN FLIGHT: Wave 3 dense-weight knob (#628, still an open draft PR, checks green so far, not yet merged)** ships `TG_FIND_DENSE_WEIGHT` DEFAULT-OFF (1.0 = byte-identical no-op) plus a query-adaptive rule (queries over 2 `split_terms` tokens get the env weight; 2-token-or-shorter queries always stay at 1:1) plus a 10-query literal-query golden slice -- evidence infrastructure for the design pass's finding that a 1:5 bm25:dense weighting lifts NL ndcg@10 by +0.14 (0.305->0.4466) with zero per-category regression, while the literal slice stays protected by construction. Opus-gated SHIP-WITH-NITS, with 2 nits to close before any default-flip: a `math.isfinite` clamp on malformed `TG_FIND_DENSE_WEIGHT` input, and a 3-token-identifier re-sweep (multi-segment identifiers like `getUserName` classify as NL under `split_terms`). **The default-flip itself is a separate CEO checkpoint** (product taste; changes shipped ranking; evidence will be in hand once #628 lands). **Wave-4 stays HELD/evidence-gated:** `TG_LATE_RERANK` remains off -- the gate-run shows rrf+maxsim regressing vs bm25, but that is entangled with a known harness simplification (the late-rerank doc-role encoder is not query/doc role-aware yet, `retrieval_late.py:328-333`), so it is NOT a verdict on MaxSim itself; do not flip until role-aware encoding lands and it is re-measured. `TG_RRF_CHANNELS`/`TG_CHUNKER` remain evidence-gated too. **PR queue: 1 open** (draft #628). **CEO desk:** #72 publish the moat numbers (public/irreversible -- now covers both the original P1/P4 tokens-per-correct proof and this NL-search gate-run, verified + ready, still held); the dense-weight default-flip (product taste, pending #628 + evidence review); #77 tg-ledger; GPU retired-for-search (#169). Demand-gated: #98 MCP-consolidation, #141 native-AstBackend.
-- **Live PyPI: v1.76.13 (2026-07-16, published clean). The last AI-actionable item shipped as its own honest close-out -- ZERO broken releases:** #182 (the 3 SHIP-WITH-NITS Opus-gate follow-ups from #612 GPU-calibrate honesty) had been deferred as "opportunistic-batch, do NOT fire standalone." With the drain clear and no future GPU-calibrate PR coming to batch into (the GPU program is CEO-held #169), that deferral would have let real honesty fixes rot -- so #182 shipped as **v1.76.13 #621** (a one-time close-out that empties the queue is closure, not tail-churn). **NIT-1 (the real fix):** the Python `tg calibrate` no-binary message still name-dropped `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia` in a "confirm before relying on" aside -- asymmetric with the Rust side (`crossover.rs::detect_device_name`), whose test forbids that override as an obtainable path (no nvidia asset ships). Dropped it; added the symmetric `FLAVOR not in output` assertion (RED->GREEN). **NIT-3:** "so calibrate can run" -> "that calibrate requires" (calibrate still fails-closed on a CPU-only box post-upgrade). **NIT-2 (`crossover.rs`, comment-only):** the `#[cfg(feature="cuda")]` mirror-TEST fn is compiled by NO CI job (`cuda-feature-check` omits `--tests`; `test-rust-core` is cuda-off) -- the "Compile-checked only" comment overstated coverage; corrected to state the real gap (the production fn IS compile-checked via its `:533` call site; only the test assertion is uncovered) + why `--all-targets` is deferred (pre-existing cuda test debt in `main.rs`/`test_routing.rs`). **All text-only -- no logic, no control-flow, no CI-config change.** **Adversarial Opus gate: SHIP-CLEAN** -- every honesty claim independently verified TRUE against the shipped assets (default release profile `native-frontdoor` = CPU-only; nvidia legs `if:`-gated off; PyPI wheel carries no CUDA) + no stale assertion elsewhere + zero regression. **Non-blocking coupling banked on #169:** if the GPU release flag ever flips to `native-frontdoor-gpu`, BOTH this message ("not shipped in any current build") and the Rust mirror test ("not shipped in this build") must update in the same change. **PR queue EMPTY (0 open). AI-actionable backlog EMPTY.** **CEO desk unchanged:** #72 publish (public/irreversible; verified numbers ready), #77 tg-ledger, #169 GPU held; #98/#141 demand-deferred.
-- **Live PyPI: v1.76.12 (2026-07-16, published clean). The #72 benchmark MOAT RE-PROOF + the correctness fix it surfaced, ZERO broken releases:** The idle drain was put to the highest-value strategic use — re-running the CEO-flagged **#72 tokens-per-correct benchmark** now that **#460** shipped the scoped `tg imports`/`tg importers` primitives. The 2026-07-08 harness + express corpus survived in `scratchpad/bench/` (deterministic, **$0 — no model API**), so the re-run was internal (running is NOT gated; only public *publishing* is CEO-gated per the benchmark skill). **RESULT (independently re-scored via aggregate.py): P4 file-deps tokens-per-correct 53,631 (whole-repo `tg map`) -> 2,387 (scoped) = from ~10x WORSE than rg -> ~2.24x BETTER**, F1 preserved+improved (0.542->0.606, bidirectional oracle PASSED 25/25); P1 def-lookup still 6.4x better (tg 1,457 vs rg 9,328). **The moat is now proven on BOTH axes** — the P4 weakness the original benchmark exposed is closed. The re-run also surfaced a genuine correctness gap -> **v1.76.12 #619** `tg importers` now resolves directory-index imports (a file doing `require('./router')` — Node resolves to `lib/router/index.js` — is now found as an importer; express repro `importer_count 0 -> 2`). Confined to `tg importers` ONLY via `_reverse_importer_extra_aliases` (the shared `_module_aliases_for_path` is byte-identical to main, so `tg blast-radius`/ranking/PageRank untouched). **Opus gate SHIP-WITH-NITS -> remediated** (softened a false "cannot create a false-positive" comment + documented/tested the bare-specifier 0.2-conf heuristic; confined + a blast-radius non-inflation regression test) — and the remediation itself CAUGHT + fixed a PageRank regression in the gate's OWN suggested confine. **PR queue EMPTY (0 open).** **CEO desk:** #72 publish is the CEO's call (public/irreversible) — verified numbers ready; #77 tg-ledger, #169 GPU held; #98/#141 demand-deferred; #182 LOW-batch.
-- **Live PyPI: v1.76.11 (2026-07-16, published clean). Post-v1.76.10 dogfood/hygiene follow-ups — 1 WSL-honesty fix + 1 latent release-gate flake, ZERO broken releases:** v1.76.11 **#617** `device_detect.get_platform()` now detects WSL2 via a 3-signal `_running_under_wsl` (env `WSL_DISTRO_NAME`/`WSL_INTEROP` -> `/run/WSL` -> `/proc/version` "microsoft", fail-closed) instead of `/run/WSL`-only — so a stripped-env WSL host reports `platform:"wsl2"` not `"linux"` in the `tg devices` GPU inventory (same WSL/GPU-honesty theme as #612/#615; closes the `device_detect.py` /proc/version sibling nit). **Opus gate SHIP-WITH-NITS** — all 5 safety claims verified against real code (`Platform.WSL2`/`LINUX` has NO control-flow consumer, only a report string at `device_inventory.py:63`; layering-clean core-must-not-import-cli; logic byte-identical to `is_wsl_host`; tests RED-GREEN + CI-safe) — the one drift NIT closed in-PR with a parity test pinning `_running_under_wsl == is_wsl_host`. **#616 (no-release, `test:`+docs)** fixed a LATENT release-gate flake: `test_empty_invocation_fallback_help_matches_public_contract` flipped PASS/FAIL on a BYTE-IDENTICAL binary because it parsed clap's fallback help and clap renders the `update` visible_alias width/platform-dependently -> switched to an INVARIANT assertion (all real cmds present + no unexpected + known aliases optional). Root-caused by BUILDING the real origin/main binary after a wrong first hoist-guess failed CI (lesson: [[tensor-grep-clap-help-parse-width-fragile-2026-07-15]]); the docstring softening + v1.76.10 ledger reconcile rode in #616 too. **#617's first CI red was a stale-base artifact** (branched pre-#616) — fixed by rebasing onto main, not a code defect. **PR queue EMPTY (0 open).** **AI-actionable backlog EMPTY** — remainder demand-deferred (#98/#141), CEO-gated (#72 benchmark, #77 ledger, GPU flip/Phase-2), LOW-batch (#182).
-- **Live PyPI: v1.76.10 (2026-07-15, published). CEO v1.76.9-dogfood follow-up — one real fix after a corrected misdiagnosis:** v1.76.10 **#615** `is_wsl_host()` gains the canonical `/proc/version` "microsoft" fallback (Opus SHIP-WITH-NITS + WSL-verified end-to-end) — closes the all-signals-stripped WSL detection-miss behind the CEO's `failed_probe_path` residual. **CORRECTION BANKED (`tensor-grep-verify-code-against-origin-not-stale-local`):** the WSL path-*bridging* bug I first chased was ALREADY fixed v1.75.1 (#594) — I misdiagnosed it by grepping the STALE local checkout (47 behind, v1.74.0) + a manual raw-binary test that BYPASSED tg's translation; the build agent caught it via verify-against-origin/main BEFORE any code (no churn, #184 closed). **BIG UNBLOCK this session:** got WSL repro access (`wsl.exe -e bash`) — the WSL cluster (#89/#90) is no longer env-blocked; reproduced the CEO's failures NATIVELY (unscoped fast-refuses exit 2, GPU reports honestly) = 9p transients, NOT bugs. **2 LOW WSL nits ride forward:** the is_wsl_host docstring softened (this reconcile); `device_detect.py:278` has the same `/run/WSL`-only gap (theoretical — devices already detect; batch-with-future-GPU-touch). **AI-actionable backlog EMPTY** — remainder demand-deferred (#98/#141), CEO-gated (#72 benchmark, #77 ledger, GPU flip/Phase-2), LOW-batch (#182/#186-nits).
-- **Live PyPI: v1.76.9 (2026-07-15, published). Post-#176 hardening + dogfood wave — 4 more PRs, ZERO broken *published* releases:** v1.76.7 **#610** gate-NIT hardening (session-daemon metadata coercion-safe removal via `_daemon_identity()` on both sides + Rust `create_checkpoint` fail-closed cleanup `remove_dir_all` on write-failure; Opus SHIP-WITH-NITS) · v1.76.8 **#611** checkpoint snapshot **SECURITY** — no longer follows symlinks (out-of-root file-disclosure): recreate-as-symlink instead of `std::fs::copy`, undo fail-closed via `_resolve_within_root` (Opus SHIP; F1 comment-accuracy + F2a Windows `ERROR_PRIVILEGE_NOT_HELD` message MUST-FIXes addressed + re-verified RED-GREEN) · v1.76.9 **#612** GPU `tg calibrate`/`doctor` guidance honest when this build ships no nvidia asset (CEO v1.76.6-dogfood ask — conditions on the Rust `#[cfg(feature="cuda")]` compile flag, splits the shared hint into no-cuda-build vs device-not-found so an nvidia-binary user is never told "not shipped"; Opus SHIP-WITH-NITS = #182) · **#613** widen the flaky `test_index_lock` heartbeat timing bound 0.6->2.0s for loaded CI runners (`test:` no-release; RED-GREEN verified 0.064s green vs 3.977s sabotaged). **PR queue EMPTY (0 open).** RELEASE-FAILURE NUANCE reinforced: v1.76.9's FIRST run FAILED on that timing-flaky heartbeat test (Semantic Release SKIPPED, no tag, PyPI not bumped) — a job-failure release does NOT self-heal (distinct from a push-race rejection), `gh run rerun --failed` cleared it (flaky passed on retry) and #613 hardens it against recurrence. **#90 CLOSED** — ast-grep "doctor false-available (exit-127 shim)" verified already-fixed in #130(b) (`is_available()` probe-RUNS each `which()`-resolved candidate via `ast-grep --version`, gates on exit 0); native dogfood confirmed. **AI-actionable backlog EMPTY** — remainder demand-deferred (#98 MCP-consolidation, #141 native-AstBackend), env-blocked (#89 WSL /mnt/c path, needs Linux), CEO-gated (#72 benchmark publish, #77 tg-ledger, GPU flag-flip held/Phase-2), or LOW opportunistic-batch (#182 = #612 gate NITs).
-- **Live PyPI: v1.76.6 (2026-07-15, published). Directive #176 ("implement the remaining AI-actionable backlog") COMPLETE + a dogfood follow-up (#608) — a 7-PR wave, Sonnet-TDD in `isolation:'worktree'`, Opus-gated where load-bearing, drained one-per-publish, ZERO broken releases:** v1.76.0 **#601** promote `tg route-test` hidden->public (also closed a native-front-door gap — route-test was absent from the rust front door; dogfood-verified on the wheel) · v1.76.1 **#602** checkpoint/rollback write symlink-hardening (Opus SHIP — genuinely TOCTOU-safe incl. Windows `FILE_FLAG_OPEN_REPARSE_POINT` same-handle check, NOT the #110 O_NOFOLLOW-noop) · v1.76.2 **#604** perf `@lru_cache _expected_tg_version` + `tg importers` dead-provenance precision fix · v1.76.3 **#603** session-daemon removes only its OWN metadata (stale-daemon orphan-pileup guard; Opus SHIP-WITH-NITS) · v1.76.4 **#605** bound the cuda GPU implicit-walk to mirror the #105 native DoS ceiling (Opus SHIP-WITH-NITS, exact parity + fail-closed) · v1.76.5 **#606** `tg orient` `suggested_scope` excludes deweighted/ignored trees (no longer misdirects agents to `.claude`; dogfood-verified agent-studio `.claude`->`scripts/`) · v1.76.6 **#608** `tg agent`/`context-render` `suggested_scope` excludes ignored trees too — the #606 SIBLING that dogfooding the SHIPPED v1.76.5 wheel caught (tg agent STILL misdirected suggested_scope to `.claude` while suggested_ignore excluded it; CI + the #606 review both missed it; dogfood-verified before/after `.claude`->`scripts/`). **PR queue EMPTY (0 open).** One CI hiccup self-corrected: v1.76.3 hit a transient Windows dep-install flake -> `gh run rerun --failed` cleared it (a job-failure release does NOT self-heal, unlike a push-race rejection — banked). Cleanup done (6 agent worktrees + all branches pruned). **AI-actionable backlog is now EMPTY** — remainder is demand-deferred (#98 MCP-consolidation, #141 native-AstBackend), env-blocked (#89/#90, need Linux/WSL), or LOW nits (#178/#125; #179 shipped as #608). DOGFOOD LESSON reinforced: running the SHIPPED wheel after a fix catches sibling gaps that CI + the fix's own review miss — #179 was found dogfooding v1.76.5.
+- **Live PyPI: v1.83.0 (2026-07-20, published clean). The CEO `/goal` "ultimate agentic toolkit" campaign (#224) shipped every AI-actionable pillar; PR queue EMPTY, drain clear, ZERO broken published releases:** the on-moat **A2A `tg ledger`** plane is live and dogfood-verified on the published binary -- **claims** (advisory code-scoped locks, always exit-0 + `overlaps`, TTL-prune; #673/v1.82.0; #225 dogfood: agent-b sees agent-a's overlap in production) + **findings** (content-addressed reuse with revision-freshness + integrity tamper-detect; #675/v1.83.0; #227 dogfood), both EXPERIMENTAL/default-inert, each independent-security reviewer-gated, composing only existing primitives (no new crypto/transport/bus). The deadline-SLA wave (#668-#672, v1.81.17-.21) closed the CEO-dogfood enterprise-scale gaps -- headlined by **#671/v1.81.20**, a super-linear vendored-subtree `resolve()` dedup (90-144x, ~61% of `tg agent` wall) that the v19 real-workspace dogfood surfaced AFTER #669's synthetic-scoped tail fix (**#222 -- synthetic sets don't carry magnitude**), plus `importers` likely-first bounded scan (#670), `route-test` SLA-under-load (#672), and the queued LSP follow-ups (#668). **#674/v1.82.1** bounded `tg codemap`'s git-identity/`resolve()` storm (its gate caught a `--check` TypeError CI would have shipped). **Creative-GPU ideation** produced 3 amortization-passing Tier-A ideas, all build-gated behind #169's spend. **CEO desk (unchanged except #77 A2A now DONE):** #72 publish the moat numbers (public/irreversible; verified + ready), #169 GPU-compute build (spend), #189-fork query-gated signal channels vs accept-the-ranking-ceiling (taste), #48 native-front-door (the ~30-40ms Python-interpreter startup floor). Demand-gated: #98 MCP-consolidation, #141 native-AstBackend. **#207 (stale local checkout) stays inert; #219 (torch/CUDA-13 bump) waits on RAPIDS shipping a CUDA-13 `cudf-cu12`.**
+- **Live PyPI: v1.78.0 (2026-07-16).** The `tg find` implementation (#189) shipped whole-repository natural-language retrieval with shared ranking (#624), evaluation infrastructure (#625), CLI registration and bounded results (#626; v1.77.0), and the MCP `tg_find` contract (#627; v1.78.0). Review corrected dense-unavailable fallback and the MCP contract version. At this historical checkpoint, #628 dense-weight configuration was still draft; default changes and late reranking remained evidence-gated. Internal retrieval measurements remain publication-gated under #72. #77 remained decision-gated, #169 held, and #98/#141 demand-gated.
+- **Live PyPI: v1.76.13 (2026-07-16, published clean). The last AI-actionable item shipped as its own honest close-out -- ZERO broken releases:** #182 (the 3 SHIP-WITH-NITS security reviewer-gate follow-ups from #612 GPU-calibrate honesty) had been deferred as "opportunistic-batch, do NOT fire standalone." With the drain clear and no future GPU-calibrate PR coming to batch into (the GPU program is CEO-held #169), that deferral would have let real honesty fixes rot -- so #182 shipped as **v1.76.13 #621** (a one-time close-out that empties the queue is closure, not tail-churn). **NIT-1 (the real fix):** the Python `tg calibrate` no-binary message still name-dropped `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia` in a "confirm before relying on" aside -- asymmetric with the Rust side (`crossover.rs::detect_device_name`), whose test forbids that override as an obtainable path (no nvidia asset ships). Dropped it; added the symmetric `FLAVOR not in output` assertion (RED->GREEN). **NIT-3:** "so calibrate can run" -> "that calibrate requires" (calibrate still fails-closed on a CPU-only box post-upgrade). **NIT-2 (`crossover.rs`, comment-only):** the `#[cfg(feature="cuda")]` mirror-TEST fn is compiled by NO CI job (`cuda-feature-check` omits `--tests`; `test-rust-core` is cuda-off) -- the "Compile-checked only" comment overstated coverage; corrected to state the real gap (the production fn IS compile-checked via its `:533` call site; only the test assertion is uncovered) + why `--all-targets` is deferred (pre-existing cuda test debt in `main.rs`/`test_routing.rs`). **All text-only -- no logic, no control-flow, no CI-config change.** **Adversarial security reviewer gate: SHIP-CLEAN** -- every honesty claim independently verified TRUE against the shipped assets (default release profile `native-frontdoor` = CPU-only; nvidia legs `if:`-gated off; PyPI wheel carries no CUDA) + no stale assertion elsewhere + zero regression. **Non-blocking coupling banked on #169:** if the GPU release flag ever flips to `native-frontdoor-gpu`, BOTH this message ("not shipped in any current build") and the Rust mirror test ("not shipped in this build") must update in the same change. **PR queue EMPTY (0 open). AI-actionable backlog EMPTY.** **CEO desk unchanged:** #72 publish (public/irreversible; verified numbers ready), #77 tg-ledger, #169 GPU held; #98/#141 demand-deferred.
+- **Live PyPI: v1.76.12 (2026-07-16).** Benchmark follow-up for #72 identified a scoped import-navigation correctness issue after #460; the resulting fix shipped. Benchmark publication remained approval-gated. Internal benchmark measurements and evaluation procedures are retained privately.
+- **Live PyPI: v1.76.11 (2026-07-16, published clean). Post-v1.76.10 dogfood/hygiene follow-ups — 1 WSL-honesty fix + 1 latent release-gate flake, ZERO broken releases:** v1.76.11 **#617** `device_detect.get_platform()` now detects WSL2 via a 3-signal `_running_under_wsl` (env `WSL_DISTRO_NAME`/`WSL_INTEROP` -> `/run/WSL` -> `/proc/version` "microsoft", fail-closed) instead of `/run/WSL`-only — so a stripped-env WSL host reports `platform:"wsl2"` not `"linux"` in the `tg devices` GPU inventory (same WSL/GPU-honesty theme as #612/#615; closes the `device_detect.py` /proc/version sibling nit). **security reviewer gate SHIP-WITH-NITS** — all 5 safety claims verified against real code (`Platform.WSL2`/`LINUX` has NO control-flow consumer, only a report string at `device_inventory.py:63`; layering-clean core-must-not-import-cli; logic byte-identical to `is_wsl_host`; tests RED-GREEN + CI-safe) — the one drift NIT closed in-PR with a parity test pinning `_running_under_wsl == is_wsl_host`. **#616 (no-release, `test:`+docs)** fixed a LATENT release-gate flake: `test_empty_invocation_fallback_help_matches_public_contract` flipped PASS/FAIL on a BYTE-IDENTICAL binary because it parsed clap's fallback help and clap renders the `update` visible_alias width/platform-dependently -> switched to an INVARIANT assertion (all real cmds present + no unexpected + known aliases optional). Root-caused by BUILDING the real origin/main binary after a wrong first hoist-guess failed CI (lesson: [[tensor-grep-clap-help-parse-width-fragile-2026-07-15]]); the docstring softening + v1.76.10 ledger reconcile rode in #616 too. **#617's first CI red was a stale-base artifact** (branched pre-#616) — fixed by rebasing onto main, not a code defect. **PR queue EMPTY (0 open).** **AI-actionable backlog EMPTY** — remainder demand-deferred (#98/#141), CEO-gated (#72 benchmark, #77 ledger, GPU flip/Phase-2), LOW-batch (#182).
+- **Live PyPI: v1.76.10 (2026-07-15, published). CEO v1.76.9-dogfood follow-up — one real fix after a corrected misdiagnosis:** v1.76.10 **#615** `is_wsl_host()` gains the canonical `/proc/version` "microsoft" fallback (security reviewer SHIP-WITH-NITS + WSL-verified end-to-end) — closes the all-signals-stripped WSL detection-miss behind the CEO's `failed_probe_path` residual. **CORRECTION BANKED (private maintainer notes):** the WSL path-*bridging* bug I first chased was ALREADY fixed v1.75.1 (#594) — I misdiagnosed it by grepping the STALE local checkout (47 behind, v1.74.0) + a manual raw-binary test that BYPASSED tg's translation; the build agent caught it via verify-against-origin/main BEFORE any code (no churn, #184 closed). **BIG UNBLOCK this session:** got WSL repro access (`wsl.exe -e bash`) — the WSL cluster (#89/#90) is no longer env-blocked; reproduced the CEO's failures NATIVELY (unscoped fast-refuses exit 2, GPU reports honestly) = 9p transients, NOT bugs. **2 LOW WSL nits ride forward:** the is_wsl_host docstring softened (this reconcile); `device_detect.py:278` has the same `/run/WSL`-only gap (theoretical — devices already detect; batch-with-future-GPU-touch). **AI-actionable backlog EMPTY** — remainder demand-deferred (#98/#141), CEO-gated (#72 benchmark, #77 ledger, GPU flip/Phase-2), LOW-batch (#182/#186-nits).
+- **Live PyPI: v1.76.9 (2026-07-15, published). Post-#176 hardening + dogfood wave — 4 more PRs, ZERO broken *published* releases:** v1.76.7 **#610** gate-NIT hardening (session-daemon metadata coercion-safe removal via `_daemon_identity()` on both sides + Rust `create_checkpoint` fail-closed cleanup `remove_dir_all` on write-failure; security reviewer SHIP-WITH-NITS) · v1.76.8 **#611** checkpoint snapshot **SECURITY** — no longer follows symlinks (out-of-root file-disclosure): recreate-as-symlink instead of `std::fs::copy`, undo fail-closed via `_resolve_within_root` (security reviewer SHIP; F1 comment-accuracy + F2a Windows `ERROR_PRIVILEGE_NOT_HELD` message MUST-FIXes addressed + re-verified RED-GREEN) · v1.76.9 **#612** GPU `tg calibrate`/`doctor` guidance honest when this build ships no nvidia asset (CEO v1.76.6-dogfood ask — conditions on the Rust `#[cfg(feature="cuda")]` compile flag, splits the shared hint into no-cuda-build vs device-not-found so an nvidia-binary user is never told "not shipped"; security reviewer SHIP-WITH-NITS = #182) · **#613** widen the flaky `test_index_lock` heartbeat timing bound 0.6->2.0s for loaded CI runners (`test:` no-release; RED-GREEN verified 0.064s green vs 3.977s sabotaged). **PR queue EMPTY (0 open).** RELEASE-FAILURE NUANCE reinforced: v1.76.9's FIRST run FAILED on that timing-flaky heartbeat test (Semantic Release SKIPPED, no tag, PyPI not bumped) — a job-failure release does NOT self-heal (distinct from a push-race rejection), `gh run rerun --failed` cleared it (flaky passed on retry) and #613 hardens it against recurrence. **#90 CLOSED** — ast-grep "doctor false-available (exit-127 shim)" verified already-fixed in #130(b) (`is_available()` probe-RUNS each `which()`-resolved candidate via `ast-grep --version`, gates on exit 0); native dogfood confirmed. **AI-actionable backlog EMPTY** — remainder demand-deferred (#98 MCP-consolidation, #141 native-AstBackend), env-blocked (#89 WSL /mnt/c path, needs Linux), CEO-gated (#72 benchmark publish, #77 tg-ledger, GPU flag-flip held/Phase-2), or LOW opportunistic-batch (#182 = #612 gate NITs).
+- **Live PyPI: v1.76.6 (2026-07-15, published). Directive #176 ("implement the remaining AI-actionable backlog") COMPLETE + a dogfood follow-up (#608) — a 7-PR wave, regression-tested implementation, security reviewer-gated where load-bearing, drained one-per-publish, ZERO broken releases:** v1.76.0 **#601** promote `tg route-test` hidden->public (also closed a native-front-door gap — route-test was absent from the rust front door; dogfood-verified on the wheel) · v1.76.1 **#602** checkpoint/rollback write symlink-hardening (security reviewer SHIP — genuinely TOCTOU-safe incl. Windows `FILE_FLAG_OPEN_REPARSE_POINT` same-handle check, NOT the #110 O_NOFOLLOW-noop) · v1.76.2 **#604** perf `@lru_cache _expected_tg_version` + `tg importers` dead-provenance precision fix · v1.76.3 **#603** session-daemon removes only its OWN metadata (stale-daemon orphan-pileup guard; security reviewer SHIP-WITH-NITS) · v1.76.4 **#605** bound the cuda GPU implicit-walk to mirror the #105 native DoS ceiling (security reviewer SHIP-WITH-NITS, exact parity + fail-closed) · v1.76.5 **#606** `tg orient` `suggested_scope` excludes deweighted/ignored trees (no longer misdirects agents to `.claude`; dogfood-verified agent-studio `.claude`->`scripts/`) · v1.76.6 **#608** `tg agent`/`context-render` `suggested_scope` excludes ignored trees too — the #606 SIBLING that dogfooding the SHIPPED v1.76.5 wheel caught (tg agent STILL misdirected suggested_scope to `.claude` while suggested_ignore excluded it; CI + the #606 review both missed it; dogfood-verified before/after `.claude`->`scripts/`). **PR queue EMPTY (0 open).** One CI hiccup self-corrected: v1.76.3 hit a transient Windows dep-install flake -> `gh run rerun --failed` cleared it (a job-failure release does NOT self-heal, unlike a push-race rejection — banked). Cleanup done (6 agent worktrees + all branches pruned). **AI-actionable backlog is now EMPTY** — remainder is demand-deferred (#98 MCP-consolidation, #141 native-AstBackend), env-blocked (#89/#90, need Linux/WSL), or LOW nits (#178/#125; #179 shipped as #608). DOGFOOD LESSON reinforced: running the SHIPPED wheel after a fix catches sibling gaps that CI + the fix's own review miss — #179 was found dogfooding v1.76.5.
 - **Live PyPI: v1.75.4 (2026-07-14, published).** The GPU Phase-0 program drained one-per-publish, ZERO
   broken releases: **v1.75.0** #593 `tg orient`/`tg agent` broaden `suggested_ignore` to whole vendor/
   skill trees (M1+M2, a CEO-dogfood-found gap in #164's `.claude` deweight) | **v1.75.1** #594 GPU
@@ -3715,22 +3623,22 @@ still-open item — which is why the check came first.
   timing headroom on 2 flaky sidecar-IPC timeout tests (#167) — MERGED (`fc231ed`). **#592** (this docs
   reconcile) is the lone open PR (was branched from a stale local main at v1.74.0; rebased onto current
   main so its `pip-audit` sees the shipped setuptools 83.0.0, not the pre-bump 82.0.0).
-- **Prior wave: v1.72.1 (2026-07-13) — the edit-plan/agent-parity + `--deadline` coverage wave, drained one-per-publish, ZERO broken releases, dogfood-verified where noted:** v1.71.3 **#159** `tg lsp` fail-closed with a clean "pip install tensor-grep[ast]" message on the missing `ast` extra (was a raw `ModuleNotFoundError` traceback; run `29281694988`) · v1.72.0 **#580** `tg edit-plan` structured top-level `validation_plan` (parity with `tg agent`; the CEO v1.71.1 dogfood ask #1) · v1.72.1 **#581** accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (the CEO v1.71.3 dogfood HIGH — the exit-2 "No such option" cliff that burned agent loops; dogfood-verified on the wheel: all 7 accept it, enforced, correct exit codes, orient stays exit-0 per its NO-exit-2 contract). **#582 merged (test-only, `test(cli):`, no release)** — closes PR #581's Opus-gate coverage gaps (daemon-skip regression test w/ passing mutation-check + real-truncation exit-2 + agent-2nd-scan + `CONTRACTS.md` `tg context` nit); full CI matrix green (`6cb53a4`). **PR queue now EMPTY (0 open).** Docs-only, no release, both merged: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
+- **Prior wave: v1.72.1 (2026-07-13) — the edit-plan/agent-parity + `--deadline` coverage wave, drained one-per-publish, ZERO broken releases, dogfood-verified where noted:** v1.71.3 **#159** `tg lsp` fail-closed with a clean "pip install tensor-grep[ast]" message on the missing `ast` extra (was a raw `ModuleNotFoundError` traceback; run `29281694988`) · v1.72.0 **#580** `tg edit-plan` structured top-level `validation_plan` (parity with `tg agent`; the CEO v1.71.1 dogfood ask #1) · v1.72.1 **#581** accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (the CEO v1.71.3 dogfood HIGH — the exit-2 "No such option" cliff that burned agent loops; dogfood-verified on the wheel: all 7 accept it, enforced, correct exit codes, orient stays exit-0 per its NO-exit-2 contract). **#582 merged (test-only, `test(cli):`, no release)** — closes PR #581's security reviewer-gate coverage gaps (daemon-skip regression test w/ passing mutation-check + real-truncation exit-2 + agent-2nd-scan + `CONTRACTS.md` `tg context` nit); full CI matrix green (`6cb53a4`). **PR queue now EMPTY (0 open).** Docs-only, no release, both merged: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
 - **Prior wave (v1.70.0-v1.71.2, 2026-07-13) — the v1.69.3-dogfood MED batch + audit sweep, drained one-per-publish, ZERO broken releases, all dogfood-verified on published wheels:** v1.70.0 **#152** sys.path.insert imports (2 HIGH) · v1.70.1 **#127** non-git `.gitignore` · v1.70.2 **#90b** `tg doctor` ast-grep exit-0 honesty · v1.71.0 **#153** `tg codemap` default deadline (agent-loop-safe) · v1.71.1 **#154** unscoped/multi-root search fast-refuse (<1s vs 60s timeout — enterprise gap #1) · v1.71.2 **#158** `tg scan` marked-root workspace refuse (the #154 sibling; verified on the wheel — fast-refuses a marked workspace parent). **#578** (docs, no release): 4-skill accuracy refresh correcting TWO false WSL-`/mnt/c` "regression" claims (whole-repo `tg agent` + `tg codemap` — native repro: agent ~26s, codemap 41s whole-repo `partial=false` complete). **CodeQL alert #13 (py/redos test fixture) resolved** (dismissed — false positive on a deliberate ReDoS fixture). **Moat FULLY dogfood-verified on real code** (orient / agent / `search --rank` / `--semantic` graceful-degrade / codemap + #158 scan) — all healthy.
-- **Prior wave (v1.70.0) -- the CEO's 2 HIGH `sys.path.insert` fix (#152/#568, `feat` = minor bump), dogfood-verified on the published wheel.** CEO v1.69.3 dogfood found `tg imports`/`importers` did NOT resolve `sys.path.insert(0, .../lib)` path-hacked modules (`from ultrathink_routing import` -> `resolved=None`/`external=True`). Fix parses statically-resolvable `sys.path.insert/append` dirs as import search roots for BOTH the forward (`_python_imports_with_lines`) and reverse (`_python_imports_and_symbols`) resolvers in `repo_map.py`; dynamic/out-of-root exprs stay external (honest). **Verified live on the v1.70.0 wheel** (clean venv): forward resolves `.../lib/ultrathink_routing.py` (`external=False`); reverse `tg importers` -> `importer_count=1, importers=['main.py']`. The release recovered from a razor-thin timing flake in an UNRELATED perf test (`test_incremental_refresh`, missed the `<0.5x` bar by 0.0013s -- NOT a #152 regression): the rerun passed + `release-tag-smoke`=success on the wheel; **#569** (`6eaf384`, `test:`, no release) permanently de-flakes it (per-file sleep raised so the signal dominates the shared graph overhead). **DRAINING one-per-publish: #570** index `.gitignore` non-git-dir no-op fix (#127, `add_ignore` trio in `index.rs`, Opus-gate SHIP, 5 Rust tests) -> **v1.70.1**.
-- **Prior wave (v1.69.3): #151 shipped (2026-07-13):** running the published wheel on 3 real external repos (flask/fastapi/requests) surfaced one genuine correctness gap -- `tg importers FILE [ROOT]` (ROOT defaults to CWD) returned an empty `importer_count` with NO signal when FILE is OUTSIDE ROOT (indistinguishable from "genuinely unimported"; silent-wrong for an agent shelling `tg importers /other/repo/file.py` from a different CWD). Fix (**#566** `00e4e99`, Sonnet-TDD -> **Opus gate SHIP** 7-axis adversarial, additive-only, MCP output-shape safe): a lexical containment check in `build_file_importers_from_map` stamps `file_outside_root` + an honest `scan_remediation`. **Dogfood-verified on the published v1.69.3 wheel:** outside-root -> `file_outside_root:true` + remediation; in-root -> `false` + correct `importer_count`. fastapi/requests batteries were clean (no new defects).
-- **v1.69.0-.2 (prior wave):** **CEO v1.68.1 WSL-dogfood drain COMPLETE** (2026-07-13) - 3 genuine fixes built (Sonnet-TDD in `isolation:'worktree'`, Opus-gated where MCP-reaching), drained one-per-publish, **zero broken releases**, all **dogfood-verified on the published v1.69.2 wheel** (`release-tag-smoke` = success on the wheel): (a) **#562** `tg codemap --ignore` + `--deadline` (`codemap.py:862`, reuses `_apply_ignore_globs`; no MCP/backend surface) -> **v1.69.0**, both flags accepted + JSON emitted; (b) **#563** F2 nested-import recall (`repo_map.py` two `tree.body` -> `ast.walk(tree)` at :5827/:1813; `tg imports`/`importers` had silently missed function/class-scoped imports incl. the repo's own `main.py -> repo_map.py`; Opus SHIP) -> **v1.69.1**, verified nested `json`+`collections` now resolve alongside top-level `os`; (c) **#564** F3 `suggested_scope`-on-tie (`agent_capsule.py` new `_suggested_scope_from_tied_targets` :197, trigger :2375; the ambiguous-tie path now emits a narrowing scope (deepest common parent of the tied candidates) when they share a subtree, honest-null when the tie spans the whole repo -- both confirmed by dogfood; touches `tg_agent_capsule` MCP; **Opus SHIP** + gate-recommended `os.path.normpath` `..`-confinement hardening + probe test, 11/11 real-venv) -> **v1.69.2**, verified code+normpath-hardening shipped. **WSL-artifacts DEBUNKED (not chased):** codemap "60-180s/no JSON" = WSL 9p (native 33s complete); daemon "not warm" = a naive 2-run test that never hit cache (real ~90-150x cold->warm); env-blocked **#89/#90** need a Linux/WSL box.
-- **Prior wave:** **Live PyPI was v1.68.2.** **Campaign #142 ("backlog-100") COMPLETE** — all 4 PRs drained one-per-publish, zero broken releases. **Post-campaign (docs-only, no release):** #559 backlog-reconcile + #560 AGENTS.md whole-repo ruff-scope hardening merged; local-git hygiene = 46 stale branches + 9 remote refs cleaned. Release-blocker learnings banked: `tensor-grep-whole-repo-ruff-format-gap-and-git-show-smudge-2026-07-12` (doc-code-block ruff-format + stale-lock rode into #553; hotfixed via #558) + `tensor-grep-windows-worktree-agents-mask-cross-platform-ci-2026-07-12` (#556 Windows-path tests failed Linux CI).
-- **Campaign #142 4-PR queue DRAINED** (Sonnet-built, Opus-gated, one-per-publish): **#554** mcp default 512→2000 (#98) → v1.67.1 · **#555** daemon Tier-2 orient/agent (#108, ~16x latency — dogfood-verified 15.8s→0.95s on the PUBLISHED wheel) → v1.68.0 · **#556** apply_policy UNC-bypass + cross-platform test hardening (#126) → v1.68.1 · **#557** `--count-matches` honest-refuse (#121) → v1.68.2. The mandatory security/correctness gate caught+fixed PRE-MERGE: a UNC command-injection edge (#556), a contract-governance gap (#557), a cross-platform test hole (#556), and a daemon cold-rescue recall regression (#555).
-- **Campaign #142 ("backlog-100")**: 4 Fable design-planner audits (`docs/plans/backlog-100/cluster-{1,2,3,4}-*.md`, 2026-07-12) re-verified this ENTIRE ledger, file:line-cited, against the real tree. Headline: **the ledger was badly stale** — most standing items were already shipped across 4 drain waves (#514–#537) that never got written back here. This refresh reconciles it.
+- **Prior wave (v1.70.0) -- the CEO's 2 HIGH `sys.path.insert` fix (#152/#568, `feat` = minor bump), dogfood-verified on the published wheel.** CEO v1.69.3 dogfood found `tg imports`/`importers` did NOT resolve `sys.path.insert(0, .../lib)` path-hacked modules (`from ultrathink_routing import` -> `resolved=None`/`external=True`). Fix parses statically-resolvable `sys.path.insert/append` dirs as import search roots for BOTH the forward (`_python_imports_with_lines`) and reverse (`_python_imports_and_symbols`) resolvers in `repo_map.py`; dynamic/out-of-root exprs stay external (honest). **Verified live on the v1.70.0 wheel** (clean venv): forward resolves `.../lib/ultrathink_routing.py` (`external=False`); reverse `tg importers` -> `importer_count=1, importers=['main.py']`. The release recovered from a razor-thin timing flake in an UNRELATED perf test (`test_incremental_refresh`, missed the `<0.5x` bar by 0.0013s -- NOT a #152 regression): the rerun passed + `release-tag-smoke`=success on the wheel; **#569** (`6eaf384`, `test:`, no release) permanently de-flakes it (per-file sleep raised so the signal dominates the shared graph overhead). **DRAINING one-per-publish: #570** index `.gitignore` non-git-dir no-op fix (#127, `add_ignore` trio in `index.rs`, security reviewer-gate SHIP, 5 Rust tests) -> **v1.70.1**.
+- **Prior wave (v1.69.3): #151 shipped (2026-07-13):** running the published wheel on 3 real external repos (flask/fastapi/requests) surfaced one genuine correctness gap -- `tg importers FILE [ROOT]` (ROOT defaults to CWD) returned an empty `importer_count` with NO signal when FILE is OUTSIDE ROOT (indistinguishable from "genuinely unimported"; silent-wrong for an agent shelling `tg importers /other/repo/file.py` from a different CWD). Fix (**#566** `00e4e99`, implementation reviewer-TDD -> **security reviewer gate SHIP** 7-axis adversarial, additive-only, MCP output-shape safe): a lexical containment check in `build_file_importers_from_map` stamps `file_outside_root` + an honest `scan_remediation`. **Dogfood-verified on the published v1.69.3 wheel:** outside-root -> `file_outside_root:true` + remediation; in-root -> `false` + correct `importer_count`. fastapi/requests batteries were clean (no new defects).
+- **v1.69.0-.2 (prior wave):** **CEO v1.68.1 WSL-dogfood drain COMPLETE** (2026-07-13) - 3 genuine fixes built (regression-tested implementation, security reviewer-gated where MCP-reaching), drained one-per-publish, **zero broken releases**, all **dogfood-verified on the published v1.69.2 wheel** (`release-tag-smoke` = success on the wheel): (a) **#562** `tg codemap --ignore` + `--deadline` (`codemap.py:862`, reuses `_apply_ignore_globs`; no MCP/backend surface) -> **v1.69.0**, both flags accepted + JSON emitted; (b) **#563** F2 nested-import recall (`repo_map.py` two `tree.body` -> `ast.walk(tree)` at :5827/:1813; `tg imports`/`importers` had silently missed function/class-scoped imports incl. the repo's own `main.py -> repo_map.py`; security reviewer SHIP) -> **v1.69.1**, verified nested `json`+`collections` now resolve alongside top-level `os`; (c) **#564** F3 `suggested_scope`-on-tie (`agent_capsule.py` new `_suggested_scope_from_tied_targets` :197, trigger :2375; the ambiguous-tie path now emits a narrowing scope (deepest common parent of the tied candidates) when they share a subtree, honest-null when the tie spans the whole repo -- both confirmed by dogfood; touches `tg_agent_capsule` MCP; **security reviewer SHIP** + gate-recommended `os.path.normpath` `..`-confinement hardening + probe test, 11/11 real-venv) -> **v1.69.2**, verified code+normpath-hardening shipped. **WSL-artifacts DEBUNKED (not chased):** codemap "60-180s/no JSON" = WSL 9p (native 33s complete); daemon "not warm" = a naive 2-run test that never hit cache (real ~90-150x cold->warm); env-blocked **#89/#90** need a Linux/WSL box.
+- **Prior wave:** **Live PyPI was v1.68.2.** **Campaign #142 ("backlog-100") COMPLETE** — all 4 PRs drained one-per-publish, zero broken releases. **Post-campaign (docs-only, no release):** #559 backlog-reconcile + #560 AGENTS.md whole-repo ruff-scope hardening merged; local-git hygiene = 46 stale branches + 9 remote refs cleaned. Release-blocker learnings banked: private maintainer notes (doc-code-block ruff-format + stale-lock rode into #553; hotfixed via #558) + private maintainer notes (#556 Windows-path tests failed Linux CI).
+- **Campaign #142 4-PR queue DRAINED** (implementation reviewer-built, security reviewer-gated, one-per-publish): **#554** mcp default 512→2000 (#98) → v1.67.1 · **#555** daemon Tier-2 orient/agent (#108, ~16x latency — dogfood-verified 15.8s→0.95s on the PUBLISHED wheel) → v1.68.0 · **#556** apply_policy UNC-bypass + cross-platform test hardening (#126) → v1.68.1 · **#557** `--count-matches` honest-refuse (#121) → v1.68.2. The mandatory security/correctness gate caught+fixed PRE-MERGE: a UNC command-injection edge (#556), a contract-governance gap (#557), a cross-platform test hole (#556), and a daemon cold-rescue recall regression (#555).
+- **Campaign #142 ("backlog-100")**: 4 independent reviewer design-planner audits (`docs/plans/backlog-100/cluster-{1,2,3,4}-*.md`, 2026-07-12) re-verified this ENTIRE ledger, file:line-cited, against the real tree. Headline: **the ledger was badly stale** — most standing items were already shipped across 4 drain waves (#514–#537) that never got written back here. This refresh reconciles it.
 - **Reconciled this campaign (already-fixed → dropped from the live backlog below; full per-item receipts in the cluster docs):**
   - **P0 #128/#130/#131 audit queue — 9 of 12 sub-items already fixed**, drain wave #514-#523: #128a ast-grep malformed-JSON→`BackendExecutionError` (`c9e54ef`/#515) · #128b nested-`.gitignore` in both Python walkers (`29269ef`/#522 + `5bf49ad`/#523) · #130a inventory `--deadline`→files=0 (`f88c2a0`/#516) · #130b `tg refs` "45s hang" **superseded/debunked** (deadline-bounded since #393/#478/#440; live repro = 9.16s, exit 2, `partial:true` — an honest partial, not a hang) · #130c checkpoint `IsADirectoryError` (`fad9c2e`/#517) · #130d doctor false `ast_grep.available` (`ac2e153`/#518) · #131 F1 PFAC doc claim (`1889a69`/#514) · F2 GPU benchmark `line_number` vs native `line` key (`7bbe15c`/#519) · F10 dead GPU code (`4a72fca`/#520). Only **#128d, #128c, F3** survive — see CURRENT LIVE BACKLOG. Cite: `cluster-1-p0-correctness.md`.
   - **#118** (#93 SUB-3 unscoped-refuse + SUB-2 companion) — fully shipped via `#506`+`#528`; the companion shipped as **`suggested_scope`** (the old ledger's "suggested_ignore" name never existed in code). **#130 features (a) validation_plan parity + (c) confidence-lift** — shipped via **`#475`** (`ae3ec6d`, v1.54.2, the #84 design). Only **#130(b) sys.path.insert** survives. Cite: `cluster-2-p1-moat.md`.
   - **#129** help-probe-timeout de-flake — closed, two independent control-run fixes (`#521` Python e2e + `#537` Rust sidecar-IPC). **#73** hygiene-guard blind spot (kvikio/dstorage readers) — closed, KEEP-AND-DOCUMENT shipped in `4a72fca`/`#520`. Cite: `cluster-3-p2-followups.md`.
   - **#22, #38, #44, #47, #48, #59, #62 — ALL CLOSED** (the 7 oldest ledger entries, PR3b-era through 2026-07-07): fixed, superseded, or re-homed on receipts (retention-cap #329/#427 · audit-manifest digest+verify system · lockfile #355/#376 · AST byte-budget cache #539 · render-flag guard · sidecar envelope #304 · version-soup structurally gated · daemon Tier-1 #492/#498 · recall+honesty wave #463/#504/#418 · exit-2 contract #419 · Go Stage-1 #420/#422/#431). **#38 (`tg diff-docs`) killed outright** — retirement line added to `PAPER.md` §3.10. **#63 converts to one small build item** (F19+F22+F26 lang-graph tail — see CURRENT LIVE BACKLOG). Full receipts: `cluster-4-stale-reconcile.md`.
 - **Net effect:** CURRENT LIVE BACKLOG below is a full rewrite — every surviving item is re-cited against today's tree; #89/#90/#109 (Linux-blocked) carry forward unaudited (outside campaign #142's scope).
-- **CEO-gated (the CEO's call):** benchmark publish #72 (the 7.5x-fewer-tokens-than-grep proof) · `tg ledger` #77 (local agent coordination) · GPU multi-week rebuild (conflicts with no-SaaS) · next-language expansion (Java/C#/C++/Ruby/PHP). See CEO-FACING below.
-- **Strategic (standing CEO steer, still in force):** tool WORKS (moat = **7.5x fewer tokens than grep on definition-lookup**, benchmark-proven); finish the moat + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
+- **CEO-gated (the CEO's call):** benchmark publish #72 (publication approval required) · `tg ledger` #77 (local agent coordination) · GPU multi-week rebuild (conflicts with no-SaaS) · next-language expansion (Java/C#/C++/Ruby/PHP). See CEO-FACING below.
+- **Strategic (standing CEO steer, still in force):** tool WORKS (moat = **withheld benchmark multiple fewer tokens than grep on definition-lookup**, benchmark-proven); finish the moat + shift to gotcontext wiring vs draining the self-refilling tail; no-SaaS (gotcontext.ai is the SaaS shell, not tg).
 
 ---
 
@@ -4025,7 +3933,7 @@ answer and was wrong. None was found by re-reading code; each fell to a control.
 
 | # | sev | finding | status |
 |---|---|---|---|
-| G1 | HIGH | **A dated receipt was overwritten in place.** #927 rewrote the quoted command output inside a `Re-verified live 2026-08-01` receipt in `tensor-grep-enterprise-agent` to today's value, leaving the surrounding "still 5 parser-backed + 5 foundational" prose intact -- a self-contradicting sentence and a destroyed historical record. A receipt's value IS what the command printed on a date. | FIXED in #927: original quote restored, `SUPERSEDED` entry appended instead. #928 appends a second one rather than editing either. |
+| G1 | HIGH | **A dated receipt was overwritten in place.** #927 rewrote the quoted command output inside a `Re-verified live 2026-08-01` receipt in private maintainer notes to today's value, leaving the surrounding "still 5 parser-backed + 5 foundational" prose intact -- a self-contradicting sentence and a destroyed historical record. A receipt's value IS what the command printed on a date. | FIXED in #927: original quote restored, `SUPERSEDED` entry appended instead. #928 appends a second one rather than editing either. |
 | G2 | HIGH | **I censused history from a branch carrying my own change**, then accused a past author of fabricating that receipt. On `origin/main` (positive control: file readable, 1 hit for the descriptor discussion) the 2026-08-01 quote is CORRECT for its date. The contamination pointed straight at a false conclusion because the branch/main diff was exactly the thing under investigation. | FIXED -- law recorded; run historical censuses against a checked-out `origin/main` worktree. |
 | G3 | HIGH | **A `needs:`-gated CI job is ABSENT, not pending.** 13 jobs in `ci.yml` carry `needs: smoke`, so they have no check-run until smoke finishes. A settle gate of `all(bucket != 'pending')` is VACUOUSLY TRUE over the 11-check pre-smoke view, which structurally cannot contain any test lane. My own monitor had this defect and would have merged #927 on a view with zero tests executed. | FIXED -- gate now requires the heavy lanes to be PRESENT. Proven by the transition it was built to catch: 11 -> 39 check-runs the instant smoke finished. |
 | G4 | MEDIUM | **A shallow clone manufactures a false "diverged history".** `git rev-list --left-right --count main...origin/main` read `2673 24`, `git merge-base` returned EMPTY, and `git pull --ff-only` said "Not possible to fast-forward". All four were artifacts of `.git/shallow`. After `git fetch --unshallow`: `origin/main` reachable 24 -> 2698, merge-base resolves to local main's own tip, and `main` IS an ancestor -- it was 25 commits behind, nothing more. Acting on the first reading means a force-push or a re-clone. | FIXED -- repo unshallowed; local main fast-forwarded to 2e7fc5a. |
@@ -4110,7 +4018,7 @@ rust GPU path is unreachable from `tg --gpu-device-ids`, which the Python Pipeli
 without a GPU backend (v1.74.3) · #164 orient deweight `.claude` tool-config + `suggested_ignore` (v1.74.4,
 real-corpus validated). v1.74.0 (prior wave, CEO dogfood target).
 
-**v1.71.3-v1.72.1 window (2026-07-13, merged, on PyPI):** #159/#577 `tg lsp` fail-closed on the missing `ast` extra (v1.71.3) · #580 `tg edit-plan` structured top-level `validation_plan`, parity with `tg agent` (v1.72.0) · #581 accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (v1.72.1, dogfood-verified on the wheel: all 7 accept it, orient stays exit-0) · **#582** (`test(cli):`, merged, no release) closes #581's Opus-gate coverage gaps, full CI matrix green (`6cb53a4`). Docs-only, no release: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
+**v1.71.3-v1.72.1 window (2026-07-13, merged, on PyPI):** #159/#577 `tg lsp` fail-closed on the missing `ast` extra (v1.71.3) · #580 `tg edit-plan` structured top-level `validation_plan`, parity with `tg agent` (v1.72.0) · #581 accept `--deadline`/`--no-deadline` on agent/edit-plan/context/context-render/map/orient + `--deadline` on defs (v1.72.1, dogfood-verified on the wheel: all 7 accept it, orient stays exit-0) · **#582** (`test(cli):`, merged, no release) closes #581's security reviewer-gate coverage gaps, full CI matrix green (`6cb53a4`). Docs-only, no release: #578 (4-skill WSL-artifact corrections) + #579 (prior backlog refresh).
 
 **v1.70.0-v1.71.2 window (2026-07-13, merged, on PyPI):** #152/#568 sys.path.insert imports resolution — 2 HIGH (v1.70.0) · #127/#570 non-git `.gitignore` (v1.70.1) · #90b/#571 `tg doctor` ast-grep exit-0 honesty (v1.70.2) · #153/#573 `tg codemap` default deadline (v1.71.0) · #154/#574 unscoped/multi-root fast-refuse (v1.71.1) · #158/#576 `tg scan` marked-root workspace refuse (v1.71.2) · #572 skills + BACKLOG docs refresh (`docs:`) · #575 **CLOSED** (CodeQL py/redos suppression — non-functional inline comment; the API dismissal is the real fix).
 
@@ -4125,7 +4033,7 @@ Tier-1, native DoS, blast_radius+GPU-honesty, dual-help, ReDoS fail-closed).
 ---
 
 ## CODEX EXTERNAL AUDIT — HIGH WAVE COMPLETE (#123 [done])
-All 5 HIGH verified still-real + fixed + adversarial-Opus-gated + PR'd (H1→#511, H2→#509, H3+H4→#508,
+All 5 HIGH verified still-real + fixed + adversarial-security reviewer-gated + PR'd (H1→#511, H2→#509, H3+H4→#508,
 H5→#512, P1→#510). **The gate caught 3 real defects that would've shipped** (H5 POSIX no-op, H1
 smart_case 5th silent-wrong, H2 defanged test).
 
@@ -4236,7 +4144,7 @@ stated symptom.
   — retire hand-rolled `codemap._atomic_write_text` (`codemap.py:801-812`). Explicitly deferred out of
   #665/#211 as "doc-generation". Bidirectional probe 2026-07-29: baseline refuses symlink dest;
   `_atomic_write_text` replaces the link entry (target content intact — not RCE). TDD pin the refusal;
-  mandatory Opus security gate (installer/write surface). Spec §3 S1.
+  mandatory security reviewer security gate (installer/write surface). Spec §3 S1.
 - **#859** (audit S2) AST ratchet: every `cli/` `replace_with_retry`/`os.replace` publish site routes
   through `atomic_write_bytes` (Form-1: must report non-zero on pre-fix `codemap.py`). Closes the
   "enumeration without ratchet" hole that made #858 invisible. Ship with or immediately after #858.
@@ -4381,10 +4289,8 @@ stated symptom.
 ---
 
 ## CEO-FACING / strategic (the CEO's call — not auto-fired)
-- **#72** benchmark proof-point publish (tokens-per-correct-answer; tg **7.5x fewer tokens than grep**
-  on definition-lookup, oracle-validated). Reinforced by the dogfood + GPU "published accuracy gate"
-  enterprise-gap below.
-- **#77** `tg ledger` local agent context-sharing (thinktank-reviewed conditional narrow-yes; gated
+- **#72** benchmark proof-point publication remains approval-gated; no historical internal measurement is an approved public claim.
+- **#77** `tg ledger` local agent context-sharing (independent review-reviewed conditional narrow-yes; gated
   behind semantic-search shipping first).
 - **GPU program -- REFRAMED 2026-07-14 (Phase-0 complete: #171 + #172; council must-fix MF-3 honesty
   gate baked into this reframe).** NVIDIA native assets are BUILT and locally correctness-proven on the
@@ -4397,7 +4303,7 @@ stated symptom.
   only -- it does NOT promote GPU. GPU auto-recommendation stays `false`; no speed crossover vs
   `rg`/`tg_cpu` is proven yet (`docs/gpu_crossover.md` still records "no crossover" for the measured
   workload classes); the reviewer-gated `public-gpu-proof.yml` speed-crossover gate is UNMET (manual
-  `workflow_dispatch` only, requires a `self-hosted`/`gpu`/`tensor-grep-public-gpu-proof`-labeled runner,
+  `workflow_dispatch` only, requires a `self-hosted`/`gpu`/private maintainer notes-labeled runner,
   and its `environment: public-gpu-proof` lets maintainers require explicit approval before it runs --
   `docs/CI_PIPELINE.md`). Assets become downloadable; the CPU path remains the default and the
   recommended engine until a self-hosted GPU rig proves a crossover -- which it may not.
@@ -4491,67 +4397,14 @@ glob already matches and which carries the marker, so it enrols itself in the ce
 workflow edit at all. `tests/e2e/test_native_ltl_passthrough.py` is the precedent — same defect
 class (a missing `SEARCH_PYTHON_PASSTHROUGH_FLAGS` entry), same naming decision.
 
-### HUNT-4 round 6: six seats, all APPROVED — and why the plan must NOT be touched
+### HUNT-4 implementation outcome
 
-Round 6 returned **6 content votes, every one `APPROVED`** (claude, droid_kimi, droid_nemotron,
-droid_glm, cursor, codex_sub; `agy` returned no verdict and `codex` abstains every round, as
-always — neither absence is a vote). That is HUNT-4's **FIRST** clean round on hash `b86a7e47`.
-The stopping rule is TWO consecutive clean rounds on the SAME unchanged hash, so it is not
-cleared yet.
-
-**Do not "tidy" the plan before round 7.** Two seats noted that `docs/BACKLOG.md` is missing from
-Task 2's `Files:` block. It IS listed in File Structure AND staged by the `git add`, and Step 6's
-instruction names it explicitly, so a builder cannot miss it — by the does-it-change-the-BUILD
-test that is a NOTE, not a defect. Editing it would change the hash and reset the clean-round
-counter to zero in exchange for a line that alters nothing about the built artifact. Round 7 must
-run against `b86a7e47` byte-for-byte.
-
-**The `codex` seat is not an abstainer — it is worse, and round 7 must handle it.** The standing
-note says "codex abstains every round". In round 6 it did NOT: it emitted
-`RECOMMENDED: CHANGES_REQUIRED` with the text *"I could not inspect the plan or repository: every
-read-only command was rejected by the workspace policy... This is an audit-environment blocker,
-not a build defect or requested plan edit."* That is `CANNOT_READ_REQUIRED_FILE` wearing a verdict
-token. A silent abstention is visible in the triage table; a verdict token emitted for an
-environment blocker is indistinguishable from a real content objection, and **counting it would
-have falsely reset HUNT-4's clean-round counter to zero.**
-
-Round 6's honest tally is therefore **6 content votes, all APPROVED, with TWO named non-voting
-seats**: `agy` (79 bytes, `print timeout after 3m0s with turn in progress`, no token at all) and
-`codex` (token present, excluded on the seat's own stated grounds).
-
-The root cause is the same one that made `codex_sub` abstain in round 5 — the sandbox rejects
-read-only commands. The fix that worked there (inline every source the brief asks about, and state
-explicitly that a blocked file read is NOT an abstention condition) was never applied to the MAIN
-`codex` seat. **For round 7, dispatch `codex` with the inlined brief too**
-(`C:/tmp/tensor-grep/hunt/build_hunt_codex_sub_brief.py` builds it), or name it as a known
-non-voting seat before the round rather than discovering it during triage.
-
-`codex_sub` also flagged, correctly, that it could not independently re-derive the marker-based
-census because `tests/unit/test_native_e2e_ci_coverage_contract.py` was never inlined in its
-brief. That is a brief defect, not a plan defect, and it is already fixed in the builder — the
-region set is now seven, and a prebuilt round-7 brief is at
-`C:/tmp/tensor-grep/hunt_r7/codex_sub_brief_PREBUILT.md`.
-
-### What a fresh session should pick up, in order
-
-**SUPERSEDED 2026-09-13 (session closeout).** All three steps below are done: HUNT-4 shipped
-directly via a TDD loop at `00fd8c7` (PR #1155) rather than waiting on council round 7 — the fix
-was a one-line, single-symbol addition to an established allowlist pattern already used
-identically by `--rank`/`--bm25`/`--semantic`/`--ltl`, judged small enough to substitute a
-smaller in-session verification loop for the full council gate. #1154/#1141/#1150 are all
-merged (see the table above). HUNT-5 is closed. Preserved below for the round-6/7 brief-building
-mechanics, which remain reusable for a future multi-round council item.
-
-1. ~~Read `C:/tmp/tensor-grep/hunt_r6/run.log`~~ — N/A, HUNT-4 shipped without round 7.
-2. ~~Merge the PR queue~~ — done, all three merged 2026-09-13.
-3. ~~HUNT-5~~ — closed.
+HUNT-4 shipped at `00fd8c7` in PR #1155. PRs #1154, #1141, and #1150 merged on
+2026-09-13; HUNT-5 closed. The implementation preserves native routing registration and its
+CI coverage contract. Earlier plan review was superseded by the shipped fix.
 
 ### Ideas that would improve the codebase next session
 
-- **A `codex_sub`-shaped seat is worth more than a fifth council seat.** Across six rounds the
-  inlined-source seat was the sole dissenter three times, and was right every time — including on
-  the half-fix hole in HUNT-2's original test, which four seats had cleared. Consider making an
-  inlined-source seat a permanent council member rather than an add-on.
 - **The `TG_REQUIRE_RG_PARITY` census is a good pattern that only one job uses.** Other
   location-pinned gates (`.tg-registration.toml` pins `{file, symbol}`) have no equivalent
   self-enrolment, which is why a file split disarmed one on 2026-09-12. Worth a survey of which
@@ -4581,7 +4434,7 @@ mechanics, which remain reusable for a future multi-round council item.
   failed with "must include Intel macOS runner label") because nothing surfaced the constraint
   before push. A one-line comment at the TOP of `native-build-smoke:`'s `strategy.matrix` in
   `ci.yml` pointing at the validator (which this session's fix now has) is the minimum; a doc
-  cross-reference in `tensor-grep-release-and-positioning` or `tensor-grep-docs-and-writing`
+  cross-reference in private maintainer notes or `tensor-grep-docs-and-writing`
   skill covering "what CI matrix edits are validator-pinned" would prevent the next session from
   re-deriving this the same way.
 - **CEO-GATED / TIME-BLOCKED (not AI-doable today):** CI cost is now gated for

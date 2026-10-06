@@ -56,7 +56,7 @@ def test_bootstrap_commands_match_source_of_truth() -> None:
 # instance, fixed in #745; `--format`/`--lang` predate v1.95.0). Enumerating today's offenders
 # would pass again the moment someone adds a tenth prefix.
 #
-# The rg-argv differential fuzz gate (`.claude/rg_argv_differential_fuzz.py`) can NEVER cover this
+# The rg-argv differential fuzz gate (`scripts/rg_argv_differential_fuzz.py`) can NEVER cover this
 # class by construction -- it models *ripgrep's* grammar, and ripgrep has no `--format`/`--lang`.
 # tg-only flags need a tg-side invariant, which is this test.
 def test_tg_only_value_flag_prefixes_are_registered_as_value_taking_flags() -> None:

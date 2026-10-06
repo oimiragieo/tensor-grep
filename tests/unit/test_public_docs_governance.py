@@ -171,7 +171,9 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
     # The README is now a marketing/positioning doc; the detailed current-release-state facts below
     # are governed against the dedicated handoff docs (AGENTS.md / SKILL.md / SESSION_HANDOFF.md /
     # CONTINUATION_PLAN.md) plus CHANGELOG.md, so README is excluded from these positive content pins.
-    handoff_docs = {path: content for path, content in docs.items() if path != "README.md"}
+    handoff_docs = {
+        path: content for path, content in docs.items() if path not in {"README.md", "AGENTS.md"}
+    }
     for content in handoff_docs.values():
         assert CURRENT_RELEASE_TAG in content
         assert f"release_docs_current_tag: {_project_release_tag()}" in content
@@ -191,7 +193,7 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         f"latest complete public PyPI/release-asset distribution is also `{CURRENT_RELEASE_TAG}`"
     )
     incomplete_disclosure = f"**`{CURRENT_RELEASE_TAG}` is TAGGED AND NOT PUBLISHED"
-    for path in ("AGENTS.md", "SKILL.md"):
+    for path in ("SKILL.md",):
         assert complete_claim in docs[path] or incomplete_disclosure in docs[path], (
             f"{path} must state the publication status of {CURRENT_RELEASE_TAG} definitely: "
             "either the completeness claim or an explicit TAGGED AND NOT PUBLISHED disclosure. "
@@ -314,7 +316,7 @@ def test_public_ast_positioning_should_not_claim_ast_grep_parity() -> None:
     # positioning, but the exact `validated useful slice` contract phrasing is governed against the
     # dedicated docs (SKILL.md / AGENTS.md) rather than re-pinned into the README prose.
     assert "validated useful slice" in public_surfaces["SKILL.md"]
-    assert "useful validated AST slice" in public_surfaces["AGENTS.md"]
+    assert "useful validated AST slice" in " ".join(public_surfaces["AGENTS.md"].split())
 
 
 def test_gpu_docs_should_record_current_gpu_crossover_story() -> None:
@@ -424,46 +426,26 @@ def test_python_gpu_benchmark_docs_should_not_claim_native_public_proof_fields()
     assert "top-level `public_managed_promotion_ready` and `public_gpu_proof`" not in section
 
 
-def test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process() -> None:
-    docs = {
-        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
-        "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
-        "docs/SESSION_HANDOFF.md": SESSION_HANDOFF_PATH.read_text(encoding="utf-8"),
-    }
-
-    required_fragments = (
-        "Dogfood follow-up workflow",
-        "per-slice evidence ledger",
-        "PR order",
-        "slice scope",
-        "Exa research",
-        "thinktank",
-        "subagent ownership",
-        "PR-sized slices",
-        "Gemini",
-        "contract test",
-        "targeted suite",
-        "validation commands",
-        "lint and format",
-        "PR CI",
-        "main CI",
-        "release-bearing slices",
-        "semantic-release",
-        "release assets",
-        "PyPI",
-        "public release dogfood",
-        "not applicable",
-        "rationale",
-        "do not collapse independent fixes into one broad PR",
-    )
-    for path, content in docs.items():
-        for fragment in required_fragments:
-            assert fragment in content, f"{path} missing `{fragment}`"
+def test_contributor_guidance_preserves_public_verification_requirements() -> None:
+    text = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    for fragment in (
+        "independent adversarial review",
+        "external process timeout",
+        "ruff check",
+        "ruff format --check --preview",
+        "mypy",
+        "file_size_budget.py",
+        "actual executable or published wheel",
+        "source, native executable, and wheel versions",
+        ".claude",
+    ):
+        assert fragment in text
+    for private_dependency in ("Fable", "Sonnet", "Opus", "thinktank", "CEO"):
+        assert private_dependency not in text
 
 
 def test_agent_success_harness_should_remain_workflow_not_search_speed_contract() -> None:
     docs = {
-        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
         "docs/SESSION_HANDOFF.md": SESSION_HANDOFF_PATH.read_text(encoding="utf-8"),
         "docs/benchmarks.md": BENCHMARKS_DOC_PATH.read_text(encoding="utf-8"),
@@ -913,7 +895,12 @@ def test_agent_docs_should_lock_pr_merge_release_completion_contract() -> None:
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
 
-    for doc in (agents, skill, handoff):
+    public_guidance = " ".join(agents.split())
+    assert "A branch push or open PR starts PR CI only" in public_guidance
+    assert "publish-success-gate" in public_guidance
+    assert "PyPI/public installer availability" in public_guidance
+    assert "A green PR alone is not release proof" in public_guidance
+    for doc in (skill, handoff):
         assert "A branch push or open PR starts PR CI only" in doc
         assert "It is not a release, not a released version, and not complete release state" in doc
         assert (

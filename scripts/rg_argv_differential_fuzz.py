@@ -24,9 +24,9 @@ authoritative. If rg's grammar changes, update `SHORT_VALUE` / `LONG_VALUE` belo
 
 USAGE
 -----
-    python .claude/rg_argv_differential_fuzz.py
-    python .claude/rg_argv_differential_fuzz.py --seed 20260725 --iterations 60000
-    python .claude/rg_argv_differential_fuzz.py --src path/to/src   # test another checkout
+    python scripts/rg_argv_differential_fuzz.py
+    python scripts/rg_argv_differential_fuzz.py --seed 20260725 --iterations 60000
+    python scripts/rg_argv_differential_fuzz.py --src path/to/src   # test another checkout
 
 Exit code 0 = zero disagreements (the closing gate). Exit code 1 = disagreements, printed with
 a minimal reproducer per distinct shape so a failure is actionable, not just a count.

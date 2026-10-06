@@ -88,3 +88,19 @@ Before calling a release enterprise-ready, keep these documents aligned with the
 - `docs/HOTFIX_PROCEDURE.md`
 - `docs/EXPERIMENTAL.md`
 - `docs/RELEASE_CHECKLIST.md`
+
+## Agent skills and private material
+
+Only the six reviewed skills listed in [AGENTS.md](AGENTS.md#skills) and the product skill's
+reference are published under `.claude/`. They explain product usage and contribution requirements.
+New `.claude` files are ignored by default; publishing an additional file requires an explicit
+allowlist change, documentation review, and an update to the publication-boundary tests.
+CI also rejects private paths that were added with `git add --force`.
+
+Keep internal operating procedures, model/provider configuration, session notes, unpublished
+research, and private workflows in a private repository or machine-local skill store. Public
+skills must work without those files. Do not copy private procedures or restricted research
+results into public docs, tests, issue bodies, or pull-request descriptions.
+
+Ignoring a file does not untrack an existing Git entry or remove earlier commits. Removal from
+the current tree is distinct from history cleanup; assess previously published material separately.
