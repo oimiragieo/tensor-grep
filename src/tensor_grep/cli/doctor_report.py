@@ -1347,14 +1347,15 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         return base
 
     routing_backend = str(payload.get("routing_backend") or "")
-    sidecar_used = bool(payload.get("sidecar_used", False))
+    raw_sidecar_used = payload.get("sidecar_used")
+    sidecar_used = raw_sidecar_used if isinstance(raw_sidecar_used, bool) else None
     base.update({
         "routing_backend": routing_backend or None,
         "routing_reason": payload.get("routing_reason"),
         "sidecar_used": sidecar_used,
         "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
     })
-    if routing_backend == "NativeGpuBackend" and not sidecar_used:
+    if routing_backend == "NativeGpuBackend" and sidecar_used is False:
         base["status"] = "supported"
         return base
 
