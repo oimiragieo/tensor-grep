@@ -33,7 +33,13 @@ Checkpoint metadata and snapshots live under `.tensor-grep/checkpoints/`. Deleti
 
 ## Rebuild a stale search cache
 
-First close any running `tg` work that may be using the project. From the project root, remove only the specific rebuildable search data you intend to refresh. For a trigram index:
+From the project root, use `tg search --index` to explicitly build or refresh the trigram index for that root. For example:
+
+```text
+tg search --index -F -n 'KNOWN_TEXT' .
+```
+
+Replace `KNOWN_TEXT` with a literal expected in the project. The search builds `.tg_index` when it is absent and updates it when the recorded file state is stale. The query's match result does not determine whether the index is built. To force a full rebuild, first close any running `tg` work that may be using the project, then remove only the index file:
 
 **PowerShell:**
 
@@ -44,10 +50,10 @@ Remove-Item -LiteralPath '.tg_index' -Force
 **Bash:**
 
 ```bash
-rm -f -- .tg_index
+rm -f ./.tg_index
 ```
 
-The next eligible indexed search can recreate the index. If the problem concerns AST data, inspect and remove only `.tg_cache/ast/project_data_v6.json`; AST data may be recreated by a later AST workflow. Do not remove session or checkpoint state to refresh either search cache. If you are unsure which path is affected, keep the files and ask your project maintainer before deleting anything.
+After removal, rerun the explicit `tg search --index` command above. If the problem concerns AST data, inspect and remove only `.tg_cache/ast/project_data_v6.json`; a later AST workflow can rebuild it. Do not remove session or checkpoint state to refresh either search cache. If you are unsure which path is affected, keep the files and ask your project maintainer before deleting anything.
 
 ## Keep state separate
 

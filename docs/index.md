@@ -15,7 +15,6 @@
 
 - [Experimental features](EXPERIMENTAL.md) describes optional features, their setup, and limits.
 - [Cache management](runbooks/cache-management.md) distinguishes search indexes, AST data, sessions, and checkpoints.
-- [Harness API](harness_api.md) documents machine-readable command contracts.
 - [Harness cookbook](harness_cookbook.md) gives task examples for AI and editor integrations.
 - [Harness API](harness_api.md) documents the CLI and MCP machine-readable interfaces; [session daemon](session_daemon_protocol.md) covers repeated session requests.
 
@@ -26,6 +25,7 @@
 ## Maintainers and operators
 
 - [Benchmarks](benchmarks.md) records accepted comparisons and their limits.
+- [Tool comparison](tool_comparison.md) describes workload-specific strengths and limits.
 - [CI pipeline](CI_PIPELINE.md), [release checklist](RELEASE_CHECKLIST.md), and [package publishing](package_manager_publish.md) cover delivery.
 - [Hotfix procedure](HOTFIX_PROCEDURE.md) and [enterprise review bundle](enterprise_review_bundle_ci.md) cover operational workflows.
 - [GPU troubleshooting](runbooks/gpu-troubleshooting.md) and [resident worker runbook](runbooks/resident-worker.md) cover optional paths.

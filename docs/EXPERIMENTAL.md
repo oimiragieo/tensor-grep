@@ -6,7 +6,13 @@ As of 2026-10-06, this page describes optional features with narrower support or
 
 `tg find` combines text retrieval with ranking options for finding potentially relevant files or passages. The command remains experimental, including when it uses BM25 ranking. **BM25** is a local ranking method that orders text results by how well their words match the query; it is not a generative model and does not establish that a result is correct.
 
-Some `tg find` modes can use dense embeddings. A **dense embedding** is a numerical representation of text used to find passages with similar meaning, including when they do not share exact words. Dense mode is optional and may require installing a model and additional CPU or GPU dependencies. Follow the command's setup guidance and [GPU runbook](runbooks/gpu-troubleshooting.md); core search does not download a model automatically.
+Some `tg find` modes can use dense embeddings. A **dense embedding** is a numerical representation of text used to find passages with similar meaning, including when they do not share exact words. Dense mode is optional; without its dependencies, `tg find` reports that it is using BM25 only. To try dense matching, explicitly run:
+
+```text
+tg install-dense
+```
+
+This installs the `semantic` Python extra and fetches a checksum-pinned model of about 65 MB. The dense path uses CPU and NumPy; it does not require Torch or a GPU. The command needs network access, and nothing downloads automatically when you run `tg find`. For GPU-specific requirements, see the [GPU runbook](runbooks/gpu-troubleshooting.md).
 
 Treat ranked results as suggestions to inspect. The ranking may vary with the chosen backend, model, and corpus. `rg` remains a useful baseline for exact text search, and `tg search` has a separate, documented search contract.
 
@@ -27,3 +33,11 @@ See the [resident worker runbook](runbooks/resident-worker.md) for its operation
 ## Support boundary
 
 These features are outside the stable compatibility guarantees. They may fall back, refuse a request, or require a different dependency set from core text search. Keep a tested text-search path available, inspect structured route and completeness fields where offered, and check the [support matrix](SUPPORT_MATRIX.md) before selecting a deployment target.
+
+## Runtime switches for testing and diagnosis
+
+These environment variables change routing behavior and are intended for testing or diagnosis. Leave them unset for ordinary use unless you are following a specific troubleshooting procedure:
+
+- `TG_FORCE_CPU=1` requests CPU routing for search commands; it does not enable GPU execution.
+- `TG_RUST_EARLY_POSITIONAL_RG=1` enables an early `rg` passthrough attempt for eligible bare positional searches. It has an effect only when `rg` is available and the invocation fits the supported passthrough surface.
+- `TG_RESIDENT_AST=1` enables the experimental resident AST worker workflow described above; it does not start a worker by itself.

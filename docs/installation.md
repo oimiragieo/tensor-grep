@@ -36,13 +36,19 @@ Install from PyPI with either `pip` or `uv`:
 python -m pip install tensor-grep
 ```
 
-Or run a pinned version without a persistent environment using `uvx`:
+Or run the package with `uvx`:
 
 ```text
-uvx tensor-grep@1.123.23 --version
+uvx tensor-grep --version
 ```
 
-Replace the version with the release you intend to use. Basic Python installation does not require a GPU, dense model, CUDA, or an API key. Optional dense search dependencies belong to the [experimental feature setup](EXPERIMENTAL.md).
+To pin an exact version, replace `X.Y.Z` with the version you selected:
+
+```text
+uvx --from 'tensor-grep==X.Y.Z' tg --version
+```
+
+Basic Python installation does not require a GPU, dense model, CUDA, or an API key. Optional dense search dependencies belong to the [experimental feature setup](EXPERIMENTAL.md).
 
 The Python package path also supports the `tg update` / `tg upgrade` workflow. If you need those commands, install with `pip` or `uv` rather than a directly downloaded binary.
 

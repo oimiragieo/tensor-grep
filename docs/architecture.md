@@ -33,7 +33,7 @@ Within the Rust executable, both the bare positional search form (`tg PATTERN PA
 
 The search router can select `rg`, native CPU search, a trigram index, an AST backend, or optional GPU paths according to flags, output shape, available tools, and project state. A backend is the engine that performs the request. Routing is conditional, so a release containing a GPU-related build configuration does not mean GPU is the default or that every search uses it.
 
-The trigram index records character groups to narrow which files need a full scan. It lives under `.tg_index/`. It can speed some repeated compatible text searches; it is not a complete replacement for scanning and its use depends on the query and route. For exact flags and fallbacks, use [routing policy](routing_policy.md).
+The trigram index records character groups to narrow which files need a full scan. It is a file named `.tg_index` at the indexed project root. It can narrow some compatible text searches; whether it is used depends on the query and route. For exact flags and fallbacks, use [routing policy](routing_policy.md).
 
 AST workflows parse source into an abstract syntax tree (AST), then match or analyze code structure. Parser and language coverage constrain what can be found. Call graphs and caller lists can have unresolved or bounded results, so an absent edge is not proof that no caller exists. Orientation scores suggest central files or entry points from available signals; they are not proof of runtime importance or safety.
 
@@ -41,10 +41,10 @@ AST workflows parse source into an abstract syntax tree (AST), then match or ana
 
 | Location | Purpose | How to treat it |
 |---|---|---|
-| `.tg_index/` | Native trigram index used by eligible repeated text searches | Rebuildable search data; may be removed when the index is stale |
+| `.tg_index` | Native trigram index file used by eligible text searches | Rebuildable search data; may be removed when the index is stale |
 | `.tg_cache/ast/` | AST project data, including `project_data_v6.json` | Rebuildable parser and project data; separate from the text index |
 | `.tensor-grep/sessions/` | Persisted session metadata and snapshots | State for reusable project context; inspect before cleanup |
-| Checkpoint store under `.tensor-grep/` | Saved file contents for rollback | Durable recovery material; do not delete when clearing caches |
+| `.tensor-grep/checkpoints/` | Saved file contents and metadata for rollback | Durable recovery material; do not delete when clearing caches |
 | Resident worker memory | Optional in-process AST data | Volatile; worker behavior is experimental |
 
 Some session requests may use an optional daemon response cache. That cache is scoped to daemon requests and is not the checkpoint store. See [cache management](runbooks/cache-management.md) before removing local state and [session daemon protocol](session_daemon_protocol.md) for session behavior.

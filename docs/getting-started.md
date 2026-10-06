@@ -47,6 +47,7 @@ INFO application stopped
 def invoice_total(amount, tax):
     return amount + tax
 
+
 print(invoice_total(100, 5))
 ```
 
@@ -99,7 +100,7 @@ Text search finds characters. Structural search parses code and can match a shap
 Try the supported AST search slice:
 
 ```text
-tg run -p 'print($VALUE)' -l python ./src
+tg run -p 'print($VALUE)' --lang python ./src
 ```
 
 `$VALUE` is a named wildcard: it stands for an expression in the call. The output should identify the `print(invoice_total(100, 5))` call. This is a useful validated slice of structural search, not a replacement for every feature in ast-grep. Parser support and configuration affect which files can be analyzed. See the [harness API](harness_api.md) for command output details.
@@ -135,20 +136,20 @@ Do not type `SESSION_ID` literally. Refresh asks the session to update its view 
 
 ## Save a checkpoint before an edit
 
-A **checkpoint** is a saved copy used to restore a specific file. It is rollback material, so treat it differently from a disposable cache. Create and inspect a checkpoint for only the sample source file:
+A **checkpoint** is a saved copy used to restore a specific file. It is rollback material, so treat it differently from a disposable cache. Create a checkpoint for only the sample source file:
 
 ```text
 tg checkpoint create ./src/invoice.py --json
 tg checkpoint list ./src/invoice.py --json
 ```
 
-If you are practicing, make a small change to `invoice.py`, then use the exact ID returned by `create`:
+Before changing the file, inspect the create result. Record its `checkpoint_id`, confirm its scope is the sample file, and read the `undo_command` or `undo_argv` it returned. You can also list the checkpoint as shown above. If you are practicing, make a small change to `invoice.py`, then use the exact ID from that creation result:
 
 ```text
 tg checkpoint undo CHECKPOINT_ID ./src/invoice.py --json
 ```
 
-Replace `CHECKPOINT_ID` with the returned ID. Read the undo result and its suggested command before proceeding. Undo restores the saved file and may discard edits made after the checkpoint. Keep this exercise inside the disposable practice folder. Optional checkpoint labels are available from a source checkout and may depend on a release newer than the published package; the ID, not the label, selects the checkpoint.
+Replace `CHECKPOINT_ID` with the returned ID. Undo restores the saved file and may discard edits made after the checkpoint, so confirm the displayed command targets only the intended practice file before running it. The current source checkout accepts optional `--label` metadata, but published PyPI `1.123.23` does not; omit labels when following this guide with that package. Labels are descriptive only; the checkpoint ID selects what to restore.
 
 ## What to expect from optional features
 
