@@ -195,3 +195,24 @@ handler line was reanchored; the 340 identities and classifications are retained
 New-source independent review, restored mandatory Opus review, integration against actual
 dependency squashes, exact-head CI and published replay remain required. The provider-limited
 Opus invocation returned HTTP 429 before work and is FAILED; it does not grant clearance.
+
+## Actual dependency squashes and final source verification
+
+Subprocess #1217 merged as `c0e8449ebad3374d2f9168f691258b9ca899e235`; ranking #1215
+merged as `47700556f404c631a58a1b9a272ea6fe37fc38dd`. Labels integration commit
+`e4e280a4ab093251560480e0572b964acde56df9` has the exact full Git tree of reviewed
+`f20551a`: `48e63c9eb40279da8299b6128588197cf9a7610c`. This is actual integration,
+not the earlier rehearsal. Four known status/inventory conflicts retain the exact reviewed
+labels blobs. Current dispositions were then refreshed in clean source `09b55be`.
+
+All eleven bounded batches pass on that exact clean source: 103 sanitization/label/wire tests,
+strict subprocess census, full Ruff/preview/mypy (177 files), unchanged size and bare-call
+gates, actual memoized handler assertions, tracker and documentation checks, and 47 unique
+source replay cases. The source/test/script subtrees still equal reviewed `f20551a`.
+The new diagnostics publication receipt records its completed 44-job release and eight
+actual v1.123.22 replay cases. Subprocess/ranking publication is pending main CI `37437549841`.
+
+Final-head independent review, restored mandatory Opus review and full CI remain gates.
+The latest Opus invocation failed with HTTP 429 before review; retry after 10:10 UTC on
+2026-10-06. Earlier specialist approval cannot clear the new sanitization amendment.
+Labels must wait for completed main publication before merge, then pass published replay.
