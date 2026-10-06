@@ -50,6 +50,15 @@ uvx --from 'tensor-grep==X.Y.Z' tg --version
 
 Basic Python installation does not require a GPU, dense model, CUDA, or an API key. Optional dense search dependencies belong to the [experimental feature setup](EXPERIMENTAL.md).
 
+Python users can add `tensor-grep[scan]` for structural patterns and rules that use
+the ast-grep command, or `tensor-grep[ast]` for the optional tree-sitter language
+parsers used by code analysis. These are separate from GPU and dense-model dependencies.
+For example:
+
+```text
+python -m pip install "tensor-grep[ast,scan]"
+```
+
 The Python package path also supports the `tg update` / `tg upgrade` workflow. If you need those commands, install with `pip` or `uv` rather than a directly downloaded binary.
 
 ## Install a release binary directly

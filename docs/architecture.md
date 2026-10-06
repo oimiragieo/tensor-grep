@@ -9,6 +9,7 @@ flowchart LR
   U[User or tool] --> F{Installed front door}
   F -->|Managed native binary| R[Rust CLI]
   F -->|Python package| P[Python CLI]
+  P -->|Eligible delegated command| R
   R -->|Text search| S{Selected engine}
   S --> RG[rg, when eligible]
   S --> CPU[Native CPU]
@@ -36,6 +37,29 @@ The search router can select `rg`, native CPU search, a trigram index, an AST ba
 The trigram index records character groups to narrow which files need a full scan. It is a file named `.tg_index` at the indexed project root. It can narrow some compatible text searches; whether it is used depends on the query and route. For exact flags and fallbacks, use [routing policy](routing_policy.md).
 
 AST workflows parse source into an abstract syntax tree (AST), then match or analyze code structure. Parser and language coverage constrain what can be found. Call graphs and caller lists can have unresolved or bounded results, so an absent edge is not proof that no caller exists. Orientation scores suggest central files or entry points from available signals; they are not proof of runtime importance or safety.
+
+## From a question to relevant code
+
+Commands such as `tg context` and `tg prepare` use Python services to gather and rank
+candidate files and symbols. A **symbol** is a named code element, such as a function
+or class. Query words, symbol matches, filenames, and relationships between code elements
+help select useful results. Production files, tests, generated code, and vendored code
+can receive different treatment. Exact symbol evidence takes priority over a filename
+phrase match.
+
+The selected results must fit an output budget. This makes them practical to read or
+send to an assistant, but it also means that relevant code may be omitted. Sessions
+reuse project snapshots for repeated requests; refreshing a session updates its view
+after files change. Ranking and caching do not establish that a proposed edit is correct.
+
+## CLI and MCP access
+
+People can read command output in a terminal. Scripts can request structured JSON or
+NDJSON where supported. **MCP** (Model Context Protocol) lets a compatible assistant
+call the tool's search and analysis functions through `tg mcp`. These interfaces share
+underlying services, while their public input and output contracts are documented in
+the [harness API](harness_api.md). Running an MCP server does not by itself grant a
+client permission to apply every proposed change.
 
 ## Local state has different purposes
 

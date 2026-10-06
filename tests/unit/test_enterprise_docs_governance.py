@@ -33,17 +33,17 @@ def test_readme_should_point_to_enterprise_contract_docs() -> None:
 def test_support_matrix_should_distinguish_ci_tested_from_best_effort() -> None:
     doc = SUPPORT_MATRIX_PATH.read_text(encoding="utf-8")
 
-    assert "CI-tested" in doc
-    assert "Best-effort" in doc
+    assert "CI coverage" in doc
+    assert "best-effort" in doc
     assert "3.11" in doc
     assert "3.12" in doc
-    assert "Python < 3.11" in doc
+    assert "Python < 3.11 is unsupported" in doc
     assert "3.9" not in doc
     assert "3.10" not in doc
     assert "3.13" not in doc
     assert "3.14" not in doc
     assert "Apple Silicon" in doc
-    assert "docs/EXPERIMENTAL.md" in doc
+    assert "(EXPERIMENTAL.md)" in doc
 
 
 def test_contracts_should_exclude_experimental_surface_from_stable_guarantees() -> None:
@@ -58,12 +58,12 @@ def test_contracts_should_exclude_experimental_surface_from_stable_guarantees() 
 def test_installation_doc_should_describe_release_validated_channels() -> None:
     doc = INSTALLATION_PATH.read_text(encoding="utf-8")
 
-    assert "Recommended Channel by Use Case" in doc
+    assert "Recommended channel by use case" in doc
     assert "tg update" in doc
     assert "tg-windows-amd64-cpu.exe" in doc
     assert "tg-linux-amd64-cpu" in doc
     assert "tg-macos-amd64-cpu" in doc
-    assert "docs/EXPERIMENTAL.md" in doc
+    assert "(EXPERIMENTAL.md)" in doc
 
 
 def test_hotfix_procedure_should_route_through_semantic_release() -> None:
@@ -118,13 +118,12 @@ def test_security_doc_should_exist_when_readme_links_to_it() -> None:
 def test_docs_index_should_point_to_current_product_contracts() -> None:
     doc = DOCS_INDEX_PATH.read_text(encoding="utf-8")
 
-    assert "native search and rewrite tool" in doc
-    assert "Rust-native CPU text search" in doc
-    assert "docs/CI_PIPELINE.md" in doc
-    assert "docs/benchmarks.md" in doc
-    assert "docs/tool_comparison.md" in doc
-    assert "docs/SUPPORT_MATRIX.md" in doc
-    assert "GPU acceleration is benchmark-governed" in doc
+    assert "(getting-started.md)" in doc
+    assert "(architecture.md)" in doc
+    assert "(CI_PIPELINE.md)" in doc
+    assert "(benchmarks.md)" in doc
+    assert "(SUPPORT_MATRIX.md)" in doc
+    assert "(EXPERIMENTAL.md)" in doc
 
 
 def test_tool_comparison_doc_should_keep_workload_specific_claims() -> None:
@@ -141,7 +140,8 @@ def test_tool_comparison_doc_should_keep_workload_specific_claims() -> None:
 def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
     doc = MKDOCS_PATH.read_text(encoding="utf-8")
 
-    assert "Native search and rewrite tool" in doc
+    assert "Search code and logs, understand symbols, and prepare changes" in doc
+    assert "First Search: getting-started.md" in doc
     assert "https://github.com/oimiragieo/tensor-grep" in doc
     assert "CI Pipeline: CI_PIPELINE.md" in doc
     assert "Support Matrix: SUPPORT_MATRIX.md" in doc
@@ -154,8 +154,8 @@ def test_experimental_docs_and_runbooks_should_warn_about_worker_support_boundar
     experimental = EXPERIMENTAL_PATH.read_text(encoding="utf-8")
     runbook = RESIDENT_WORKER_RUNBOOK_PATH.read_text(encoding="utf-8")
 
-    assert "Not covered by the stable enterprise contract" in experimental
-    assert "workload-dependent" in experimental
+    assert "outside the stable compatibility guarantees" in experimental
+    assert "compatible build, device, drivers, and supported route" in experimental
     assert "not part of the stable default enterprise surface" in runbook
     assert "tg worker --stop" in runbook
 
@@ -173,7 +173,10 @@ def test_operational_runbooks_should_include_windows_safe_commands() -> None:
     cache = CACHE_RUNBOOK_PATH.read_text(encoding="utf-8")
 
     assert '$env:TG_FORCE_CPU = "1"' in gpu
-    assert "Remove-Item -LiteralPath .tg_cache -Recurse -Force" in cache
+    assert "Remove-Item -LiteralPath '.tg_index' -Force" in cache
+    assert "`.tg_index` is a file" in cache
+    assert "avoid deleting the whole `.tensor-grep/` directory" in cache
+    assert "Remove-Item -LiteralPath .tg_cache -Recurse -Force" not in cache
 
 
 NATIVE_SEARCH_RS = Path("rust_core/src/native_search.rs")

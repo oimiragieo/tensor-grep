@@ -3,6 +3,42 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
+
+@pytest.mark.parametrize(
+    "required",
+    [
+        "## Install the Python package",
+        "## Install a release binary directly",
+        "## Verify the installation",
+        "## Channels not yet published",
+        "https://github.com/oimiragieo/tensor-grep/releases",
+        "python -m pip install tensor-grep",
+        "tg --version",
+        "tg-windows-amd64-cpu.exe",
+        "tg-linux-amd64-cpu",
+        "tg-macos-amd64-cpu",
+        "CHECKSUMS.txt",
+        "(package_manager_publish.md)",
+    ],
+)
+def test_installation_validator_detects_missing_user_guidance(required: str) -> None:
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "validate_release_assets", root / "scripts/validate_release_assets.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    content = (root / "docs/installation.md").read_text(encoding="utf-8")
+    assert module.validate_installation_docs(installation_content=content) == []
+    assert required in content
+    errors = module.validate_installation_docs(
+        installation_content=content.replace(required, "REMOVED")
+    )
+    assert len(errors) == 1
+
 
 def test_should_fail_when_npm_repository_url_is_not_canonical():
     root = Path(__file__).resolve().parents[2]
@@ -340,7 +376,7 @@ def test_should_require_explicit_homebrew_version_contract():
     assert any("version TENSOR_GREP_VERSION" in err for err in errors)
 
 
-def test_should_require_package_manager_sections_in_installation_docs():
+def test_should_require_user_installation_sections_and_release_link():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -352,13 +388,13 @@ def test_should_require_package_manager_sections_in_installation_docs():
     errors = module.validate_installation_docs(
         installation_content="### Homebrew Tap Flow\n### Winget Flow\n"
     )
-    assert any("### Repeatable Release Checklist" in err for err in errors)
-    assert any("### Rollback Playbook" in err for err in errors)
+    assert any("## Verify the installation" in err for err in errors)
+    assert any("## Channels not yet published" in err for err in errors)
     assert any("oimiragieo/tensor-grep" in err for err in errors)
-    assert any("npm parity checks" in err for err in errors)
+    assert any("(package_manager_publish.md)" in err for err in errors)
 
 
-def test_should_require_installation_docs_to_include_package_manager_commands():
+def test_should_require_installation_commands_assets_and_checksum_reference():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -377,12 +413,11 @@ def test_should_require_installation_docs_to_include_package_manager_commands():
             "--check-npm\n"
         )
     )
-    assert any("brew tap oimiragieo/tap" in err for err in errors)
-    assert any("brew install tensor-grep" in err for err in errors)
-    assert any("brew install oimiragieo/tap/tensor-grep" in err for err in errors)
-    assert any("winget validate --manifest" in err for err in errors)
-    assert any("winget-pkgs" in err for err in errors)
-    assert any("winget install oimiragieo.tensor-grep" in err for err in errors)
+    assert any("python -m pip install tensor-grep" in err for err in errors)
+    assert any("tg-windows-amd64-cpu.exe" in err for err in errors)
+    assert any("tg-linux-amd64-cpu" in err for err in errors)
+    assert any("tg-macos-amd64-cpu" in err for err in errors)
+    assert any("CHECKSUMS.txt" in err for err in errors)
     assert any("tg --version" in err for err in errors)
 
 

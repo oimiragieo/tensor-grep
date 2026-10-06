@@ -1,251 +1,158 @@
 <div align="center">
-  <img src="docs/assets/logo.jpg" alt="tensor-grep logo" width="800"/>
+  <img src="docs/assets/logo.jpg" alt="tensor-grep" width="640"/>
 </div>
 
-# tensor-grep (tg)
+# tensor-grep
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/tensor-grep)](https://pypi.org/project/tensor-grep/)
-[![CI](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml)
+[![CI](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-**Fast text, AST, indexed, and GPU-aware search CLI.** One binary for ripgrep-compatible text search, BM25 re-ranking, native AST search and rewrite, indexed acceleration for repeated queries, codebase orientation for agents, one-call edit readiness and machine-readable context for AI agents, symbol call-graph analysis, security and compliance rule packs, and an embedded MCP server.
+**Find the code. Understand the change.**
 
-```bash
-pip install tensor-grep        # or: uvx tensor-grep
+Search code and logs, follow symbols, and gather the context for your next change from
+one command-line interface. `tensor-grep` combines text and structural search with
+repository maps, ranked context, and tools for AI-assisted development.
 
-tg PATTERN [PATH]                                    # ripgrep-compatible text search
-tg prepare src/ "add invoice tax field" --json       # one-call edit readiness for agents
-tg agent src/ "add invoice tax field" --json         # AI-agent context capsule
-tg blast-radius-render src/ create_invoice           # blast-radius for a symbol
-tg scan --config sgconfig.yml                        # AST structural search/rewrite
-tg mcp                                               # start the built-in MCP server
-```
+Use it to investigate an unfamiliar project, trace a log message back to its source,
+or give a coding assistant a focused set of files instead of an entire repository.
+Core local workflows need no API key or GPU.
 
----
+[Get started](docs/getting-started.md) · [Installation](docs/installation.md) ·
+[How it works](docs/architecture.md) · [Releases](https://github.com/oimiragieo/tensor-grep/releases)
 
-## What it is
+## Get started
 
-`tensor-grep` is an agent-native search and code-intelligence layer. It covers the full workflow from finding text to understanding what a change will affect: a ripgrep-compatible text engine, native AST structural search and rewrite via ast-grep rules, in-process caches and a session daemon for sub-second repeated queries, machine-readable AI-agent context capsules, symbol call-graph analysis, security/compliance rule packs with signed audit manifests, and a built-in MCP server and LSP.
-
-It ships as a native CLI on Windows, macOS, and Linux — no server required for local use, no subprocess overhead.
-
----
-
-## Features
-
-### Text search
-- **ripgrep-compatible subset** — supports the common `rg` flags (pattern, path, `-t`/`--type`, `--count-matches`, `--no-ignore`, `--sort path`, `--format rg`, `--json`, `--ndjson`). This is a validated compatible subset, not a full ripgrep replacement. Use `--format rg` for deterministic ripgrep-shaped stdout; `--format rg --json` for rg JSON Lines output.
-- Root-level shortcuts: `tg PATTERN [PATH]`, `tg -t js PATTERN PATH`, `tg --count-matches PATTERN PATH` all behave as `tg search ...`.
-- **`tg search PATTERN PATH --rank`** (alias `--bm25`) — local BM25 re-ranking of text-search results by per-chunk content relevance. Pure-Python, no API key, no GPU. Scores and re-orders results from the ripgrep-backed engine so the most content-relevant matches surface first. Works in plain text and `--json` output modes. Usage: `tg search PATTERN PATH --rank`.
-- **`tg find "QUERY" [PATH]`** (experimental) — whole-repo hybrid semantic search: no regex/pattern pre-filter, walks and ranks the WHOLE repo via BM25 + local CPU dense-embedding relevance (RRF-fused), so it can surface content a vocabulary-mismatched regex would miss. No API key, no GPU. The dense leg falls back to BM25-only (visibly, never silently) when the `semantic` extra or a fetched model is absent — a BM25-only `tg find` is a fully supported mode. Bounded by default (`--max-repo-files`, `--deadline`); a truncated scan exits 2 with `result_incomplete`. Does not offer `--format rg` — this is not a grep-parity surface. Options: `--limit` (default 10), `--max-tokens` (default 4000, 0 = unbounded), `--max-repo-files`, `--deadline`, `--json`, `--ndjson`.
-- **`tg install-dense`** — one-shot setup for `tg find`'s dense leg: installs the `semantic` extra (`model2vec` + `numpy` — pure CPU/numpy, no torch or GPU dependency) and fetches the checksum-pinned `potion-code-16M` model (~65MB, one-time download, cached at `~/.tensor-grep/models/potion-code-16M`). Not run automatically and not bundled into the wheel — `tg find` keeps working BM25-only until this has been run once, and offline or on any install/fetch failure it exits non-zero with a clear message rather than leaving a partial model.
-- Chunk-parallel native CPU engine for large files.
-
-### AST search & rewrite
-- **`tg scan --config sgconfig.yml`** — run ast-grep class structural search/rewrite rules against a codebase.
-- **`tg test`** — validate AST rules against fixtures.
-- **`tg run`** — apply a validated AST rule slice. (`tg run` is a useful slice of ast-grep, not a full replacement.)
-- **`tg new`** — scaffold a new rule, test, or project. `tg new project NAME` creates a named AST project; `tg new` initializes the current directory.
-
-### AI-agent context
-- **`tg prepare PATH "task" --json`** — one-call edit readiness. A single call returns everything an agent otherwise assembles from a multi-step tool loop: the primary edit target (file/symbol) with a confidence score, a callers/blast-radius floor with graph-trust provenance, detected validation commands, a machine-branchable `ask_user_before_editing` recommendation, and ready-to-use claim/evidence coordination hooks for multi-agent work.
-
-  ```bash
-  tg prepare src/ "add invoice tax field" --out capsule.json --json
-  ```
-
-  What comes back (abridged; real field names):
-
-  ```json
-  {
-    "primary_target": {"file": "...", "symbol": "...", "kind": "function", "confidence": 0.9},
-    "confidence": {"overall": 0.9, "downgrade_reasons": []},
-    "ask_user_before_editing": {"required": false, "reasons": []},
-    "blast_radius_floor": {"callers_count": 3, "top_callers": ["..."], "graph_trust_summary": {"...": "..."}},
-    "validation_commands": ["uv run pytest tests/unit/... -q"],
-    "coordination": {"claim": {"submitted": false}, "evidence": {"argv": ["..."]}}
-  }
-  ```
-
-  Budget-honest by default: `tg prepare` runs under a 60s `--deadline` (override it, or pass `--no-deadline`), and when the deadline binds it prints the full payload, exits `2` with `partial: true`, and downgrades the confidence score itself with named reasons — it never presents a truncated scan as a complete, full-confidence answer. `--out capsule.json` persists the capsule byte-identical to stdout so `tg evidence emit --capsule capsule.json` can reuse it; `--claim` submits an advisory ledger claim so concurrent agents see the overlap. See [docs/CONTRACTS.md](docs/CONTRACTS.md) for the full contract.
-- **`tg agent PATH "query" --json`** — Actionable Context Capsule: primary files/functions, alternative targets, snippets with line maps, validation commands, rollback/checkpoint metadata, confidence, and an ask-before-editing recommendation. Mixed-language queries report `validation_alignment` instead of silently pairing mismatched targets and validators.
-- **`tg orient [PATH]`** — one-call codebase orientation capsule for agents. Ranks files by import in-degree (imported-by-many = foundational), identifies entry points via main/cli/index/lib heuristics, produces a symbol map, and emits AST-boundary code snippets within a token budget. Pure-CPU, no API key, no GPU. Options: `--max-tokens` (default 3000; bounds the snippet budget only, not the whole capsule), `--max-central-files` (default 10), `--json`. JSON keys include `central_files[{file,graph_score,symbols}]`, `entry_points`, `symbol_map`, `snippets`, `token_estimate`, `token_budget_label`, `truncated`, `scan_limit`, `routing_reason="orient"`. Honest caveat: in-degree centrality is import-graph based and works best on Python; Rust/JS edges resolve fully only in whole-repo scans.
-- **`tg map`** — machine-readable file/symbol map of a codebase.
-- **`tg inventory [PATH]`** — single-pass, walk-only repository manifest for first-contact triage: file/byte counts by language and by category (code/doc/config/test/other), a top-level-directory breakdown, and the largest files. Reuses the same gitignore-aware walker as `orient`/`callers` (so counts stay truth-consistent and `.git`/`.tensor-grep`/vendor dirs are excluded for free), detects and separates binary files so they never inflate language counts, and surfaces truncation honestly via `scan_limit`. Pure-CPU, no AST parse (much faster than `tg map`), no API key. Options: `--max-repo-files` (default 50000), `--json`. JSON keys: `totals`, `binary`, `languages[]`, `categories[]`, `top_level_dirs[]`, `largest_files[]`, `scan_limit`, `coverage.language_scope="extension-heuristic"`. Honest caveat: language labels are an extension heuristic, not a linguist-grade classifier.
-- **`tg docs-coverage [PATH]`** — list source files not referenced by any governing doc (`CLAUDE.md`/`README*`/`AGENTS.md`) under `PATH` — the concrete doc-drift signal for keeping per-directory agent docs honest. Reference-existence only (a source file is "covered" if a governing doc mentions its repo-relative path or basename), so it under-reports gaps rather than flooding with false positives. Excludes tests, fixtures, tool-state (`.claude`/`.git`/`.tensor-grep`), vendor, and build/cache trees. Reuses the same gitignore-aware walker as `inventory`/`orient`. Options: `--max-repo-files` (default 50000), `--json` (keys: `totals`, `uncovered_files[]`, `doc_files[]`, `scan_limit`, `coverage`). Note: governing docs are collected from within `PATH`, so run it at the repo root for full coverage (a sub-directory scope only sees docs inside that sub-directory).
-- **Scan-limit tiers** — why a `tg inventory` file count and a `tg map`/`tg orient` file count can differ on the same repo: `tg map` and `tg orient` AST-index a bounded set of files (`--max-repo-files` defaults to `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000`, full parse per file); `tg inventory` walks up to `DEFAULT_MAX_INVENTORY_FILES = 50000` files (stat + 8KB content sniff, no parse); a raw `tg search` scans the full tree with no file-count cap. A larger `tg inventory` total than `tg map`'s `files` count on the same repo is expected behavior, not a bug.
-- **`tg context PATH "query"`** — semantic context capsule for a natural-language question. Bounded for prompt injection by default: `--max-tokens` (default 16000) caps the pack to a coherent top-ranked slice (each retained file keeps its symbols) with an honest `token_budget` field; pass `--max-tokens 0` for the full unbounded pack.
-- **`tg context-render`** / **`tg edit-plan`** — rendered context and structured edit plans with daemon response caching for sub-second warm calls.
-
-### Symbol intelligence
-- **`tg defs`** — find definitions.
-- **`tg source`** — show source for a symbol.
-- **`tg refs`** — find references. Recommended for TypeScript/JS symbol navigation: dogfooding (v1.19.3) found `tg refs` returned 14 reference sites on a TS-heavy repo where `tg callers` returned 1 for the same symbol.
-- **`tg callers`** -- who calls a function. Resolution is parser-backed in-file for all ten registered languages (see [Language Coverage](docs/tool_comparison.md#language-coverage)); the "Python-first" framing this bullet used to carry described a state that predates the current tier and contradicted that table. Large repos of any language can still take minutes -- that is a scale property, not a language one, and `--deadline` bounds it. See [docs/harness_api.md](docs/harness_api.md) for the exact contract note.
-- **`tg impact`** -- what a symbol affects.
-- **`tg blast-radius`** / **`tg blast-radius-render`** / **`tg blast-radius-plan`** -- ranked impact graph with rendered and plan-ready output.
-- Language coverage: all ten registered languages -- C, C#, C++, Go, Java, JavaScript, PHP, Python, Rust, TypeScript -- have AST-verified refs/callers **in-file**. Cross-file caller confirmation still falls back to a text prefilter for every one of them, and a `resolution_gaps` entry names that gap rather than reporting a proven zero. The split is derived live from the language registry and stamped into every repo-map JSON payload (`coverage.symbol_navigation`), so ask the product rather than trusting a written count; the honest comparison -- including where competitors are ahead -- is in [docs/tool_comparison.md](docs/tool_comparison.md#language-coverage).
-
-### Security & compliance
-- **`tg rulesets`** — built-in security and compliance AST rule packs.
-- **`tg audit`** — audit-verify / audit-history / audit-diff with signed manifest digests and semantic diff.
-- **`tg classify`** — log and code classification. Default path is local deterministic heuristics; set `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` to opt into the CyBERT/Triton path.
-- **`tg review-bundle`** — produce enterprise review bundles. See [docs/enterprise_review_bundle_ci.md](docs/enterprise_review_bundle_ci.md) for a turnkey CI PR-gate recipe.
-
-### Edit safety & audit
-- **`tg checkpoint create/list/undo`** — create, list, and undo edit checkpoints before applying rewrites.
-- Signed audit manifests for every run.
-- Bounded agent-loop memory: session and daemon response caches report byte usage; search and repo-context caches have environment-overridable entry caps.
-
-### Integrations: MCP + LSP
-- **`tg mcp`** — built-in MCP server. Exposes `tg_search` and related tools with `query`, `max_results`, `max_files`, and `structured_json` bounds. Machine-readable contracts in [docs/harness_api.md](docs/harness_api.md).
-  - Legacy vs meta surface: the per-function tools stay advertised by default, and each description names the consolidated meta-tool (`tg_navigate`, `tg_impact`, `tg_query`, ...) that covers it. Set `TG_MCP_LEGACY_TOOLS=off` to advertise only the consolidated surface. Details in [docs/harness_api.md](docs/harness_api.md).
-- **`tg lsp`** / **`tg lsp-setup`** — structural search language server for editor integration.
-
-### Indexed / persisted acceleration
-- In-process literal/string/AST/repo-context caches accelerate repeated queries.
-- **`tg session`** — start a cached edit loop session.
-- Daemon mode keeps caches warm across invocations; `tg context-render` and `tg edit-plan` reach sub-second latency on warm daemon calls.
-
-### GPU routing (experimental)
-- GPU support is **opt-in and experimental**. Default classification is local/deterministic unless you opt in.
-- **`tg calibrate`** — benchmark local CPU vs GPU crossover for your workload.
-- **`tg devices`** — list available GPU devices.
-- **`--gpu-device-ids`** — select specific GPUs for a run.
-- Native CUDA via `cudarc` with NVRTC JIT, CUDA streams, pinned memory, and CUDA graphs. Public managed GPU is not promotion-ready; `tg dogfood` reports `world_class_readiness.status = "not_claimed"` for GPU until public managed binaries produce verified end-to-end route/correctness proof.
-
-### Diagnostics & ops
-- **`tg doctor`** — system, GPU, cache, AST, and daemon diagnostics.
-- **`tg dogfood`** — agent-readiness gate; emits structured JSON with limitation surfaces.
-- **`tg route-test`** — diagnostic: compare `context-render` vs `edit-plan` target routing for the same query, reporting agreement and confidence warnings.
-- **`tg upgrade`** / **`tg update`** — self-upgrade.
-- **`tg repair-launcher`** — fix native vs Python launcher conflicts on Windows.
-
----
-
-## Install
+With Python 3.11 or later:
 
 ```bash
-pip install tensor-grep
-# or run without installing:
-uvx tensor-grep
+python -m pip install tensor-grep
+tg --version
 ```
 
-> **Which front door do you get?** `pip install`/`uvx tensor-grep` installs the **Python front door**;
-> a cold search pays a Python-interpreter startup tax (roughly 150-250ms) before the search itself
-> runs. The install script also sets up the managed **native** `tg` binary
-> (`~/.tensor-grep/bin/tg`), which starts close to raw `rg` speed, and `tg upgrade` keeps an existing
-> native front door in sync with new releases. Either way, `rg` stays the fastest baseline for cold
-> literal search — tg's edge is agent-native context (`tg prepare` / `tg orient` / `tg callers` /
-> `tg blast-radius` / `tg find`), not raw grep speed.
-
-Supported on Windows, macOS, and Linux. See [docs/installation.md](docs/installation.md) for release binaries and source builds. npm, Homebrew and winget packages are not published yet.
-
----
-
-## Quick start
+Then, from a project directory:
 
 ```bash
-# Text search — ripgrep-compatible subset
-tg "TODO" src/
+# Find a literal marker and show its line number.
+tg search -F -n "TODO" .
 
-# Search with type filter
-tg -t py "class.*Service" api/
+# Get an overview of the project's central files and likely entry points.
+tg orient .
 
-# Deterministic ripgrep-shaped output (for automation)
-tg --format rg --sort path "import" src/
-
-# One-call edit readiness — target + confidence + blast-radius floor + validation commands
-tg prepare src/ "add invoice tax field" --out capsule.json --json
-
-# AI-agent context capsule — structured JSON for agent workflows
-tg agent src/ "add invoice tax field" --json
-
-# Blast radius for a symbol
-tg blast-radius-render src/ create_invoice
-
-# Who calls a function?
-tg callers src/ authenticate_user
-
-# AST structural search/rewrite
-tg scan --config sgconfig.yml
-
-# Local BM25 re-ranking — surface most-relevant matches first, no API key
-tg search "TODO" src/ --rank
-
-# Whole-repo hybrid semantic search (experimental) — no pattern pre-filter needed
-tg find "verify login tokens" src/
-
-# One-shot install of tg find's dense-embedding leg (~65MB, one-time)
-tg install-dense
-
-# One-call codebase orientation for agents — central files, entry points, symbol map
-tg orient src/
-
-# Start the built-in MCP server
-tg mcp
-
-# Check system and cache health
-tg doctor
-
-# Verify agent-readiness
-tg dogfood
+# Gather relevant code for a question, within a context budget.
+tg context . "how are invoices calculated?" --max-tokens 2000
 ```
 
----
+New to command-line tools? The [first-search walkthrough](docs/getting-started.md)
+uses a small sample project and explains each command and result.
+
+Windows, macOS, and Linux have supported installation paths. The Python package starts
+through a Python entry point; the managed installers also set up a native CPU front door.
+Some native commands call a Python sidecar, a separate process that supplies the rest of
+the tool's features. See [docs/installation.md](docs/installation.md) and the
+[support matrix](docs/SUPPORT_MATRIX.md) to choose a channel. npm, Homebrew, and winget
+packages are not published yet.
+
+## What you can do
+
+| Task | Start here | What you get |
+|---|---|---|
+| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; optional local BM25 relevance ranking with `--rank` |
+| Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
+| Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
+| Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits |
+| Prepare a change | `tg context`, `tg agent`, `tg prepare` | Relevant code, possible edit targets, confidence information, and suggested validation commands |
+| Repeat a workflow | `tg index`, `tg session`, `tg checkpoint` | Search indexes, reusable repository context, and scoped snapshots restored by ID |
+| Connect your tools | `tg mcp`, JSON/NDJSON output | Structured results for coding assistants, scripts, and editor integrations |
+
+An **AST** is a parsed representation of source code. Structural search can match a
+function call as code rather than as a particular arrangement of spaces and text.
+For a Python package installation, first add the structural-search dependency with
+`python -m pip install "tensor-grep[scan]"`. The native binary supports this example directly.
+
+This searches Python files for calls to `print`:
+
+```bash
+tg run -p 'print($VALUE)' --lang python .
+```
+
+Keep the single quotes around AST patterns in PowerShell so `$VALUE` reaches the tool
+unchanged. Search is read-only; applying a rewrite is a separate, explicit operation.
+
+## Give an assistant useful context
+
+`tg prepare` brings together a possible edit target, confidence and limitations,
+caller evidence, and validation commands. Its JSON output lets a client inspect the
+recommendation before deciding what to do:
+
+```bash
+tg prepare . "add invoice tax validation" --json
+```
+
+A **context capsule** is a structured collection of relevant files, symbols and snippets.
+It saves callers from assembling that information through separate searches. Sessions
+can reuse repository context across requests. Optional audit manifests and signed evidence
+support review workflows; they are not generated or signed automatically for every run.
+
+For automation, start with [docs/harness_api.md](docs/harness_api.md) and the working
+recipes in [docs/harness_cookbook.md](docs/harness_cookbook.md). The
+[review-bundle guide](docs/enterprise_review_bundle_ci.md) covers evidence checks in CI.
+
+## Choose the right search
+
+- **Known text or a regular expression:** use `tg search`. It supports a validated
+  ripgrep-compatible subset; `--format rg` requests ripgrep-shaped output.
+- **A code pattern:** use the structural search commands. The supported AST slice is
+  useful for focused rules and rewrites; `ast-grep` has a broader surface.
+- **A task or question:** use `tg context` or `tg prepare`. Experimental `tg find`
+  also offers whole-repository relevance search, with optional local dense matching.
+- **Repeated searches:** evaluate indexes and sessions against your workload.
+
+The native CPU engine is one execution path, alongside delegated engines and Python-owned
+commands. `rg` remains the cold text-search baseline. Performance claims are
+benchmark-governed and workload-specific; the [comparison](docs/tool_comparison.md)
+and [benchmarks](docs/benchmarks.md) explain what was measured.
+
+Bounded scans can return partial results. Confidence scores and caller graphs are evidence
+to review, not proof that a change is safe or that a symbol is unused. GPU paths and other
+opt-in features have separate requirements and limitations in
+[docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md).
 
 ## Canonical docs
 
-| Doc | Purpose |
-|-----|---------|
-| [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contract shapes |
-| [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end harness workflows |
-| [docs/benchmarks.md](docs/benchmarks.md) | Benchmark matrix, artifact naming, regression rules |
-| [docs/tool_comparison.md](docs/tool_comparison.md) | Comparison against `rg`, `git grep`, `ast-grep`, plus the two-tier language coverage table |
-| [docs/gpu_crossover.md](docs/gpu_crossover.md) | GPU crossover story and current limits |
-| [docs/routing_policy.md](docs/routing_policy.md) | CPU/GPU/index/AST routing behavior |
-| [docs/installation.md](docs/installation.md) | Supported install paths |
-| [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) | Opt-in and hidden features outside the stable surface |
-| [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility guarantees for configs, caches, and outputs |
-| [docs/enterprise_review_bundle_ci.md](docs/enterprise_review_bundle_ci.md) | Turnkey CI PR-gate recipe: signed evidence receipts -> review bundle -> fail-closed verify |
-| [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | CI, release, audit, and dependency-maintenance automation |
-| [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | Supported platforms, runtimes, and distribution channels |
-| [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) | Patch, rollback, and verification process |
-| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution and release-intent rules |
+| Guide | Purpose |
+|---|---|
+| [First search](docs/getting-started.md) | A sample project, explained results, and a glossary |
+| [Architecture](docs/architecture.md) | How the CLI, search engines, Python services, and stored state fit together |
+| [docs/installation.md](docs/installation.md) | Install, verify, and troubleshoot the launcher |
+| [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contracts |
+| [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end automation examples |
+| [docs/routing_policy.md](docs/routing_policy.md) | How execution paths are selected |
+| [docs/benchmarks.md](docs/benchmarks.md) | Accepted measurements and regression checks |
+| [docs/tool_comparison.md](docs/tool_comparison.md) | Workload and language-coverage comparisons |
+| [docs/gpu_crossover.md](docs/gpu_crossover.md) | GPU measurements and current limits |
+| [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) | Platforms, runtimes, and delivery channels |
+| [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility and output guarantees |
+| [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | Testing, releases, and dependency maintenance |
+| [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) | Patch and rollback procedures |
 
----
+## Contribute and get help
 
-## Issues & support
+[Report a bug](https://github.com/oimiragieo/tensor-grep/issues/new?template=bug_report.yml),
+[request a feature](https://github.com/oimiragieo/tensor-grep/issues/new?template=feature_request.yml),
+or [ask a question](https://github.com/oimiragieo/tensor-grep/issues/new?template=question.yml).
+Include the command, `tg --version`, your platform, and a small reproducible example.
 
-- [Report a bug](https://github.com/oimiragieo/tensor-grep/issues/new?template=bug_report.yml)
-- [Request a feature](https://github.com/oimiragieo/tensor-grep/issues/new?template=feature_request.yml)
-- [Ask a question](https://github.com/oimiragieo/tensor-grep/issues/new?template=question.yml)
-- [Report a security vulnerability privately](https://github.com/oimiragieo/tensor-grep/security/advisories/new)
-
----
-
-## gotcontext.ai
-
-`tensor-grep` runs locally on your machine. [gotcontext.ai](https://gotcontext.ai) is the hosted version: an MCP gateway that uses tensor-grep for code intelligence and layers on semantic compression, Knowledge Hub RAG, and team management, so any AI tool gets compressed code context from one API key.
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and review conventions, and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
 ## Future Work
 
-The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
-
-- extend lexical (BM25) re-ranking with AST-shaped chunking or semantic re-ranking only when it demonstrably beats the shipped `tg search --rank` baseline on both retrieval quality and editor-plane benchmarks
-- add tighter multi-agent signal surfaces on top of the existing JSON/NDJSON, session, and MCP contracts instead of inventing another parallel agent protocol
-- publish a broader reproducible comparator pack for tools such as `ag`, `ack`, `ugrep`, and GNU `grep` alongside the current `rg` and `git grep` rows
-- graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition
-- keep benchmark-governed security and compliance acceleration on top of the existing rulesets and audit surfaces
-- keep managed provider / editor-plane integrations honest and contract-tested
-- continue supply-chain hardening, package-manager validation, and operational docs for team ownership
-- preserve benchmark history and rejected experiments so future work stays measurable instead of speculative
-
----
+Ongoing work focuses on retrieval quality, cross-file navigation, larger repositories,
+and integrations. Experimental features graduate through measured results and compatibility
+checks. See the [experimental-feature guide](docs/EXPERIMENTAL.md) for current boundaries
+and [GitHub issues](https://github.com/oimiragieo/tensor-grep/issues) for discussion.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). Related project: [gotcontext.ai](https://gotcontext.ai).

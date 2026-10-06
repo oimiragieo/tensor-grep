@@ -99,6 +99,16 @@ Text search finds characters. Structural search parses code and can match a shap
 
 Try the supported AST search slice:
 
+If you installed the Python package, first add its structural-search dependency:
+
+```text
+python -m pip install "tensor-grep[ast,scan]"
+```
+
+This installs the ast-grep command used by the Python path for patterns with named
+wildcards, plus optional language parsers for the code-analysis tasks later in this guide.
+The native binary supports the following structural-search example directly.
+
 ```text
 tg run -p 'print($VALUE)' --lang python ./src
 ```
@@ -149,7 +159,7 @@ Before changing the file, inspect the create result. Record its `checkpoint_id`,
 tg checkpoint undo CHECKPOINT_ID ./src/invoice.py --json
 ```
 
-Replace `CHECKPOINT_ID` with the returned ID. Undo restores the saved file and may discard edits made after the checkpoint, so confirm the displayed command targets only the intended practice file before running it. The current source checkout accepts optional `--label` metadata, but published PyPI `1.123.23` does not; omit labels when following this guide with that package. Labels are descriptive only; the checkpoint ID selects what to restore.
+Replace `CHECKPOINT_ID` with the returned ID. Undo restores the saved file and may discard edits made after the checkpoint, so confirm the displayed command targets only the intended practice file before running it. The checkpoint ID selects what to restore.
 
 ## What to expect from optional features
 

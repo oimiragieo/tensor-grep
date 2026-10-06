@@ -57,7 +57,8 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "docs/harness_api.md" in readme
     assert "docs/harness_cookbook.md" in readme
     # High-level capability surface the README still advertises.
-    assert "tg calibrate" in readme
+    # GPU setup belongs in the opt-in guide rather than the introductory README.
+    assert "tg calibrate" in (_REPO_ROOT / "docs/EXPERIMENTAL.md").read_text(encoding="utf-8")
     assert "tg mcp" in readme
     assert "native CPU engine" in readme
     assert "benchmark-governed" in readme
@@ -1003,7 +1004,12 @@ def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
     handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
     continuation = CONTINUATION_PLAN_PATH.read_text(encoding="utf-8")
 
-    for doc in (agents, readme, skill, contracts, handoff, continuation):
+    assert "tg agent" in readme
+    assert "context capsule" in readme.lower()
+    assert "docs/harness_api.md" in readme
+
+    # Detailed capsule fields belong in the technical references, not the overview.
+    for doc in (agents, skill, contracts, handoff, continuation):
         assert "tg agent" in doc
         assert "Actionable Context Capsule" in doc
         assert "line maps" in doc

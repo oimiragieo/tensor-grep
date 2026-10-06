@@ -17,7 +17,7 @@ The default native asset profile is CPU. The CI workflow has a separate `native-
 
 - Python package floor: Python 3.11 or newer (`pyproject.toml` declares `>=3.11`).
 - Python versions exercised by the documented CI matrix: 3.11 and 3.12.
-- Python below 3.11 is unsupported.
+- Python < 3.11 is unsupported.
 - Rust maintainers should use the stable toolchain specified by CI and release workflows. The source manifest's minimum toolchain is not a promise that every older stable compiler can reproduce current release builds.
 
 ## Published channels
