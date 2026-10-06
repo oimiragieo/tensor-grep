@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import platform
+import queue
 import socket
 import sys
 import threading
@@ -43,9 +44,11 @@ class _StopTrace:
 
     def __init__(self, node: str = "diagnostic-projection-control") -> None:
         self.node = node
-        self.events: list[dict[str, Any]] = []
+        self._slots: list[dict[str, Any] | None] = [None] * _TRACE_CAP
+        self._available: queue.SimpleQueue[int] = queue.SimpleQueue()
+        for slot in range(_TRACE_CAP):
+            self._available.put(slot)
         self.overflow = False
-        self.sequence = 0
         self.local = threading.local()
         self.endpoint: tuple[str, int] | None = None
         self.close_entered = threading.Event()
@@ -55,22 +58,40 @@ class _StopTrace:
         self.pre_cleanup: dict[str, Any] | None = None
 
     def add(self, name: str, **fields: Any) -> None:
-        if len(self.events) >= _TRACE_CAP:
+        try:
+            slot = self._available.get_nowait()
+        except queue.Empty:
             self.overflow = True
             return
-        self.sequence += 1
         safe = {
             key: value
             for key, value in fields.items()
             if value is None or type(value) in (bool, int, float, str)
         }
-        self.events.append({
-            "seq": self.sequence,
+        self._slots[slot] = {
+            "seq": slot + 1,
             "t": round(time.monotonic(), 6),
             "thread": threading.get_ident(),
             "event": name,
             **safe,
-        })
+        }
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        return [event for event in self._slots.copy() if event is not None]
+
+    def event_snapshot(self) -> dict[str, Any]:
+        events = self.events
+        # Read reservations after the slot copy: a concurrent new reservation can only make this
+        # snapshot conservatively incomplete, never make a missing record look complete.
+        outstanding = _TRACE_CAP - self._available.qsize() - len(events)
+        return {
+            "events": events,
+            "overflow": self.overflow,
+            "cap": _TRACE_CAP,
+            "outstanding_reservations": outstanding,
+            "incomplete": self.overflow or outstanding != 0,
+        }
 
     def stage(self) -> str:
         return getattr(self.local, "stage", "other")
@@ -359,7 +380,7 @@ class _StopTrace:
                 "poll_seconds": 0.05,
             },
             "result_before_cleanup": self.serialize_result(result),
-            "trace": {"events": self.events, "overflow": self.overflow, "cap": _TRACE_CAP},
+            "trace": self.event_snapshot(),
             "failure_type": failure,
             "cleanup_error_type": cleanup_error,
             "pre_cleanup": self.pre_cleanup,
@@ -381,6 +402,102 @@ def _emit_trace(capsys: pytest.CaptureFixture[str], payload: dict[str, Any]) -> 
     line = _TRACE_PREFIX + json.dumps(payload, sort_keys=True, separators=(",", ":"))
     with capsys.disabled():
         print(line, flush=True)
+
+
+def _finish_diagnostic(
+    trace: _StopTrace,
+    daemon: Any,
+    result: object,
+    capsys: pytest.CaptureFixture[str],
+    original_failure: BaseException | None,
+    original_traceback: Any,
+    release_shutdown: threading.Event | None = None,
+) -> None:
+    """Observation is fallible; release and close always run before selecting the primary error."""
+    observer_errors: list[BaseException] = []
+    cleanup_error: BaseException | None = None
+    emergency_release = False
+
+    def observer_failed(stage: str, error: BaseException) -> None:
+        observer_errors.append(error)
+        try:
+            trace.add("observer_error", stage=stage, exception=type(error).__name__)
+        except BaseException as recording_error:
+            observer_errors.append(recording_error)
+
+    try:
+        try:
+            trace.snapshot_before_cleanup(daemon)
+        except BaseException as error:
+            observer_failed("snapshot", error)
+    finally:
+        try:
+            if release_shutdown is not None:
+                try:
+                    emergency_release = (
+                        not trace.shutdown_held.is_set() or trace.shutdown_hold_expired
+                    )
+                    trace.add("control_shutdown_release", emergency=emergency_release)
+                except BaseException as error:
+                    observer_failed("release_observation", error)
+                finally:
+                    try:
+                        release_shutdown.set()
+                    except BaseException as error:
+                        observer_failed("release", error)
+        finally:
+            if daemon is not None:
+                try:
+                    trace.set_stage("cleanup")
+                except BaseException as error:
+                    observer_failed("cleanup_stage", error)
+                try:
+                    daemon.close()
+                except BaseException as error:
+                    cleanup_error = error
+
+    if release_shutdown is not None and (emergency_release or trace.shutdown_hold_expired):
+        observer_failed(
+            "control", AssertionError("control was not causally gated by the shutdown hold")
+        )
+    try:
+        payload = trace.payload(
+            result,
+            failure=type(original_failure).__name__ if original_failure is not None else None,
+            cleanup_error=type(cleanup_error).__name__ if cleanup_error is not None else None,
+            daemon=daemon,
+        )
+        if payload["trace"]["incomplete"]:
+            observer_failed("trace", AssertionError("diagnostic trace is incomplete"))
+        if payload["result_before_cleanup"]["result_serialization"] != "ok":
+            observer_failed("projection", AssertionError("diagnostic result projection refused"))
+    except BaseException as error:
+        observer_failed("payload", error)
+        payload = {
+            "node": trace.node,
+            "failure_type": type(original_failure).__name__ if original_failure else None,
+            "cleanup_error_type": type(cleanup_error).__name__ if cleanup_error else None,
+            "trace": {"incomplete": True},
+        }
+    payload["observer_error_types"] = [type(error).__name__ for error in observer_errors]
+    payload["diagnostic_incomplete"] = bool(observer_errors)
+    if release_shutdown is not None:
+        payload["control"] = {
+            "name": "ack_before_shutdown",
+            "emergency_release": emergency_release,
+            "release_set": release_shutdown.is_set(),
+            "hold_expired": trace.shutdown_hold_expired,
+        }
+    try:
+        _emit_trace(capsys, payload)
+    except BaseException as error:
+        observer_failed("emission", error)
+    if original_failure is not None:
+        raise original_failure.with_traceback(original_traceback)
+    if cleanup_error is not None:
+        raise cleanup_error
+    if observer_errors:
+        raise observer_errors[0]
 
 
 @pytest.fixture(autouse=True)
@@ -540,7 +657,6 @@ def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
     result: dict[str, Any] | None = None
     original_failure: BaseException | None = None
     original_traceback: Any = None
-    cleanup_error: BaseException | None = None
     try:
         daemon = _Daemon(root, metadata_version="OLD", trace=trace)
         result = session_daemon.stop_session_daemon(str(root))
@@ -548,29 +664,19 @@ def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
         assert not any(event["event"] == "signal_seam_reached" for event in trace.events), (
             "self-PID classification reached the signal seam"
         )
-        assert not trace.overflow, "diagnostic trace is incomplete"
+        assert not trace.event_snapshot()["incomplete"], "diagnostic trace is incomplete"
     except BaseException as error:
         original_failure = error
         original_traceback = error.__traceback__
     finally:
-        trace.snapshot_before_cleanup(daemon)
-        if daemon is not None:
-            trace.set_stage("cleanup")
-            try:
-                daemon.close()
-            except BaseException as error:
-                cleanup_error = error
-        payload = trace.payload(
+        _finish_diagnostic(
+            trace,
+            daemon,
             result,
-            failure=type(original_failure).__name__ if original_failure is not None else None,
-            cleanup_error=type(cleanup_error).__name__ if cleanup_error is not None else None,
-            daemon=daemon,
+            capsys,
+            original_failure,
+            original_traceback,
         )
-        _emit_trace(capsys, payload)
-    if original_failure is not None:
-        raise original_failure.with_traceback(original_traceback)
-    if cleanup_error is not None:
-        raise cleanup_error
 
 
 def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
@@ -590,8 +696,6 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
     result: dict[str, Any] | None = None
     original_failure: BaseException | None = None
     original_traceback: Any = None
-    cleanup_error: BaseException | None = None
-    emergency_release = False
     try:
         daemon = _Daemon(
             root,
@@ -641,42 +745,20 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
         assert not any(event.get("event") == "signal_seam_reached" for event in trace.events), (
             "self-PID classification reached the signal seam"
         )
-        assert not trace.overflow, "diagnostic trace is incomplete"
+        assert not trace.event_snapshot()["incomplete"], "diagnostic trace is incomplete"
     except BaseException as error:
         original_failure = error
         original_traceback = error.__traceback__
     finally:
-        trace.snapshot_before_cleanup(daemon)
-        if not trace.shutdown_held.is_set() or trace.shutdown_hold_expired:
-            emergency_release = True
-        trace.add("control_shutdown_release", emergency=emergency_release)
-        release_shutdown.set()
-        if daemon is not None:
-            trace.set_stage("cleanup")
-            try:
-                daemon.close()
-            except BaseException as error:
-                cleanup_error = error
-        payload = trace.payload(
+        _finish_diagnostic(
+            trace,
+            daemon,
             result,
-            failure=type(original_failure).__name__ if original_failure is not None else None,
-            cleanup_error=type(cleanup_error).__name__ if cleanup_error is not None else None,
-            daemon=daemon,
+            capsys,
+            original_failure,
+            original_traceback,
+            release_shutdown,
         )
-        payload["control"] = {
-            "name": "ack_before_shutdown",
-            "emergency_release": emergency_release,
-            "release_set": release_shutdown.is_set(),
-            "hold_expired": trace.shutdown_hold_expired,
-        }
-        _emit_trace(capsys, payload)
-    if original_failure is not None:
-        raise original_failure.with_traceback(original_traceback)
-    if cleanup_error is not None:
-        raise cleanup_error
-    assert not emergency_release and not trace.shutdown_hold_expired, (
-        "control was not causally gated by the shutdown hold"
-    )
 
 
 @pytest.mark.parametrize("secret_field", ["token", "nonce", "hmac", "secret", "version_proof"])
@@ -711,6 +793,196 @@ def test_diagnostic_projection_refuses_secret_fields_and_overflow_is_explicit(
     assert len(payload["trace"]["events"]) == _TRACE_CAP
     assert payload["node"] == request.node.nodeid
     assert "diagnostic-secret-sentinel" not in json.dumps(payload)
+
+
+def test_diagnostic_parallel_reservations_have_unique_sequence_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _StopTrace()
+    rendezvous = threading.Barrier(2)
+    real_time = time.monotonic
+    errors: list[BaseException] = []
+
+    def interleaved_time() -> float:
+        if threading.current_thread().name.startswith("trace-race-"):
+            rendezvous.wait(2.0)
+        return real_time()
+
+    def writer() -> None:
+        try:
+            trace.add("interleaved")
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(time, "monotonic", interleaved_time)
+    writers = [threading.Thread(target=writer, name=f"trace-race-{index}") for index in range(2)]
+    try:
+        for thread in writers:
+            thread.start()
+        for thread in writers:
+            thread.join(3.0)
+    finally:
+        rendezvous.abort()
+        for thread in writers:
+            thread.join(3.0)
+    assert not errors and not any(thread.is_alive() for thread in writers)
+    snapshot = trace.event_snapshot()
+    assert [event["seq"] for event in snapshot["events"]] == [1, 2]
+    assert snapshot["outstanding_reservations"] == 0 and not snapshot["incomplete"]
+
+
+def test_diagnostic_pending_reservation_and_parallel_cap_are_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _StopTrace()
+    for _ in range(_TRACE_CAP - 1):
+        trace.add("filled")
+    entered, release = threading.Event(), threading.Event()
+    real_time = time.monotonic
+    errors: list[BaseException] = []
+
+    def held_time() -> float:
+        if threading.current_thread().name == "trace-cap-writer":
+            entered.set()
+            if not release.wait(3.0):
+                raise AssertionError("reservation hold expired")
+        return real_time()
+
+    def writer() -> None:
+        try:
+            trace.add("last_slot")
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(time, "monotonic", held_time)
+    thread = threading.Thread(target=writer, name="trace-cap-writer")
+    thread.start()
+    try:
+        assert entered.wait(2.0), "last-slot reservation did not reach its hold"
+        pending = trace.event_snapshot()
+        assert len(pending["events"]) == _TRACE_CAP - 1
+        assert pending["outstanding_reservations"] == 1
+        assert pending["incomplete"] and not pending["overflow"]
+        trace.add("over_cap")
+        assert trace.event_snapshot()["overflow"]
+    finally:
+        release.set()
+        thread.join(3.0)
+    assert not errors and not thread.is_alive()
+    final = trace.event_snapshot()
+    assert [event["seq"] for event in final["events"]] == list(range(1, _TRACE_CAP + 1))
+    assert len(final["events"]) == _TRACE_CAP
+    assert final["outstanding_reservations"] == 0 and final["overflow"] and final["incomplete"]
+
+
+def test_diagnostic_unfilled_reservation_cannot_finish_green(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _StopTrace()
+    error = RuntimeError("reservation-projection-failed")
+
+    def fail_time() -> float:
+        raise error
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(time, "monotonic", fail_time)
+        with pytest.raises(RuntimeError) as raised:
+            trace.add("unfilled")
+    assert raised.value is error
+    snapshot = trace.event_snapshot()
+    assert snapshot["events"] == [] and not snapshot["overflow"]
+    assert snapshot["outstanding_reservations"] == 1 and snapshot["incomplete"]
+    emitted: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        sys.modules[__name__], "_emit_trace", lambda _capsys, body: emitted.append(body)
+    )
+    with pytest.raises(AssertionError, match="diagnostic trace is incomplete"):
+        _finish_diagnostic(trace, None, {"stopped": True}, capsys, None, None)
+    assert emitted[0]["diagnostic_incomplete"] and emitted[0]["trace"]["incomplete"]
+
+
+def test_diagnostic_refused_projection_cannot_finish_green(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _StopTrace()
+    emitted: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        sys.modules[__name__], "_emit_trace", lambda _capsys, body: emitted.append(body)
+    )
+    with pytest.raises(AssertionError, match="diagnostic result projection refused"):
+        _finish_diagnostic(trace, None, {"stopped": True, "token": "private"}, capsys, None, None)
+    assert emitted[0]["diagnostic_incomplete"]
+    assert emitted[0]["result_before_cleanup"]["result_serialization"] == "refused"
+    assert "private" not in json.dumps(emitted)
+
+
+@pytest.mark.parametrize("observer_seam", ["snapshot", "payload", "emission"])
+@pytest.mark.parametrize("primary", ["original", "cleanup", "both", "none"])
+@pytest.mark.parametrize("control", [False, True], ids=["natural", "control"])
+def test_diagnostic_observer_errors_always_cleanup_and_preserve_precedence(
+    observer_seam: str,
+    primary: str,
+    control: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    trace = _StopTrace()
+    original_error = (
+        AssertionError("original behavior failed") if primary in {"original", "both"} else None
+    )
+    cleanup_error = OSError("cleanup failed") if primary in {"cleanup", "both"} else None
+    observer_error = RuntimeError("private-observer-text-sentinel")
+    release = threading.Event() if control else None
+    trace.shutdown_held.set()
+    calls: list[str] = []
+    emitted: list[dict[str, Any]] = []
+
+    class Fixture:
+        def __init__(self) -> None:
+            self.thread = self.server = self.socket = self
+
+        def is_alive(self) -> bool:
+            return False
+
+        def fileno(self) -> int:
+            return -1
+
+        def close(self) -> None:
+            calls.append("close")
+            assert release is None or release.is_set(), "control was not released before close"
+            if cleanup_error is not None:
+                raise cleanup_error
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        calls.append(observer_seam)
+        raise observer_error
+
+    def emit(_capsys: Any, body: dict[str, Any]) -> None:
+        emitted.append(body)
+        if observer_seam == "emission":
+            fail()
+
+    if observer_seam != "emission":
+        monkeypatch.setattr(
+            trace, "snapshot_before_cleanup" if observer_seam == "snapshot" else "payload", fail
+        )
+    monkeypatch.setattr(sys.modules[__name__], "_emit_trace", emit)
+    expected = original_error or cleanup_error or observer_error
+    with pytest.raises(type(expected)) as raised:
+        _finish_diagnostic(
+            trace, Fixture(), {"stopped": True}, capsys, original_error, None, release
+        )
+    assert raised.value is expected
+    assert calls.count("close") == 1 and (release is None or release.is_set())
+    assert emitted[0]["failure_type"] == (type(original_error).__name__ if original_error else None)
+    assert emitted[0]["cleanup_error_type"] == (
+        type(cleanup_error).__name__ if cleanup_error else None
+    )
+    assert "private-observer-text-sentinel" not in json.dumps(emitted)
+    assert any(event["event"] == "observer_error" for event in trace.events)
+    if observer_seam != "emission":
+        assert emitted[0]["diagnostic_incomplete"]
+        assert "RuntimeError" in emitted[0]["observer_error_types"]
 
 
 @pytest.mark.parametrize("seam", ["request", "probe", "refusal", "proof"])

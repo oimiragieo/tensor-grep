@@ -67,3 +67,28 @@ Failed control raw SHA-256 (current evidence bytes):
 
 - daemon-diagnostic-focused-1.log: `0226b08e5ef88a0f8e6b819cdb7dede7ade90affeb46445f4d0e61f463c8ce13`
 - daemon-diagnostic-control-2.log: `ce458ef8ecd61e5e66b5ee861d52bbc1b3a651c04bbc250d61f606eb323a6d28`
+
+## Independent implementation review amendment: recorder and cleanup
+
+The independent exact-01a5 reviewer reproduced two diagnostic defects without network activity.
+`sol-daemon-review-race-01a5.log` forces interleaving at the actual recorder: two writers can
+emit duplicate sequence numbers, and a 127-entry trace can grow to 129 with overflow=false.
+`sol-daemon-review-finally-01a5.log` confirms ordinary cleanup errors preserve the assertion,
+but an injected snapshot error hides the original assertion and skips cleanup (and the control's
+release). These are diagnostic defects, not the cause of the hosted natural stop failure.
+
+Approved correction: preallocate exactly 128 event slots and a `queue.SimpleQueue` containing
+their unique IDs. Each writer reserves via `get_nowait`; Empty records overflow. Use the reserved
+local ID for both the sequence and its exclusive slot, with no shared increment or len/append
+race and no waiting lock. Sequence means reservation order. Snapshot only materialized records;
+flag outstanding/unfilled reservations as incomplete rather than complete. Retain the same
+primitive projections, event cap, actual timings, forwarding and natural subject schedule.
+
+Put the control's Event release and fixture close in unconditional nested cleanup, even when
+snapshotting fails. Independently catch observer snapshot/payload/emission errors, preserve the
+original subject failure first, cleanup failure second, diagnostic failure last, and retain a
+secondary exception's type in the trace where possible. Observer failures must not skip release
+or close, hide a behavioral failure, or become a passing test. Add bounded deterministic controls
+for the demonstrated race, pending reservations, and snapshot/payload/emission failure order.
+No production, workflow, timeout, polling or original cooperative-predicate change is authorized.
+Both original failed review controls remain raw evidence; new exact-artifact review is required.
