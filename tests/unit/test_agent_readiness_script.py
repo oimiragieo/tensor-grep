@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import time
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,14 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
                 "sidecar-routed rows are unsupported for native CUDA promotion",
             ])
         path.write_text("\n".join([prefix, gpu_content, taxonomy]), encoding="utf-8")
+
+
+def test_docs_claim_validator_accepts_current_repository_docs() -> None:
+    root = Path(__file__).resolve().parents[2]
+    version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+    _load_script_module().validate_docs_claims("", root, version)
 
 
 def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:

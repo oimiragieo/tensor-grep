@@ -43,6 +43,10 @@ Use scoped paths, globs, file types, and `--max-depth` for `tg search`.
 `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence limits, not general search
 flags.
 
+`rg` remains the baseline for cold text search. Compatibility covers the validated compatibility set
+documented in [docs/CONTRACTS.md](docs/CONTRACTS.md), not every possible ripgrep invocation. Preserve
+multi-project workspace and broad generated-root scan protections when changing search routing.
+
 For `tg agent`, preserve the Actionable Context Capsule contract: executable line maps,
 `context_consistency`, confidence, route rationale, omission counts, and checkpoint references.
 Keep parser-backed, rg-backed, graph-derived, heuristic, and stale/uncertain evidence distinguishable.
@@ -123,6 +127,8 @@ These reviewed public skills live in `.claude/skills/`:
 Reproduce reported issues with disposable fixtures, add focused regression coverage, and replay
 against the actual executable or published wheel. `CliRunner` bypasses bootstrap routing.
 Use `python scripts/agent_readiness.py` and `tg dogfood` for the readiness checks relevant to the change.
+The `agent-capsule-hardcases` check exercises target selection and context consistency on difficult
+queries; keep this coverage when changing ranking or capsule output.
 Windows launcher verification includes the quoted multi-word false-positive control in
 `public-windows-launcher-quoted-patterns`. Record source, native executable, and wheel versions
 separately. Do not use a successful sidecar call as proof of native GPU execution.
