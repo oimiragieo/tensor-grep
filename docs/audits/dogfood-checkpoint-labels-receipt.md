@@ -147,3 +147,25 @@ bundle retains exact-source clean-start receipts. Preceding PRs must land first;
 remaining labels delta against actual main, refreshing ancestry/metadata if needed. Squash
 merges do not automatically refresh this branch's merge base. Fresh final-head independent,
 security and CI gates remain required.
+
+## Inherited import-layering correction
+
+Clean combined source `88f405666d6cf6625d2661a0c55abb649f59d6dd` merges subprocess
+`733b116ce15789144ae5ab2038012cff258e41a0` into reviewed labels `0d39ea4`. The complete
+production/test/script delta is identical to the subprocess correction: three unchanged
+decode helpers move into core, the CLI explicitly re-exports them, and two backends import
+core. The import baseline, guard and seven exact exceptions remain unchanged. The inventory
+adds only the wrapper location adjustment, preserving prior label-related locations.
+Superseded labels CI `37429726601` was cancelled for this inherited defect and gives no clearance.
+
+Ten bounded clean-source batches pass: 62 import/policy tests, strict census, complete
+inventory and pin equality across Python 3.11/3.12/3.13, full Ruff/preview/mypy (177 source
+files), size (1,124 files; zero regressions), bare calls, five actual memoized handler
+assertions plus negative control, and 47 source replay rows. The independently reviewed
+replay harness now checks parsed CLI lists, full no-write fixture state and two distinct
+checkpoint IDs with the same label. Source replay is not published-artifact proof.
+
+This supersedes the earlier three-PR burst proposal: merge green #1217 and #1215 in one
+open release window, then integrate labels against their actual squash commits and obtain
+new exact-head reviews and CI. A rehearsal found four status/inventory conflicts; it is
+not evidence of an actual merge. Final Windows wheel/native replay remains required.
