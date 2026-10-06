@@ -330,6 +330,22 @@ def test_agent_gpu_tg_command_degrades_honestly_when_nothing_resolves(monkeypatc
     assert agent_capsule._agent_gpu_tg_command() == "tg"
 
 
+def test_gpu_json_probe_preserves_unicode_machine_output_from_bytes(monkeypatch) -> None:
+    payload = {"message": "café 日本語"}
+
+    def fake_run(command, **options):
+        assert options["text"] is False
+        assert "encoding" not in options and "errors" not in options
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps(payload, ensure_ascii=False).encode("utf-8"), b""
+        )
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", fake_run)
+    result = agent_capsule._run_agent_gpu_json_command(["tg", "--json"], timeout_s=1.0)
+    assert result["status"] == "ok"
+    assert result["payload"] == payload
+
+
 def test_gpu_json_probe_preserves_failure_exit_and_malformed_stderr(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 import textwrap
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from scripts.check_subprocess_decoding import (
-    PRODUCTION,
-    check_repository,
-    forwarder_key,
-    policy_for,
-    scan_source,
-    scan_tree,
-    violations,
-)
+_MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "check_subprocess_decoding.py"
+_spec = importlib.util.spec_from_file_location("tg_subprocess_decoding_guard", _MODULE_PATH)
+assert _spec is not None and _spec.loader is not None
+guard = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = guard
+_spec.loader.exec_module(guard)
+
+PRODUCTION = guard.PRODUCTION
+check_repository = guard.check_repository
+forwarder_key = guard.forwarder_key
+policy_for = guard.policy_for
+scan_source = guard.scan_source
+scan_tree = guard.scan_tree
+violations = guard.violations
 
 
 def test_guard_resolves_module_and_imported_sink_aliases() -> None:
@@ -382,7 +389,7 @@ def test_strict_manifest_rejects_invalid_inventory_structure_and_classification(
     (tmp_path / "docs/subprocess-output-policy-inventory.json").write_text(
         json.dumps(entries), encoding="utf-8"
     )
-    monkeypatch.setattr("scripts.check_subprocess_decoding.ROOT", tmp_path)
+    monkeypatch.setattr(guard, "ROOT", tmp_path)
     assert any("manifest" in problem for problem in check_repository(rows))
 
 
