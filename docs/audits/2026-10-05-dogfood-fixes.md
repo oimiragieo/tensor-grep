@@ -7,10 +7,19 @@ are outside this change. Each row remains open until its own published-artifact 
 | ID | Owner | Disposition | Completion trigger |
 |---|---|---|---|
 | DOGFOOD-DIAGNOSTICS | CLI maintainer | SHIPPED v1.123.22, PR #1214 (`d0d9f7e`) | Release CI 44 jobs; eight published replay cases pass; [raw evidence](evidence/2026-10-05-dogfood/diagnostics-publication.json) |
-| DOGFOOD-DECODING | Runtime maintainer | SHIPPED v1.123.23, PR #1217 (`c0e8449`) | Main CI `37437549841` completed 44 jobs; 33 combined published replay cases passed |
-| DOGFOOD-FILENAME | Ranking maintainer | SHIPPED v1.123.23, PR #1215 (`47700556`) | Same release and combined replay; context/edit and cached/session selection verified |
-| DOGFOOD-LABELS | Checkpoint maintainer | MERGED, UNPUBLISHED, PR #1216 (`7ef470fe`) | Recover main CI, then complete release and published replay; [recurrence](2026-10-06-daemon-stop-recurrence.md) |
-| DOGFOOD-CI-DAEMON-STOP | Runtime/CI maintainer | IN_FLIGHT #1218, PR history: #1218; main CI failed after the earlier diagnostic retry passed | Capture full proof/ACK/refusal/lifecycle outcome before selecting a fix or further retry; separate from the four scoped fixes |
+| DOGFOOD-DECODING | Runtime maintainer | SHIPPED and verified v1.124.0, PR #1217 (`c0e8449`) | Exact CI/review and published replay complete; [report](2026-10-06-dogfood-published.md) |
+| DOGFOOD-FILENAME | Ranking maintainer | SHIPPED and verified v1.124.0, PR #1215 (`47700556`) | Exact CI/review and published replay complete; [report](2026-10-06-dogfood-published.md) |
+| DOGFOOD-LABELS | Checkpoint maintainer | SHIPPED and verified v1.124.0, PR #1216 (`7ef470fe`) | Exact CI/review and published replay complete; [report](2026-10-06-dogfood-published.md) |
+| DOGFOOD-CI-DAEMON-STOP | Runtime/CI maintainer | Diagnostic capture landed through #1218; historical cause unproved; failed labels main remains FAILED | Any recurrence: inspect full result, proof/ACK/refusal and thread transitions before a new fix or retry plan |
+
+## Published closeout (2026-10-06)
+
+All four scoped changes are verified in v1.124.0. The [published report](2026-10-06-dogfood-published.md)
+contains 53 unique passing cases, exact implementation/main CI populations, actual merge and
+release identities, downloaded artifact hashes and matching installed bytes. Labels' final
+mandatory Opus review was restored and cleared its exact artifact; failed prior invocations
+remain historical failures. Earlier sections below record intermediate stages, not current gates.
+The two research-gated diagnostic followups remain open with their existing owners and triggers.
 
 ## Baseline and artifact identity
 
@@ -130,7 +139,7 @@ tree equality to `06e7fd4` checked before commit. Canonical Windows re-verificat
 94 guard, 102 consumer and 28 path tests (3 POSIX skips), full Ruff/preview/mypy, size/bare
 ratchets and 30 source replay rows. Final-head review and CI still apply after rebase.
 
-## Current integrated state (2026-10-06)
+## Pre-publication integrated state (2026-10-06; historical)
 
 Subprocess final head `733b116` passed CI `37432476137` (38 terminal jobs), independent Sol
 review and mandatory Opus review. Ranking final `0314714` passed CI `37426661907` (38 jobs)
@@ -161,3 +170,19 @@ DOGFOOD-BENCH-GPU-PROOF is research-gated, owned by the benchmark maintainer: th
 before using that helper for a native-GPU promotion claim, with explicit-boolean negative
 controls. This campaign's production diagnostic and real artifact observations do not use
 that benchmark helper as proof. Its behavior is not claimed fixed here.
+
+
+## Published diagnostic recovery (2026-10-06)
+
+Labels' first main run 37453425025 on merge `7ef470fe1880825c32af8e124104e8a90391d14d` FAILED and remains failed
+historical evidence, with no additional main retry. Test/docs-only diagnostic PR #1218,
+reviewed `6f7a54a3855958ed928f258449b3f4c7e63c2c29`, merged as `bd368355f3dd58906cf8dd3b3bbd21675d4fc377` with labels'
+merge as its sole parent. The complete recovery release CI and its four Windows observations
+(Python 3.11/3.12, natural subject and controlled shutdown hold) passed. These observations
+establish capture behavior, not the historical cause. Eight distinct successful CI roles are
+retained separately from the failed main. Diagnostic capture landed; cause remains unproved.
+Production daemon behavior, the one-second stop deadline and cooperative predicate were unchanged.
+Fresh same-head Sol/Opus diagnostic reviews and hash-bound helper review are separate from labels'
+earlier clearance; failed 529 and 429 review invocations remain failures.
+
+This mixed disposition is separate from the four product fixes and all 44 strategic rows.

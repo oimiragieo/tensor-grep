@@ -5,20 +5,24 @@
 Intake: main `99c1ea1` / v1.123.21; prior main CI `37402418507` completed with
 44 terminal jobs and zero failures. Canonical venv metadata was 1.123.19 and the managed
 launcher 1.123.20, so neither is used as source-version evidence.
-[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS is
-SHIPPED in v1.123.22 (PR #1214, `d0d9f7e`), with eight published replay cases passing.
-DOGFOOD-DECODING #1217 (`c0e8449`) and DOGFOOD-FILENAME #1215 (`47700556`) are SHIPPED
-in v1.123.23: main CI `37437549841` completed 44 jobs and 33 published replay cases passed.
-[DOGFOOD-LABELS](audits/dogfood-checkpoint-labels-receipt.md) is MERGED, UNPUBLISHED in
-#1216 (`7ef470fe`), owned by the checkpoint maintainer. Final reviewed head `e6f180fe`
-cleared independent/Opus review and PR CI after one recorded diagnostic retry. Its main CI
-`37453425025` failed the same Windows Python 3.11 daemon stop test; Python 3.12 passed.
-DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in #1218 (PR history: #1218), owned by the Runtime/CI maintainer: capture complete
-proof/ACK/refusal/lifecycle evidence before selecting a fix or retry. See the
-[recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md). Labels' trigger remains
-successful exact-artifact release CI and published-artifact replay. Other work is parked.
+[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): all four scoped items are
+SHIPPED and verified in v1.124.0; diagnostics first shipped in v1.123.22.
+PR #1214 (`d0d9f7e`), #1217 (`c0e8449`), #1215 (`47700556`) and #1216 (`7ef470fe`)
+have exact-head CI/review and published-artifact receipts. The final Windows replay has
+53 unique passing cases; [raw evidence and per-case results](audits/2026-10-06-dogfood-published.md)
+separate controlled producers from real native execution. Both GPU research followups retain
+their owners and reopen triggers. DOGFOOD-CI-DAEMON-STOP remains a recurrence-monitoring
+item owned by the Runtime/CI maintainer: recovery CI and the v1.124.0 published replay passed,
+while the original failure's cause remains unproved. A recurrence requires full result,
+proof/ACK/refusal and thread evidence before a new fix or retry plan. The failed labels main
+run remains historical FAILED evidence. No physical native-GPU execution is claimed.
 These four scoped fixes do not close existing strategic rows. Open unrelated PR #1212 owns
 the earlier bug-hunt documentation closeout; Wave 3 remains outside this campaign.
+
+The 2026-10-06 16:40 UTC GitHub census found two open PRs: #1219 (junior-analyst guide
+refresh, reviewed head `c33a88f`, green 38-job CI `37486914765`) and #1212 (the separate
+earlier closeout). Neither owns a canonical strategic row. All 29 unfinished rows retain
+their triggers and `PR: none`; this release closes only the four scoped dogfood items.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
@@ -229,7 +233,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-05** (stamp `post-**v1.123.18**`; live release/PR census and canonical
+Last reconciled: **2026-10-06** (stamp `post-**v1.124.0**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior.)
 
