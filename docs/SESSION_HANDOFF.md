@@ -13,7 +13,7 @@ Labels #1216 is MERGED, UNPUBLISHED (`7ef470fe`): exact `e6f180fe` independent a
 Opus reviews cleared, and PR CI passed after one recorded diagnostic retry. Main run
 `37453425025` then failed the same unchanged daemon signed-version stop test on Windows
 Python 3.11; the same-main Python 3.12 lane passed all seven module cases. No release ran.
-DOGFOOD-CI-DAEMON-STOP is active, owned by the Runtime/CI maintainer. The immediate task is
+DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in #1218, owned by the Runtime/CI maintainer. The immediate task is
 bounded test-only tracing with unchanged deadlines/assertions, followed by a measured fix
 decision; no additional blind retry is cleared. The [recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md)
 preserves both failures and the intervening retry. Other work stays parked while main is red.

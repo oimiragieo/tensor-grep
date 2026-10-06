@@ -13,7 +13,7 @@ in v1.123.23: main CI `37437549841` completed 44 jobs and 33 published replay ca
 #1216 (`7ef470fe`), owned by the checkpoint maintainer. Final reviewed head `e6f180fe`
 cleared independent/Opus review and PR CI after one recorded diagnostic retry. Its main CI
 `37453425025` failed the same Windows Python 3.11 daemon stop test; Python 3.12 passed.
-DOGFOOD-CI-DAEMON-STOP is active, owned by the Runtime/CI maintainer: capture complete
+DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in #1218 (PR history: #1218), owned by the Runtime/CI maintainer: capture complete
 proof/ACK/refusal/lifecycle evidence before selecting a fix or retry. See the
 [recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md). Labels' trigger remains
 successful exact-artifact release CI and published-artifact replay. Other work is parked.

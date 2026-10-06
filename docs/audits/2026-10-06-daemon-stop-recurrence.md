@@ -1,6 +1,6 @@
 # Daemon stop CI recurrence — 2026-10-06
 
-DOGFOOD-CI-DAEMON-STOP is active, owned by the Runtime/CI maintainer. It blocks publication
+DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in PR #1218 (PR history: #1218), owned by the Runtime/CI maintainer. It blocks publication
 of checkpoint labels, which merged as `7ef470fe1880825c32af8e124104e8a90391d14d` in #1216.
 No labels release or root cause is claimed. The four requested product implementations are
 complete; this necessary main-CI diagnosis remains separate from the 44 strategic rows.

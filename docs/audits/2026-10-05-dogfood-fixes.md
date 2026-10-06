@@ -10,7 +10,7 @@ are outside this change. Each row remains open until its own published-artifact 
 | DOGFOOD-DECODING | Runtime maintainer | SHIPPED v1.123.23, PR #1217 (`c0e8449`) | Main CI `37437549841` completed 44 jobs; 33 combined published replay cases passed |
 | DOGFOOD-FILENAME | Ranking maintainer | SHIPPED v1.123.23, PR #1215 (`47700556`) | Same release and combined replay; context/edit and cached/session selection verified |
 | DOGFOOD-LABELS | Checkpoint maintainer | MERGED, UNPUBLISHED, PR #1216 (`7ef470fe`) | Recover main CI, then complete release and published replay; [recurrence](2026-10-06-daemon-stop-recurrence.md) |
-| DOGFOOD-CI-DAEMON-STOP | Runtime/CI maintainer | Active diagnosis; main CI failed after the earlier diagnostic retry passed | Capture full proof/ACK/refusal/lifecycle outcome before selecting a fix or further retry; separate from the four scoped fixes |
+| DOGFOOD-CI-DAEMON-STOP | Runtime/CI maintainer | IN_FLIGHT #1218, PR history: #1218; main CI failed after the earlier diagnostic retry passed | Capture full proof/ACK/refusal/lifecycle outcome before selecting a fix or further retry; separate from the four scoped fixes |
 
 ## Baseline and artifact identity
 
