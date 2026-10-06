@@ -56,6 +56,9 @@ class _StopTrace:
         self.shutdown_release: threading.Event | None = None
         self.shutdown_hold_expired = False
         self.pre_cleanup: dict[str, Any] | None = None
+        self._shutdown_completions: queue.SimpleQueue[threading.Event] = queue.SimpleQueue()
+        self.shutdown_completion_failed = False
+        self.shutdown_completion_result: dict[str, Any] | None = None
 
     def add(self, name: str, **fields: Any) -> None:
         try:
@@ -85,13 +88,43 @@ class _StopTrace:
         # Read reservations after the slot copy: a concurrent new reservation can only make this
         # snapshot conservatively incomplete, never make a missing record look complete.
         outstanding = _TRACE_CAP - self._available.qsize() - len(events)
+        unwaited_shutdowns = self._shutdown_completions.qsize()
         return {
             "events": events,
             "overflow": self.overflow,
             "cap": _TRACE_CAP,
             "outstanding_reservations": outstanding,
-            "incomplete": self.overflow or outstanding != 0,
+            "unwaited_shutdown_completions": unwaited_shutdowns,
+            "incomplete": (
+                self.overflow
+                or outstanding != 0
+                or self.shutdown_completion_failed
+                or unwaited_shutdowns != 0
+            ),
         }
+
+    def wait_shutdown_completions(self) -> None:
+        """Own entered wrappers only; one aggregate cleanup budget never resets per callback."""
+        self.shutdown_completion_failed = True
+        deadline = time.monotonic() + 5.0
+        registered = completed = 0
+        while True:
+            try:
+                completion = self._shutdown_completions.get_nowait()
+            except queue.Empty:
+                break
+            registered += 1
+            if completion.wait(max(0.0, deadline - time.monotonic())):
+                completed += 1
+        self.shutdown_completion_result = {
+            "entered_wrappers": registered,
+            "completed": completed,
+            "cleanup_budget_seconds": 5.0,
+            "timed_out": completed != registered,
+        }
+        self.shutdown_completion_failed = completed != registered
+        if self.shutdown_completion_failed:
+            raise AssertionError("owned shutdown observations did not complete")
 
     def stage(self) -> str:
         return getattr(self.local, "stage", "other")
@@ -383,6 +416,7 @@ class _StopTrace:
             "trace": self.event_snapshot(),
             "failure_type": failure,
             "cleanup_error_type": cleanup_error,
+            "shutdown_completion": self.shutdown_completion_result,
             "pre_cleanup": self.pre_cleanup,
             "post_cleanup": {
                 "thread_alive": bool(daemon and daemon.thread.is_alive()),
@@ -455,6 +489,11 @@ def _finish_diagnostic(
                     daemon.close()
                 except BaseException as error:
                     cleanup_error = error
+
+    try:
+        trace.wait_shutdown_completions()
+    except BaseException as error:
+        observer_failed("shutdown_completion", error)
 
     if release_shutdown is not None and (emergency_release or trace.shutdown_hold_expired):
         observer_failed(
@@ -544,29 +583,39 @@ class _Daemon:
 
             def lifecycle(real_fn: Any, label: str) -> Any:
                 def observed(*args: Any, **kwargs: Any) -> Any:
-                    started = time.monotonic()
-                    self.trace.add(f"{label}_entry")
-                    if label == "server_close":
-                        self.trace.close_entered.set()
-                    if label == "shutdown" and self.trace.shutdown_release is not None:
-                        self.trace.add("shutdown_hold_entry")
-                        self.trace.shutdown_held.set()
-                        released = self.trace.shutdown_release.wait(10.0)
-                        if not released:
-                            self.trace.shutdown_hold_expired = True
-                        self.trace.add("shutdown_hold_end", released=released)
-                    self.trace.add(f"{label}_real_call")
+                    completion = threading.Event() if label == "shutdown" else None
+                    if completion is not None:
+                        self.trace._shutdown_completions.put(completion)
                     try:
-                        result = real_fn(*args, **kwargs)
-                    except BaseException as error:
+                        started = time.monotonic()
+                        self.trace.add(f"{label}_entry")
+                        if label == "server_close":
+                            self.trace.close_entered.set()
+                        if label == "shutdown" and self.trace.shutdown_release is not None:
+                            self.trace.add("shutdown_hold_entry")
+                            self.trace.shutdown_held.set()
+                            released = self.trace.shutdown_release.wait(10.0)
+                            if not released:
+                                self.trace.shutdown_hold_expired = True
+                            self.trace.add("shutdown_hold_end", released=released)
+                        self.trace.add(f"{label}_real_call")
+                        try:
+                            result = real_fn(*args, **kwargs)
+                        except BaseException as error:
+                            self.trace.add(
+                                f"{label}_error",
+                                elapsed=round(time.monotonic() - started, 6),
+                                **self.trace._error_fields(error),
+                            )
+                            raise
                         self.trace.add(
-                            f"{label}_error",
+                            f"{label}_return",
                             elapsed=round(time.monotonic() - started, 6),
-                            **self.trace._error_fields(error),
                         )
-                        raise
-                    self.trace.add(f"{label}_return", elapsed=round(time.monotonic() - started, 6))
-                    return result
+                        return result
+                    finally:
+                        if completion is not None:
+                            completion.set()
 
                 return observed
 
@@ -664,7 +713,6 @@ def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
         assert not any(event["event"] == "signal_seam_reached" for event in trace.events), (
             "self-PID classification reached the signal seam"
         )
-        assert not trace.event_snapshot()["incomplete"], "diagnostic trace is incomplete"
     except BaseException as error:
         original_failure = error
         original_traceback = error.__traceback__
@@ -745,7 +793,6 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
         assert not any(event.get("event") == "signal_seam_reached" for event in trace.events), (
             "self-PID classification reached the signal seam"
         )
-        assert not trace.event_snapshot()["incomplete"], "diagnostic trace is incomplete"
     except BaseException as error:
         original_failure = error
         original_traceback = error.__traceback__
@@ -916,7 +963,223 @@ def test_diagnostic_refused_projection_cannot_finish_green(
     assert "private" not in json.dumps(emitted)
 
 
-@pytest.mark.parametrize("observer_seam", ["snapshot", "payload", "emission"])
+def _stub_lifecycle_daemon(trace: _StopTrace, shutdown: Any) -> tuple[_Daemon, list[str]]:
+    """Exercise actual lifecycle spies/close without creating sockets or a serving thread."""
+    closed: list[str] = []
+
+    class Stub:
+        socket: Any
+
+        def __init__(self) -> None:
+            self.socket = self
+
+        def serve_forever(self) -> None:
+            pass
+
+        def shutdown(self) -> None:
+            shutdown()
+
+        def server_close(self) -> None:
+            pass
+
+        def fileno(self) -> int:
+            return -1
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float) -> None:
+            assert timeout == 5.0
+            closed.append("serve_join")
+
+    daemon = _Daemon.__new__(_Daemon)
+    daemon.trace = trace
+    daemon.server = daemon.thread = Stub()
+    daemon._spy_lifecycle()
+    return daemon, closed
+
+
+def test_diagnostic_delayed_shutdown_observation_completes_during_cleanup(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _StopTrace()
+    held, release = threading.Event(), threading.Event()
+    local = threading.local()
+    real_add, real_time = trace.add, time.monotonic
+    errors: list[BaseException] = []
+    emitted: list[dict[str, Any]] = []
+
+    def add(name: str, **fields: Any) -> None:
+        if name == "shutdown_entry":
+            assert trace._shutdown_completions.qsize() == 1
+        local.return_observation = name == "shutdown_return"
+        try:
+            real_add(name, **fields)
+        finally:
+            local.return_observation = False
+
+    def clock() -> float:
+        if getattr(local, "return_observation", False):
+            held.set()
+            if not release.wait(3.0):
+                raise AssertionError("return-observation hold expired")
+        return real_time()
+
+    monkeypatch.setattr(trace, "add", add)
+    monkeypatch.setattr(time, "monotonic", clock)
+    monkeypatch.setattr(
+        sys.modules[__name__], "_emit_trace", lambda _capsys, body: emitted.append(body)
+    )
+    daemon, closed = _stub_lifecycle_daemon(trace, lambda: None)
+
+    def worker() -> None:
+        try:
+            daemon.server.shutdown()
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert held.wait(2.0), "return observation did not reserve its held ticket"
+        pending = trace.event_snapshot()
+        assert pending["outstanding_reservations"] == 1 and pending["incomplete"]
+        assert pending["unwaited_shutdown_completions"] == 1
+        completion = trace._shutdown_completions.get_nowait()
+        trace._shutdown_completions.put(completion)
+        real_wait = completion.wait
+
+        def wait(timeout: float) -> bool:
+            assert closed == ["serve_join"], "callback wait preceded existing fixture close/join"
+            assert 0.0 <= timeout <= 5.0
+            release.set()
+            return real_wait(timeout)
+
+        monkeypatch.setattr(completion, "wait", wait)
+        _finish_diagnostic(trace, daemon, {"stopped": True}, capsys, None, None)
+    finally:
+        release.set()
+        thread.join(3.0)
+    assert not errors and not thread.is_alive()
+    assert not emitted[0]["diagnostic_incomplete"]
+    assert not emitted[0]["trace"]["incomplete"]
+    assert emitted[0]["trace"]["outstanding_reservations"] == 0
+    assert emitted[0]["trace"]["unwaited_shutdown_completions"] == 0
+    assert emitted[0]["shutdown_completion"]["entered_wrappers"] == 1
+    assert emitted[0]["shutdown_completion"]["completed"] == 1
+
+
+def test_diagnostic_shutdown_completion_timeout_remains_incomplete(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _StopTrace()
+    entered, release = threading.Event(), threading.Event()
+    emitted: list[dict[str, Any]] = []
+    errors: list[BaseException] = []
+
+    def shutdown() -> None:
+        entered.set()
+        if not release.wait(10.0):
+            raise AssertionError("completion-timeout fixture was not released")
+
+    daemon, closed = _stub_lifecycle_daemon(trace, shutdown)
+    monkeypatch.setattr(
+        sys.modules[__name__], "_emit_trace", lambda _capsys, body: emitted.append(body)
+    )
+
+    def worker() -> None:
+        try:
+            daemon.server.shutdown()
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    try:
+        assert entered.wait(2.0), "owned shutdown did not enter its fixture hold"
+        with pytest.raises(AssertionError, match="owned shutdown observations did not complete"):
+            _finish_diagnostic(trace, daemon, {"stopped": True}, capsys, None, None)
+        assert closed == ["serve_join"]
+        assert emitted[0]["trace"]["incomplete"] and emitted[0]["diagnostic_incomplete"]
+        assert emitted[0]["shutdown_completion"]["timed_out"]
+        assert emitted[0]["shutdown_completion"]["entered_wrappers"] == 1
+        assert emitted[0]["shutdown_completion"]["completed"] == 0
+    finally:
+        release.set()
+        thread.join(3.0)
+    assert not errors and not thread.is_alive()
+    assert trace.event_snapshot()["incomplete"], "late completion erased the failed cleanup budget"
+
+
+def test_diagnostic_completed_shutdown_with_unfilled_ticket_still_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    trace = _StopTrace()
+    daemon, _closed = _stub_lifecycle_daemon(trace, lambda: None)
+    real_add, real_time = trace.add, time.monotonic
+    local = threading.local()
+    error = RuntimeError("private-return-observation-error")
+    emitted: list[dict[str, Any]] = []
+
+    def add(name: str, **fields: Any) -> None:
+        local.fail_return = name == "shutdown_return"
+        try:
+            real_add(name, **fields)
+        finally:
+            local.fail_return = False
+
+    def clock() -> float:
+        if getattr(local, "fail_return", False):
+            raise error
+        return real_time()
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(trace, "add", add)
+        scoped.setattr(time, "monotonic", clock)
+        with pytest.raises(RuntimeError) as raised:
+            daemon.server.shutdown()
+    assert raised.value is error
+    monkeypatch.setattr(
+        sys.modules[__name__], "_emit_trace", lambda _capsys, body: emitted.append(body)
+    )
+    with pytest.raises(AssertionError, match="diagnostic trace is incomplete"):
+        _finish_diagnostic(trace, daemon, {"stopped": True}, capsys, None, None)
+    assert emitted[0]["shutdown_completion"]["completed"] == 1
+    assert not emitted[0]["shutdown_completion"]["timed_out"]
+    assert emitted[0]["trace"]["outstanding_reservations"] == 1
+    assert emitted[0]["trace"]["incomplete"] and emitted[0]["diagnostic_incomplete"]
+    assert "private-return-observation-error" not in json.dumps(emitted)
+
+
+def test_diagnostic_shutdown_completions_share_one_cleanup_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _StopTrace()
+    clock_values = iter([10.0, 11.0, 14.0])
+    budgets: list[float] = []
+    for _ in range(2):
+        completion = threading.Event()
+        completion.set()
+        real_wait = completion.wait
+
+        def waiter(wait_fn: Any) -> Any:
+            def wait(timeout: float) -> bool:
+                budgets.append(timeout)
+                return wait_fn(timeout)
+
+            return wait
+
+        monkeypatch.setattr(completion, "wait", waiter(real_wait))
+        trace._shutdown_completions.put(completion)
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock_values))
+    trace.wait_shutdown_completions()
+    assert budgets == [4.0, 1.0]
+    assert trace.shutdown_completion_result is not None
+    assert trace.shutdown_completion_result["completed"] == 2
+    assert not trace.event_snapshot()["incomplete"]
+
+
+@pytest.mark.parametrize("observer_seam", ["snapshot", "payload", "emission", "completion"])
 @pytest.mark.parametrize("primary", ["original", "cleanup", "both", "none"])
 @pytest.mark.parametrize("control", [False, True], ids=["natural", "control"])
 def test_diagnostic_observer_errors_always_cleanup_and_preserve_precedence(
@@ -964,7 +1227,13 @@ def test_diagnostic_observer_errors_always_cleanup_and_preserve_precedence(
 
     if observer_seam != "emission":
         monkeypatch.setattr(
-            trace, "snapshot_before_cleanup" if observer_seam == "snapshot" else "payload", fail
+            trace,
+            {
+                "snapshot": "snapshot_before_cleanup",
+                "payload": "payload",
+                "completion": "wait_shutdown_completions",
+            }[observer_seam],
+            fail,
         )
     monkeypatch.setattr(sys.modules[__name__], "_emit_trace", emit)
     expected = original_error or cleanup_error or observer_error

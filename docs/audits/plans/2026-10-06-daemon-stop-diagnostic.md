@@ -92,3 +92,36 @@ or close, hide a behavioral failure, or become a passing test. Add bounded deter
 for the demonstrated race, pending reservations, and snapshot/payload/emission failure order.
 No production, workflow, timeout, polling or original cooperative-predicate change is authorized.
 Both original failed review controls remain raw evidence; new exact-artifact review is required.
+
+## Superseding completion boundary amendment
+
+Independent review of exact `77276eb0` proved that a pending reservation is transient until its
+writer completes: pre-cleanup assertions can fail even though cleanup produces a complete
+trace (`sol-daemon-observer-transient-7727.log`). A second bounded no-network control using
+the actual lifecycle wrapper and fixture close proves the same gap at the final gate: close
+joins the serve thread but leaves the actual asynchronous shutdown callback unjoined
+(`sol-daemon-observer-final-gate-7727.log`). Both controls retain the real recorder and exact
+exception/outcome checks; neither identifies the hosted product failure's cause.
+
+Remove both pre-cleanup pending-reservation assertions. Register a completion Event before
+each actual shutdown wrapper's first observation, and set it in an outer finally after its
+return/error observation. After functional assertion, unconditional control release, and
+the existing fixture close/join, wait for only those owned shutdown completions with one
+aggregate five-second cleanup budget. No arbitrary sleep, startup barrier, per-event timeout
+reset, original stop deadline/poll change, or production change is allowed. Proof observations
+finish before ping replies, client spies are synchronous, and serve/close are already joined;
+the asynchronous shutdown callback is the specific missing owner. Capture cleanup observation
+errors by type and preserve original failure > cleanup failure > observer failure.
+
+Only after owned callback completion evaluate final pending slots and trace completeness.
+A delayed callback that completes during bounded cleanup must pass. A completion timeout must
+remain incomplete and fail, and a completed callback with a permanently unfilled ticket must
+still fail. Pin all three with bounded Event controls; preserve both failed review receipts.
+This correction is cleanup of test-owned diagnostic resources, not a relaxation of the real
+one-second behavioral stop assertion. Fresh exact-head review and hosted evidence remain required.
+
+The registry owns shutdown wrappers that have entered, with registration preceding their first
+observation. Natural successful listener closure and the control's hold handshake establish the
+relevant entry. It does not prove that a created but not-yet-entered callback is joined on a failed
+natural stop; retain that original failure regardless of secondary late observation. A registered
+completion not yet consumed by the cleanup wait makes a snapshot conservatively incomplete.
