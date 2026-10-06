@@ -14,6 +14,8 @@ This file explains how agents should work in `tensor-grep`.
 
 The repo should be treated as a benchmark-governed, contract-heavy codebase. Do not optimize by guesswork.
 
+Bounded dogfood campaign receipt: [2026-10-05 ledger](docs/audits/2026-10-05-dogfood-fixes.md); preserve per-artifact identities and native-versus-sidecar GPU proof.
+
 ## Backlog & working process
 
 The canonical prioritized/historical work ledger lives in **[docs/BACKLOG.md](docs/BACKLOG.md)**. GitHub

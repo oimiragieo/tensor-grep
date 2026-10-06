@@ -1,6 +1,12 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-09-22
+Last updated: 2026-10-05
+
+Bounded dogfood campaign: diagnostics draft PR #1214; decoding/ranking builds active, labels
+ready. [Live ledger](audits/2026-10-05-dogfood-fixes.md) records exact source/installed/CI
+identities and remaining gates. Original detached checkout and untracked files are preserved.
+Opus review hit a subscription 429 after its health probe; no security approval or release is
+claimed. Resume with implementation review, exact-head CI, then the required security gate.
 
 **2026-09-22 map dogfood correction:** PR #1164 merged as
 `1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure
