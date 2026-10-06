@@ -1284,7 +1284,6 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             ",".join(str(device_id) for device_id in requested_gpu_device_ids),
             "--json",
             "--no-ignore",
-            "-F",
             # End-of-options sentinel (CWE-88 class, AGENTS.md), BEFORE EVERY POSITIONAL.
             #
             # The first cut of this put it BETWEEN `sentinel` and `probe_target`, terminating

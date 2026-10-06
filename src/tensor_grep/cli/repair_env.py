@@ -125,13 +125,21 @@ def repair_env_command(
     else:
         cmd = [sys.executable, "-m", "pip", "install", "-e", str(repo_root), "--no-deps"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=60)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=60,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         _fail(json_output, start, f"Repair failed: {exc}", previous_version=previous_version)
     if proc.returncode != 0:
-        detail = (
-            proc.stderr.strip() or proc.stdout.strip() or f"Process exited with {proc.returncode}"
-        )
+        detail = (proc.stderr or "").strip() or (proc.stdout or "").strip()
+        if not detail:
+            detail = f"Process exited with {proc.returncode}"
         _fail(json_output, start, f"Repair failed: {detail}", previous_version=previous_version)
 
     expected_version = runtime_paths._read_project_version_fallback()
