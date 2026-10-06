@@ -5367,13 +5367,13 @@ def tg_checkpoint(
     path: str = ".",
     label: str | None = None,
 ) -> str:
-    """Checkpoint lifecycle through legacy tools; undo restores snapshots and deletes newer files.
+    """Checkpoint lifecycle; paths are confined to the MCP server root.
 
-    Args:
-        action: One of "create", "list", "undo".
-        checkpoint_id: Opaque ID required for undo.
-        path: Checkpoint scope, confined to the MCP server root.
-        label: Optional create label; invalid for list and undo.
+    - action="create" creates a checkpoint (= tg_checkpoint_create); optional label is trimmed,
+      printable and 1-120 chars, and accepted only for create.
+    - action="list" lists checkpoints (= tg_checkpoint_list).
+    - action="undo" restores a checkpoint (= tg_checkpoint_undo); requires its opaque
+      checkpoint_id and deletes newer files within the stored scope.
     """
     try:
         if label is not None and action in {"list", "undo"}:
