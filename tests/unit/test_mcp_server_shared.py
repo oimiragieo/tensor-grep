@@ -577,6 +577,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
     ),
     "language": "a ruleset language override name, not a path",
     "justification": "free-text audit-suppression rationale, not a path",
+    "label": "free-text checkpoint annotation, not a path",
     "model": "a model name used for local token estimation, not a path",
     "provider": "a semantic-provider mode name (native/lsp/hybrid), not a path",
     "render_profile": "an enum-like render mode name (full/compact/llm), not a path",

@@ -21,7 +21,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1153,
+    "lineno": 1149,
     "enclosing_symbol": "_record_generated_audit_manifest",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -541,7 +541,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1291,
+    "lineno": 1346,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1231,7 +1231,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12701,
+    "lineno": 12783,
     "enclosing_symbol": "ledger_claim",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1791,7 +1791,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1499,
+    "lineno": 1495,
     "enclosing_symbol": "_confine_mcp_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2411,7 +2411,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1364,
+    "lineno": 1419,
     "enclosing_symbol": "tg_rewrite_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2421,7 +2421,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1370,
+    "lineno": 1425,
     "enclosing_symbol": "tg_rewrite_diff",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",

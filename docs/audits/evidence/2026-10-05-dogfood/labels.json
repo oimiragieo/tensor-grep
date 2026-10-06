@@ -1,0 +1,433 @@
+{
+  "baseline_sha": "99c1ea17e30a57043051673dbfcd9750c4497373",
+  "implementation_sha": "2744a6b3d8de7012b1b40eab4956645291193e83",
+  "builder_sha": "daae9c755b8dfb9fa707b01af072bc8c616c7c6d",
+  "receipts": {
+    "label-baseline-feature": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-control",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/label_baseline.py"
+        ],
+        "exit_code": 0,
+        "seconds": 1.61,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\label-baseline-feature.log"
+      },
+      "raw_output": "{\n  \"exit\": 2,\n  \"raw_output\": \"Usage: root checkpoint create [OPTIONS] [PATH]\\nTry 'root checkpoint create --help' for help.\\n\\u250c\\u2500 Error \\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2510\\n\\u2502 No such option '--label'. Did you mean '--help'?                            \\u2502\\n\\u2514\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2500\\u2518\\n\",\n  \"entries\": [\n    \"sample.py\"\n  ]\n}\n"
+    },
+    "labels-root-targeted": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_checkpoint_labels.py",
+          "tests/unit/test_checkpoint_cli.py",
+          "tests/unit/test_checkpoint_atomic_undo.py",
+          "tests/unit/test_checkpoint_undo_preserves_empty_dirs.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 87.53,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-targeted.log"
+      },
+      "raw_output": "........................................................................ [ 98%]\n.                                                                        [100%]\n73 passed in 83.81s (0:01:23)\n"
+    },
+    "labels-root-containment": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_checkpoint_containment.py",
+          "tests/unit/test_checkpoint_create_ancestor_confinement.py",
+          "tests/unit/test_checkpoint_disk_budget.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 24.0,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-containment.log"
+      },
+      "raw_output": "......................................                                   [100%]\n38 passed in 22.79s\n"
+    },
+    "labels-root-mcp": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_mcp_server_meta_dispatch.py",
+          "tests/unit/test_mcp_server_rewrite_audit.py",
+          "-k",
+          "checkpoint",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 7.05,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-mcp.log"
+      },
+      "raw_output": "........                                                                 [100%]\n8 passed, 167 deselected in 5.61s\n"
+    },
+    "labels-root-docs": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_harness_api_docs.py",
+          "tests/unit/test_harness_cookbook.py",
+          "tests/unit/test_mcp_contract_version_docs_are_pinned.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 7.11,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-docs.log"
+      },
+      "raw_output": "..............                                                           [100%]\n14 passed in 3.82s\n"
+    },
+    "labels-root-lint": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 1.64,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-lint.log"
+      },
+      "raw_output": "All checks passed!\n"
+    },
+    "labels-root-format": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "format",
+          "--check",
+          "--preview",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.88,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-format.log"
+      },
+      "raw_output": "1215 files already formatted\n"
+    },
+    "labels-root-mypy": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "mypy",
+          "src/tensor_grep"
+        ],
+        "exit_code": 0,
+        "seconds": 30.55,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-mypy.log"
+      },
+      "raw_output": "Success: no issues found in 174 source files\n"
+    },
+    "labels-root-size": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/file_size_budget.py",
+          "--report"
+        ],
+        "exit_code": 0,
+        "seconds": 1.98,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-size.log"
+      },
+      "raw_output": "scanned 1113 in-scope tracked files\nviolations: 25   grandfathered: 25\n\n   15237  limit=1500  core      pinned=15243 src/tensor_grep/cli/repo_map.py\n   14895  limit=1500  core      pinned=14899 rust_core/src/main.rs\n   13457  limit=1500  core      pinned=13523 src/tensor_grep/cli/main.py\n    5700  limit=1500  core      pinned=5701  src/tensor_grep/cli/mcp_server.py\n    4952  limit=1500  core      pinned=4952  rust_core/src/gpu_native.rs\n    4412  limit=2000  test      pinned=4412  rust_core/tests/test_schema_compat.rs\n    3337  limit=2000  test      pinned=3337  tests/unit/test_session_cli.py\n    2995  limit=2000  test      pinned=2995  rust_core/tests/test_routing.rs\n    2987  limit=2000  test      pinned=2987  tests/unit/test_cli_bootstrap.py\n    2901  limit=2000  test      pinned=2901  tests/unit/test_file_deps.py\n    2686  limit=1500  core      pinned=2686  rust_core/src/native_search.rs\n    2553  limit=1500  core      pinned=2553  rust_core/src/backend_ast.rs\n    2516  limit=2000  test      pinned=2518  tests/unit/test_mcp_error_sanitization.py\n    2509  limit=2000  test      pinned=2509  rust_core/tests/test_ast_rewrite.rs\n    2375  limit=2000  test      pinned=2375  tests/unit/test_apply_policy.py\n    2356  limit=2000  test      pinned=2356  rust_core/tests/test_index.rs\n    2318  limit=2000  test      pinned=2318  rust_core/tests/test_public_native_cli_parity.rs\n    2250  limit=2000  test      pinned=2251  tests/unit/test_semantic_provider_navigation.py\n    2244  limit=2000  test      pinned=2244  tests/unit/test_gpu_benchmark_scale_contracts.py\n    2121  limit=1500  core      pinned=2137  src/tensor_grep/cli/session_daemon.py\n    2109  limit=1500  core      pinned=2109  rust_core/src/backend_ast_workflow.rs\n    1919  limit=1500  core      pinned=1919  benchmarks/run_gpu_native_benchmarks.py\n    1828  limit=1500  core      pinned=1828  src/tensor_grep/cli/session_store.py\n    1817  limit=1500  core      pinned=1817  rust_core/src/backend_cpu.rs\n    1756  limit=1500  core      pinned=1756  rust_core/src/index.rs\nfile-size budget OK: 1113 files scanned, 25 grandfathered, 0 regressions\n"
+    },
+    "labels-root-bare": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/bare_call_ratchet.py",
+          "--report"
+        ],
+        "exit_code": 0,
+        "seconds": 19.38,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-bare.log"
+      },
+      "raw_output": "module                                    bare calls    pinned\n--------------------------------------------------------------\nsrc/tensor_grep/cli/main.py                        0         -\nsrc/tensor_grep/cli/mcp_server.py                  0         -\nsrc/tensor_grep/cli/repo_map.py                    0         -\n--------------------------------------------------------------\nbare-call ratchet OK: 3 modules, 0 bare calls, 0 regressions\n"
+    },
+    "labels-root-mutation-control": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/label_validation_control.py",
+          "C:/dev/projects/tg-dogfood-labels-deliver"
+        ],
+        "exit_code": 0,
+        "seconds": 1.34,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-mutation-control.log"
+      },
+      "raw_output": "{\n  \"protected_control\": \"PASS\",\n  \"mutation\": \"normalizer replaced with identity\",\n  \"expected_failure\": \"DID NOT RAISE <class 'ValueError'>\",\n  \"mutant_index\": [\n    {\n      \"version\": 1,\n      \"checkpoint_id\": \"ckpt-20261006042306-952faaf4\",\n      \"mode\": \"filesystem-snapshot\",\n      \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-label-control-euoehi1n\\\\mutant\\\\project\",\n      \"created_at\": \"2026-10-06T04:23:06.909109+00:00\",\n      \"file_count\": 1,\n      \"label\": \"bad\\nlabel\"\n    }\n  ],\n  \"source_files_edited\": false\n}\n"
+    },
+    "labels-root-replay": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/published_replay.py",
+          "--cases",
+          "labels"
+        ],
+        "exit_code": 0,
+        "seconds": 5.09,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-replay.log"
+      },
+      "raw_output": "{\n  \"version\": \"1.123.19\",\n  \"python\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n  \"package\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\__init__.py\",\n  \"rows\": [\n    {\n      \"issue\": \"label_create\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006042307-c7613e94\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"created_at\": \"2026-10-06T04:23:07.239620+00:00\",\n          \"file_count\": 1,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006042307-c7613e94\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006042307-c7613e94 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": [\n            \"sample.py\"\n          ],\n          \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\",\n          \"version\": 1,\n          \"schema_version\": 1\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_list\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"version\": 1,\n          \"schema_version\": 1,\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"mode\": \"filesystem-snapshot\",\n          \"checkpoint_count\": 1,\n          \"checkpoints\": [\n            {\n              \"version\": 1,\n              \"checkpoint_id\": \"ckpt-20261006042307-c7613e94\",\n              \"mode\": \"filesystem-snapshot\",\n              \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n              \"created_at\": \"2026-10-06T04:23:07.239620+00:00\",\n              \"file_count\": 1,\n              \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\"\n            }\n          ]\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_scoped_undo_by_id\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006042307-c7613e94\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"restored_files\": 1,\n          \"removed_paths\": 0,\n          \"diverged_paths\": [\n            \"sample.py\"\n          ],\n          \"version\": 1,\n          \"schema_version\": 1\n        },\n        \"restored\": \"before\\n\",\n        \"unscoped\": \"must remain\\n\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_invalid_no_write\",\n      \"raw\": {\n        \"exit\": 2,\n        \"output\": \"Checkpoint label must contain 1 to 120 printable characters.\\n\",\n        \"entries\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint_create\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"title\": \"tg_checkpoint_createArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006042309-6c4a8f61\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"created_at\": \"2026-10-06T04:23:09.853646+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006042309-6c4a8f61\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006042309-6c4a8f61 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"legacy MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"action\": {\n              \"title\": \"Action\",\n              \"type\": \"string\"\n            },\n            \"checkpoint_id\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Checkpoint Id\"\n            },\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"required\": [\n            \"action\"\n          ],\n          \"title\": \"tg_checkpointArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006042310-57fb5957\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"created_at\": \"2026-10-06T04:23:10.955624+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006042310-57fb5957\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006042310-57fb5957 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-gmlkrd9d\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"meta MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_list\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:list\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"list\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_undo\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:undo\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"undo\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    }\n  ],\n  \"compiled_extension\": {\n    \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\rust_core.pyd\",\n    \"sha256\": \"4c77228288637aa228ec2594a3a01ac9362819acdc4b3c9e150ff103c69df54e\"\n  }\n}\n"
+    }
+  },
+  "wire_correction": {
+    "source_sha": "7e33d5f43ccb05ef3a0b38d55eaef09404a62c55",
+    "attribution": "Root repeated focused checks against these source/test bytes; later metadata only binds receipts and updates live PR references. The replay ran on identical mutable source before commit.",
+    "checks": [
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_checkpoint_labels.py",
+          "tests/unit/test_checkpoint_labels_mcp_wire.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 46.31,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-wire-final.log",
+        "raw_output": "........................................................                 [100%]\n56 passed in 38.69s\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "mypy",
+          "src/"
+        ],
+        "exit_code": 0,
+        "seconds": 2.69,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-wire-quality.log",
+        "raw_output": "Success: no issues found in 175 source files\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.45,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-wire-ruff.log",
+        "raw_output": "All checks passed!\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "format",
+          "--preview",
+          "--check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.17,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-wire-format.log",
+        "raw_output": "1218 files already formatted\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/run_handler_gate_cached.py",
+          "C:/dev/projects/tg-dogfood-labels-deliver"
+        ],
+        "exit_code": 0,
+        "seconds": 7.22,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-root-wire-ledger.log",
+        "raw_output": "{\n  \"root\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\",\n  \"records\": 340,\n  \"passed_actual_assertions\": [\n    \"test_ledger_locatability\",\n    \"test_ledger_completeness_over_the_whole_tree\",\n    \"test_ledger_uniqueness\",\n    \"test_ledger_vocabulary\",\n    \"test_ledger_evidence_and_reason_non_empty_and_distinct\"\n  ],\n  \"memoized_modules\": 175,\n  \"negative_control\": \"cli/mcp_audit_tools.py: lineno 1 outside 'tg_checkpoint_undo''s span [1296, 1369]\",\n  \"limitation\": \"Per-module pure AST reads memoized locally; this is not an unmodified pytest run. CI must run the unchanged gate.\"\n}\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/published_replay.py",
+          "--cases",
+          "labels"
+        ],
+        "exit_code": 0,
+        "seconds": 11.56,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-opus-source-replay.log",
+        "raw_output": "{\n  \"version\": \"1.123.19\",\n  \"python\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n  \"package\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\__init__.py\",\n  \"rows\": [\n    {\n      \"issue\": \"label_create\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006053316-28fa5cd7\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"created_at\": \"2026-10-06T05:33:16.608911+00:00\",\n          \"file_count\": 1,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006053316-28fa5cd7\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006053316-28fa5cd7 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": [\n            \"sample.py\"\n          ],\n          \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\",\n          \"version\": 1,\n          \"schema_version\": 1\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_list\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"version\": 1,\n          \"schema_version\": 1,\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"mode\": \"filesystem-snapshot\",\n          \"checkpoint_count\": 1,\n          \"checkpoints\": [\n            {\n              \"version\": 1,\n              \"checkpoint_id\": \"ckpt-20261006053316-28fa5cd7\",\n              \"mode\": \"filesystem-snapshot\",\n              \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n              \"created_at\": \"2026-10-06T05:33:16.608911+00:00\",\n              \"file_count\": 1,\n              \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\"\n            }\n          ]\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_scoped_undo_by_id\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006053316-28fa5cd7\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"restored_files\": 1,\n          \"removed_paths\": 0,\n          \"diverged_paths\": [\n            \"sample.py\"\n          ],\n          \"version\": 1,\n          \"schema_version\": 1\n        },\n        \"restored\": \"before\\n\",\n        \"unscoped\": \"must remain\\n\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_invalid_no_write\",\n      \"raw\": {\n        \"exit\": 2,\n        \"output\": \"Checkpoint label must contain 1 to 120 printable characters.\\n\",\n        \"entries\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint_create\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"title\": \"tg_checkpoint_createArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006053320-18172e14\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"created_at\": \"2026-10-06T05:33:20.607866+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006053320-18172e14\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006053320-18172e14 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"legacy MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"action\": {\n              \"title\": \"Action\",\n              \"type\": \"string\"\n            },\n            \"checkpoint_id\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Checkpoint Id\"\n            },\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"required\": [\n            \"action\"\n          ],\n          \"title\": \"tg_checkpointArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006053322-2af525bf\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"created_at\": \"2026-10-06T05:33:22.097398+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006053322-2af525bf\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006053322-2af525bf C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"meta MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_list\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:list\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"list\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_undo\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:undo\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"undo\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_null\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053322-edad903f\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:22.756618+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053322-edad903f\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053322-edad903f C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"null\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_[\\\"x\\\"]\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053323-804c3e01\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:23.386523+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053323-804c3e01\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053323-804c3e01 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"[\\\"x\\\"]\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_{\\\"a\\\":1}\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053323-0d6e3e1b\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:23.998605+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053323-0d6e3e1b\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053323-0d6e3e1b C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"{\\\"a\\\":1}\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_null\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053324-16b5e87a\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:24.810045+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053324-16b5e87a\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053324-16b5e87a C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"null\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_[\\\"x\\\"]\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053325-91043908\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:25.428134+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053325-91043908\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053325-91043908 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"[\\\"x\\\"]\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_{\\\"a\\\":1}\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006053326-26ad2409\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"created_at\": \"2026-10-06T05:33:26.131805+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006053326-26ad2409\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006053326-26ad2409 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-u92cf8z8\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"{\\\"a\\\":1}\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_invalid_path_redacted\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"Checkpoint label must contain 1 to 120 printable characters.\"\n        },\n        \"path\": \"[refused]\"\n      },\n      \"verdict\": \"PASS\"\n    }\n  ],\n  \"compiled_extension\": {\n    \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\rust_core.pyd\",\n    \"sha256\": \"4c77228288637aa228ec2594a3a01ac9362819acdc4b3c9e150ff103c69df54e\"\n  }\n}\n"
+      }
+    ],
+    "limits": "Handler assertions memoize pure AST reads; not unmodified pytest. Exact-head reviews, CI and published replay remain separate."
+  },
+  "ci_literal_correction": {
+    "test_sha": "b7e0776327b89225fcbb76efbb4e422712ece9fe",
+    "production_source_unchanged_from": "7e33d5f43ccb05ef3a0b38d55eaef09404a62c55",
+    "failed_run": 37419629849,
+    "failed_job": 112127241179,
+    "failed_head": "9a5ec248b48c691a7cfdd904846da8465135ea42",
+    "reason": "Two new tests hard-coded the live MCP contract version; the existing ratchet requires deriving their expectation from the shared constant. The dedicated wire-review literal pin remains unchanged.",
+    "checks": [
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_checkpoint_labels_mcp_wire.py",
+          "tests/unit/test_checkpoint_labels.py",
+          "tests/unit/test_mcp_contract_stamp_ratchet.py::test_current_contract_version_literal_lives_only_in_allowlisted_tests",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 88.23,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-ci-literal-correction.log",
+        "raw_output": ".........................................................                [100%]\n57 passed in 83.96s (0:01:23)\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "check",
+          "tests/unit/test_checkpoint_labels.py",
+          "tests/unit/test_checkpoint_labels_mcp_wire.py"
+        ],
+        "exit_code": 0,
+        "seconds": 1.58,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-ci-literal-ruff.log",
+        "raw_output": "All checks passed!\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "format",
+          "--preview",
+          "--check",
+          "tests/unit/test_checkpoint_labels.py",
+          "tests/unit/test_checkpoint_labels_mcp_wire.py"
+        ],
+        "exit_code": 0,
+        "seconds": 0.73,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-ci-literal-format.log",
+        "raw_output": "2 files already formatted\n"
+      }
+    ]
+  },
+  "wire_review_pin_correction": {
+    "test_sha": "b62099c502633a51a3b7a1fa578d2ddf0cc8f4cd",
+    "production_source_unchanged_from": "7e33d5f43ccb05ef3a0b38d55eaef09404a62c55",
+    "prior_control_head": "d955493d07c6fb17a3305b6ab6a6575595322d88",
+    "independent_prior_control": {
+      "passed": 16,
+      "failed": 1,
+      "reason": "Dedicated wire-review pin still expected 1.11.0 while actual MCP contract was 1.12.0."
+    },
+    "independent_producer_and_mcp_observation": {
+      "max_repo_files": 1,
+      "scanned_files": 1,
+      "possibly_truncated": true,
+      "truncation_cause": "project-files",
+      "budget_remediable": true
+    },
+    "key_population_review": "Independent reviewer replayed the real capped producer and actual MCP call, matching all five declared keys with no omissions or extras before the pin changed. The declared set, equality assertion and literal allowlist remain unchanged.",
+    "checks": [
+      {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_mcp_passthrough_wire_surface.py",
+          "tests/unit/test_mcp_contract_stamp_ratchet.py::test_current_contract_version_literal_lives_only_in_allowlisted_tests",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 35.48,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-wire-review-pin.log",
+        "raw_output": "...                                                                      [100%]\n3 passed in 31.92s\n"
+      }
+    ]
+  }
+}

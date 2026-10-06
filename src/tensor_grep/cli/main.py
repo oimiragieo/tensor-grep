@@ -9488,13 +9488,14 @@ def checkpoint_create(
         "--paths",
         help="File or subdirectory to include (repeatable: --paths a --paths b); scopes create + undo.",
     ),
+    label: str | None = typer.Option(None, "--label", help="Optional label for this checkpoint."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Create a checkpoint for the current editable tree."""
     from tensor_grep.cli.checkpoint_store import create_checkpoint
 
     try:
-        payload = create_checkpoint(path, paths=paths)
+        payload = create_checkpoint(path, paths=paths, label=label)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
@@ -9503,8 +9504,10 @@ def checkpoint_create(
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
         return
 
+    label_suffix = f" label={payload.label!r}" if payload.label is not None else ""
     typer.echo(
         f"Created checkpoint {payload.checkpoint_id} ({payload.mode}, files={payload.file_count})"
+        f"{label_suffix}"
     )
     typer.echo(f"Undo command: {payload.undo_command}")
 
@@ -9600,9 +9603,10 @@ def checkpoint_list(
             )
             checkpoint_records = cast(list[dict[str, object]], scope_payload["checkpoints"])
             for record in checkpoint_records:
+                label_suffix = f" label={record['label']!r}" if record.get("label") else ""
                 typer.echo(
                     f"  {record['checkpoint_id']}  {record['mode']}  "
-                    f"{record['created_at']}  files={record['file_count']}"
+                    f"{record['created_at']}  files={record['file_count']}{label_suffix}"
                 )
 
     try:
@@ -9657,9 +9661,10 @@ def checkpoint_list(
         f"({scope_result.mode}, count={scope_result.checkpoint_count})"
     )
     for record in records:
+        label_suffix = f" label={record['label']!r}" if record.get("label") else ""
         typer.echo(
             f"{record['checkpoint_id']}  {record['mode']}  "
-            f"{record['created_at']}  files={record['file_count']}"
+            f"{record['created_at']}  files={record['file_count']}{label_suffix}"
         )
 
 

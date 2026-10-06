@@ -1149,18 +1149,33 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
 
 
 @_register_legacy_tool  # type: ignore
-def tg_checkpoint_create(path: str = ".") -> str:
+def tg_checkpoint_create(path: str = ".", label: str | None = None) -> str:
     """
     Create an edit checkpoint rooted at the given path.
 
     Args:
         path: File or directory rooted at the checkpoint scope.
+        label: Optional user-facing checkpoint label (trimmed, printable, 1-120 chars).
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any read/write -- see tg_repo_map for the systemic-finding rationale. Checkpoint
     # create/undo write rollback state rooted at `path`, so unconfined this was also an
     # arbitrary-directory-WRITE primitive, not just a read.
     try:
+        from tensor_grep.cli.checkpoint_labels import normalize_checkpoint_label
+
+        try:
+            label = normalize_checkpoint_label(label)
+        except ValueError as exc:
+            return json.dumps(
+                {
+                    "version": _json_output_version(),
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "error": {"code": "invalid_input", "message": str(exc)},
+                    "path": "[refused]",
+                },
+                indent=2,
+            )
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
@@ -1188,7 +1203,7 @@ def tg_checkpoint_create(path: str = ".") -> str:
         from tensor_grep.cli.checkpoint_store import create_checkpoint
 
         try:
-            payload = create_checkpoint(path)
+            payload = create_checkpoint(path, label=label)
         except Exception as exc:
             return json.dumps(
                 {

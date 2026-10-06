@@ -271,7 +271,7 @@ when the current directory has no direct session metadata of its own.
 ## 5. Checkpoints (rewind before a risky rewrite)
 
 ```powershell
-tg checkpoint create C:\repo --json
+tg checkpoint create C:\repo --label "before rewrite" --json
 tg checkpoint list C:\repo --json                  # one detected scope
 tg checkpoint list C:\repo --discover --json        # bounded child-scope discovery
 tg checkpoint list C:\repo --discover-full --json   # exhaustive, can be slow on broad roots
@@ -283,6 +283,9 @@ tg checkpoint undo --last C:\repo --json            # restore the newest checkpo
 restore the newest checkpoint for `path` without naming an ID — do not pass both. If `checkpoint_id` resolves to an existing filesystem path, the error
 message suggests `--last` explicitly (`main.py`'s `checkpoint_undo`), which is a strong signal the two
 positionals (`checkpoint_id`, `path`) got confused.
+Checkpoint labels are trimmed printable Unicode text (1-120 characters), may repeat, and never
+select restoration; the existing checkpoint-ID and `--last` restore behavior remains unchanged.
+Older clients that rewrite `index.json` may discard labels they do not understand.
 
 ## 6. AST scan (built-in rule packs) and structural run/rewrite
 
@@ -453,7 +456,7 @@ only when you own that binary.
 | Location | What lives there | Created by | Tracked in git? |
 | --- | --- | --- | --- |
 | `.tensor-grep/sessions/` | `index.json` + per-session repo-map payloads | `tg session open` | No — `/.tensor-grep/` is gitignored (`.gitignore:51`) |
-| `.tensor-grep/checkpoints/` | `index.json`, per-checkpoint `metadata.json` + `snapshot/` tree | `tg checkpoint create` | No — same `.tensor-grep/` ignore rule |
+| `.tensor-grep/checkpoints/` | `index.json` with optional labels, per-checkpoint `metadata.json` + `snapshot/` tree | `tg checkpoint create` | No — same `.tensor-grep/` ignore rule |
 | `.tg_semantic_index/` (or `$TG_SEMANTIC_INDEX_DIR`) | Experimental semantic (dense) index shards | opt-in semantic-search paths | Not committed; experimental subsystem |
 | `artifacts/` | `--output` JSON from `tg dogfood`, `scripts/agent_readiness.py`, `benchmarks/run_*.py` | explicit `--output PATH` only — nothing is written here by default | No — `artifacts/` in `.gitignore:61` is gitignored |
 

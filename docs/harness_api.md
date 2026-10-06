@@ -1494,8 +1494,8 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.11.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
-has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.11.0) and this line has been stale three times now), not the installed CLI/package version and not
+`1.12.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
+has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.12.0) and this line has been stale three times now), not the installed CLI/package version and not
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1531,9 +1531,17 @@ Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped met
 - `tg_symbol_blast_radius_render(symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_file_imports(file)`
 - `tg_file_importers(file, path=".", max_repo_files=2000, deadline=None)`
-- `tg_checkpoint_create(path=".")`
+- `tg_checkpoint_create(path=".", label=None)`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
+
+`tg_checkpoint_create` accepts an optional label; it is trimmed and must contain 1-120 printable
+Unicode characters. The trimmed label is included in create/list results and stored in both
+checkpoint metadata and the index. Omitted labels serialize as `null` for new records, while old
+records without the key or with malformed label data load as `null` without hiding the checkpoint.
+Labels can repeat and never choose the undo target; undo
+uses the checkpoint ID. An older client that rewrites `index.json` may discard labels it does not
+understand.
 - `tg_session_open(path=".", max_repo_files=2000)`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`
@@ -1572,7 +1580,7 @@ Legacy vs meta surface: the 46 legacy per-function tools stay advertised by defa
 - `tg_session(action, session_id=None, query=None, symbol=None, file=None, path=".", ...)` -- actions: `open`/`list`/`show`/`refresh`/`context`/`edit_plan`/`context_render`/`blast_radius`/`blast_radius_plan`/`blast_radius_render`/`file_importers` (= the 11 tg_session_* tools above). `open`/`refresh` write the session cache.
 - `tg_scan(action, ruleset=None, inline_rules=None, path=".", ...)` -- actions: `scan`/`rulesets` (= tg_ruleset_scan/tg_rulesets). `action="scan"` is read-only by default; `write_baseline`/`write_suppressions` write a file.
 - `tg_audit(action, manifest_path=None, signing_key=None, previous_manifest=None, current_manifest=None, path=".", scan_path=None, checkpoint_id=None, output_path=None, bundle_path=None)` -- actions: `manifest_verify`/`history`/`diff`/`bundle_create`/`bundle_verify` (= tg_audit_manifest_verify/tg_audit_history/tg_audit_diff/tg_review_bundle_create/tg_review_bundle_verify). `action="bundle_create"` writes `output_path` when supplied.
-- `tg_checkpoint(action, checkpoint_id=None, path=".")` -- actions: `create`/`list`/`undo` (= tg_checkpoint_create/tg_checkpoint_list/tg_checkpoint_undo). `create`/`undo` write.
+- `tg_checkpoint(action, checkpoint_id=None, path=".", label=None)` -- actions: `create`/`list`/`undo` (= tg_checkpoint_create/tg_checkpoint_list/tg_checkpoint_undo). `label` is accepted only for `create`; `create`/`undo` write.
 - `tg_rewrite(action, pattern=None, replacement=None, lang=None, path=".", verify=False, checkpoint=False, audit_manifest=None, audit_signing_key=None, lint_cmd=None, test_cmd=None, policy=None, expected_plan_digest=None, expected_match_count=None)` -- actions: `plan`/`apply`/`diff` (= tg_rewrite_plan/tg_rewrite_apply/tg_rewrite_diff). `action="apply"` is the mutation surface; `action="diff"` is native-required.
 
 An unrecognized `action` or a missing action-required param returns a structured `error.code = "invalid_input"` envelope (never a raw exception); every meta tool's primary `path` (and any secondary path-shaped param, e.g. `tg_audit`'s `manifest_path`/`bundle_path`) is confined to the MCP server root BEFORE the action branch runs, regardless of which action was requested.
@@ -1735,8 +1743,6 @@ Rules:
 - field renames, type changes, removing required fields, or changing single-document output into a different transport shape are breaking changes
 - new example artifacts and schema tests must land with any contract expansion
 - docs, example artifacts, and schema tests must stay in sync
-
-
 
 
 
