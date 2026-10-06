@@ -7,9 +7,9 @@ are outside this change. Each row remains open until its own published-artifact 
 | ID | Owner | Disposition | Completion trigger |
 |---|---|---|---|
 | DOGFOOD-DIAGNOSTICS | CLI maintainer | IN_FLIGHT, PR #1214 | Installer failure and GPU route proof regressions; release replay |
-| DOGFOOD-DECODING | Runtime maintainer | Census in progress | Classified production subprocess inventory, mutation-tested guard, release replay |
-| DOGFOOD-FILENAME | Ranking maintainer | Implementation in progress | Pinned precedence/order, context/edit agreement, cached/session and release replay |
-| DOGFOOD-LABELS | Checkpoint maintainer | Ready | CLI/MCP/store round trips, invalid-input no-write proof, recovery and release replay |
+| DOGFOOD-DECODING | Runtime maintainer | IN_FLIGHT, PR #1217 | Classified production subprocess inventory, mutation-tested guard, release replay |
+| DOGFOOD-FILENAME | Ranking maintainer | IN_FLIGHT, PR #1215 | Pinned precedence/order, context/edit agreement, cached/session and release replay |
+| DOGFOOD-LABELS | Checkpoint maintainer | IN_FLIGHT, PR #1216 | CLI/MCP/store round trips, invalid-input no-write proof, recovery and release replay |
 
 ## Baseline and artifact identity
 
@@ -84,12 +84,18 @@ after returned exit 0, `unsupported`, `NativeCpuBackend`, `gpu-auto-fallback-cpu
 the patched command omits `-F`. [Raw diagnostic receipts](evidence/2026-10-05-dogfood/diagnostics.json) retain commands, exits,
 and output; artifact identity is recorded separately from installed version.
 
-The Opus health probe returned PONG, but the actual review ended with HTTP 429 / session limit
-(reset advertised as 01:10 America/New_York). This is an unavailable seat, not approval. Sol
-implementation review and the required Opus security gate remain separate. Nothing has merged.
+The initial Opus review hit HTTP 429. After its reset, Opus cleared exact `7c657aa` with 37
+independently run tests. Its misleading rejection-message finding was folded with a non-object
+JSON failure guard in `f57bebc`; the changed artifact needs fresh review. Nothing has merged.
 
 Independent Sol review of `87cdbd9` found an unchanged missing-boolean proof gap. The reviewed
 amendment requires explicit JSON `sidecar_used=false` for native GPU success and preserves unknown
 values as null in doctor and agent evidence. Implementation `6e7ec8d` also hardens the agent twin;
 110 focused diagnostic, doctor, and agent GPU tests passed in the canonical Windows venv.
-The amended source needs a fresh independent verdict and Opus clearance before merge.
+Sol cleared `7c657aa`; CI `37411308960` completed with 38 terminal jobs and zero failures.
+That run does not clear the later `f57bebc` amendment. Final review and CI remain required.
+
+DOGFOOD-AGENT-GPU-FLAGS is research-gated, owned by the runtime maintainer: agent sentinel
+and evidence commands retain `-F`. Evidence terms have a literal-match contract. Reopen
+with a native routing/escaping contract and positive plus negative controls; native-proof
+rejection currently fails closed. This follow-up is not claimed shipped with these fixes.

@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1371,
+    "lineno": 1403,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
