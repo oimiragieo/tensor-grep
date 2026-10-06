@@ -7,13 +7,16 @@ Intake: main `99c1ea1` / v1.123.21; prior main CI `37402418507` completed with
 launcher 1.123.20, so neither is used as source-version evidence.
 [Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS is
 SHIPPED in v1.123.22 (PR #1214, `d0d9f7e`), with eight published replay cases passing.
-DOGFOOD-DECODING #1217 (`c0e8449`) and DOGFOOD-FILENAME #1215 (`47700556`) are MERGED;
-combined main CI `37437549841` and publication/replay remain pending.
-[DOGFOOD-LABELS](audits/dogfood-checkpoint-labels-receipt.md) is IN_FLIGHT in #1216
-(owner: checkpoint maintainer; PR history: #1216). Its actual dependency integration preserves
-the entire reviewed tree. Trigger: fresh exact-head CI, independent and Opus reviews, then
-published-artifact replay. The latest Opus seat failed on provider quota before review;
-retry after 2026-10-06 10:10 UTC. Prior review does not clear the new sanitization fix.
+DOGFOOD-DECODING #1217 (`c0e8449`) and DOGFOOD-FILENAME #1215 (`47700556`) are SHIPPED
+in v1.123.23: main CI `37437549841` completed 44 jobs and 33 published replay cases passed.
+[DOGFOOD-LABELS](audits/dogfood-checkpoint-labels-receipt.md) is MERGED, UNPUBLISHED in
+#1216 (`7ef470fe`), owned by the checkpoint maintainer. Final reviewed head `e6f180fe`
+cleared independent/Opus review and PR CI after one recorded diagnostic retry. Its main CI
+`37453425025` failed the same Windows Python 3.11 daemon stop test; Python 3.12 passed.
+DOGFOOD-CI-DAEMON-STOP is active, owned by the Runtime/CI maintainer: capture complete
+proof/ACK/refusal/lifecycle evidence before selecting a fix or retry. See the
+[recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md). Labels' trigger remains
+successful exact-artifact release CI and published-artifact replay. Other work is parked.
 These four scoped fixes do not close existing strategic rows. Open unrelated PR #1212 owns
 the earlier bug-hunt documentation closeout; Wave 3 remains outside this campaign.
 

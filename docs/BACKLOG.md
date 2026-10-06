@@ -1,6 +1,6 @@
 # tensor-grep — Project Backlog & PR Tracker
 
-## 2026-10-06: bounded dogfood fixes — diagnostics #1214 SHIPPED v1.123.22 (8 published replay cases); decoding #1217 (`c0e8449`) and filename ranking #1215 (`47700556`) MERGED, combined release/replay pending; labels #1216 IN_FLIGHT after actual squash integration, fresh CI/reviews pending (Opus quota reset 10:10 UTC). Owners, triggers and artifacts: [dogfood ledger](audits/2026-10-05-dogfood-fixes.md), [labels receipt/PR history](audits/dogfood-checkpoint-labels-receipt.md). Strategic rows and Wave 3 are unchanged.
+## 2026-10-06: bounded dogfood fixes — diagnostics #1214 SHIPPED v1.123.22; decoding #1217 and filename ranking #1215 SHIPPED v1.123.23 (44 release jobs, 33 published replay cases). Labels #1216 MERGED, UNPUBLISHED (`7ef470fe`): reviewed PR passed after one diagnostic retry, then main CI `37453425025` repeated the Windows Python 3.11 daemon stop failure. DOGFOOD-CI-DAEMON-STOP active, owner Runtime/CI maintainer, trigger complete protocol/lifecycle capture before fix/retry; [recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md). [Dogfood ledger](audits/2026-10-05-dogfood-fixes.md), [labels history](audits/dogfood-checkpoint-labels-receipt.md). Strategic rows and Wave 3 are unchanged.
 
 ## 2026-10-05: 2026-10-03 bug hunt closeout -- 13 PRs merged and released (#1194-#1206; v1.123.13-v1.123.18); OPEN #1207 W2b H, #1208 front-door loop (P0), #1209 hermetic tests; wave 3 not started -- canonical status + per-PR receipts in `docs/audits/2026-10-03-bughunt-tracker.md` (Wave status).
 
