@@ -23,10 +23,7 @@ site/
 
 # Pytest / Coverage
 .pytest_cache/
-# Review/dogfood flows drop `basetemp` dirs at the repo root (task #268). On Windows these can
-# land with an ACL that denies the current user, and an UNIGNORED unreadable directory makes git
-# emit `warning: could not open directory ...: Permission denied` on EVERY invocation -- for the
-# operator and for every agent. Ignoring the pattern stops git traversing it at all.
+# Local test directories, including fixtures with restricted permissions.
 .pytest_tmp_*/
 .coverage
 htmlcov/
@@ -53,23 +50,11 @@ npm/node_modules/
 /*.patch
 /*.txt
 /.tmp*/
-# tg writes its own session/index state into a `.tensor-grep/` dir at whatever root it is
-# scoped to -- which is NOT always the repo root. Two root-anchored entries (`/.tensor-grep/`
-# and `/src/.tensor-grep/`) used to enumerate the places it had been observed, so a real one
-# (`src/tensor_grep/.tensor-grep/`, created by running tg from inside the package dir) went
-# untracked-but-not-ignored and polluted `git status`. Match the CLASS at any depth instead.
+# Repository-scoped runtime state at any directory depth.
 .tensor-grep/
-# `tg codemap`'s default output dir (main.rs/codemap.py: `--out` defaults to <root>/docs/code-map).
-# Generated, not authored: 190 pages plus a `_coverage.json` carrying a `generated_at` timestamp
-# AND an absolute machine-local path ("C:\\dev\\projects\\..."), so committing it would bake one
-# developer's filesystem into the repo and churn on every regeneration. Never tracked on main.
-# Ignoring it is a supported configuration, not a workaround: `check_codemap_freshness`'s
-# output-dir exclusion already handles the committed, never-committed, and untracked cases
-# (tests/unit/test_codemap_freshness.py), so this does not affect tg's own freshness oracle.
-# Whether to PUBLISH a code map as docs stays a separate product decision -- use an explicit
-# `--out` outside this path when that is the intent.
+# Generated code maps contain timestamps and local paths; regenerate as needed.
 docs/code-map/
-# .factory/ is Factory-AI/droid local tool state (contains machine-specific paths) -- never track any of it.
+# Machine-local Factory tooling state.
 /.factory/
 /_archive/
 /agent_out.json
@@ -108,12 +93,10 @@ src/tensor_grep/core/profile_stats
 # Local agent validation artifacts
 .factory/validation/
 
-# Transient agent git worktrees (harness-created; contain duplicate source copies that must
-# not be committed OR walked by the repo-map/agent-capsule scan — see F8 scan-pollution).
+# Linked development worktrees are never source inputs.
 .claude/worktrees/
 
-# --- repo hygiene 2026-07-08 (Fable tracked-tree audit): untrack tool-state + stale blobs ---
-# (.factory/validation, bench_ast_data, gpu_bench_data already ignored above but committed pre-rule)
+# Legacy build outputs and local tooling.
 /benchmarks/tg_rust.exe
 /docs/superpowers/
 /.factory/library/
@@ -122,17 +105,10 @@ src/tensor_grep/core/profile_stats
 /.factory/init.sh
 /.review_tmp/
 
-# Cursor/agent DISPATCH SCRATCH. These are one-shot task specs handed to `cursor-agent -p`,
-# not repo content -- three of them reached main before anyone noticed (~20KB), and one landed
-# via a PR whose actual deliverable was a docs page. Ignoring the pattern is the structural fix;
-# deleting the three was only the cleanup.
+# Temporary task briefs.
 .claude/cursor_task_*.md
 
-# Council briefs are the same class as the cursor_task_* files above: dispatch scratch that gets
-# regenerated every round and is never repo content. A 2026-09-13 session left TEN of them
-# untracked-but-not-ignored, one round-brief per council round, where any `git add .` would have
-# swept them onto main. The durable copy is the out-dir the council writes (question.md beside
-# the seat logs), so the repo copy has no reader.
+# Temporary review briefs.
 .claude/thinktank_*.md
 
 # Internal agent orchestration scratch & memory

@@ -1,5 +1,5 @@
 site_name: tensor-grep
-site_description: Native search and rewrite tool for large text corpora and codebases
+site_description: Search code and logs, understand symbols, and prepare changes
 site_author: tensor-grep team
 repo_url: https://github.com/oimiragieo/tensor-grep
 repo_name: oimiragieo/tensor-grep
@@ -27,44 +27,57 @@ theme:
     - search.highlight
     - content.code.copy
 
-# Internal analysis lives under docs/ for discoverability, but mkdocs builds EVERYTHING
-# under docs_dir into the published site -- nav'd or not. `docs/positioning/` holds
-# competitive analysis that discusses the CEO-GATED #72 benchmark, and `publish-docs`
-# runs `mkdocs gh-deploy --force` unconditionally on release into a PUBLIC repo.
-# Verified not yet exposed (gh-pages last built 2026-03-01, months before those files
-# existed; `positioning/` returns 404 there while the branch root reads 14 entries, so
-# the 404 is meaningful and not an API artifact). Excluding it keeps that true.
+# Keep internal research and review records out of the public documentation site.
+# MkDocs otherwise builds Markdown files even when they are absent from navigation.
 exclude_docs: |
   positioning/
   audits/
   investigations/
   superpowers/
   agent-laws-receipts.md
+  plans/
+  BACKLOG.md
+  TASK_BOARD.md
+  SESSION_HANDOFF.md
+  CONTINUATION_PLAN.md
 
 nav:
   - Home: index.md
   - Getting Started:
     - Installation: installation.md
-    - CI Pipeline: CI_PIPELINE.md
+    - First Search: getting-started.md
     - Support Matrix: SUPPORT_MATRIX.md
-    - Contracts: CONTRACTS.md
-    - Review Bundle CI Gate: enterprise_review_bundle_ci.md
+  - Daily Workflows:
+    - Automation Recipes: harness_cookbook.md
+    - Cache Management: runbooks/cache-management.md
     - Experimental Features: EXPERIMENTAL.md
+  - How It Works:
+    - Architecture: architecture.md
+    - Execution Routing: routing_policy.md
+    - Benchmarks: benchmarks.md
+    - Tool Comparison: tool_comparison.md
+  - Technical Reference:
+    - Contracts: CONTRACTS.md
+    - CLI and MCP API: harness_api.md
+    - Session Daemon Protocol: session_daemon_protocol.md
+    - Multi-Agent Context Plane: multi_agent_context_plane.md
+    - Review Bundle CI Gate: enterprise_review_bundle_ci.md
+  - Maintainers:
+    - CI Pipeline: CI_PIPELINE.md
     - Release Checklist: RELEASE_CHECKLIST.md
     - Hotfix Procedure: HOTFIX_PROCEDURE.md
     - Package Manager Publish: package_manager_publish.md
-  - Architecture: architecture.md
-  - Session Daemon Protocol: session_daemon_protocol.md
-  - Multi-Agent Context Plane: multi_agent_context_plane.md
-  - Benchmarks: benchmarks.md
-  - Tool Comparison: tool_comparison.md
 
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - admonition
   - pymdownx.details
   - pymdownx.tabbed:

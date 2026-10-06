@@ -175,36 +175,31 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
 def validate_installation_docs(*, installation_content: str) -> list[str]:
     errors: list[str] = []
     for expected in (
-        "### Homebrew Tap Flow",
-        "### Winget Flow",
-        "### Repeatable Release Checklist",
-        "### Rollback Playbook",
+        "## Install the Python package",
+        "## Install a release binary directly",
+        "## Verify the installation",
+        "## Channels not yet published",
     ):
         if expected not in installation_content:
-            errors.append(f"Installation docs missing package-manager section: {expected}")
+            errors.append(f"Installation docs missing user section: {expected}")
 
     if "https://github.com/oimiragieo/tensor-grep/releases" not in installation_content:
         errors.append("Installation docs must point GitHub Releases link to oimiragieo/tensor-grep")
 
-    if "--check-npm" not in installation_content:
-        errors.append("Installation docs release automation notes must mention npm parity checks")
-
+    # Publishing, parity checks, and rollback remain independently governed by
+    # validate_package_manager_docs. Installation links there instead of duplicating them.
     for required_cmd in (
-        "brew tap oimiragieo/tap",
-        "brew install tensor-grep",
-        "brew install oimiragieo/tap/tensor-grep",
-        "winget validate --manifest",
-        "winget-pkgs",
-        "winget install oimiragieo.tensor-grep",
+        "python -m pip install tensor-grep",
         "tg --version",
-        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z",
-        "git revert <tap-formula-commit>",
-        "winget uninstall oimiragieo.tensor-grep",
+        "tg-windows-amd64-cpu.exe",
+        "tg-linux-amd64-cpu",
+        "tg-macos-amd64-cpu",
+        "CHECKSUMS.txt",
+        "(package_manager_publish.md)",
     ):
         if required_cmd not in installation_content:
             errors.append(
-                "Installation docs missing required package-manager command/reference: "
-                f"{required_cmd}"
+                f"Installation docs missing required install command/reference: {required_cmd}"
             )
     return errors
 

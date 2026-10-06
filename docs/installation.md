@@ -1,224 +1,114 @@
 # Installation
 
-`tensor-grep` can be installed through managed binaries, Python packaging, package managers, or the automated install scripts. The right path depends on whether you want self-update behavior, locked-down workstation rollout, or source-level Python integration.
+As of 2026-10-06, the live install channels described here are PyPI, GitHub Release binaries, and the install scripts that download those binaries. npm, Homebrew, and Winget manifests are present in the repository, but those packages are not published to their registries. Check the [support matrix](SUPPORT_MATRIX.md) for tested platforms and versions.
 
-## Recommended Channel by Use Case
+## Recommended channel by use case
 
-- **Individual developers who want `tg update` / `tg upgrade`:** use the install scripts or `pip` / `uv`.
-- **Managed workstation rollout:** use GitHub release binaries (Homebrew and Winget are not published yet).
-- **Node-centric invocation:** `npx` is **not published yet** (see Option 2); use the install script or `uvx` for now.
+| Use case | Install method |
+|---|---|
+| Use `tg` from a managed native command with an isolated Python environment | Install script |
+| Use Python directly or pin the package in a Python environment | PyPI with `pip` or `uv` |
+| Manage a binary yourself | GitHub Release asset |
 
-> **Channel status (verified 2026-09-25).** Live today: **PyPI** (`pip` / `uv`), **GitHub Release
-> binaries**, and the **install scripts** (which download those binaries). **Not yet published:**
-> npm/`npx`, Homebrew, and winget. The manifests for them exist in this repository, but nothing
-> has been pushed to those registries, so their install commands currently fail.
-- **Experimental features:** review [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) instead of assuming hidden commands are stable/public.
+The managed install script is the simplest choice for most individual users. It installs a native CPU front door where a matching release asset is available and manages Python support files separately. The default published native asset profile is CPU. GPU assets require a separate gated build profile and are not the default install.
 
-## Option 1: Install Scripts (Recommended)
+## Install with the managed script
 
-The install scripts create an isolated environment, print `tg --version` at the end, and keep Python-level dependencies away from your system interpreter.
+**Windows PowerShell:**
 
-Stable script installs prefer the matching release-native CPU binary as the public `tg` front door:
-
-- Windows downloads `tg-windows-amd64-cpu.exe` into `~/.tensor-grep/bin/tg.exe`.
-- Linux x64 downloads `tg-linux-amd64-cpu` into `~/.tensor-grep/bin/tg-native`.
-- macOS x64 downloads `tg-macos-amd64-cpu` into `~/.tensor-grep/bin/tg-native`.
-
-The isolated Python environment remains installed and is exposed to the native front door with `TG_SIDECAR_PYTHON`; `TG_NATIVE_TG_BINARY` points Python-backed commands back at the managed native binary. If a release-native asset is unavailable, or when installing from `TENSOR_GREP_CHANNEL=main`, the same front door falls back to `python -m tensor_grep`.
-
-They also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager channel and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains. Provider availability is install evidence only; use `tg doctor --with-lsp` health fields and navigation `lsp_proof` / `lsp_evidence_status` before relying on `lsp` or `hybrid` output as semantic-provider evidence.
-
-On Windows, the install script removes stale same-directory `tg.exe`/`tg.bat` launchers from the managed shim directories, then puts `~/.tensor-grep/bin` ahead of compatibility shim directories and stale Python `Scripts` launchers on User PATH. That makes `cmd`, unprofiled PowerShell, and Python `subprocess.run(["tg", ...])` resolve the native `tg.exe` first instead of paying the `.cmd` Python bridge startup cost. Normal PowerShell, Git Bash, and WSL shims still route to the managed native front door when it exists. The `.cmd` shim remains as an argv-safe compatibility bridge for direct `.cmd` calls and execs the managed native binary from that bridge when available. If an old tensor-grep-owned `Python*\Scripts\tg.exe` still shadows the managed front door, the installer attempts to uninstall the stale Python package owner. If a profile-free shell still reports an older `tg`, run `where.exe tg`, `Get-Command tg -All`, and `tg doctor --json` to see which launcher is winning.
-
-**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
 ```
 
-**Linux & macOS (Bash):**
+**Linux or macOS Bash:**
+
 ```bash
 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
-> **Supply-chain note.** These one-liners fetch the install script from the mutable `main` branch. For
-> a reproducible, verifiable install, prefer `pip install tensor-grep==<version>` or `uvx
-> tensor-grep@<version>` (checksum-verified through PyPI), or download a pinned asset from the
-> [Releases page](https://github.com/oimiragieo/tensor-grep/releases) and verify its published
-> checksum before running. As with any `curl | sh` installer, review the script before piping it to a
-> shell.
+The script installs `tg` and prints its version. These commands fetch an installer from the mutable `main` branch. For a pinned install, use an exact PyPI version or download a GitHub Release asset and verify its checksum before running it.
 
-## Option 2: Using `npx` (not yet published)
+## Install the Python package
 
-> **Not on the npm registry yet.** `npm install -g tensor-grep` and `npx tensor-grep` currently
-> return **404** because the package has never been published. Until it is, use Option 1 (install
-> script), `uvx tensor-grep`, or `pip install tensor-grep`. The wrapper in `npm/` works from a
-> source checkout: `npm install -g ./npm` (it downloads and SHA-256-verifies the release binary).
+Install from PyPI with either `pip` or `uv`:
 
-Once published, if you have Node.js installed you will be able to use `npx` to download and run the correct binary for your platform automatically:
-
-```bash
-npx tensor-grep search "ERROR" app.log
+```text
+python -m pip install tensor-grep
 ```
 
-Current npm wrapper notes:
+Or run the package with `uvx`:
 
-- downloads the current CPU release asset from `oimiragieo/tensor-grep`
-- supports Windows x64, Linux x64, and macOS x64
-- writes a local `tg` / `tg.exe` shim into the installed npm package
-
-To install it globally via npm:
-
-```bash
-npm install -g tensor-grep
-tg search "ERROR" app.log
+```text
+uvx tensor-grep --version
 ```
 
-## Option 3: Pre-compiled Binaries (Direct Download)
+To pin an exact version, replace `X.Y.Z` with the version you selected:
 
-The semantic-release path publishes release-validated CPU front-door binaries for Windows, Linux,
-and macOS via GitHub Releases. NVIDIA/GPU binaries are not part of the current main-CI native
-front-door asset profile.
+```text
+uvx --from 'tensor-grep==X.Y.Z' tg --version
+```
 
-1. Go to the [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases) page.
-2. Download the binary for your platform:
-   - `tg-windows-amd64-cpu.exe`
-   - `tg-linux-amd64-cpu`
-   - `tg-macos-amd64-cpu`
-3. Add it to your system PATH.
-4. Verify the binary against `CHECKSUMS.txt` before rollout.
+Basic Python installation does not require a GPU, dense model, CUDA, or an API key. Optional dense search dependencies belong to the [experimental feature setup](EXPERIMENTAL.md).
 
-## Option 4: Python (`pip` / `uv`)
+Python users can add `tensor-grep[scan]` for structural patterns and rules that use
+the ast-grep command, or `tensor-grep[ast]` for the optional tree-sitter language
+parsers used by code analysis. These are separate from GPU and dense-model dependencies.
+For example:
 
-If you prefer to run the tool from source or within a Python environment:
+```text
+python -m pip install "tensor-grep[ast,scan]"
+```
 
-```bash
-pip install tensor-grep
+The Python package path also supports the `tg update` / `tg upgrade` workflow. If you need those commands, install with `pip` or `uv` rather than a directly downloaded binary.
+
+## Install a release binary directly
+
+Download the CPU asset for your system from [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases):
+
+- Windows x64: `tg-windows-amd64-cpu.exe`
+- Linux x64: `tg-linux-amd64-cpu`
+- macOS x64: `tg-macos-amd64-cpu`
+
+Place it in a directory on your `PATH`, then verify it against that release's `CHECKSUMS.txt`. This route does not install the managed Python sidecar. Some Python-backed commands therefore need a Python package installation or an explicitly configured sidecar environment.
+
+## Verify the installation
+
+Open a new terminal and run:
+
+```text
+tg --version
 tg --help
+tg search -F 'ERROR' .
 ```
 
-*Note: the Python package path is the one that supports `tg update` / `tg upgrade`. It requires a configured Python environment and may need additional GPU dependencies such as `cudf` and `torch`.*
+The final command searches the current directory for the literal word `ERROR`. It can return no matches if your files do not contain that word; that is a valid search result.
 
-**Cold-search speed.** This Python entry point pays a Python-interpreter startup tax on every cold,
-one-shot search: roughly 150-250ms before the search itself runs (tracked in
-[issue #48](https://github.com/oimiragieo/tensor-grep/issues/48)). `rg` remains the fastest baseline
-for cold literal search regardless of install channel. For a cold start close to native `rg` speed, use
-the install scripts (Option 1) above (or, once published, `npx`/`npm` in Option 2); they set up the
-managed **native** `tg` binary as the front door, and once it is installed, `tg upgrade` keeps it in
-sync with new releases.
-
-On Windows, the Python package installs a launcher shim under a Python `Scripts` directory. That shim is for invoking the Python CLI path, not for native delegation. Simple AST rewrite plan/apply is still available through the packaged PyO3 Rust extension. If you need native-only features such as rewrite diff, checkpoint, audit, validation, verify, or explicit MCP handoff to the standalone executable, point `TG_NATIVE_TG_BINARY` at an explicit native `tg.exe` path or use a release binary / in-tree Rust build.
-
-## Option 5: Package Managers
-
-- **Homebrew:** **not yet published.** The formula lives at `scripts/tensor-grep.rb`, but the
-  `oimiragieo/homebrew-tap` repository does not exist yet, so `brew tap oimiragieo/tap` fails.
-- **Winget:** **not yet published.** The manifest lives at `scripts/oimiragieo.tensor-grep.yaml`,
-  but it has not been submitted to `microsoft/winget-pkgs`, so `winget install` finds nothing.
-- **PyPI:** live. Use it for Python integration or self-managed virtual environments.
-
-For managed rollout today, use the GitHub Release binaries (Option 3) and verify them against
-`CHECKSUMS.txt`.
-
-## Maintainer Notes: Package Manager Publish Flow
-
-The repository includes package-manager manifests:
-- Homebrew formula: `scripts/tensor-grep.rb`
-- Winget manifest: `scripts/oimiragieo.tensor-grep.yaml`
-
-Before cutting a tag release:
-1. Keep `pyproject.toml`, `rust_core/Cargo.toml`, and `npm/package.json` versions aligned.
-2. Ensure manifest URLs point to release artifact names produced by main CI's `publish-github-release-assets` job.
-3. Run:
-
-```bash
-uv run python scripts/validate_release_assets.py
-```
-
-Main CI now runs this same validation in the `release-readiness` job to prevent release drift.
-
-### Homebrew Tap Flow
-
-1. Keep `scripts/tensor-grep.rb` aligned with the tagged version and release artifact URLs.
-2. Validate formula syntax:
-
-```bash
-ruby -c scripts/tensor-grep.rb
-```
-
-3. Commit/update the formula in your tap repository (for example `oimiragieo/homebrew-tap`), then test install:
-
-```bash
-brew tap oimiragieo/tap
-brew install tensor-grep
-brew install oimiragieo/tap/tensor-grep
-tg --version
-```
-
-### Winget Flow
-
-1. Keep `scripts/oimiragieo.tensor-grep.yaml` aligned with the tagged version, Windows artifact URL, `PackageLocale`, and Windows artifact SHA256.
-2. Validate manifest locally on Windows:
+If `tg` is not found, open a new terminal so it reads updated `PATH` settings. On Windows, check which command will run:
 
 ```powershell
-winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+where.exe tg
+Get-Command tg -All
+tg doctor --json
 ```
 
-3. Submit/update the manifest in `microsoft/winget-pkgs`, then smoke-test install:
+If more than one launcher appears, the first one on `PATH` wins. Follow the install script's diagnostics before removing old launchers.
 
-```powershell
-winget install oimiragieo.tensor-grep
-tg --version
-```
+## What the install provides
 
-CI coverage:
-- `ci.yml` includes `package-manager-readiness` on Linux + Windows.
-- `ci.yml` builds release-native CPU front-door assets from the semantic-release tag and uploads them to the GitHub release before PyPI publish is allowed.
-- On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`. If hosted-runner `winget validate` reports only the known schema-header URL warning from embedded schema-version skew, CI also requires `scripts/validate_release_assets.py` to pass before continuing; other `winget` failures remain blocking.
-- CI/release package-manager jobs also run `scripts/prepare_package_manager_release.py --check` to ensure manifests are ready for tap/winget-pkgs publication.
-- `publish-github-release-assets` builds `artifacts/package-manager-bundle`, stamps Winget `InstallerSha256` from generated `CHECKSUMS.txt`, verifies `BUNDLE_CHECKSUMS.txt`, and runs `scripts/smoke_test_package_manager_bundle.py` before publishing release assets.
+Managed native installs use the native binary as the command front door and may invoke a managed Python sidecar for Python-backed commands. PyPI installs begin through the Python command. These are different entry points; [architecture](architecture.md) describes the split and [routing policy](routing_policy.md) describes text-search engine selection.
 
-Release automation notes:
-- The normal release path is main CI after semantic-release. Tags created by the default `GITHUB_TOKEN` do not trigger a separate tag-push workflow run, so `release.yml` is a manual/backfill path rather than the authoritative asset publisher.
-- `scripts/validate_release_assets.py` verifies cross-file version/URL consistency across PyPI, npm, Homebrew, and Winget release assets.
-- CI and release workflows install `uv` before Windows Winget fallback checks to keep validation deterministic on runner images without `winget validate`.
-- Main CI (`ci.yml`) validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`.
-- Main CI also runs `scripts/smoke_test_pypi_artifacts.py` to install from local `dist/` artifacts in an isolated virtual environment before publish.
-- `publish-pypi` depends on `publish-github-release-assets` so PyPI cannot publish before installer-critical GitHub release assets are verified.
-- `publish-pypi` verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
-- `publish-success-gate` in main CI always verifies GitHub release native assets and PyPI latest parity for the semantic-release version, even when PyPI publish is skipped.
-- `release.yml` verifies npm registry latest parity (`--check-npm`) after `npm publish` before release success gate completion.
+The release's normal native asset profile is CPU. GPU execution is experimental and requires the appropriate opt-in build and compatible hardware and drivers. A platform-specific CI build or manifest does not mean that the install will use a GPU. See [experimental features](EXPERIMENTAL.md) and the [GPU troubleshooting runbook](runbooks/gpu-troubleshooting.md).
 
-### Repeatable Release Checklist
+## Channels not yet published
 
-1. Merge to `main` only after CI is green.
-2. Confirm semantic-release created tag `vX.Y.Z` and matching GitHub release.
-3. Confirm CI `validate-pypi-artifacts` is green before `publish-pypi`.
-4. Confirm PyPI latest version is exactly `X.Y.Z`.
-5. Confirm `scripts/tensor-grep.rb` and `scripts/oimiragieo.tensor-grep.yaml` reference `vX.Y.Z` assets.
-6. Confirm the uploaded GitHub release assets and checksum coverage:
+These source manifests are not live registry packages:
 
-```bash
-python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z
-```
+- npm/`npx`: the repository contains an npm wrapper, but `tensor-grep` is not published to the npm registry.
+- Homebrew: the formula is present in the repository, but no published tap is available.
+- Winget: a manifest is present in the repository, but it has not been submitted to the public Winget package index.
 
-### Rollback Playbook
+Use PyPI, GitHub Releases, or the install scripts until those channels are published. The existence of a manifest does not make its registry install command available.
 
-If a publish is bad or inconsistent:
+## Maintainer publishing details
 
-1. Stop new releases by merging a corrective patch or temporarily disabling the release path.
-2. Ship an immediate patch release (`X.Y.(Z+1)`) with corrected artifacts. Do not attempt to overwrite an existing PyPI version.
-3. For package managers:
-   - Homebrew: update formula to corrected version and re-run tap tests.
-     ```bash
-     git revert <tap-formula-commit>
-     brew update
-     brew install tensor-grep
-     tg --version
-     ```
-   - Winget: submit corrected manifest version to `winget-pkgs`.
-     ```powershell
-     winget uninstall oimiragieo.tensor-grep
-     winget install oimiragieo.tensor-grep
-     tg --version
-     ```
-4. Update `CHANGELOG.md` with rollback reason and remediation commit hash.
+Release maintainers can use [package manager publishing](package_manager_publish.md) for manifest validation and release steps. See the [release checklist](RELEASE_CHECKLIST.md) for the broader release process. Users installing `tg` do not need to follow those procedures.
