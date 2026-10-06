@@ -928,6 +928,49 @@ jobs:
         working-directory: rust_core
         run: cargo build --release --no-default-features
 
+      # Install the comparison binary on every platform before native smoke and parity tests.
+      # Bound package-manager stalls and verify the executable after any fallback installation.
+      - name: Ensure ripgrep is available
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          if command -v rg >/dev/null 2>&1; then
+            rg --version
+            exit 0
+          fi
+          case "$RUNNER_OS" in
+            macOS) brew install ripgrep ;;
+            Linux)
+              for attempt in 1 2 3; do
+                if sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; then
+                  break
+                fi
+                echo "apt attempt $attempt failed; retrying in 10s" >&2
+                sleep 10
+              done
+              ;;
+          esac
+          if ! command -v rg >/dev/null 2>&1; then
+            cargo_root="$RUNNER_TEMP/cargo-rg"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cargo_root="$(cygpath -u "$cargo_root")"
+            fi
+            cargo install ripgrep --version 14.1.1 --locked --root "$cargo_root"
+            cargo_bin="$cargo_root/bin"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cygpath -m "$cargo_bin" >> "$GITHUB_PATH"
+            else
+              printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
+            fi
+            export PATH="$cargo_bin:$PATH"
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            echo "ripgrep unavailable after installation; refusing to skip native parity tests" >&2
+            exit 1
+          fi
+          rg --version
+
       - name: Smoke-test native release binary (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -950,60 +993,6 @@ jobs:
           $workdir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "tg-native-smoke") -Force
           Set-Content -Path (Join-Path $workdir.FullName "sample.log") -Value "ERROR one`nINFO two"
           & $bin search ERROR (Join-Path $workdir.FullName "sample.log")
-
-      # ripgrep must exist for the byte-parity oracle below. The in-tree fallback
-      # (`benchmarks/rg.zip`) is Windows-only -- there is no darwin or linux binary committed --
-      # so without this step both macOS legs would resolve no `rg` and SILENTLY skip, which is
-      # exactly how a gate stops gating.
-      # BOUNDED deliberately. Observed twice on 2026-08-19, both on ubuntu: this step sat
-      # in_progress for 2h21m and then 29m while the macOS and windows legs of the SAME run
-      # finished in 10-12 minutes. An unbounded apt stall runs to the 6h job limit, so the
-      # PR is blocked for hours by a step that emits nothing -- indistinguishable, from the
-      # outside, from a slow build. `timeout-minutes` turns that into a fast, legible red;
-      # the retry absorbs the transient mirror failure that is the usual cause.
-      - name: Ensure ripgrep is available
-        shell: bash
-        timeout-minutes: 6
-        run: |
-          set -euo pipefail
-          if command -v rg >/dev/null 2>&1; then
-            rg --version | head -1
-            exit 0
-          fi
-          case "$RUNNER_OS" in
-            macOS) brew install ripgrep ;;
-            Linux)
-              for attempt in 1 2 3; do
-                if sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; then
-                  break
-                fi
-                echo "apt attempt $attempt failed; retrying in 10s" >&2
-                sleep 10
-              done
-              ;;
-            Windows) echo "Windows resolves the committed benchmarks/rg.zip fallback" ;;
-          esac
-          # A retry loop that exhausts its attempts must not look like success: `for` exits 0
-          # on the last iteration regardless, so assert the POSTCONDITION rather than trusting
-          # the loop's status.
-          #
-          # Package-manager mirrors go down independently of this repo (observed on
-          # native-build-smoke (ubuntu-latest), 2026-09-10: apt failed all 3 attempts while
-          # every other OS leg of the same run finished clean). This job already sets up the
-          # Rust toolchain to build tg itself, so `cargo install` is a same-supply-chain
-          # fallback: crates.io downloads are integrity-checked by cargo/Cargo.lock, so this
-          # needs no hand-maintained checksum (unlike a raw GitHub-release binary fetch would).
-          if [ "$RUNNER_OS" != "Windows" ] && ! command -v rg >/dev/null 2>&1; then
-            echo "package manager did not provide rg; falling back to cargo install ripgrep" >&2
-            cargo install ripgrep --locked --root "$RUNNER_TEMP/cargo-rg"
-            echo "$RUNNER_TEMP/cargo-rg/bin" >> "$GITHUB_PATH"
-            export PATH="$RUNNER_TEMP/cargo-rg/bin:$PATH"
-          fi
-          if [ "$RUNNER_OS" != "Windows" ] && ! command -v rg >/dev/null 2>&1; then
-            echo "ripgrep still unavailable after apt retries and a cargo install fallback --" >&2
-            echo "failing rather than letting the rg-parity suites resolve no rg and SILENTLY skip." >&2
-            exit 1
-          fi
 
       # Every e2e suite that needs the real compiled native binary MUST run against it here:
       # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
