@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -285,6 +286,41 @@ def test_repo_revision_identity_fails_closed_outside_a_git_repo(tmp_path: Path) 
     assert identity["status"] == "unavailable"
     assert identity.get("reason")
     assert "commit_sha" not in identity
+
+
+def test_repo_revision_identity_fails_closed_on_invalid_utf8_git_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def _invalid_output(*_args: object, **_kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _invalid_output)
+    identity = evidence_receipt._repo_revision_identity(tmp_path)
+
+    assert identity["status"] == "unavailable"
+    assert "invalid start byte" in identity["reason"]
+
+
+def test_repo_revision_identity_keeps_valid_protocol_with_malformed_stderr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    results = iter([
+        subprocess.CompletedProcess(
+            args=["git", "rev-parse"], returncode=0, stdout=b"a" * 40 + b"\n", stderr=b"warn \xff"
+        ),
+        subprocess.CompletedProcess(
+            args=["git", "status"], returncode=0, stdout=b"## main\n", stderr=b"warn \xff"
+        ),
+    ])
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", lambda *_a, **_k: next(results))
+
+    identity = evidence_receipt._repo_revision_identity(tmp_path)
+
+    assert identity["status"] == "present"
+    assert identity["commit_sha"] == "a" * 40
+    assert identity["branch"] == "main"
 
 
 def test_repo_revision_identity_makes_at_most_two_git_subprocess_calls(
@@ -600,6 +636,123 @@ def test_parse_porcelain_z_no_branch_header_still_parses_entries() -> None:
     branch, entries = evidence_receipt._parse_porcelain_z(raw)
     assert branch is None
     assert entries == [(" M", "sub/core.py")]
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows filesystem paths do not expose raw invalid UTF-8 names"
+)
+def test_parse_porcelain_z_bytes_preserves_non_utf8_path_identity() -> None:
+    raw_path = b"bad-\xff-name.txt"
+    branch, entries = evidence_receipt._parse_porcelain_z(
+        b"## feature\xff\x00 M " + raw_path + b"\x00"
+    )
+
+    assert branch == os.fsdecode(b"feature\xff")
+    assert entries == [(" M", os.fsdecode(raw_path))]
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows filesystem paths do not expose raw invalid UTF-8 names"
+)
+def test_excluding_revision_identity_hashes_raw_path_bytes_safely(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_status = b"## main\x00?? dirty-\xff-name.txt\x00"
+
+    def _git(args, **kwargs):
+        if "rev-parse" in args[0]:
+            return subprocess.CompletedProcess(args[0], 0, stdout="a" * 40, stderr="")
+        return subprocess.CompletedProcess(args[0], 0, stdout=raw_status, stderr=b"")
+
+    monkeypatch.setattr(evidence_receipt, "run_subprocess", _git)
+
+    result = evidence_receipt._repo_revision_identity_excluding(
+        tmp_path,
+        commit_sha="a" * 40,
+        timeout_seconds=1.0,
+        exclude_prefixes=(),
+    )
+
+    assert result["status"] == "present"
+    assert result["dirty"] is True
+    assert result["dirty_file_count"] == 1
+
+
+def test_excluding_revision_identity_fails_closed_on_fsdecode_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_status = b"## main\x00 M caf\xe9.txt\x00"
+    monkeypatch.setattr(
+        evidence_receipt,
+        "run_subprocess",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["git", "status"], returncode=0, stdout=raw_status, stderr=b""
+        ),
+    )
+    real_fsdecode = os.fsdecode
+
+    def _unrepresentable(value: bytes | str) -> str:
+        if value == b"caf\xe9.txt":
+            raise UnicodeDecodeError("utf-8", value, 3, 4, "invalid continuation byte")
+        return real_fsdecode(value)
+
+    monkeypatch.setattr(evidence_receipt.os, "fsdecode", _unrepresentable)
+
+    result = evidence_receipt._repo_revision_identity_excluding(
+        tmp_path, commit_sha="a" * 40, timeout_seconds=1.0, exclude_prefixes=()
+    )
+
+    assert result["status"] == "unavailable"
+    assert "path could not be represented" in result["reason"]
+
+
+def test_excluding_revision_identity_fails_closed_on_fsencode_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_status = b"## main\x00 M tracked.txt\x00"
+    monkeypatch.setattr(
+        evidence_receipt,
+        "run_subprocess",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["git", "status"], returncode=0, stdout=raw_status, stderr=b""
+        ),
+    )
+    real_fsencode = os.fsencode
+
+    def _unrepresentable(value: str | bytes | os.PathLike[str] | os.PathLike[bytes]) -> bytes:
+        if value == "tracked.txt":
+            raise UnicodeEncodeError("utf-8", value, 0, len(value), "unrepresentable")
+        return real_fsencode(value)
+
+    monkeypatch.setattr(evidence_receipt.os, "fsencode", _unrepresentable)
+
+    result = evidence_receipt._repo_revision_identity_excluding(
+        tmp_path, commit_sha="a" * 40, timeout_seconds=1.0, exclude_prefixes=()
+    )
+
+    assert result["status"] == "unavailable"
+    assert "path could not be represented" in result["reason"]
+
+
+def test_excluding_revision_identity_preserves_valid_portable_path_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_status = b"## main\x00 M tracked.txt\x00"
+    monkeypatch.setattr(
+        evidence_receipt,
+        "run_subprocess",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            ["git", "status"], returncode=0, stdout=raw_status, stderr=b""
+        ),
+    )
+
+    result = evidence_receipt._repo_revision_identity_excluding(
+        tmp_path, commit_sha="a" * 40, timeout_seconds=1.0, exclude_prefixes=()
+    )
+
+    assert result["status"] == "present"
+    assert result["dirty"] is True
+    assert result["dirty_file_count"] == 1
 
 
 def test_receipt_revision_block_reflects_dirty_worktree_end_to_end(git_repo: Path) -> None:

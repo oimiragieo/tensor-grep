@@ -5,8 +5,8 @@
 Intake: main `99c1ea1` / v1.123.21; prior main CI `37402418507` completed with
 44 terminal jobs and zero failures. Canonical venv metadata was 1.123.19 and the managed
 launcher 1.123.20, so neither is used as source-version evidence.
-[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS is
-IN_FLIGHT in PR #1214; DOGFOOD-DECODING is IN_FLIGHT in PR #1217, DOGFOOD-FILENAME
+[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS merged
+in PR #1214 (`d0d9f7e`), awaiting publication/replay; DOGFOOD-DECODING is IN_FLIGHT in #1217, DOGFOOD-FILENAME
 in PR #1215, and DOGFOOD-LABELS in PR #1216. Each retains its own review and release gate.
 These four scoped fixes do not close existing strategic rows. Open unrelated PR #1212 owns
 the earlier bug-hunt documentation closeout; Wave 3 remains outside this campaign.
@@ -575,4 +575,3 @@ None at this snapshot. #109 shipped in PR #605. WSL path bugs above are program-
 - Historical ledger: `docs/BACKLOG.md` · Contracts: `docs/CONTRACTS.md` · Laws: `AGENTS.md`
 - Release mechanics + positioning rules: `.claude/skills/tensor-grep-release-and-positioning`
 - What counts as proof: `.claude/skills/tensor-grep-validation-and-qa` (oracle forms 1–10)
-

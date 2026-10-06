@@ -594,11 +594,17 @@ def _build_index_search_command(*, pattern: str, path: str, native_binary: str |
     ]
 
 
-def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_rewrite_subprocess(
+    command: list[str], *, stdout_is_diagnostic: bool = False
+) -> subprocess.CompletedProcess[str]:
     import sys
 
     from tensor_grep.cli.frontdoor_hops import FrontdoorHopLimitError, next_hop_env
-    from tensor_grep.cli.subprocess_policy import run_subprocess
+    from tensor_grep.cli.subprocess_policy import (
+        decode_diagnostic_output,
+        decode_protocol_output,
+        run_subprocess,
+    )
 
     try:
         env = next_hop_env()
@@ -607,15 +613,31 @@ def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[s
         # OSError to a sanitized `execution_failed` envelope.
         raise OSError("TG_FRONTDOOR_HOPS limit reached; native tg not spawned") from exc
     env["TG_SIDECAR_PYTHON"] = sys.executable
-    return run_subprocess(
+    completed = run_subprocess(
         command,
         capture_output=True,
         stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        text=False,
         check=False,
         env=env,
+    )
+    stderr = decode_diagnostic_output(completed.stderr)
+    if stdout_is_diagnostic:
+        stdout = decode_diagnostic_output(completed.stdout)
+    else:
+        try:
+            stdout = decode_protocol_output(completed.stdout)
+        except UnicodeDecodeError:
+            if completed.returncode == 0:
+                raise
+            # On failed invocations, preserve the return code and human diagnostic. The caller's
+            # established error classifier owns this path; malformed unused stdout must not mask it.
+            stdout = ""
+    return subprocess.CompletedProcess(
+        completed.args,
+        completed.returncode,
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -633,6 +655,11 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
             f"Failed to execute rewrite command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             retryable=True,
+        )
+    except UnicodeDecodeError as exc:
+        _log_tool_exception("rewrite_subprocess_utf8", exc)
+        return _rewrite_error(
+            "Rewrite command produced invalid UTF-8 JSON output.", code="invalid_output"
         )
 
     if completed.returncode != 0:
@@ -1210,7 +1237,7 @@ def execute_rewrite_apply_json(
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
     try:
-        completed = _self._run_rewrite_subprocess(command)
+        completed = _self._run_rewrite_subprocess(command, stdout_is_diagnostic=True)
     except FileNotFoundError as exc:
         _log_tool_exception("rewrite_diff_subprocess", exc)
         return _rewrite_error(
@@ -1260,6 +1287,14 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
         return _index_search_error(
             "Index search command binary not found.",
             code="unavailable",
+            pattern=pattern,
+            path=path,
+        )
+    except UnicodeDecodeError as exc:
+        _log_tool_exception("index_search_subprocess_utf8", exc)
+        return _index_search_error(
+            "Index search command returned invalid UTF-8 JSON output.",
+            code="invalid_output",
             pattern=pattern,
             path=path,
         )

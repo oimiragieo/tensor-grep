@@ -568,7 +568,7 @@ def _tracked_file_set(
             ["git", "-C", str(root), "ls-files", "-z"],
             timeout_seconds=timeout_seconds,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -576,20 +576,32 @@ def _tracked_file_set(
     if result.returncode != 0:
         return None
     tracked: set[str] = set()
-    for rel_posix in result.stdout.split("\0"):
-        if not rel_posix:
-            continue
-        try:
-            tracked.add(str((root / rel_posix).resolve()))
-        except OSError as exc:
-            # Task #296. `git ls-files` named this path, so it IS committed -- only resolving it
-            # failed. Dropping it here makes `_is_tracked` below answer False for a genuinely
-            # tracked file, which deletes it from `files`/`tests`/`symbols`/`imports`. That is a
-            # silent WRONG answer, not a smaller one: the map claims to be the project's committed
-            # surface while omitting part of it. Record so `coverage.partial` can say so.
-            if unreadable_hit is not None:
-                unreadable_hit.record(exc)
-            continue
+    stdout = result.stdout
+    try:
+        if isinstance(stdout, bytes):
+            rel_paths = (os.fsdecode(path) for path in stdout.split(b"\0"))
+        else:
+            # Preserve compatibility with existing monkeypatched string results. The real Git
+            # invocation above is bytes-only so path identity is never lost to text decoding.
+            rel_paths = iter(stdout.split("\0"))
+        for rel_posix in rel_paths:
+            if not rel_posix:
+                continue
+            try:
+                tracked.add(str((root / rel_posix).resolve()))
+            except OSError as exc:
+                # Task #296. `git ls-files` named this path, so it IS committed -- only resolving it
+                # failed. Dropping it here makes `_is_tracked` below answer False for a genuinely
+                # tracked file, which deletes it from `files`/`tests`/`symbols`/`imports`. That is a
+                # silent WRONG answer, not a smaller one: the map claims to be the project's committed
+                # surface while omitting part of it. Record so `coverage.partial` can say so.
+                if unreadable_hit is not None:
+                    unreadable_hit.record(exc)
+                continue
+    except UnicodeError:
+        # A path byte sequence the host filesystem codec cannot represent makes this census
+        # incomplete. The caller already treats None as unavailable and must not claim a clean map.
+        return None
     return tracked
 
 

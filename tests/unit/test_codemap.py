@@ -6,6 +6,7 @@ generated output never touches the checked-in fixture and mtimes are stable with
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,6 +23,63 @@ from tensor_grep.cli.codemap import build_codemap, build_codemap_json
 from tensor_grep.cli.main import app
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "codemap_repo"
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows filesystem paths do not expose raw invalid UTF-8 names"
+)
+def test_tracked_file_set_decodes_git_path_bytes_with_filesystem_codec(
+    tmp_path: Path, monkeypatch
+) -> None:
+    raw_path = b"tracked-\xff-name.py"
+
+    def _git(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout=raw_path + b"\x00", stderr=b"")
+
+    monkeypatch.setattr(_codemap, "run_subprocess", _git)
+
+    tracked = _codemap._tracked_file_set(tmp_path)
+
+    assert tracked == {str((tmp_path / os.fsdecode(raw_path)).resolve())}
+
+
+def test_tracked_file_set_degrades_when_host_cannot_decode_git_path_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_path = b"caf\xe9.py"
+    monkeypatch.setattr(
+        _codemap,
+        "run_subprocess",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], returncode=0, stdout=raw_path + b"\0", stderr=b""
+        ),
+    )
+    real_fsdecode = os.fsdecode
+
+    def _unrepresentable(value: bytes | str) -> str:
+        if value == raw_path:
+            raise UnicodeDecodeError("utf-8", raw_path, 3, 4, "invalid continuation byte")
+        return real_fsdecode(value)
+
+    monkeypatch.setattr(_codemap.os, "fsdecode", _unrepresentable)
+
+    assert _codemap._tracked_file_set(tmp_path) is None
+
+
+def test_tracked_file_set_keeps_portable_valid_byte_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_path = b"tracked.py"
+    monkeypatch.setattr(
+        _codemap,
+        "run_subprocess",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args[0], returncode=0, stdout=raw_path + b"\0", stderr=b""
+        ),
+    )
+
+    assert _codemap._tracked_file_set(tmp_path) == {str((tmp_path / "tracked.py").resolve())}
+
 
 _FIXED_REVISION = {
     "status": "present",

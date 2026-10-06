@@ -330,6 +330,52 @@ def test_agent_gpu_tg_command_degrades_honestly_when_nothing_resolves(monkeypatc
     assert agent_capsule._agent_gpu_tg_command() == "tg"
 
 
+def test_gpu_json_probe_preserves_unicode_machine_output_from_bytes(monkeypatch) -> None:
+    payload = {"message": "café 日本語"}
+
+    def fake_run(command, **options):
+        assert options["text"] is False
+        assert "encoding" not in options and "errors" not in options
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps(payload, ensure_ascii=False).encode("utf-8"), b""
+        )
+
+    monkeypatch.setattr(agent_capsule.subprocess, "run", fake_run)
+    result = agent_capsule._run_agent_gpu_json_command(["tg", "--json"], timeout_s=1.0)
+    assert result["status"] == "ok"
+    assert result["payload"] == payload
+
+
+def test_gpu_json_probe_preserves_failure_exit_and_malformed_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["tg", "--json"], returncode=17, stdout=b"{}", stderr=b"GPU unavailable \xff"
+    )
+    monkeypatch.setattr(agent_capsule.subprocess, "run", lambda *_a, **_k: completed)
+
+    result = agent_capsule._run_agent_gpu_json_command(["tg", "--json"], timeout_s=1.0)
+
+    assert result["status"] == "failed"
+    assert result["exit_code"] == 17
+    assert result["stderr"] == "GPU unavailable \ufffd"
+
+
+def test_gpu_json_probe_keeps_exit_code_when_success_output_is_invalid_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = subprocess.CompletedProcess(
+        args=["tg", "--json"], returncode=0, stdout=b"{\xff}", stderr=b"warning \xff"
+    )
+    monkeypatch.setattr(agent_capsule.subprocess, "run", lambda *_a, **_k: completed)
+
+    result = agent_capsule._run_agent_gpu_json_command(["tg", "--json"], timeout_s=1.0)
+
+    assert result["status"] == "malformed"
+    assert result["exit_code"] == 0
+    assert result["stderr"] == "warning \ufffd"
+
+
 def test_agent_gpu_evidence_classifies_shutil_which_result_cross_domain(monkeypatch, tmp_path):
     """End-to-end (through `_agent_gpu_evidence`, not just the helper): a `shutil.which`-resolved
     fallback binary must reach the SAME `is_cross_domain_native_binary()` gate a resolved native

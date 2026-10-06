@@ -2637,7 +2637,12 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
         if not candidate or not candidate.exists():
             continue
         completed = subprocess.run(
-            [str(candidate), flag], capture_output=True, text=True, env=child_env
+            [str(candidate), flag],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=child_env,
         )
         last_completed = completed
         if completed.returncode == 0:
@@ -10785,7 +10790,14 @@ def _run_upgrade(
     errors: list[str] = []
     for label, cmd in attempts:
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
             return result, label
         except FileNotFoundError as e:
             errors.append(f"{label}: {e}")
@@ -10800,9 +10812,18 @@ def _run_upgrade(
                         [sys.executable, "-m", "ensurepip", "--upgrade"],
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         check=True,
                     )
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    result = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=True,
+                    )
                     return result, "pip+ensurepip"
                 except FileNotFoundError as ee:
                     errors.append(f"ensurepip: {ee}")
@@ -10852,6 +10873,8 @@ def upgrade() -> None:
             from pathlib import Path
             from uuid import uuid4
 
+            def _decode_utf8(raw, errors="strict"): return raw.decode("utf-8", errors=errors) if isinstance(raw, bytes) else raw or ""
+
             parent_pid = int(sys.argv[1])
             log_path = Path(sys.argv[2])
             attempts = json.loads(sys.argv[3])
@@ -10872,8 +10895,8 @@ def upgrade() -> None:
                             "-Command",
                             f"Get-Process -Id {parent_pid} -ErrorAction Stop | Out-Null",
                         ],
-                        capture_output=True,
-                        text=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
                         check=True,
                     )
                 except subprocess.CalledProcessError:
@@ -10884,7 +10907,14 @@ def upgrade() -> None:
                 errors: list[str] = []
                 for label, cmd in attempts:
                     try:
-                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=True,
+                        )
                         output = "\\n".join(
                             part
                             for part in (
@@ -10907,12 +10937,16 @@ def upgrade() -> None:
                                     [sys.executable, "-m", "ensurepip", "--upgrade"],
                                     capture_output=True,
                                     text=True,
+                                    encoding="utf-8",
+                                    errors="replace",
                                     check=True,
                                 )
                                 result = subprocess.run(
                                     cmd,
                                     capture_output=True,
                                     text=True,
+                                    encoding="utf-8",
+                                    errors="replace",
                                     check=True,
                                 )
                                 output = "\\n".join(
@@ -10944,17 +10978,21 @@ def upgrade() -> None:
                     result = subprocess.run(
                         [sys.executable, "-c", probe_code],
                         capture_output=True,
-                        text=True,
+                        text=False,
                         check=True,
                     )
                 except FileNotFoundError as exc:
                     return False, f"post-upgrade verification failed: {exc}"
                 except subprocess.CalledProcessError as exc:
-                    stderr = (exc.stderr or "").strip()
-                    stdout = (exc.stdout or "").strip()
+                    stderr = _decode_utf8(exc.stderr, "replace").strip()
+                    stdout = _decode_utf8(exc.stdout, "replace").strip()
                     combined = stderr or stdout or str(exc)
                     return False, f"post-upgrade verification failed: {combined}"
-                version = (result.stdout or "").strip().splitlines()
+                try:
+                    stdout = _decode_utf8(result.stdout)
+                except UnicodeDecodeError:
+                    return False, "post-upgrade verification returned invalid UTF-8 version output"
+                version = stdout.strip().splitlines()
                 if not version:
                     return False, "post-upgrade verification failed: no tensor-grep version reported"
                 installed_version = version[-1].strip()
@@ -10969,10 +11007,18 @@ def upgrade() -> None:
                 return True, installed_version
 
             def _version(path: Path) -> str:
-                result = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+                result = subprocess.run(
+                    [str(path), "--version"],
+                    capture_output=True,
+                    text=False,
+                )
                 if result.returncode != 0:
                     return ""
-                for line in result.stdout.splitlines():
+                try:
+                    stdout = _decode_utf8(result.stdout)
+                except UnicodeDecodeError:
+                    return ""
+                for line in stdout.splitlines():
                     line = line.strip()
                     if line:
                         return line
@@ -11014,19 +11060,23 @@ def upgrade() -> None:
                             "-f",
                             "tensor-grep",
                         ],
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
+                    capture_output=True,
+                    text=False,
+                    timeout=10,
                     )
                 except Exception:
                     return ""
                 if result.returncode != 0:
                     return ""
+                try:
+                    output = _decode_utf8(result.stdout)
+                except UnicodeDecodeError:
+                    return ""
                 location: Path | None = None
                 version = ""
                 files_started = False
                 files: list[str] = []
-                for raw_line in result.stdout.splitlines():
+                for raw_line in output.splitlines():
                     line = raw_line.rstrip()
                     if line.startswith("Location:"):
                         value = line.split(":", 1)[1].strip()
@@ -11100,6 +11150,8 @@ def upgrade() -> None:
                             ],
                             capture_output=True,
                             text=True,
+                            encoding="utf-8",
+                            errors="replace",
                             timeout=120,
                         )
                         if result.returncode != 0:
@@ -11287,24 +11339,24 @@ def upgrade() -> None:
                     status = subprocess.run(
                         status_command,
                         capture_output=True,
-                        text=True,
+                        text=False,
                         timeout=10,
                     )
                     if status.returncode == 0:
                         try:
-                            if json.loads(status.stdout).get("running") is True:
+                            if json.loads(_decode_utf8(status.stdout)).get("running") is True:
                                 return ""
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, UnicodeDecodeError):
                             pass
                     started = subprocess.run(
                         start_command,
                         capture_output=True,
-                        text=True,
+                        text=False,
                         timeout=30,
                     )
                     if started.returncode == 0:
                         return "Session daemon restarted after scheduled upgrade for " + daemon_root + "."
-                    error = (started.stderr or started.stdout or "").strip()
+                    error = _decode_utf8(started.stderr or started.stdout, "replace").strip()
                     return (
                         "WARNING: session daemon was running before scheduled upgrade but "
                         "restart failed for "
@@ -13359,25 +13411,37 @@ def main_entry() -> None:
             pcre2_env, pcre2_refusal = child_env_or_refusal()
             if pcre2_env is None:
                 sys.exit(pcre2_refusal)
+            from tensor_grep.cli.subprocess_policy import (
+                decode_diagnostic_output,
+                decode_protocol_output,
+            )
+
             # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
             native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
             candidates = [native, _self.resolve_ripgrep_binary()]
-            last_completed: subprocess.CompletedProcess[str] | None = None
+            last_completed: subprocess.CompletedProcess[bytes] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():
                     continue
                 completed = subprocess.run(
                     [str(candidate), "--pcre2-version"],
                     capture_output=True,
-                    text=True,
+                    text=False,
                     env=pcre2_env,
                 )
                 last_completed = completed
                 if completed.returncode == 0:
-                    print(completed.stdout.strip())
+                    try:
+                        output = decode_protocol_output(completed.stdout)
+                    except UnicodeDecodeError:
+                        print("PCRE2 version output was not valid UTF-8.", file=sys.stderr)
+                        sys.exit(1)
+                    print(output.strip())
                     sys.exit(0)
             if last_completed is not None:
-                output = last_completed.stderr.strip() or last_completed.stdout.strip()
+                output = decode_diagnostic_output(last_completed.stderr).strip() or (
+                    decode_diagnostic_output(last_completed.stdout).strip()
+                )
                 if output:
                     print(output, file=sys.stderr)
                 sys.exit(last_completed.returncode or 1)

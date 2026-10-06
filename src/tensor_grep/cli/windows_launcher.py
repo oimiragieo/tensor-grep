@@ -170,16 +170,22 @@ def _windows_python_scripts_tensor_grep_package_version(
     python_executable: Path,
     launcher_path: Path,
 ) -> str | None:
+    from tensor_grep.cli.subprocess_policy import decode_protocol_output
+
     try:
         result = _self.subprocess.run(
             [str(python_executable), "-m", "pip", "show", "-f", "tensor-grep"],
             capture_output=True,
-            text=True,
+            text=False,
             timeout=10,
         )
     except Exception:
         return None
     if result.returncode != 0:
+        return None
+    try:
+        stdout = decode_protocol_output(result.stdout)
+    except UnicodeDecodeError:
         return None
     location: Path | None = None
     version: str | None = None
@@ -188,7 +194,7 @@ def _windows_python_scripts_tensor_grep_package_version(
         resolved_launcher = launcher_path.resolve()
     except OSError:
         resolved_launcher = launcher_path
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.lower().startswith("location:"):
             raw_location = line.split(":", 1)[1].strip()
             if raw_location:
@@ -315,6 +321,8 @@ def _remove_windows_stale_tensor_grep_python_launchers(
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
             if result.returncode != 0:
@@ -816,21 +824,29 @@ def _schedule_windows_native_frontdoor_refresh(
                         "powershell",
                         "-NoProfile",
                         "-Command",
-                        f"Get-Process -Id {parent_pid} -ErrorAction Stop | Out-Null",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                    f"Get-Process -Id {parent_pid} -ErrorAction Stop | Out-Null",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
                 )
             except subprocess.CalledProcessError:
                 break
             time.sleep(0.1)
 
         def _version(path: Path) -> str:
-            result = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+            result = subprocess.run(
+                [str(path), "--version"],
+                capture_output=True,
+                text=False,
+            )
             if result.returncode != 0:
                 return ""
-            for line in result.stdout.splitlines():
+            try:
+                stdout = result.stdout.decode("utf-8") if isinstance(result.stdout, bytes) else result.stdout
+            except UnicodeDecodeError:
+                return ""
+            for line in stdout.splitlines():
                 line = line.strip()
                 if line:
                     return line

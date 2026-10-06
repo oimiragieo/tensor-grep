@@ -27,6 +27,7 @@ import typer
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli._main_binding import _self as _self
 from tensor_grep.cli.runtime_paths import native_frontdoor_metadata_path
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 
 _PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
 _PYPI_SIMPLE_URL = "https://pypi.org/simple/tensor-grep/"
@@ -156,6 +157,8 @@ def _candidate_versions_from_pip_index_output(output: str) -> list[str]:
 
 
 def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
+    from tensor_grep.cli.subprocess_policy import decode_protocol_output
+
     env = os.environ.copy()
     env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
     try:
@@ -172,16 +175,16 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
                 "https://pypi.org/simple",
             ],
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
             timeout=timeout_seconds,
             env=env,
         )
+        # Both streams are parsed for versions, so neither is merely diagnostic text.
+        output = "\n".join(decode_protocol_output(part) for part in (result.stdout, result.stderr))
     except Exception:
         return []
-    return _candidate_versions_from_pip_index_output(
-        "\n".join(part for part in (result.stdout, result.stderr) if part)
-    )
+    return _candidate_versions_from_pip_index_output(output)
 
 
 def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
@@ -231,18 +234,23 @@ def _verify_target_python_tensor_grep_version(python_executable: str) -> str:
         result = _self.subprocess.run(
             [python_executable, "-c", probe_code],
             capture_output=True,
-            text=True,
+            text=False,
             check=True,
         )
     except FileNotFoundError as exc:
         raise RuntimeError(f"post-upgrade verification failed: {exc}") from exc
     except _self.subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        stdout = (exc.stdout or "").strip()
+        stderr = decode_diagnostic_output(exc.stderr).strip()
+        stdout = decode_diagnostic_output(exc.stdout).strip()
         combined = stderr or stdout or str(exc)
         raise RuntimeError(f"post-upgrade verification failed: {combined}") from exc
 
-    version = (result.stdout or "").strip().splitlines()
+    try:
+        version = decode_protocol_output(result.stdout).strip().splitlines()
+    except UnicodeDecodeError as exc:
+        raise RuntimeError(
+            "post-upgrade verification returned invalid UTF-8 version output"
+        ) from exc
     if not version:
         raise RuntimeError("post-upgrade verification failed: no tensor-grep version reported")
     return version[-1].strip()

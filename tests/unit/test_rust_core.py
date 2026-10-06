@@ -257,6 +257,27 @@ def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
         backend.search(str(log_file), "ERROR", config=SearchConfig(pcre2=True))
 
 
+def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
+    import subprocess
+
+    from tensor_grep.backends import ripgrep_backend as rg_backend
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.cpu_backend import InvalidRegexError
+    from tensor_grep.core.config import SearchConfig
+
+    monkeypatch.setattr(rg_backend.RipgrepBackend, "_get_binary_name", lambda _self: "rg")
+    monkeypatch.setattr(
+        rg_backend,
+        "run_subprocess",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=["rg"], returncode=2, stdout=b"", stderr=b"bad pattern \xff"
+        ),
+    )
+    with pytest.raises(InvalidRegexError, match="bad pattern ") as captured:
+        rb.RustCoreBackend._binary_file_matches_pattern("sample.txt", "[", SearchConfig(pcre2=True))
+    assert "\ufffd" in str(captured.value)
+
+
 def test_rust_limit_bridge_failure_records_fallback_reason(monkeypatch, tmp_path: Path):
     """Audit #1: if the native bridge fails for a limit-flag search, the fallback must record a
     VISIBLE fallback_reason instead of silently downgrading the flag contract to another engine."""

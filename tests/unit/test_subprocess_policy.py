@@ -1,9 +1,35 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
 from tensor_grep.cli import subprocess_policy
+
+
+def test_cli_decoder_exports_preserve_core_function_identity() -> None:
+    from tensor_grep.core import subprocess_decoding
+
+    assert subprocess_policy.decode_protocol_output is subprocess_decoding.decode_protocol_output
+    assert (
+        subprocess_policy.decode_diagnostic_output is subprocess_decoding.decode_diagnostic_output
+    )
+    assert subprocess_policy.decode_path_record is subprocess_decoding.decode_path_record
+
+
+def test_subprocess_output_policies_separate_protocol_diagnostics_and_paths() -> None:
+    assert subprocess_policy.decode_protocol_output(b'{"ok": true}') == '{"ok": true}'
+    assert subprocess_policy.decode_protocol_output('{"ok": true}') == '{"ok": true}'
+    assert subprocess_policy.decode_diagnostic_output(b"bad\xffmessage") == "bad\ufffdmessage"
+    assert subprocess_policy.decode_path_record(b"filename") == os.fsdecode(b"filename")
+    if os.name != "nt":
+        assert subprocess_policy.decode_path_record(b"name\xff") == os.fsdecode(b"name\xff")
+    try:
+        subprocess_policy.decode_protocol_output(b"{\xff}")
+    except UnicodeDecodeError:
+        pass
+    else:
+        raise AssertionError("machine protocol output must reject malformed UTF-8")
 
 
 def test_ripgrep_timeout_defaults_to_60s(monkeypatch) -> None:

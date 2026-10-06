@@ -6,6 +6,16 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from tensor_grep.core.subprocess_decoding import (
+    decode_diagnostic_output as decode_diagnostic_output,
+)
+from tensor_grep.core.subprocess_decoding import (
+    decode_path_record as decode_path_record,
+)
+from tensor_grep.core.subprocess_decoding import (
+    decode_protocol_output as decode_protocol_output,
+)
+
 
 def _configured_positive_float(env_var: str, default: float) -> float:
     raw_value = os.environ.get(env_var)
