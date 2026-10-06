@@ -135,6 +135,11 @@ A **session** stores a snapshot of project context so related requests can reuse
 tg session open . --json
 ```
 
+Inspect the returned `root` before continuing. Session storage anchors to a detected
+project root, which may be an ancestor containing `.git` or a project manifest.
+If that is not the project you intended, stop and move the practice folder outside
+that project before opening another session.
+
 Copy the session ID from the output and replace `SESSION_ID` in the next command:
 
 ```text
