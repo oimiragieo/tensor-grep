@@ -143,11 +143,21 @@ count names its population/denominator (`0/2 unchecked`, not merely `0`).
 
 ### Layer D — The published mkdocs site (a separate universe)
 
-`mkdocs.yml` defines a **subset** of `docs/*.md` as the published site nav (currently: `index.md`, `installation.md`, `CI_PIPELINE.md`, `SUPPORT_MATRIX.md`, `CONTRACTS.md`, `enterprise_review_bundle_ci.md`, `EXPERIMENTAL.md`, `RELEASE_CHECKLIST.md`, `HOTFIX_PROCEDURE.md`, `package_manager_publish.md`, `architecture.md`, `multi_agent_context_plane.md`, `benchmarks.md`, `tool_comparison.md` — verify with `grep -A2 '^nav:' mkdocs.yml`). CI's `release-readiness` job (`grep -n "release-readiness" -A25 .github/workflows/ci.yml`) runs `mkdocs build --strict`, which **fails the build on any broken internal link or nav reference**, not just missing content. `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/PAPER.md`, `docs/gpu_crossover.md`, `docs/routing_policy.md`, `docs/world_class_plan.md` are **repo-internal only** — they are pytest-governed (Layer B) but are NOT part of the published site and don't need mkdocs nav entries. Before editing a file that IS in the nav, run the strict build locally:
+`mkdocs.yml` owns navigation and publication exclusions. Read both `nav` and
+`exclude_docs`: a Markdown page absent from navigation is still built and searchable
+unless explicitly excluded. The user navigation starts with installation and the
+first-search guide, then daily workflows, architecture and technical references.
+Selected task ledgers and planning records remain available in GitHub but are excluded
+from the site. Do not infer exclusion from a filename or from absence in the menu.
+
+CI's `release-readiness` job runs `mkdocs build --strict`. Strict mode fails on warnings;
+also inspect informational link diagnostics and verify new anchors. Use a prepared docs
+environment and an explicit interpreter: `uv run --no-sync mkdocs` can otherwise select
+an unrelated global executable when the project environment lacks MkDocs.
 
 ```powershell
-pip install mkdocs-material
-mkdocs build --strict
+python -m pip install mkdocs-material
+python -m mkdocs build --strict
 ```
 
 ---
@@ -188,14 +198,25 @@ The repo's own `CLAUDE.md` states its job explicitly: *"Claude Code auto-loads t
    tg search "exact phrase you plan to remove" tests/unit
    ```
    If it's pinned, you have two choices, both legitimate: (a) keep the fragment and change only the surrounding prose, or (b) change the fragment **and** update the pinning assertion in the **same commit** (`AGENTS.md` rule 6 / `CONTRIBUTING.md:57-59`). Silently deleting a pinned sentence without touching the test is not allowed — it is the docs-equivalent of routing around a registration site.
-2. **If you're adding a new capability/behavior claim** that should be visible across the doc set (most product-facing behaviors are — check how the closest existing claim is pinned, e.g. `tg agent` / Actionable Context Capsule spans `AGENTS.md`, `README.md`, `SKILL.md`, `docs/CONTRACTS.md`, `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md` per `test_agent_docs_should_lock_agent_context_capsule_roadmap`), write the **same exact fragment text** into every doc in that group, then either reuse an existing loop-style assertion or add a new one following the pattern of the tests already in `test_public_docs_governance.py` (a `docs = {...}` dict + a `for path, content in docs.items(): assert "..." in content` loop; this file has ~30 such tests to copy the shape from).
+2. **Put a new behavior claim in its owning guide and check the relevant governance loop.**
+   The README summarizes benefits and links to contracts; detailed capsule fields belong in
+   the technical references. Installation instructions serve users; publishing, parity checks
+   and rollback remain in `package_manager_publish.md`, independently checked by
+   `validate_package_manager_docs`. Update ownership tests alongside a deliberate move.
 3. **Run the full docs-governance surface before pushing:**
    ```powershell
-   uv run pytest tests/unit/test_public_docs_governance.py tests/unit/test_enterprise_docs_governance.py tests/unit/test_stamp_release_assets.py -q
-   uv run pytest tests/unit/test_benchmark_scripts_part6.py -k tensor_grep_claude_skill -q
+   uv run --no-sync pytest tests/unit/test_public_docs_governance.py tests/unit/test_enterprise_docs_governance.py tests/unit/test_stamp_release_assets.py tests/unit/test_mcp_contract_version_docs_are_pinned.py -q
+   uv run --no-sync pytest tests/unit/test_benchmark_scripts_part6.py -k tensor_grep_claude_skill -q
    python scripts/agent_readiness.py --output artifacts/agent_readiness.json
    uv run python scripts/validate_release_assets.py
    ```
+   Wrap test runs in an external platform-appropriate timeout. Search the entire `tests/`
+   and `scripts/` trees for each changed documentation filename, not just the two governance
+   modules. Architecture's MCP count is compared with the live registry in
+   `test_mcp_contract_version_docs_are_pinned.py`; do not remove that claim unnoticed or
+   replace it with a decorator count. Run affected installation-validator tests when moving
+   install instructions. Execute examples against the intended installation channel as well
+   as checking their syntax.
    If you touched a file in mkdocs' nav (Part 2, Layer D), also run `mkdocs build --strict` — CI's `release-readiness`
    job runs both `mkdocs build --strict` and `validate_release_assets.py` back to back (same grep as Part 2 Layer D), so a
    release-bearing docs change is not proven green until both pass locally.
@@ -275,7 +296,7 @@ Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` 
 ## Part 9 — Pre-merge checklist for any docs change
 
 - [ ] Identified which doc(s) in Part 1's table own this claim — not just the first one that came to mind.
-- [ ] Grepped the exact phrase being changed/removed against `tests/unit/test_public_docs_governance.py` and `test_enterprise_docs_governance.py` **before** editing.
+- [ ] Searched changed filenames and removed phrases across `tests/` and `scripts/` before editing.
 - [ ] New claim written into **every** doc a matching existing pytest loop requires (Part 4, step 2) — or a new loop-style assertion added if none exists yet.
 - [ ] No banned marketing fragment introduced (Part 2 Layer B negative list); no `"ast-grep parity"` claim.
 - [ ] No hand-edit of an auto-stamped fragment (Part 2 Layer A) — ran `python scripts/stamp_release_assets.py` instead if a stamp looked wrong.
@@ -289,7 +310,7 @@ Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` 
 - [ ] `CLAUDE.md` touched → change is a short pointer bullet, not duplicated AGENTS.md prose.
 - [ ] Appended a receipt that cites another doc's state → cited the CHECK COMMAND (or a dated past observation), never a present-tense snapshot ("still reads X") that rots when that doc moves (Part 8, 2026-08-12).
 - [ ] Added/changed a status-bearing line (task ID + BLOCKED/READY/SHIPPED/…) → same-ID grep across the handoff/board/backlog docs shows ONE status per ID; no cross-doc contradiction (Part 8, 2026-08-12).
-- [ ] Ran `uv run pytest tests/unit/test_public_docs_governance.py tests/unit/test_enterprise_docs_governance.py tests/unit/test_stamp_release_assets.py -q` and `tests/unit/test_benchmark_scripts_part6.py -k tensor_grep_claude_skill -q` green.
+- [ ] Ran the bounded docs checks in Part 4, including MCP registry/version pins and any other tests found by the filename census.
 - [ ] Touched a mkdocs-nav'd file → `mkdocs build --strict` green.
 - [ ] Ran `python scripts/agent_readiness.py` (the `docs-claim-check` probe) as a fast pre-push smoke test.
 - [ ] Release-bearing docs change → ran `uv run python scripts/validate_release_assets.py` locally (the actual
@@ -339,4 +360,3 @@ If any command above no longer matches what's in this file, update the skill in 
 - Design-on-main ≠ SHIPPED (A122). Update Triggers in-body when a design packet lands; do not flip
   DEMAND_GATED to SHIPPED on docs alone.
 - Operator Fable waiver is recorded on the PR and in AGENTS.md A117 — do not invent clearance.
-
