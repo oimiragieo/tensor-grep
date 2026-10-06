@@ -1,18 +1,17 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-10-05)
+## Live reconciliation (2026-10-05, closeout)
 
-At `origin/main` `6862df3`, `pyproject.toml` identifies v1.123.18 (PyPI serves 1.123.18).
-Releases since the prior stamp (v1.123.12) all come from the 2026-10-03 bug hunt (per-PR receipts:
-`docs/audits/2026-10-03-bughunt-tracker.md`, Wave status): v1.123.13 (`05bfdb6`), v1.123.14
-(`700d3d1`; first tag push `161fd53` failed and self-healed), v1.123.15 (`14d8596`), v1.123.16
-(`f9e5167`), v1.123.17 (`9d1a1a0`), v1.123.18 (`6862df3`) -- PRs #1194-#1205, plus docs-only #1206.
-None owns a canonical row, so no canonical row's Status changed. Open PRs (queried 2026-10-05):
-#1207 (wave 2b Part H), #1208 (P0: native and Python front doors re-delegated `search -s|-N --json`
-to each other without bound), #1209 (host-dependent tests made hermetic). The prior 2026-10-03
-stamp covered #1185-#1188. Read CI verdicts per SHA
-(`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not treat the dated
-open-PR tables below as live.
+At `origin/main` `bbfe211`, `pyproject.toml` identifies v1.123.20 (PyPI serves 1.123.20).
+Releases since the prior stamp (v1.123.18): v1.123.19 (`9f08e16`, #1207 wave 2b Part H) and
+v1.123.20 (`7e1da25`, #1208: the native and Python front doors no longer re-delegate
+`search -s|-N --json` to each other without bound; its first release attempt failed on
+runner-not-acquired cancellations and published on `gh run rerun --failed`). #1209 (tests only)
+and docs #1210 merged without a release. All 2026-10-03 bug-hunt PRs (#1194-#1210) are merged;
+per-PR receipts: `docs/audits/2026-10-03-bughunt-tracker.md` (Wave status). None owns a canonical
+row, so no canonical row's Status changed. The open-PR set is empty (queried 2026-10-05). Read CI
+verdicts per SHA (`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not
+treat the dated open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
@@ -223,7 +222,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-05** (stamp `post-**v1.123.18**`; live release/PR census and canonical
+Last reconciled: **2026-10-05** (stamp `post-**v1.123.20**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior.)
 
