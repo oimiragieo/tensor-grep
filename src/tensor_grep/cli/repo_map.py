@@ -406,6 +406,15 @@ from tensor_grep.cli.repo_map_output_budget import (
 from tensor_grep.cli.repo_map_output_budget import (
     apply_repo_map_output_limits as apply_repo_map_output_limits,
 )
+from tensor_grep.cli.repo_map_ranking import (
+    _promote_filename_phrase as _promote_filename_phrase,
+)
+from tensor_grep.cli.repo_map_ranking import (
+    _symbol_rank_key as _symbol_rank_key,
+)
+from tensor_grep.cli.repo_map_ranking import (
+    _symbol_span_length as _symbol_span_length,
+)
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_imports_and_symbols as _regex_imports_and_symbols,
 )
@@ -4712,13 +4721,6 @@ def _score_text_terms(text: str, terms: list[str]) -> int:
     return score
 
 
-def _symbol_span_length(symbol: dict[str, Any]) -> int:
-    line = int(symbol.get("line", symbol.get("start_line", 0)) or 0)
-    start_line = int(symbol.get("start_line", line) or line)
-    end_line = int(symbol.get("end_line", start_line) or start_line)
-    return max(1, end_line - start_line + 1)
-
-
 def _is_cli_command_module_path(file_path: str) -> bool:
     """No-I/O, path-only check: does ``file_path`` live under a ``cli/`` package? Necessary but
     NOT sufficient for "thin CLI dispatcher" (task #250) -- see
@@ -4828,26 +4830,6 @@ def _thin_cli_dispatcher_call_targets(
     if len(called_names) > _THIN_DISPATCHER_MAX_CALL_TARGETS:
         return None
     return called_names
-
-
-def _symbol_rank_key(symbol: dict[str, Any]) -> tuple[int, int, int, int, str, int, str]:
-    if bool(symbol.get("exact_query_match")):
-        query_match_rank = 0
-    elif bool(symbol.get("bridge_query_match")):
-        query_match_rank = 1
-    elif bool(symbol.get("covered_query_match")):
-        query_match_rank = 2
-    else:
-        query_match_rank = 3
-    return (
-        query_match_rank,
-        -int(symbol.get("score", 0)),
-        0 if str(symbol.get("kind")) == "function" else 1,
-        -_symbol_span_length(symbol),
-        str(symbol.get("file")),
-        int(symbol.get("line", 0)),
-        str(symbol.get("name")),
-    )
 
 
 def _symbol_lookup_key(text: str) -> str:
@@ -6185,6 +6167,15 @@ def _build_context_pack_from_map(
 
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
+        _self._promote_filename_phrase(
+            scored_files,
+            scored_symbols,
+            payload=payload,
+            query=query,
+            query_language_hints=query_language_hints,
+            deweighted_trees=deweighted_trees,
+            file_reasons=file_reasons,
+        )
         ranked_files = [path for _, path in scored_files]
         file_matches = [
             _match_record(path, score, file_reasons.get(path, []), graph_scores.get(path))
@@ -8921,7 +8912,7 @@ def _promote_substantive_symbol_for_edit_seed(
             return implementation_candidate
     # An exactly-named primary symbol (H7) must not be demoted by a higher-scored
     # but merely graph-central candidate.
-    if bool(primary_symbol.get("exact_query_match")):
+    if bool(primary_symbol.get("exact_query_match") or primary_symbol.get("filename_phrase_match")):
         return primary_symbol
     if "validation-direct-definition" in primary_file_reasons:
         return primary_symbol
