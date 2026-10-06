@@ -35,6 +35,11 @@ exclude_docs: |
   investigations/
   superpowers/
   agent-laws-receipts.md
+  plans/
+  BACKLOG.md
+  TASK_BOARD.md
+  SESSION_HANDOFF.md
+  CONTINUATION_PLAN.md
 
 nav:
   - Home: index.md

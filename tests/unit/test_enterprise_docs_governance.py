@@ -149,6 +149,16 @@ def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
     assert "Experimental Features: EXPERIMENTAL.md" in doc
     assert "Tool Comparison: tool_comparison.md" in doc
 
+    excluded = doc.split("exclude_docs: |", 1)[1].split("\nnav:", 1)[0]
+    for internal in (
+        "plans/",
+        "BACKLOG.md",
+        "TASK_BOARD.md",
+        "SESSION_HANDOFF.md",
+        "CONTINUATION_PLAN.md",
+    ):
+        assert f"  {internal}\n" in excluded
+
 
 def test_experimental_docs_and_runbooks_should_warn_about_worker_support_boundary() -> None:
     experimental = EXPERIMENTAL_PATH.read_text(encoding="utf-8")
