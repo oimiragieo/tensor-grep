@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v1.123.21 (2026-10-06)
+
+### Bug Fixes
+
+- **deps**: Floor fsspec>=2026.6.0 and multidict>=6.9.1 (CVE-2026-104851, CVE-2026-104874)
+  ([#1213](https://github.com/oimiragieo/tensor-grep/pull/1213),
+  [`5936c78`](https://github.com/oimiragieo/tensor-grep/commit/5936c7839fa388383341e6118a903ddd699964c2))
+
+Floors fsspec>=2026.6.0 (CVE-2026-104851) and multidict>=6.9.1 (CVE-2026-104874), both transitive,
+  in [tool.uv] constraint-dependencies AND the published metadata of every extra that pulls them
+  (fsspec: gpu, gpu-win, nlp, semantic; multidict: nlp); uv.lock relocked for exactly these two
+  (fsspec 2026.9.0, multidict 6.9.1). pip install --dry-run ".[nlp]" from published metadata
+  resolves the fixed versions. Turns main's Dependency & License Audit green. CI green on this head.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- Make the session-daemon stop CLI and reverse-import deadline tests hermetic
+  ([#1209](https://github.com/oimiragieo/tensor-grep/pull/1209),
+  [`bbfe211`](https://github.com/oimiragieo/tensor-grep/commit/bbfe211f6b222fa55f8199bb0d02972279bfefdd))
+
+Session-daemon and reverse-import deadline tests made hermetic on hosts whose %TEMP% carries foreign
+  Modify ACEs (the trust walk correctly refuses it) or whose monotonic clock is large (Windows
+  uptime): trusted secret/base dirs via conftest fixtures that are identity on CI/POSIX, and
+  clock-relative deadlines. Tests only; bite-checked against a broken _ancestors_refusal in both
+  directions. Codex SHIP; CI green on 3aca569.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.20 (2026-10-06)
 
 ### Bug Fixes
