@@ -26,7 +26,6 @@ import pytest
 # (AKIAIOSFODNN7THISISAFAKEKEYFORTEST) can never match, so it would make this
 # control fail for the wrong reason. This 20-char key has no EXAMPLE marker.
 ACCESS_KEY = "AKIA" + "IOSFODNN7ZXCVBNM"
-SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYFAKETESTKEY"
 EXPECTED_RULE = "aws-access-token"
 
 
@@ -96,11 +95,8 @@ def test_gitleaks_detects_non_allowlisted_aws_credentials() -> None:
             f"Baseline scan not clean: rc={baseline.returncode} {baseline.stdout}{baseline.stderr}"
         )
 
-        # These fixed synthetic values must be written in clear text to test detection.
-        (repo / "secrets.txt").write_text(
-            # codeql[py/clear-text-storage-sensitive-data]
-            f"AWS_ACCESS_KEY_ID={ACCESS_KEY}\nAWS_SECRET_ACCESS_KEY={SECRET_KEY}\n"
-        )
+        # This fixed synthetic access key is the exact positive control for the named rule.
+        (repo / "secrets.txt").write_text(f"AWS_ACCESS_KEY_ID={ACCESS_KEY}\n")
         _git(repo, "add", "--", "secrets.txt")
         _git(repo, "commit", "-m", "add credentials")
 
