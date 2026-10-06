@@ -136,3 +136,17 @@ The raw bundle states the hash method and retains each interpreter's complete ou
 All 97 canonical console guard tests, focused Ruff/preview and unchanged size gate pass.
 Production `src/` remains unchanged. Fresh final-head independent/Opus review and CI are
 required; no test skip, new exception or size-pin increase was introduced.
+
+## CLI mock correction after full CI
+
+CI `37426876771` on `129e373` failed because upgrade test doubles rejected the new
+explicit `encoding` argument. A deterministic test-signature census identified eleven
+upgrade mocks and three info-action siblings; a bounded sibling control reproduced the
+same TypeError. Test-only `5a20787390030a29d0eda9aec44e34cdf9e6d8f7` accepts the explicit parameters, and the three
+info-action mocks additionally assert UTF-8/replacement text capture. All existing outcome
+assertions remain. Runtime source, guard scripts, inventory and exception pins are unchanged.
+
+The two complete affected test files pass **144 tests**; focused Ruff, preview formatting
+and the unchanged size gate pass. Raw receipts retain their dirty starting status. An initial
+size invocation used a nonexistent script and provides no clearance; the corrected actual
+file-size gate passed. Full exact-head CI and refreshed independent reviews remain required.
