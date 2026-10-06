@@ -1,6 +1,81 @@
 # CHANGELOG
 
 
+## v1.124.0 (2026-10-06)
+
+### Features
+
+- Add checkpoint labels to CLI and MCP
+  ([#1216](https://github.com/oimiragieo/tensor-grep/pull/1216),
+  [`7ef470f`](https://github.com/oimiragieo/tensor-grep/commit/7ef470fe1880825c32af8e124104e8a90391d14d))
+
+* fix: preserve subprocess protocol and path decoding contracts
+
+* docs: bind subprocess rebase gates to merged diagnostics
+
+* test(subprocess): verify byte consumers with CI pytest entrypoint
+
+* docs: record subprocess CI entrypoint corrections
+
+* fix: prefer complete filename phrases in shared context ranking
+
+* docs: bind ranking replay to merged diagnostic source
+
+* fix: make subprocess guard fingerprints stable across Python versions
+
+* docs: record cross-interpreter guard proof and exact pin migration
+
+* feat: add checkpoint labels across CLI and MCP on combined source
+
+* docs: bind checkpoint labels to combined source verification
+
+* test(cli): align upgrade and info mocks with decoding policy
+
+* docs: record CLI subprocess mock CI correction
+
+* docs: record integrated CLI mock correction
+
+* move pure subprocess decoders into core
+
+* test: pin decoder compatibility and retain import-layering ratchet
+
+* docs: record decoder-layering correction and verification
+
+* docs: record combined decoder-layering verification
+
+* fix: sanitize checkpoint label validation errors
+
+* docs: record checkpoint label error sanitization evidence
+
+* docs: reconcile actual dogfood merges and published diagnostics
+
+* docs: record actual checkpoint-label integration verification
+
+* fix: restore checkpoint meta-tool discovery descriptions
+
+* docs: record restored checkpoint discovery metadata proof
+
+### Testing
+
+- Capture daemon stop proof and shutdown outcomes
+  ([#1218](https://github.com/oimiragieo/tensor-grep/pull/1218),
+  [`bd36835`](https://github.com/oimiragieo/tensor-grep/commit/bd368355f3dd58906cf8dd3b3bbd21675d4fc377))
+
+* test: capture daemon stop stages and delayed shutdown control
+
+* docs: record daemon stop recurrence and published dependencies
+
+* docs: assign daemon diagnostic capture to PR 1218
+
+* test: bound daemon trace reservations and preserve cleanup failures
+
+* docs: retain diagnostic review failures and corrections
+
+* test: wait for entered shutdown observer completion before final trace gate
+
+* docs: record diagnostic completion-boundary correction
+
+
 ## v1.123.23 (2026-10-06)
 
 ### Bug Fixes
