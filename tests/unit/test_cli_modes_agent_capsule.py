@@ -1053,7 +1053,7 @@ def test_agent_capsule_gpu_evidence_uses_native_route(monkeypatch, tmp_path):
     assert any("-e" in call for call in calls)
 
 
-def test_agent_capsule_gpu_evidence_reads_native_output_as_utf8(monkeypatch, tmp_path):
+def test_agent_capsule_gpu_evidence_captures_native_json_as_bytes(monkeypatch, tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     (project / "app.py").write_text("def create_invoice():\n    return 'é'\n", encoding="utf-8")
@@ -1070,7 +1070,7 @@ def test_agent_capsule_gpu_evidence_reads_native_output_as_utf8(monkeypatch, tmp
             "total_matches": 0,
             "matches": [],
         }
-        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode("utf-8"), b"")
 
     monkeypatch.setattr(agent_capsule.subprocess, "run", _fake_gpu_run)
 
@@ -1088,8 +1088,8 @@ def test_agent_capsule_gpu_evidence_reads_native_output_as_utf8(monkeypatch, tmp
         if "--gpu-device-ids" in [str(part) for part in command]
     ]
     assert gpu_kwargs
-    assert all(kwargs["encoding"] == "utf-8" for kwargs in gpu_kwargs)
-    assert all(kwargs["errors"] == "replace" for kwargs in gpu_kwargs)
+    assert all(kwargs["text"] is False for kwargs in gpu_kwargs)
+    assert all("encoding" not in kwargs and "errors" not in kwargs for kwargs in gpu_kwargs)
 
 
 def test_agent_capsule_gpu_evidence_payload_is_bounded(monkeypatch, tmp_path):

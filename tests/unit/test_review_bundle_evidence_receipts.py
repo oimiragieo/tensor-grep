@@ -253,6 +253,35 @@ def test_resolve_git_ref_commit_sha_fails_closed_outside_a_git_repo(tmp_path: Pa
     assert error is not None
 
 
+def test_resolve_git_ref_commit_sha_fails_closed_on_invalid_utf8_output(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path
+) -> None:
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def _invalid_output(*_args: object, **_kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(audit_manifest, "run_subprocess", _invalid_output)
+    sha, message = audit_manifest._resolve_git_ref_commit_sha("HEAD", root=git_repo)
+
+    assert sha is None
+    assert message is not None and "invalid start byte" in message
+
+
+def test_resolve_git_ref_ignores_malformed_stderr_when_sha_stdout_is_valid(
+    monkeypatch: pytest.MonkeyPatch, git_repo: Path
+) -> None:
+    result = subprocess.CompletedProcess(
+        args=["git", "rev-parse"], returncode=0, stdout=("a" * 40).encode(), stderr=b"warning \xff"
+    )
+    monkeypatch.setattr(audit_manifest, "run_subprocess", lambda *_a, **_k: result)
+
+    sha, error = audit_manifest._resolve_git_ref_commit_sha("HEAD", root=git_repo)
+
+    assert error is None
+    assert sha == "a" * 40
+
+
 # ---------------------------------------------------------------------------
 # 3. Change B -- verify --against: GREEN + RED cases (bidirectional oracle)
 # ---------------------------------------------------------------------------

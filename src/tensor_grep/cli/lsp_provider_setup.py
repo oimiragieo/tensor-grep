@@ -532,6 +532,8 @@ def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if completed.returncode == 0:
         return
@@ -732,9 +734,9 @@ def _find_go_binary_name(root: Path, binary_name: str) -> Path | None:
             [go, "env", env_name],
             check=False,
             capture_output=True,
-            text=True,
+            text=False,
         )
-        value = completed.stdout.strip()
+        value = os.fsdecode(completed.stdout or b"").removesuffix("\n")
         if not value:
             continue
         parent = Path(value) if env_name == "GOBIN" else Path(value) / "bin"
@@ -788,7 +790,14 @@ def _ensure_csharp_ls(root: Path) -> Path:
         _CSHARP_LS_VERSION,
         "csharp-ls",
     ]
-    completed = subprocess.run(install_cmd, check=False, capture_output=True, text=True)
+    completed = subprocess.run(
+        install_cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if completed.returncode != 0:
         if "already installed" in completed.stderr.lower():
             # A different version may already be on the tool-path; converge it to the pinned
@@ -831,9 +840,9 @@ def _swift_command() -> list[str] | None:
         [xcrun, "--find", "sourcekit-lsp"],
         check=False,
         capture_output=True,
-        text=True,
+        text=False,
     )
-    candidate = completed.stdout.strip()
+    candidate = os.fsdecode(completed.stdout or b"").removesuffix("\n")
     if completed.returncode == 0 and candidate:
         return [candidate]
     return None

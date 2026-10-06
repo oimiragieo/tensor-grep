@@ -10,6 +10,7 @@ from typing import Any
 
 from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -54,13 +55,17 @@ def _is_ast_grep_sg_binary(binary: str) -> bool:
         result = subprocess.run(
             [binary, "--version"],
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
             timeout=2,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
         return False
-    version_text = f"{result.stdout}\n{result.stderr}".lower()
+    try:
+        stdout = decode_protocol_output(result.stdout)
+    except UnicodeDecodeError:
+        return False
+    version_text = f"{stdout}\n{decode_diagnostic_output(result.stderr)}".lower()
     # #90(b): require a clean exit too, not just the "ast-grep" marker. A broken
     # shim (e.g. a Windows `ast-grep.exe` invoked under WSL/Linux that exits 127)
     # can print an error whose text still contains "ast-grep" -- the marker-only
@@ -435,19 +440,35 @@ class AstGrepWrapperBackend(ComputeBackend):
     ) -> subprocess.CompletedProcess[str]:
         timeout_seconds = _ast_grep_command_timeout_seconds()
         try:
-            return subprocess.run(
+            completed = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=False,
                 check=False,
-                encoding="utf-8",
-                input=input_text,
+                input=input_text.encode("utf-8") if input_text is not None else None,
                 timeout=timeout_seconds,
+            )
+            try:
+                stdout = decode_protocol_output(completed.stdout)
+            except UnicodeDecodeError as exc:
+                raise BackendExecutionError(
+                    "ast-grep command returned invalid UTF-8 protocol output."
+                ) from exc
+            stderr = decode_diagnostic_output(completed.stderr)
+            return subprocess.CompletedProcess(
+                completed.args,
+                completed.returncode,
+                stdout=stdout,
+                stderr=stderr,
             )
         except subprocess.TimeoutExpired as exc:
             raise BackendExecutionError(
                 "ast-grep command timed out after "
                 f"{timeout_seconds:g}s; set {_AST_GREP_COMMAND_TIMEOUT_ENV} to adjust."
+            ) from exc
+        except UnicodeDecodeError as exc:
+            raise BackendExecutionError(
+                "ast-grep command returned invalid UTF-8 protocol output."
             ) from exc
 
     def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:

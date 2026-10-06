@@ -133,6 +133,23 @@ def test_doctor_gpu_runtime_probe_redacts_temp_probe_path(monkeypatch, tmp_path:
     assert "<doctor-gpu-probe-file>" in probe["command"]
 
 
+def test_doctor_gpu_probe_retains_nonzero_exit_and_tolerant_stderr_on_bad_stdout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    native_tg = tmp_path / "tg.exe"
+    native_tg.write_text("native", encoding="utf-8")
+    result = subprocess.CompletedProcess(
+        args=[str(native_tg)], returncode=17, stdout=b"{\xff}", stderr=b"GPU unavailable \xff"
+    )
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", lambda *_a, **_k: result)
+
+    probe = cli_main._doctor_gpu_search_runtime_probe(native_tg)
+
+    assert probe["status"] == "failed"
+    assert probe["exit_code"] == 17
+    assert probe["error"] == "GPU unavailable \ufffd"
+
+
 def test_doctor_gpu_runtime_probe_cross_domain_translates_probe_path(
     monkeypatch, tmp_path: Path
 ) -> None:

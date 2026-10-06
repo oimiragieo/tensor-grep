@@ -118,18 +118,24 @@ def _native_tg_version(candidate: Path) -> str | None:
     if child_env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
     try:
+        from tensor_grep.cli.subprocess_policy import decode_protocol_output
+
         result = subprocess.run(
             [str(candidate), "--version"],
             env=child_env,
             capture_output=True,
-            text=True,
+            text=False,
             timeout=2,
         )
     except Exception:
         return None
     if result.returncode != 0:
         return None
-    for line in result.stdout.splitlines():
+    try:
+        stdout = decode_protocol_output(result.stdout)
+    except UnicodeDecodeError:
+        return None
+    for line in stdout.splitlines():
         stripped = line.strip()
         if stripped:
             return stripped
@@ -527,6 +533,8 @@ def translate_path_for_windows_binary(
     """
     import shutil
 
+    from tensor_grep.cli.subprocess_policy import decode_protocol_output
+
     wslpath_bin = shutil.which("wslpath")
     if wslpath_bin is None:
         return None
@@ -548,16 +556,17 @@ def translate_path_for_windows_binary(
             # check, so it gets the same treatment as the rest.
             [wslpath_bin, "-w", "--", str(path)],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=False,
             timeout=timeout_s,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
     if result.returncode != 0:
         return None
-    translated = result.stdout.strip()
+    try:
+        translated = decode_protocol_output(result.stdout).removesuffix("\n")
+    except UnicodeDecodeError:
+        return None
     return translated or None
 
 

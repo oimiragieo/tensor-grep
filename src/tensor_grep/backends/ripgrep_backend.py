@@ -1,5 +1,6 @@
 import base64
 import binascii
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 from tensor_grep.cli.subprocess_policy import (
     configured_ripgrep_timeout_seconds as configured_ripgrep_timeout_seconds,
 )
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -45,6 +47,19 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
         return base64.b64decode(b64).decode("utf-8", errors="replace")
     except (binascii.Error, ValueError):
         return ""
+
+
+def _decode_rg_path_field(field: dict[str, object] | None) -> str | None:
+    """Decode rg path bytes with the filesystem codec, preserving path identity."""
+    if not field:
+        return None
+    text = field.get("text")
+    if isinstance(text, str):
+        return text or None
+    raw = _field_bytes(field)
+    if raw is None or not raw:
+        return None
+    return os.fsdecode(raw)
 
 
 def _lossy_record_text(field: dict[str, object] | None, delim: bytes) -> str:
@@ -179,6 +194,8 @@ class RipgrepBackend(ComputeBackend):
                 [binary, "--help"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             if "--pcre2" in result.stdout or "PCRE2" in result.stdout:
@@ -186,7 +203,7 @@ class RipgrepBackend(ComputeBackend):
                 test_proc = run_subprocess(
                     [binary, "-P", "a(?=b)", "-V"],
                     capture_output=True,
-                    text=True,
+                    text=False,
                     timeout_seconds=configured_ripgrep_timeout_seconds(),
                 )
                 return test_proc.returncode == 0
@@ -235,14 +252,14 @@ class RipgrepBackend(ComputeBackend):
             result = run_subprocess(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=False,
                 check=False,
-                encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
+            stdout = decode_protocol_output(result.stdout)
             matches, matched_file_paths, match_counts_by_file, total_matches = (
                 self._parse_ndjson_matches(
-                    result.stdout,
+                    stdout,
                     file_path,
                     delim=b"\0" if config is not None and config.null_data else b"\n",
                     render=render_cfg,
@@ -257,7 +274,7 @@ class RipgrepBackend(ComputeBackend):
             # stays fail-closed with the byte-identical BackendExecutionError message.
             partial = result.returncode == 2 and total_matches > 0
             if result.returncode > 1 and not partial:
-                stderr = result.stderr.strip()
+                stderr = decode_diagnostic_output(result.stderr).strip()
                 raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
@@ -276,7 +293,9 @@ class RipgrepBackend(ComputeBackend):
                 rg_exit_zero=render_cfg is not None and result.returncode == 0,
             )
             if partial:
-                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                reason = (
+                    decode_diagnostic_output(result.stderr).strip() or "rg exit 2 (partial results)"
+                )
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
@@ -311,7 +330,17 @@ class RipgrepBackend(ComputeBackend):
             timeout_seconds = (
                 e.timeout if e.timeout is not None else configured_ripgrep_timeout_seconds()
             )
-            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
+            try:
+                partial_stdout_raw = e.stdout or b""
+                if isinstance(partial_stdout_raw, bytes):
+                    # NDJSON records are independently framed by LF. Discard one torn
+                    # trailing record before strict decoding; retain complete records.
+                    last_complete = partial_stdout_raw.rfind(b"\n")
+                    partial_stdout = decode_protocol_output(partial_stdout_raw[: last_complete + 1])
+                else:
+                    partial_stdout = partial_stdout_raw
+            except UnicodeDecodeError:
+                partial_stdout = ""
             matches, matched_file_paths, match_counts_by_file, total_matches = (
                 self._parse_ndjson_matches(
                     partial_stdout,
@@ -395,13 +424,13 @@ class RipgrepBackend(ComputeBackend):
                 proc = run_subprocess(
                     cmd,
                     capture_output=True,
-                    text=True,
+                    text=False,
                     check=False,
-                    encoding="utf-8",
                     timeout_seconds=configured_ripgrep_timeout_seconds(),
                 )
+                stdout = decode_protocol_output(proc.stdout)
                 records = 0
-                for line in proc.stdout.split("\n"):
+                for line in stdout.split("\n"):
                     if line.strip() and json.loads(line).get("type") == "match":
                         records += 1
                 result = records == 1 if records else None
@@ -460,13 +489,8 @@ class RipgrepBackend(ComputeBackend):
                     text = _lossy_record_text(data_match.get("lines"), delim)
 
                     _path_obj = data_match.get("path", {})
-                    path_str = _decode_rg_field(_path_obj)
-                    # Preserve the single-file fallback: if rg gave no path.text, prefer the
-                    # real caller-supplied path over a lossy U+FFFD decode (keeps match.file
-                    # openable for _resolve_match_path). Non-UTF-8 filenames in a directory
-                    # scan may still yield a lossy path; correct raw-bytes path is out of scope.
-                    if "text" not in _path_obj and isinstance(file_path, str):
-                        path_str = file_path
+                    decoded_path = _decode_rg_path_field(_path_obj)
+                    path_str = decoded_path or (file_path if isinstance(file_path, str) else "")
 
                     # Stash rg's per-occurrence byte offsets (submatches[]) for --vimgrep/
                     # --column output shaping. Counting stays one-per-matching-line (below) so
@@ -501,9 +525,8 @@ class RipgrepBackend(ComputeBackend):
                     line_number = data_match.get("line_number", 0)
                     text = _lossy_record_text(data_match.get("lines"), delim)
                     _path_obj = data_match.get("path", {})
-                    path_str = _decode_rg_field(_path_obj)
-                    if "text" not in _path_obj and isinstance(file_path, str):
-                        path_str = file_path
+                    decoded_path = _decode_rg_path_field(_path_obj)
+                    path_str = decoded_path or (file_path if isinstance(file_path, str) else "")
                     if render is not None:
                         matches.extend(
                             render_json_record(
@@ -532,19 +555,24 @@ class RipgrepBackend(ComputeBackend):
             result = run_subprocess(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=False,
                 check=False,
-                encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
-            # split on rg's \n path delimiter, not str.splitlines() (a filename may contain a
-            # literal U+2028/U+0085 that splitlines would fracture the path on).
-            path_parts = result.stdout.split("\0") if config.null else result.stdout.split("\n")
-            matched_file_paths = [path for path in path_parts if path]
+            separator = b"\0" if config.null else b"\n"
+            stdout = result.stdout
+            if isinstance(stdout, bytes):
+                matched_file_paths = [os.fsdecode(path) for path in stdout.split(separator) if path]
+            else:
+                # Keep compatibility with existing patched-run tests. The real child stays in
+                # bytes mode so path records retain filesystem identity and CR/LF bytes.
+                matched_file_paths = [
+                    path for path in stdout.split(separator.decode("ascii")) if path
+                ]
             # rg exit 2 with some matched files = soft partial error: keep them, flag incomplete.
             partial = result.returncode == 2 and bool(matched_file_paths)
             if result.returncode > 1 and not partial:
-                stderr = result.stderr.strip()
+                stderr = decode_diagnostic_output(result.stderr).strip()
                 raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
@@ -560,7 +588,9 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
             )
             if partial:
-                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                reason = (
+                    decode_diagnostic_output(result.stderr).strip() or "rg exit 2 (partial results)"
+                )
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
@@ -570,9 +600,20 @@ class RipgrepBackend(ComputeBackend):
             # L7: rg timed out mid-scan -> recover the file list it already flushed instead of
             # hard-erroring, mirroring search()'s TimeoutExpired handling. Fail-graceful, not
             # fail-crash: a `tg search -l` on a huge tree returns partial + result_incomplete.
-            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
-            path_parts = partial_stdout.split("\0") if config.null else partial_stdout.split("\n")
-            matched_file_paths = [path for path in path_parts if path]
+            partial_stdout = e.stdout or b""
+            separator = b"\0" if config.null else b"\n"
+            if isinstance(partial_stdout, bytes):
+                # Only complete delimiter-terminated names are usable after timeout. The
+                # trailing fragment may be a truncated path, not a complete rg record.
+                complete = partial_stdout.split(separator)
+                if not partial_stdout.endswith(separator):
+                    complete = complete[:-1]
+                matched_file_paths = [os.fsdecode(path) for path in complete if path]
+            else:
+                complete = partial_stdout.split(separator.decode("ascii"))
+                if not partial_stdout.endswith(separator.decode("ascii")):
+                    complete = complete[:-1]
+                matched_file_paths = [path for path in complete if path]
             reason = (
                 "rg files-with-matches search timed out; returning the partial file list. Scope "
                 "the search to a smaller path (e.g. `tg search PATTERN src/`) or raise "
@@ -597,17 +638,18 @@ class RipgrepBackend(ComputeBackend):
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
     def _parse_count_stdout(
-        self, stdout: str, config: SearchConfig, file_path: str | list[str]
+        self,
+        stdout: bytes | str,
+        config: SearchConfig,
+        file_path: str | list[str],
+        *,
+        complete_records_only: bool = False,
     ) -> tuple[int, int, list[str], dict[str, int]]:
         """Parse rg ``--count`` stdout into (total_matches, total_files, matched_file_paths,
         match_counts_by_file). Shared by the success path and the L7 TimeoutExpired partial-recovery
         path so a timed-out count still tallies whatever rg had flushed."""
-        lines = [line.strip() for line in stdout.split("\n") if line.strip()]
-        total_matches = 0
-        total_files = 0
-        matched_file_paths: list[str] = []
-        match_counts_by_file: dict[str, int] = {}
-
+        raw_stdout = os.fsencode(stdout)
+        newline, nul, colon = b"\n", b"\0", b":"
         multi_file = (
             (isinstance(file_path, (list, tuple)) and len(file_path) > 1)
             or (isinstance(file_path, str) and Path(file_path).is_dir())
@@ -617,19 +659,54 @@ class RipgrepBackend(ComputeBackend):
                 and Path(file_path[0]).is_dir()
             )
         )
+        path_prefixed = (multi_file or config.with_filename) and not config.no_filename
+        if config.null and path_prefixed:
+            # In --null mode rg emits `path NUL count LF`; filenames may contain
+            # whitespace and CR/LF, so only the count field may be stripped/split.
+            lines: list[bytes] = []
+            remaining = raw_stdout
+            while remaining:
+                separator = remaining.find(nul)
+                if separator < 0:
+                    break
+                path_record = remaining[:separator]
+                count_start = separator + 1
+                record_end = remaining.find(newline, count_start)
+                if record_end < 0:
+                    if complete_records_only:
+                        break
+                    count_record = remaining[count_start:]
+                    remaining = b""
+                else:
+                    count_record = remaining[count_start:record_end]
+                    remaining = remaining[record_end + 1 :]
+                if count_record.strip():
+                    lines.append(path_record + nul + count_record.strip())
+        else:
+            # Without --null, newline is rg's path/count framing and a filename
+            # containing LF cannot be represented unambiguously by this format.
+            if complete_records_only:
+                final_delimiter = raw_stdout.rfind(newline)
+                raw_stdout = raw_stdout[:final_delimiter] if final_delimiter >= 0 else b""
+            lines = [line for line in raw_stdout.split(newline) if line.strip()]
+        total_matches = 0
+        total_files = 0
+        matched_file_paths: list[str] = []
+        match_counts_by_file: dict[str, int] = {}
         # Audit HIGH: rg emits `path:count` whenever it prints the filename, which is driven by
         # -H/--no-filename (config.with_filename/no_filename), NOT only by the multi-file heuristic.
-        path_prefixed = (multi_file or config.with_filename) and not config.no_filename
         for line in lines:
             matched_path: str | None = None
-            if config.null and "\0" in line:
-                matched_path, count_text = line.rsplit("\0", 1)
-            elif path_prefixed and ":" in line:
-                matched_path, count_text = line.rsplit(":", 1)
+            if config.null and nul in line:
+                matched_path_raw, count_text = line.rsplit(nul, 1)
+                matched_path = os.fsdecode(matched_path_raw)
+            elif path_prefixed and colon in line:
+                matched_path_raw, count_text = line.rsplit(colon, 1)
+                matched_path = os.fsdecode(matched_path_raw)
             else:
                 count_text = line
             try:
-                count_value = int(count_text.strip())
+                count_value = int(count_text.strip().decode("ascii"))
             except ValueError:
                 continue
             total_matches += count_value
@@ -651,9 +728,8 @@ class RipgrepBackend(ComputeBackend):
             result = run_subprocess(
                 cmd,
                 capture_output=True,
-                text=True,
+                text=False,
                 check=False,
-                encoding="utf-8",
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             total_matches, total_files, matched_file_paths, match_counts_by_file = (
@@ -662,7 +738,7 @@ class RipgrepBackend(ComputeBackend):
 
             partial = result.returncode == 2 and total_matches > 0
             if result.returncode > 1 and not partial:
-                stderr = result.stderr.strip()
+                stderr = decode_diagnostic_output(result.stderr).strip()
                 raise BackendExecutionError(
                     f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
                 )
@@ -679,7 +755,9 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
             )
             if partial:
-                reason = result.stderr.strip() or "rg exit 2 (partial results)"
+                reason = (
+                    decode_diagnostic_output(result.stderr).strip() or "rg exit 2 (partial results)"
+                )
                 sys.stderr.write(f"tg: rg exited 2, keeping partial results: {reason}\n")
                 search_result.result_incomplete = True
                 search_result.incomplete_reason = reason
@@ -688,9 +766,11 @@ class RipgrepBackend(ComputeBackend):
         except subprocess.TimeoutExpired as e:
             # L7: recover the partial tally rg had flushed before the timeout instead of
             # hard-erroring, mirroring search()'s TimeoutExpired handling.
-            partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
+            partial_stdout = e.stdout or b""
             total_matches, total_files, matched_file_paths, match_counts_by_file = (
-                self._parse_count_stdout(partial_stdout, config, file_path)
+                self._parse_count_stdout(
+                    partial_stdout, config, file_path, complete_records_only=True
+                )
             )
             routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
             reason = (

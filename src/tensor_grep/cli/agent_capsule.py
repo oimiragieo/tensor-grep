@@ -403,17 +403,21 @@ def _run_agent_gpu_json_command(
             "exit_code": None,
         }
     try:
+        from tensor_grep.cli.subprocess_policy import (
+            decode_diagnostic_output,
+            decode_protocol_output,
+        )
+
         completed = subprocess.run(
             args,
             env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=False,
             check=False,
             timeout=max(float(timeout_s), 0.1),
         )
+        stderr = decode_diagnostic_output(completed.stderr).strip()
     except subprocess.TimeoutExpired as exc:
         return {
             "status": "timeout",
@@ -432,9 +436,6 @@ def _run_agent_gpu_json_command(
             "exit_code": None,
             "stderr": str(exc),
         }
-
-    stdout = completed.stdout or ""
-    stderr = (completed.stderr or "").strip()
     result: dict[str, Any] = {
         "status": "ok",
         "command": ref["command"],
@@ -446,6 +447,13 @@ def _run_agent_gpu_json_command(
     if completed.returncode not in valid_return_codes:
         result["status"] = "failed"
         result["reason"] = f"GPU evidence command exited with code {completed.returncode}."
+        return result
+
+    try:
+        stdout = decode_protocol_output(completed.stdout)
+    except UnicodeDecodeError as exc:
+        result["status"] = "malformed"
+        result["reason"] = f"GPU evidence command returned invalid UTF-8 JSON: {exc}"
         return result
 
     try:

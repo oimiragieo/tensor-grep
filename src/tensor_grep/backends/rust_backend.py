@@ -3,6 +3,7 @@ from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
+from tensor_grep.cli.subprocess_policy import decode_diagnostic_output
 from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
@@ -192,7 +193,7 @@ class RustCoreBackend(ComputeBackend):
         proc = run_subprocess(
             cmd,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
             timeout_seconds=configured_ripgrep_timeout_seconds(),
         )
@@ -200,7 +201,8 @@ class RustCoreBackend(ComputeBackend):
             return True
         if proc.returncode == 1:
             return False
-        raise InvalidRegexError(f"invalid regex pattern: {(proc.stderr or '').strip()[:300]}")
+        stderr = decode_diagnostic_output(proc.stderr).strip()[:300]
+        raise InvalidRegexError(f"invalid regex pattern: {stderr}")
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None

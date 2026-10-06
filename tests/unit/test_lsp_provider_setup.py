@@ -7,6 +7,26 @@ import pytest
 import tensor_grep.cli.lsp_provider_setup as provider_setup
 
 
+def test_find_go_binary_name_preserves_trailing_space_in_bytes_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(provider_setup.shutil, "which", lambda _name: "go")
+    monkeypatch.setattr(
+        provider_setup.subprocess,
+        "run",
+        lambda *_args, **_kwargs: type(
+            "Result", (), {"stdout": b"C:\\Go Path \n", "returncode": 0}
+        )(),
+    )
+    monkeypatch.setattr(Path, "is_file", lambda _self: True)
+
+    found = provider_setup._find_go_binary_name(tmp_path, "gopls")
+
+    assert (
+        found == Path("C:\\Go Path ") / provider_setup._managed_bin_binary(tmp_path, "gopls").name
+    )
+
+
 def test_wrap_windows_batch_command_routes_cmd_through_cmd_exe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

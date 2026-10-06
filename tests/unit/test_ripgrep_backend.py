@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -623,6 +624,50 @@ def test_count_single_file_without_filename_parses_bare_count():
     assert result.total_matches == 5
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows filesystem decoding does not preserve arbitrary raw bytes"
+)
+def test_null_count_preserves_path_bytes_and_only_strips_count_field():
+    """NUL-delimited path records may contain whitespace, CR/LF, and undecodable bytes."""
+    import os
+
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, null=True)
+    raw_path = b"  leading and trailing  \r\nline-\xff"
+
+    total, files, paths, counts = backend._parse_count_stdout(
+        raw_path + b"\0 2 \n", config, ["one", "two"]
+    )
+
+    expected = os.fsdecode(raw_path)
+    assert (total, files) == (2, 1)
+    assert paths == [expected]
+    assert counts == {expected: 2}
+
+
+def test_null_count_without_path_prefix_keeps_bare_count():
+    backend = RipgrepBackend()
+    total, files, paths, counts = backend._parse_count_stdout(
+        b"2\n", SearchConfig(count=True, null=True), "single.txt"
+    )
+    assert (total, files) == (2, 1)
+    assert paths == ["single.txt"]
+    assert counts == {"single.txt": 2}
+
+
+def test_count_parser_preserves_leading_space_in_prefixed_path() -> None:
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, with_filename=True)
+
+    total, files, paths, counts = backend._parse_count_stdout(
+        b" leading name:2\n", config, ["one", "two"]
+    )
+
+    assert (total, files) == (2, 1)
+    assert paths == [" leading name"]
+    assert counts == {" leading name": 2}
+
+
 def test_should_forward_sort_flags_in_json_mode():
     """Audit MED: --sort/--sortr/--sort-files change RESULT ORDER and rg honors them with
     --json, but they were gated behind `not json_mode` — and search() always uses json_mode,
@@ -1064,6 +1109,65 @@ def test_ripgrep_backend_decodes_non_utf8_lines_bytes(monkeypatch):
     assert result.matches[0].text != ""
     assert "foo" in result.matches[0].text
     assert result.matches[0].line_number == 3
+
+
+@pytest.mark.parametrize("record_type", ["match", "context"])
+def test_ripgrep_json_path_bytes_are_filesystem_decoded(record_type: str) -> None:
+    import base64
+    import json
+
+    raw_path = b"src/a.py"
+    record = {
+        "type": record_type,
+        "data": {
+            "path": {"bytes": base64.b64encode(raw_path).decode("ascii")},
+            "lines": {"bytes": base64.b64encode(b"line\xff\n").decode("ascii")},
+            "line_number": 1,
+            "submatches": [],
+        },
+    }
+
+    matches, paths, counts, total = RipgrepBackend._parse_ndjson_matches(
+        json.dumps(record) + "\n", "repo-directory"
+    )
+
+    assert total == (1 if record_type == "match" else 0)
+    assert matches[0].file == os.fsdecode(raw_path)
+    assert matches[0].text == "line\ufffd"
+    assert os.fsencode(matches[0].file) == raw_path
+    if record_type == "match":
+        assert paths == [os.fsdecode(raw_path)]
+        assert counts == {os.fsdecode(raw_path): 1}
+    else:
+        assert paths == []
+        assert counts == {}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permits creating names with invalid UTF-8 bytes")
+def test_ripgrep_json_path_surrogate_round_trips_to_existing_posix_file(tmp_path: Path) -> None:
+    import base64
+    import json
+
+    raw_name = b"name-\xff.py"
+    raw_path = os.fsencode(tmp_path) + b"/" + raw_name
+    with open(raw_path, "wb") as stream:
+        stream.write(b"line\xff\n")
+    record = {
+        "type": "match",
+        "data": {
+            "path": {"bytes": base64.b64encode(raw_name).decode("ascii")},
+            "lines": {"bytes": base64.b64encode(b"line\xff\n").decode("ascii")},
+            "line_number": 1,
+            "submatches": [],
+        },
+    }
+
+    matches, _paths, _counts, _total = RipgrepBackend._parse_ndjson_matches(
+        json.dumps(record) + "\n", str(tmp_path)
+    )
+
+    assert os.fsencode(matches[0].file) == raw_name
+    assert (tmp_path / matches[0].file).is_file()
 
 
 def test_build_cmd_forwards_unrestricted_levels():

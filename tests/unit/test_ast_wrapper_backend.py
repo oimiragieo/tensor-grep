@@ -210,6 +210,48 @@ def test_ast_grep_backend_memoizes_binary_probe():
     assert probe_calls == ["/real/path/ast-grep"]
 
 
+def test_ast_wrapper_strict_output_decode_uses_established_failure_boundary():
+    from tensor_grep.backends.base import BackendExecutionError
+
+    backend = AstGrepWrapperBackend()
+    error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+    with (
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", side_effect=error),
+        pytest.raises(BackendExecutionError, match="invalid UTF-8"),
+    ):
+        backend._run_ast_grep_command(["ast-grep", "--json"])
+
+
+def test_ast_wrapper_decodes_stdout_strictly_and_stderr_with_replacement():
+    backend = AstGrepWrapperBackend()
+    result = subprocess.CompletedProcess(
+        args=["ast-grep", "--json"],
+        returncode=2,
+        stdout=b"[]",
+        stderr=b"warning \xff",
+    )
+    with patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=result):
+        completed = backend._run_ast_grep_command(["ast-grep", "--json"])
+
+    assert completed.stdout == "[]"
+    assert completed.stderr == "warning \ufffd"
+
+
+def test_ast_wrapper_rejects_invalid_stdout_without_losing_diagnostic_boundary():
+    backend = AstGrepWrapperBackend()
+    result = subprocess.CompletedProcess(
+        args=["ast-grep", "--json"],
+        returncode=0,
+        stdout=b"[\xff]",
+        stderr=b"",
+    )
+    with (
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=result),
+        pytest.raises(BackendExecutionError, match="invalid UTF-8 protocol output"),
+    ):
+        backend._run_ast_grep_command(["ast-grep", "--json"])
+
+
 def test_doctor_ast_grep_available_false_when_shim_broken():
     """#130(b): `tg doctor`'s ast_grep status delegates to
     AstGrepWrapperBackend, so the probe-gate fix must be visible through
@@ -432,7 +474,7 @@ def test_ast_wrapper_backend_should_forward_stdin_to_ast_grep_run(monkeypatch):
         "python",
         "--stdin",
     ]
-    assert run.call_args.kwargs["input"] == "print('hello')\n"
+    assert run.call_args.kwargs["input"] == b"print('hello')\n"
     assert run.call_args.kwargs["timeout"] == 60.0
 
 
