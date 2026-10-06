@@ -150,3 +150,25 @@ The two complete affected test files pass **144 tests**; focused Ruff, preview f
 and the unchanged size gate pass. Raw receipts retain their dirty starting status. An initial
 size invocation used a nonexistent script and provides no clearance; the corrected actual
 file-size gate passed. Full exact-head CI and refreshed independent reviews remain required.
+
+## Import-layering correction after full CI
+
+CI `37429574908` on `574d18b` reached 5,281 passing tests before the import-graph
+ratchet detected two new backend-to-CLI dependencies. The run and the combined labels
+run were cancelled after this real production finding; they supply no clearance.
+The independently hash-reviewed [layering plan](plans/2026-10-06-subprocess-layering.md)
+uses raw-byte SHA-256 `2a8fe262265e926cbfa1db2dbd401f7fd3aac18cd44cb338699910a7676771f0`.
+
+Luna implemented the bounded move as `952c308`, harvested as `6b8dd71`; clean integrated
+source is `83811a71239f3cb76650a20f57ad789f54a57cdc`. The three helper function ASTs are
+unchanged in `core/subprocess_decoding.py`. Both backends import from core; explicit CLI
+re-exports retain the same callable objects. The existing import baseline is unchanged.
+The inventory differs only at the wrapper's source line, 120 to 102; all 72 sinks,
+16 text-decoding calls, 12 generated calls and seven exact exceptions are preserved.
+
+Ten bounded clean-source batches pass: 197 import/backend/policy/path tests (four skips),
+97 guard tests, complete three-interpreter inventory equality, full Ruff/preview/mypy
+(174 source files), size (1,118 files; no regressions), bare-call and memoized actual
+handler assertions, and 30 diagnostic/decoding source replay rows. The new core module
+explains the source-count increase; no ratchet or budget was widened. Exact final-head
+independent/security review, full CI and published replay remain separate gates.

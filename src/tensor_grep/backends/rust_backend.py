@@ -3,10 +3,10 @@ from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
-from tensor_grep.cli.subprocess_policy import decode_diagnostic_output
 from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
+from tensor_grep.core.subprocess_decoding import decode_diagnostic_output
 
 try:
     from tensor_grep.rust_core import RustBackend as NativeRustBackend

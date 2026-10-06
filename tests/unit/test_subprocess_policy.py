@@ -7,6 +7,16 @@ import time
 from tensor_grep.cli import subprocess_policy
 
 
+def test_cli_decoder_exports_preserve_core_function_identity() -> None:
+    from tensor_grep.core import subprocess_decoding
+
+    assert subprocess_policy.decode_protocol_output is subprocess_decoding.decode_protocol_output
+    assert (
+        subprocess_policy.decode_diagnostic_output is subprocess_decoding.decode_diagnostic_output
+    )
+    assert subprocess_policy.decode_path_record is subprocess_decoding.decode_path_record
+
+
 def test_subprocess_output_policies_separate_protocol_diagnostics_and_paths() -> None:
     assert subprocess_policy.decode_protocol_output(b'{"ok": true}') == '{"ok": true}'
     assert subprocess_policy.decode_protocol_output('{"ok": true}') == '{"ok": true}'
