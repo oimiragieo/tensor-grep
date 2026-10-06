@@ -503,8 +503,8 @@ def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
             "use a CUDA-enabled native tg route."
         )
     return (
-        "GPU evidence command did not use NativeGpuBackend "
-        f"(routing_backend={backend or 'unknown'})."
+        "GPU evidence command lacks proved native execution "
+        f"(routing_backend={backend or 'unknown'}, sidecar_used={sidecar_used})."
     )
 
 

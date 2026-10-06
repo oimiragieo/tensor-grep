@@ -1345,6 +1345,10 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         base["status"] = "failed"
         base["error"] = f"GPU runtime probe returned invalid JSON: {exc}"
         return base
+    if not isinstance(payload, dict):
+        base["status"] = "failed"
+        base["error"] = "GPU runtime probe returned invalid JSON object: expected a JSON object"
+        return base
 
     routing_backend = str(payload.get("routing_backend") or "")
     raw_sidecar_used = payload.get("sidecar_used")
@@ -1361,7 +1365,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
 
     base["status"] = "unsupported"
     base["error"] = (
-        "GPU route did not use NativeGpuBackend "
+        "GPU route lacks proved native execution "
         f"(routing_backend={routing_backend or 'unknown'}, sidecar_used={sidecar_used})."
     )
     return base

@@ -159,9 +159,30 @@ def test_doctor_gpu_probe_uses_supported_argv_and_preserves_execution_proof(
     assert kwargs["timeout"] > 0
     if sidecar:
         assert result["error"] == (
-            "GPU route did not use NativeGpuBackend "
+            "GPU route lacks proved native execution "
             "(routing_backend=GpuSidecar, sidecar_used=True)."
         )
+
+
+@pytest.mark.parametrize("stdout", ["[]", "null", "7", '"probe"'])
+def test_doctor_gpu_probe_rejects_non_object_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stdout: str
+) -> None:
+    binary = tmp_path / "tg.exe"
+    binary.write_text("native", encoding="utf-8")
+    monkeypatch.setattr(cli_main, "is_cross_domain_native_binary", lambda _binary: False)
+    monkeypatch.setattr(
+        cli_main.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, stdout, ""),
+    )
+
+    result = cli_main._doctor_gpu_search_runtime_probe(binary)
+
+    assert result["status"] == "failed"
+    assert result["error"] == (
+        "GPU runtime probe returned invalid JSON object: expected a JSON object"
+    )
 
 
 def test_doctor_gpu_probe_preserves_native_failure_classification(
