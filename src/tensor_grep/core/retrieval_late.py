@@ -7,8 +7,8 @@ too load-bearing to touch for a demand-gated feature), but this is a validated d
 paused build. Reachable ONLY behind the undocumented ``TG_LATE_RERANK=1`` env var (no CLI flag,
 no `tg` command sets it) from two call sites in `cli/main.py`, and the required `rerank` extra is
 never installed by `tg install-dense` -- there is no `tg`-command install path at all. Even when
-reached, it is decisively negative on the golden set (ndcg@10 0.068 vs plain RRF 0.305,
-`docs/PAPER.md:469`), and the root cause is model capacity (the 17M-param int8
+reached, its retrieval quality remains below the RRF baseline on the evaluation corpus.
+The identified limitation is model capacity (the 17M-param int8
 `LateOn-Code-edge` model's raw MaxSim ranking is statistically indistinguishable from random on
 in-repo code) -- NOT the role-aware query/document encoding bug this module already fixed (see
 `load_late_reranker`'s docstring), so re-flipping the same encoder will not change the verdict.

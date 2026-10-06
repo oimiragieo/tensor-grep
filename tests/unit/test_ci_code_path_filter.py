@@ -116,7 +116,15 @@ def test_detector_does_not_confuse_a_substring() -> None:
 _DOC_FILTER_LINE = re.compile(r"DOC_FILES=\$\(git diff --name-only[^)]*")
 
 #: Paths whose change can invalidate a doc claim or dangle a skill citation.
-REQUIRED_DOC_PATHS = ("docs", ".claude/skills", "mkdocs.yml", "README.md", "AGENTS.md")
+REQUIRED_DOC_PATHS = (
+    "docs",
+    ".claude",
+    ".gitignore",
+    "mkdocs.yml",
+    "README.md",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+)
 
 
 def _doc_filter_line() -> str:

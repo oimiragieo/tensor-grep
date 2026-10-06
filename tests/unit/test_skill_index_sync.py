@@ -88,9 +88,9 @@ def test_skills_directory_has_a_plausible_folder_count() -> None:
     # comparison tests below would compare empty-set-to-empty-set and vacuously pass. Fail loudly
     # on an implausibly small real-folder count instead of trusting a silent zero.
     real = _real_skill_folders()
-    assert len(real) >= 15, (
+    assert len(real) == 6, (
         f"Only found {len(real)} `.claude/skills/*/SKILL.md` folders -- the glob pattern or "
-        "SKILLS_DIR path is probably broken, not the repo."
+        "Only the six reviewed public skills belong in this directory."
     )
 
 

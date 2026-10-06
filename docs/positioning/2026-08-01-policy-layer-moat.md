@@ -466,14 +466,7 @@ quick-start block and is absent. `grep -c "tg agent" README.md` -> 3; `grep -in 
 
 **Mandatory section. Every line here is a claim that would fail review.**
 
-1. **The 7.5x-fewer-tokens-than-grep benchmark (#72) is CEO-GATED for public use.** It is listed
-   under `docs/TASK_BOARD.md`'s CEO-GATED heading and in `docs/BACKLOG.md`. It is referenced in this
-   memo for internal reasoning only. **Publishing it is not my call and not any agent's call.** It
-   must not enter `docs/tool_comparison.md`, `README.md`, a blog post, or any external artifact
-   without an explicit CEO go. Note also that it belongs to the same metric family competitors
-   already publish (grepai 97% input-token cut, CodeGraph 94% vendor / ~70% independently re-measured
-   fewer tool calls, GitNexus 88%, Gortex up to 50x) — so it will be read *comparatively*, which
-   raises rather than lowers the bar on how it is framed.
+1. **Benchmark publication (#72) remains approval-gated.** Public wording requires current reproducible evidence and explicit approval; historical internal measurements are not approved claims.
 
 2. **We cannot claim "the 2026 market consensus".** One blog post, 2026-05-19, plus two contemporaries
    naming different gaps. Cite the post or argue from our own evidence.

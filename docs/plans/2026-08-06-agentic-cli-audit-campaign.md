@@ -55,7 +55,7 @@ Verdicts: VERIFIED / PARTIAL (real, description imprecise) / WRONG / STALE. All 
 | R3 | Query-policy layer: content classifier (regex/structural/NSL) + escalate-on-low-recall + search-budget meter | ARCS budgeted loop; SWE-Explore Context Efficiency r=0.95; CoREB short-query collapse | only argv router + single-token gate (`main.py:4431-4440`); docs reject richer classifier (:4386) | default-OFF; no existing-semantics change |
 | R4a | Node/symbol-addressed edit apply — `tg edit-ready` | CodeStruct/CodeCompass; Probe "LLM is semantic layer" | `EditReadyTicketV1` concept only, cmd missing (`prepare_service.py:459-472`) | experimental, **needs design** |
 | R4b | ARISE data-flow slicing `tg slice <var>` | ARISE +17/+15 | unbuilt; research-frontier labels lower-priority | experimental default-OFF |
-| R5 | Line-level localization + tokens-per-correct-answer private harness (SWE-Explore-style) | SWE-Explore line-level is the shared bottleneck; Sverklo t/correct | no public/private position; internal proof points exist (defs 7.5×, file-deps 2.24×) | private only; publish gated #72 |
+| R5 | Line-level localization + tokens-per-correct-answer private harness (SWE-Explore-style) | SWE-Explore line-level is the shared bottleneck; Sverklo t/correct | no approved public claim; internal proof points remain publication-gated | private only; publish gated #72 |
 | R6 | Git co-change evolutionary-coupling in blast-radius | Ripple ICSE'26; Codebase-Memory git co-change edges | no co-change signal | additive pin-first ranking gate (A16) |
 | R7 | C/C++ cross-file caller + `#include` graph | Codebase-Memory/Atlas LSP-augmented C/C++ | hooks `None` on c/cpp LanguageSpec (Problem 6 open) | decision-gated backlog item, plan separately |
 

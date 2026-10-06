@@ -1,9 +1,7 @@
 """Report-only governance-doc size visibility (AGENTS.md / docs/BACKLOG.md / ...).
 
 `scripts/file_size_budget.py::governance_doc_census` exists because AGENTS.md and
-docs/BACKLOG.md are APPEND-ONLY BY DESIGN -- the ratchet gate cannot be pointed at
-them without forbidding the exact appends the house rules mandate (see that
-function's docstring). This suite proves the census is real (bidirectional
+docs/BACKLOG.md need size visibility without prescribing a minimum document length. This suite proves the census is real (bidirectional
 control: a populated result differs observably from an empty one) rather than
 proving the docs are small, and that --docs-report never touches the exit code.
 """
@@ -30,12 +28,10 @@ def test_census_finds_agents_and_backlog_with_plausible_counts() -> None:
     assert "AGENTS.md" in rows, "AGENTS.md missing from governance doc census"
     assert "docs/BACKLOG.md" in rows, "docs/BACKLOG.md missing from governance doc census"
 
-    agents_lines, agents_bytes = rows["AGENTS.md"]
-    backlog_lines, backlog_bytes = rows["docs/BACKLOG.md"]
-    assert agents_lines > 1000, f"AGENTS.md line count implausibly small: {agents_lines}"
-    assert agents_bytes > 100_000, f"AGENTS.md byte count implausibly small: {agents_bytes}"
-    assert backlog_lines > 1000, f"docs/BACKLOG.md line count implausibly small: {backlog_lines}"
-    assert backlog_bytes > 100_000, f"docs/BACKLOG.md byte count implausibly small: {backlog_bytes}"
+    for relative in ("AGENTS.md", "docs/BACKLOG.md"):
+        raw = (REPO_ROOT / relative).read_bytes()
+        assert raw, f"{relative} is unexpectedly empty"
+        assert rows[relative] == (len(raw.splitlines()), len(raw))
 
 
 def test_path_not_in_the_tuple_is_absent_from_result() -> None:

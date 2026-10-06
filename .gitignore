@@ -116,3 +116,18 @@ src/tensor_grep/core/profile_stats
 .orchestrator/
 .wayfinder/
 MEMORY.md
+
+# Only reviewed public contributor skills belong in the repository.
+# Keep private skills, hooks, settings, and workflows in a private skill store.
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/tensor-grep/
+!/.claude/skills/tensor-grep-build-and-env/
+!/.claude/skills/tensor-grep-architecture-contract/
+!/.claude/skills/tensor-grep-add-language/
+!/.claude/skills/tensor-grep-validation-and-qa/
+!/.claude/skills/tensor-grep-docs-and-writing/
+/.claude/skills/*/*
+!/.claude/skills/*/SKILL.md
+!/.claude/skills/tensor-grep/REFERENCE.md

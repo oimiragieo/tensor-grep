@@ -2273,7 +2273,7 @@ values for these five rows (they stay `CEO_GATED`).
 | Row | Deliverable | Hard constraint |
 |---|---|---|
 | #48 | Thinktank-recommended option + **reversible** implementation proposal for the architectural remainder | Marked "requires CEO decision"; no rewrite authorized |
-| #72 | Packet with evidence + recommendation | The 2026-08-12 competitor token-reduction receipts strengthen the case, **not** the gate. HOLD any public multiplier (7.5x / 6.4x conflict unresolved) |
+| #72 | Packet with evidence + recommendation | The 2026-08-12 competitor token-reduction receipts strengthen the case, **not** the gate. HOLD any public multiplier (historical measurements remain unresolved) |
 | #77 | Thinktank-recommended option + reversible implementation proposal for ledger enforcement scope | Standing recommendation is local opt-in advisory only; no auth/CI blocking gate |
 | #131 | Packet with evidence + recommendation | Still downstream of #169; no asset publish |
 | #169 | **Pointer only** | **No packet, no recommendation, no spend.** The only money stop. A recommendation on a money stop reads as a nudge |

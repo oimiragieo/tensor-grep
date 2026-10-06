@@ -450,7 +450,7 @@ CEO_GATED". This campaign's contribution is a **delta**, not a rewrite:
 | Row | Standing recommendation (2026-08-06) | 2026-08-13 delta |
 |---|---|---|
 | #48 | Accept shipped hybrid front door; no rewrite without a measured P0 + named consumer | Reversible implementation proposal for the architectural remainder; still a CEO scoping call |
-| #72 | HOLD any public multiplier (7.5x / 6.4x conflict); zero-spend pinned-harness benchmark only | 2026-08-12 receipts show competitors publishing token-reduction numbers; strengthens the *case*, changes nothing about the *gate* |
+| #72 | HOLD any public multiplier (historical measurements conflict); zero-spend pinned-harness benchmark only | 2026-08-12 receipts show competitors publishing token-reduction numbers; strengthens the *case*, changes nothing about the *gate* |
 | #77 | Keep ledger local opt-in advisory; no auth/CI blocking gate | Thinktank-recommended option + reversible implementation proposal |
 | #131 | Optional experimental NVIDIA asset, CPU default, no speed claim; proof/spend under #169 | Unchanged; still downstream of #169 |
 | #169 | FINANCIAL_HOLD - pointer only, mandatory money stop | **No packet, no recommendation, no spend.** The only money stop. |

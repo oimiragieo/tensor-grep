@@ -93,13 +93,12 @@ jobs:
       # advertised a language split the product contradicted). The tests that catch
       # exactly that were not running on the changes most likely to cause it.
       #
-      # `.claude/skills` is included because test_skill_library_drift.py pins every
-      # skill citation, and a shrinking source file dangles them -- measured on PR
-      # #1021, where a split took a file 3780 -> 340 lines and a skill cited :3577.
+      # Any agent configuration change must run the public-file allowlist gate,
+      # including ignored files that someone explicitly force-added.
       - id: docs
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DOC_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- docs .claude/skills mkdocs.yml README.md AGENTS.md CLAUDE.md 2>/dev/null || true)
+            DOC_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- docs .claude .gitignore mkdocs.yml README.md AGENTS.md CLAUDE.md CONTRIBUTING.md 2>/dev/null || true)
           else
             DOC_FILES="main-push"
           fi
@@ -540,7 +539,7 @@ jobs:
       # `rg --help` output (see the script's own docstring) — this gate is what catches a
       # missed refresh, not a substitute for doing it.
       - name: "rg argv grammar differential fuzz (task #269)"
-        run: python .claude/rg_argv_differential_fuzz.py --seed 20260725 --iterations 65000
+        run: python scripts/rg_argv_differential_fuzz.py --seed 20260725 --iterations 65000
 
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
