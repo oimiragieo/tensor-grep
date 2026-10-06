@@ -1,8 +1,10 @@
 # Checkpoint labels — implementation receipt
 
-DOGFOOD-LABELS is **IN_FLIGHT in PR #1216**, owned by the checkpoint maintainer.
-PR history: #1216. Completion requires exact-head CI, independent implementation and Opus
-security review, then published Windows wheel/CLI/MCP replay. No release is claimed here.
+DOGFOOD-LABELS is **MERGED, UNPUBLISHED in PR #1216** (`7ef470fe`), owned by the checkpoint
+maintainer. PR history: #1216. Exact head `e6f180fe` passed independent/Opus review and PR CI
+after one diagnostic retry. Main CI `37453425025` repeated the daemon stop failure; see the
+[recurrence receipt](2026-10-06-daemon-stop-recurrence.md). Completion still requires successful
+release CI and published Windows wheel/CLI/MCP replay. No labels release is claimed here.
 
 Implementation `2744a6b3d8de7012b1b40eab4956645291193e83` was harvested from builder
 `daae9c755b8dfb9fa707b01af072bc8c616c7c6d` onto base

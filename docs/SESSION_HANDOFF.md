@@ -4,19 +4,20 @@ Last updated: 2026-10-06
 
 Bounded dogfood campaign: diagnostics #1214 is SHIPPED in v1.123.22, with release CI
 `37422114884` completed (44 jobs) and eight published Windows replay cases passing.
-Subprocess #1217 merged as `c0e8449`; ranking #1215 merged as `47700556`. Combined main
-CI `37437549841` owns the release hold; publication and those issues' replay remain pending.
+Subprocess #1217 (`c0e8449`) and ranking #1215 (`47700556`) are SHIPPED in v1.123.23.
+Combined main CI `37437549841` completed 44 jobs; 33 published Windows cases passed.
 [Live ledger](audits/2026-10-05-dogfood-fixes.md) separates source, installed and CI identities.
 The original detached checkout and untracked files are preserved.
 
-Labels #1216 is IN_FLIGHT. Actual squash integration `e4e280a` preserves the entire reviewed
-`f20551a` tree; four status/inventory conflicts were resolved from that exact labels tree.
-The new MCP label refusal uses a constant message after CI rejected raw exception output.
-[Label receipt](audits/dogfood-checkpoint-labels-receipt.md) retains the failed and corrected
-arms. Fresh exact-head CI and independent review are required. The mandatory Opus seat failed
-with HTTP 429 before review; retry after 2026-10-06 10:10 UTC. This is not security clearance.
-Merge labels only after its final gates and completed main publication. Then replay every
-scoped fix against the published Windows wheel/native artifacts and close the evidence trail.
+Labels #1216 is MERGED, UNPUBLISHED (`7ef470fe`): exact `e6f180fe` independent and restored
+Opus reviews cleared, and PR CI passed after one recorded diagnostic retry. Main run
+`37453425025` then failed the same unchanged daemon signed-version stop test on Windows
+Python 3.11; the same-main Python 3.12 lane passed all seven module cases. No release ran.
+DOGFOOD-CI-DAEMON-STOP is IN_FLIGHT in #1218, owned by the Runtime/CI maintainer. The immediate task is
+bounded test-only tracing with unchanged deadlines/assertions, followed by a measured fix
+decision; no additional blind retry is cleared. The [recurrence receipt](audits/2026-10-06-daemon-stop-recurrence.md)
+preserves both failures and the intervening retry. Other work stays parked while main is red.
+Labels still needs successful exact-artifact release CI and all published Windows replays.
 
 **2026-09-22 map dogfood correction:** PR #1164 merged as
 `1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure

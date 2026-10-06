@@ -7,9 +7,10 @@ are outside this change. Each row remains open until its own published-artifact 
 | ID | Owner | Disposition | Completion trigger |
 |---|---|---|---|
 | DOGFOOD-DIAGNOSTICS | CLI maintainer | SHIPPED v1.123.22, PR #1214 (`d0d9f7e`) | Release CI 44 jobs; eight published replay cases pass; [raw evidence](evidence/2026-10-05-dogfood/diagnostics-publication.json) |
-| DOGFOOD-DECODING | Runtime maintainer | MERGED, PR #1217 (`c0e8449`); publication/replay pending | Combined main CI `37437549841`, complete publication, published protocol/path replay |
-| DOGFOOD-FILENAME | Ranking maintainer | MERGED, PR #1215 (`47700556`); publication/replay pending | Combined main CI `37437549841`, complete publication, published context/edit and cached/session replay |
-| DOGFOOD-LABELS | Checkpoint maintainer | IN_FLIGHT, PR #1216 | CLI/MCP/store round trips, invalid-input no-write proof, recovery and release replay |
+| DOGFOOD-DECODING | Runtime maintainer | SHIPPED v1.123.23, PR #1217 (`c0e8449`) | Main CI `37437549841` completed 44 jobs; 33 combined published replay cases passed |
+| DOGFOOD-FILENAME | Ranking maintainer | SHIPPED v1.123.23, PR #1215 (`47700556`) | Same release and combined replay; context/edit and cached/session selection verified |
+| DOGFOOD-LABELS | Checkpoint maintainer | MERGED, UNPUBLISHED, PR #1216 (`7ef470fe`) | Recover main CI, then complete release and published replay; [recurrence](2026-10-06-daemon-stop-recurrence.md) |
+| DOGFOOD-CI-DAEMON-STOP | Runtime/CI maintainer | IN_FLIGHT #1218, PR history: #1218; main CI failed after the earlier diagnostic retry passed | Capture full proof/ACK/refusal/lifecycle outcome before selecting a fix or further retry; separate from the four scoped fixes |
 
 ## Baseline and artifact identity
 

@@ -1,0 +1,507 @@
+{
+  "observed_utc": "2026-10-06T11:46:15.978981+00:00",
+  "run": {
+    "id": 37453425025,
+    "head_sha": "7ef470fe1880825c32af8e124104e8a90391d14d",
+    "run_attempt": 1,
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/oimiragieo/tensor-grep/actions/runs/37453425025"
+  },
+  "retry_count_on_main": 0,
+  "raw_capture": {
+    "file": "main-labels-daemon-recurrence-20261006T114614416738.json",
+    "sha256": "d3850d18374024d67ea1b35d10827dc20ff9e6e91bf55d670039c96a659ff6b9",
+    "bytes": 186739
+  },
+  "jobs": [
+    {
+      "id": 112235168700,
+      "name": "changes",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112235168805,
+      "name": "repo-hygiene",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112235168972,
+      "name": "ci-cost-os-gate",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112235170000,
+      "name": "release-intent",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112235214964,
+      "name": "smoke (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925107,
+      "name": "docs-governance",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925115,
+      "name": "windows-agent-readiness",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925149,
+      "name": "cuda-feature-check (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925158,
+      "name": "package-manager-readiness (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925162,
+      "name": "release-readiness",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925173,
+      "name": "agent-readiness",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925182,
+      "name": "test-rust-core (ubuntu-latest, nightly)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925184,
+      "name": "test-gpu-nvidia (ubuntu-latest, cuDF)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925205,
+      "name": "package-manager-readiness (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925206,
+      "name": "benchmark-regression (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925216,
+      "name": "test-rust-core (windows-latest, stable)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925217,
+      "name": "native-build-smoke (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925228,
+      "name": "Formatting & Linting",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925231,
+      "name": "native-build-smoke (macos-15-intel)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925249,
+      "name": "search-golden-parity (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925273,
+      "name": "cuda-feature-check (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925284,
+      "name": "test-rust-core (ubuntu-latest, stable)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925295,
+      "name": "test-rust-core (windows-latest, nightly)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925348,
+      "name": "native-build-smoke (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925361,
+      "name": "native-build-smoke (macos-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925380,
+      "name": "test-python (ubuntu-latest, py3.11)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925419,
+      "name": "test-python (ubuntu-latest, py3.12)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112236925422,
+      "name": "test-python (windows-latest, py3.11)",
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "id": 112236925517,
+      "name": "test-python (windows-latest, py3.12)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112252157168,
+      "name": "Semantic Release",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252157474,
+      "name": "publish-github-release-assets",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252157490,
+      "name": "publish-success-gate",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 112252157504,
+      "name": "build-release-native-assets (${{ matrix.os }}, ${{ matrix.acceleration }})",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252157698,
+      "name": "build-pypi-wheels (${{ matrix.os }})",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252157739,
+      "name": "validate-pypi-artifacts",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252157793,
+      "name": "build-pypi-sdist",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252158814,
+      "name": "publish-pypi",
+      "status": "completed",
+      "conclusion": "skipped"
+    },
+    {
+      "id": 112252207442,
+      "name": "release-tag-smoke",
+      "status": "completed",
+      "conclusion": "skipped"
+    }
+  ],
+  "lanes": [
+    {
+      "raw_log": {
+        "file": "C:\\dev\\projects\\tg-dogfood-evidence\\main-labels-daemon-112236925422.log",
+        "sha256": "fe6e99fc6e5d916f03a36c88c1c9a233d9bb16f263888c9447a9cdb352106f9b",
+        "bytes": 1691416
+      },
+      "runner_image_lines": [
+        "\ufeff2026-10-06T11:04:26.7460455Z Current runner version: '2.337.0'",
+        "2026-10-06T11:04:26.7483294Z ##[group]Runner Image Provisioner",
+        "2026-10-06T11:04:26.7484042Z Hosted Compute Agent",
+        "2026-10-06T11:04:26.7484598Z Version: 20260901.588",
+        "2026-10-06T11:04:26.7485114Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b",
+        "2026-10-06T11:04:26.7485742Z Build Date: 2026-09-01T19:56:44Z",
+        "2026-10-06T11:04:26.7486352Z Worker ID: {75405472-3b15-4595-a889-9bb80d483f8b}",
+        "2026-10-06T11:04:26.7486991Z Azure Region: westus3",
+        "2026-10-06T11:04:26.7487446Z ##[endgroup]",
+        "2026-10-06T11:04:26.7488537Z ##[group]Operating System",
+        "2026-10-06T11:04:26.7489061Z Microsoft Windows Server 2025",
+        "2026-10-06T11:04:26.7489630Z 10.0.26100",
+        "2026-10-06T11:04:26.7490087Z Datacenter",
+        "2026-10-06T11:04:26.7490609Z ##[endgroup]",
+        "2026-10-06T11:04:26.7491110Z ##[group]Runner Image",
+        "2026-10-06T11:04:26.7491601Z Image: windows-2025-vs2026",
+        "2026-10-06T11:04:26.7492101Z Version: 20260925.250.1",
+        "2026-10-06T11:04:26.7493513Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20260925.250/images/windows/Windows2025-VS2026-Readme.md",
+        "2026-10-06T11:04:26.7494986Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20260925.250",
+        "2026-10-06T11:04:26.7495790Z ##[endgroup]",
+        "2026-10-06T11:04:26.7497265Z ##[group]GITHUB_TOKEN Permissions",
+        "2026-10-06T11:04:26.7498999Z Contents: read",
+        "2026-10-06T11:04:26.7499472Z Metadata: read",
+        "2026-10-06T11:04:26.7500077Z ##[endgroup]",
+        "2026-10-06T11:04:26.7502001Z Secret source: Actions",
+        "2026-10-06T11:04:26.7502874Z Cache mode: write",
+        "2026-10-06T11:04:26.7503410Z Prepare workflow directory",
+        "2026-10-06T11:04:26.7973205Z Prepare all required actions",
+        "2026-10-06T11:04:26.8024186Z Getting action download info",
+        "2026-10-06T11:04:27.1042018Z Download action repository 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' (SHA:df4cb1c069e1874edd31b4311f1884172cec0e10)",
+        "2026-10-06T11:04:27.3490793Z Complete job name: test-python (windows-latest, py3.11)",
+        "2026-10-06T11:04:27.5031542Z ##[group]Run actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
+      ],
+      "pytest_environment": [
+        "2026-10-06T11:11:06.7592999Z ##[group]Run uv run pytest tests -v --tb=short -m \"not eval\"",
+        "2026-10-06T11:11:06.7593528Z \u001b[36;1muv run pytest tests -v --tb=short -m \"not eval\"\u001b[0m",
+        "2026-10-06T11:11:06.7652450Z shell: C:\\Program Files\\PowerShell\\7\\pwsh.EXE -command \". '{0}'\"",
+        "2026-10-06T11:11:06.7652861Z env:",
+        "2026-10-06T11:11:06.7653131Z   CARGO_TERM_COLOR: always",
+        "2026-10-06T11:11:06.7653467Z   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1",
+        "2026-10-06T11:11:06.7653816Z   CARGO_NET_RETRY: 10",
+        "2026-10-06T11:11:06.7654110Z   CARGO_HTTP_TIMEOUT: 60",
+        "2026-10-06T11:11:06.7654447Z   CARGO_HTTP_MULTIPLEXING: false",
+        "2026-10-06T11:11:06.7654743Z ##[endgroup]",
+        "2026-10-06T11:11:08.8295576Z ============================= test session starts =============================",
+        "2026-10-06T11:11:08.8296310Z platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0 -- D:\\a\\tensor-grep\\tensor-grep\\.venv\\Scripts\\python.exe",
+        "2026-10-06T11:11:08.8296885Z cachedir: .pytest_cache",
+        "2026-10-06T11:11:08.8297566Z hypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True, suppress_health_check=(HealthCheck.too_slow,)",
+        "2026-10-06T11:11:08.8298124Z rootdir: D:\\a\\tensor-grep\\tensor-grep",
+        "2026-10-06T11:11:08.8298434Z configfile: pyproject.toml",
+        "2026-10-06T11:11:08.8298937Z plugins: anyio-4.14.2, hypothesis-6.168.5, platformdirs-4.12.3, asyncio-1.4.0, cov-7.1.0, mock-3.16.0, snapshot-0.9.0",
+        "2026-10-06T11:11:08.8299696Z asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function",
+        "2026-10-06T11:11:33.1045764Z collecting ... collected 11746 items / 3 deselected / 11743 selected",
+        "2026-10-06T11:11:33.1046126Z ",
+        "2026-10-06T11:11:33.1196764Z tests/e2e/test_backend_contracts.py::TestBackendContract::test_cpu_backend_satisfies_contract PASSED [  0%]",
+        "2026-10-06T11:11:33.1239561Z tests/e2e/test_backend_contracts.py::TestBackendContract::test_cudf_backend_satisfies_contract SKIPPED [  0%]",
+        "2026-10-06T11:11:33.4098587Z tests/e2e/test_cli_classify.py::TestCLIClassify::test_should_classify_log_lines PASSED [  0%]",
+        "2026-10-06T11:11:33.7387770Z tests/e2e/test_cli_no_gpu.py::TestCLIWithoutGPU::test_should_work_with_cpu_flag PASSED [  0%]",
+        "2026-10-06T11:11:34.0594294Z tests/e2e/test_cli_no_gpu.py::TestCLIWithoutGPU::test_should_output_json PASSED [  0%]",
+        "2026-10-06T11:11:34.3733219Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_find_pattern_in_log_file PASSED [  0%]",
+        "2026-10-06T11:11:34.6889627Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_exit_1_when_no_matches PASSED [  0%]",
+        "2026-10-06T11:11:35.0085685Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_emit_json_without_hanging PASSED [  0%]",
+        "2026-10-06T11:11:35.3415997Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_emit_ripgrep_json_lines_when_format_rg_is_explicit PASSED [  0%]",
+        "2026-10-06T11:11:35.3451876Z tests/e2e/test_io_contracts.py::TestIOContract::test_fallback_satisfies_contract PASSED [  0%]",
+        "2026-10-06T11:11:35.6642395Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_matches_all_patterns_not_just_first PASSED [  0%]",
+        "2026-10-06T11:11:35.9853773Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_reports_both_match_line_once PASSED [  0%]",
+        "2026-10-06T11:11:36.4058148Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_crlf_file_round_trips_its_own_crlf PASSED [  0%]",
+        "2026-10-06T11:11:36.7371516Z tests/e2e/test_multi_pattern_native.py::test_pattern_file_native_reads_file_and_matches_any_pattern PASSED [  0%]",
+        "2026-10-06T11:11:37.0293203Z tests/e2e/test_multi_pattern_native.py::test_pattern_file_missing_exits_2 PASSED [  0%]"
+      ],
+      "immediately_preceding_tests": [
+        "2026-10-06T11:36:41.4103137Z tests/unit/test_session_daemon_security.py::test_restrict_windows_file_is_noop_off_windows PASSED [ 91%]",
+        "2026-10-06T11:36:41.4367269Z tests/unit/test_session_daemon_security.py::test_confine_path_to_root_rejects_escape PASSED [ 91%]",
+        "2026-10-06T11:36:41.4630917Z tests/unit/test_session_daemon_security.py::test_resolve_daemon_request_path_confines_absolute_escape PASSED [ 91%]",
+        "2026-10-06T11:36:41.9911042Z tests/unit/test_session_daemon_security.py::test_daemon_request_path_field_cannot_escape_root PASSED [ 91%]",
+        "2026-10-06T11:36:42.0312754Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_creates_sensitive_temp_without_world_readable_window PASSED [ 91%]",
+        "2026-10-06T11:36:42.0597091Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_final_mode_is_restrictive_on_posix SKIPPED [ 91%]",
+        "2026-10-06T11:36:42.0958630Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_default_mode_unchanged PASSED [ 91%]",
+        "2026-10-06T11:36:42.3670904Z tests/unit/test_session_daemon_security.py::test_open_session_prunes_oldest_payloads PASSED [ 91%]",
+        "2026-10-06T11:36:42.3685728Z tests/unit/test_session_daemon_security.py::test_session_max_defaults_to_64 PASSED [ 91%]",
+        "2026-10-06T11:36:42.4080319Z tests/unit/test_session_daemon_security.py::test_prune_session_records_keeps_newest PASSED [ 91%]",
+        "2026-10-06T11:36:42.4094288Z tests/unit/test_session_daemon_security.py::test_terminate_daemon_by_pid_refuses_unvalidated PASSED [ 91%]",
+        "2026-10-06T11:36:42.4107264Z tests/unit/test_session_daemon_security.py::test_terminate_daemon_by_pid_refuses_self PASSED [ 91%]",
+        "2026-10-06T11:36:42.4119426Z tests/unit/test_session_daemon_security.py::test_pid_looks_like_tg_daemon_rejects_invalid PASSED [ 91%]",
+        "2026-10-06T11:36:42.4131789Z tests/unit/test_session_daemon_security.py::test_lifecycle_seconds_config_parsing PASSED [ 91%]",
+        "2026-10-06T11:36:42.9591207Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_shuts_down_on_max_uptime PASSED [ 91%]",
+        "2026-10-06T11:36:43.4954246Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_defers_shutdown_while_request_in_flight PASSED [ 91%]",
+        "2026-10-06T11:36:43.5253286Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_returns_when_both_limits_disabled PASSED [ 91%]",
+        "2026-10-06T11:36:43.5561079Z tests/unit/test_session_daemon_security.py::test_get_session_rejects_root_mismatch PASSED [ 91%]",
+        "2026-10-06T11:36:43.5865250Z tests/unit/test_session_daemon_security.py::test_get_session_accepts_matching_root PASSED [ 91%]",
+        "2026-10-06T11:36:43.6337658Z tests/unit/test_session_daemon_security.py::test_nearby_lookup_disabled_by_default PASSED [ 91%]"
+      ],
+      "signed_version_population": [
+        "2026-10-06T11:36:43.7637447Z tests/unit/test_session_daemon_signed_version.py::test_doctored_metadata_on_a_current_daemon_gets_no_skew_stop PASSED [ 91%]",
+        "2026-10-06T11:36:45.8726410Z tests/unit/test_session_daemon_signed_version.py::test_a_genuinely_different_signed_version_is_stopped_cooperatively PASSED [ 91%]",
+        "2026-10-06T11:36:52.4534250Z tests/unit/test_session_daemon_signed_version.py::test_a_verified_reply_with_no_signed_version_is_treated_as_skewed FAILED [ 91%]",
+        "2026-10-06T11:36:52.4551608Z FAILED tests/unit/test_session_daemon_signed_version.py::test_a_verified_reply_with_no_signed_version_is_treated_as_skewed - AssertionError: {'version': 1, 'root': 'C:\\\\Users\\\\runneradmin\\\\AppData\\\\Local\\\\Temp\\\\pytest-of-runneradmin\\\\pytest-0\\\\test_a_verified_reply_with_no_0', 'running': True, 'stopped': False, ...}"
+      ],
+      "cache_observations": [],
+      "final_summary": [
+        "2026-10-06T11:36:52.4553531Z = 1 failed, 9998 passed, 721 skipped, 3 deselected, 2 xfailed, 4 warnings in 1540.86s (0:25:40) ="
+      ],
+      "job": {
+        "id": 112236925422,
+        "name": "test-python (windows-latest, py3.11)",
+        "run_id": 37453425025,
+        "run_attempt": 1,
+        "head_sha": "7ef470fe1880825c32af8e124104e8a90391d14d",
+        "status": "completed",
+        "conclusion": "failure",
+        "html_url": "https://github.com/oimiragieo/tensor-grep/actions/runs/37453425025/job/112236925422"
+      }
+    },
+    {
+      "raw_log": {
+        "file": "C:\\dev\\projects\\tg-dogfood-evidence\\main-labels-daemon-112236925517.log",
+        "sha256": "1fdc640135648dfa60e07f08108cad59aeea0661c8ffe2a0b30bf133a8fc11cb",
+        "bytes": 1846170
+      },
+      "runner_image_lines": [
+        "\ufeff2026-10-06T11:04:27.4776656Z Current runner version: '2.337.0'",
+        "2026-10-06T11:04:27.4814457Z ##[group]Runner Image Provisioner",
+        "2026-10-06T11:04:27.4815659Z Hosted Compute Agent",
+        "2026-10-06T11:04:27.4816527Z Version: 20260901.588",
+        "2026-10-06T11:04:27.4817401Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b",
+        "2026-10-06T11:04:27.4818485Z Build Date: 2026-09-01T19:56:44Z",
+        "2026-10-06T11:04:27.4819490Z Worker ID: {8a81507d-45e3-4bce-970f-9897938331a5}",
+        "2026-10-06T11:04:27.4820482Z Azure Region: westus3",
+        "2026-10-06T11:04:27.4821311Z ##[endgroup]",
+        "2026-10-06T11:04:27.4823569Z ##[group]Operating System",
+        "2026-10-06T11:04:27.4824568Z Microsoft Windows Server 2025",
+        "2026-10-06T11:04:27.4825515Z 10.0.26100",
+        "2026-10-06T11:04:27.4826246Z Datacenter",
+        "2026-10-06T11:04:27.4826913Z ##[endgroup]",
+        "2026-10-06T11:04:27.4827689Z ##[group]Runner Image",
+        "2026-10-06T11:04:27.4828500Z Image: windows-2025-vs2026",
+        "2026-10-06T11:04:27.4829327Z Version: 20260925.250.1",
+        "2026-10-06T11:04:27.4832006Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20260925.250/images/windows/Windows2025-VS2026-Readme.md",
+        "2026-10-06T11:04:27.4834671Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20260925.250",
+        "2026-10-06T11:04:27.4836189Z ##[endgroup]",
+        "2026-10-06T11:04:27.4837781Z ##[group]GITHUB_TOKEN Permissions",
+        "2026-10-06T11:04:27.4840255Z Contents: read",
+        "2026-10-06T11:04:27.4841115Z Metadata: read",
+        "2026-10-06T11:04:27.4841836Z ##[endgroup]",
+        "2026-10-06T11:04:27.4844707Z Secret source: Actions",
+        "2026-10-06T11:04:27.4846041Z Cache mode: write",
+        "2026-10-06T11:04:27.4847026Z Prepare workflow directory",
+        "2026-10-06T11:04:27.5509789Z Prepare all required actions",
+        "2026-10-06T11:04:27.5586907Z Getting action download info",
+        "2026-10-06T11:04:27.9131875Z Download action repository 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' (SHA:df4cb1c069e1874edd31b4311f1884172cec0e10)",
+        "2026-10-06T11:04:28.2895128Z Complete job name: test-python (windows-latest, py3.12)",
+        "2026-10-06T11:04:28.4937771Z ##[group]Run actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10"
+      ],
+      "pytest_environment": [
+        "2026-10-06T11:11:19.0582489Z ##[group]Run uv run pytest tests -v --tb=short -m \"not eval\"",
+        "2026-10-06T11:11:19.0582997Z \u001b[36;1muv run pytest tests -v --tb=short -m \"not eval\"\u001b[0m",
+        "2026-10-06T11:11:19.0739860Z shell: C:\\Program Files\\PowerShell\\7\\pwsh.EXE -command \". '{0}'\"",
+        "2026-10-06T11:11:19.0740213Z env:",
+        "2026-10-06T11:11:19.0740431Z   CARGO_TERM_COLOR: always",
+        "2026-10-06T11:11:19.0740704Z   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1",
+        "2026-10-06T11:11:19.0740978Z   CARGO_NET_RETRY: 10",
+        "2026-10-06T11:11:19.0741193Z   CARGO_HTTP_TIMEOUT: 60",
+        "2026-10-06T11:11:19.0741454Z   CARGO_HTTP_MULTIPLEXING: false",
+        "2026-10-06T11:11:19.0741697Z ##[endgroup]",
+        "2026-10-06T11:11:21.9205062Z ============================= test session starts =============================",
+        "2026-10-06T11:11:21.9206240Z platform win32 -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- D:\\a\\tensor-grep\\tensor-grep\\.venv\\Scripts\\python.exe",
+        "2026-10-06T11:11:21.9207106Z cachedir: .pytest_cache",
+        "2026-10-06T11:11:21.9208137Z hypothesis profile 'ci' -> database=None, deadline=None, print_blob=True, derandomize=True, suppress_health_check=(HealthCheck.too_slow,)",
+        "2026-10-06T11:11:21.9209124Z rootdir: D:\\a\\tensor-grep\\tensor-grep",
+        "2026-10-06T11:11:21.9209610Z configfile: pyproject.toml",
+        "2026-10-06T11:11:21.9210421Z plugins: anyio-4.14.2, hypothesis-6.168.5, platformdirs-4.12.3, asyncio-1.4.0, cov-7.1.0, mock-3.16.0, snapshot-0.9.0",
+        "2026-10-06T11:11:21.9211624Z asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function",
+        "2026-10-06T11:11:51.0924129Z collecting ... collected 11746 items / 3 deselected / 11743 selected",
+        "2026-10-06T11:11:51.0924631Z ",
+        "2026-10-06T11:11:51.1079591Z tests/e2e/test_backend_contracts.py::TestBackendContract::test_cpu_backend_satisfies_contract PASSED [  0%]",
+        "2026-10-06T11:11:51.1117562Z tests/e2e/test_backend_contracts.py::TestBackendContract::test_cudf_backend_satisfies_contract SKIPPED [  0%]",
+        "2026-10-06T11:11:51.4444947Z tests/e2e/test_cli_classify.py::TestCLIClassify::test_should_classify_log_lines PASSED [  0%]",
+        "2026-10-06T11:11:51.8396266Z tests/e2e/test_cli_no_gpu.py::TestCLIWithoutGPU::test_should_work_with_cpu_flag PASSED [  0%]",
+        "2026-10-06T11:11:52.2721298Z tests/e2e/test_cli_no_gpu.py::TestCLIWithoutGPU::test_should_output_json PASSED [  0%]",
+        "2026-10-06T11:11:52.6987806Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_find_pattern_in_log_file PASSED [  0%]",
+        "2026-10-06T11:11:53.1027567Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_exit_1_when_no_matches PASSED [  0%]",
+        "2026-10-06T11:11:53.5279694Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_emit_json_without_hanging PASSED [  0%]",
+        "2026-10-06T11:11:53.9591184Z tests/e2e/test_cli_search.py::TestCLISearch::test_should_emit_ripgrep_json_lines_when_format_rg_is_explicit PASSED [  0%]",
+        "2026-10-06T11:11:53.9645343Z tests/e2e/test_io_contracts.py::TestIOContract::test_fallback_satisfies_contract PASSED [  0%]",
+        "2026-10-06T11:11:54.4072112Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_matches_all_patterns_not_just_first PASSED [  0%]",
+        "2026-10-06T11:11:54.8223859Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_reports_both_match_line_once PASSED [  0%]",
+        "2026-10-06T11:11:55.3920000Z tests/e2e/test_multi_pattern_native.py::test_multi_e_native_crlf_file_round_trips_its_own_crlf PASSED [  0%]",
+        "2026-10-06T11:11:55.8419467Z tests/e2e/test_multi_pattern_native.py::test_pattern_file_native_reads_file_and_matches_any_pattern PASSED [  0%]",
+        "2026-10-06T11:11:56.2108917Z tests/e2e/test_multi_pattern_native.py::test_pattern_file_missing_exits_2 PASSED [  0%]"
+      ],
+      "immediately_preceding_tests": [
+        "2026-10-06T11:42:29.7047249Z tests/unit/test_session_daemon_security.py::test_restrict_windows_file_is_noop_off_windows PASSED [ 91%]",
+        "2026-10-06T11:42:29.7374133Z tests/unit/test_session_daemon_security.py::test_confine_path_to_root_rejects_escape PASSED [ 91%]",
+        "2026-10-06T11:42:29.7767152Z tests/unit/test_session_daemon_security.py::test_resolve_daemon_request_path_confines_absolute_escape PASSED [ 91%]",
+        "2026-10-06T11:42:30.3117746Z tests/unit/test_session_daemon_security.py::test_daemon_request_path_field_cannot_escape_root PASSED [ 91%]",
+        "2026-10-06T11:42:30.3557953Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_creates_sensitive_temp_without_world_readable_window PASSED [ 91%]",
+        "2026-10-06T11:42:30.3970703Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_final_mode_is_restrictive_on_posix SKIPPED [ 91%]",
+        "2026-10-06T11:42:30.4356574Z tests/unit/test_session_daemon_security.py::test_write_json_atomic_default_mode_unchanged PASSED [ 91%]",
+        "2026-10-06T11:42:30.6390740Z tests/unit/test_session_daemon_security.py::test_open_session_prunes_oldest_payloads PASSED [ 91%]",
+        "2026-10-06T11:42:30.6405186Z tests/unit/test_session_daemon_security.py::test_session_max_defaults_to_64 PASSED [ 91%]",
+        "2026-10-06T11:42:30.6869452Z tests/unit/test_session_daemon_security.py::test_prune_session_records_keeps_newest PASSED [ 91%]",
+        "2026-10-06T11:42:30.6884136Z tests/unit/test_session_daemon_security.py::test_terminate_daemon_by_pid_refuses_unvalidated PASSED [ 91%]",
+        "2026-10-06T11:42:30.6898047Z tests/unit/test_session_daemon_security.py::test_terminate_daemon_by_pid_refuses_self PASSED [ 91%]",
+        "2026-10-06T11:42:30.6910560Z tests/unit/test_session_daemon_security.py::test_pid_looks_like_tg_daemon_rejects_invalid PASSED [ 91%]",
+        "2026-10-06T11:42:30.6923721Z tests/unit/test_session_daemon_security.py::test_lifecycle_seconds_config_parsing PASSED [ 91%]",
+        "2026-10-06T11:42:31.2273814Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_shuts_down_on_max_uptime PASSED [ 91%]",
+        "2026-10-06T11:42:31.7646382Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_defers_shutdown_while_request_in_flight PASSED [ 91%]",
+        "2026-10-06T11:42:31.8040144Z tests/unit/test_session_daemon_security.py::test_lifecycle_monitor_returns_when_both_limits_disabled PASSED [ 91%]",
+        "2026-10-06T11:42:31.8618784Z tests/unit/test_session_daemon_security.py::test_get_session_rejects_root_mismatch PASSED [ 91%]",
+        "2026-10-06T11:42:31.9058744Z tests/unit/test_session_daemon_security.py::test_get_session_accepts_matching_root PASSED [ 91%]",
+        "2026-10-06T11:42:31.9618799Z tests/unit/test_session_daemon_security.py::test_nearby_lookup_disabled_by_default PASSED [ 91%]"
+      ],
+      "signed_version_population": [
+        "2026-10-06T11:42:32.1122751Z tests/unit/test_session_daemon_signed_version.py::test_doctored_metadata_on_a_current_daemon_gets_no_skew_stop PASSED [ 91%]",
+        "2026-10-06T11:42:34.2564610Z tests/unit/test_session_daemon_signed_version.py::test_a_genuinely_different_signed_version_is_stopped_cooperatively PASSED [ 91%]",
+        "2026-10-06T11:42:36.4311116Z tests/unit/test_session_daemon_signed_version.py::test_a_verified_reply_with_no_signed_version_is_treated_as_skewed PASSED [ 91%]",
+        "2026-10-06T11:42:36.5578367Z tests/unit/test_session_daemon_signed_version.py::test_a_forged_or_unsigned_version_is_refused_not_stopped[forged_mac] PASSED [ 91%]",
+        "2026-10-06T11:42:36.6694234Z tests/unit/test_session_daemon_signed_version.py::test_a_forged_or_unsigned_version_is_refused_not_stopped[unsigned_version] PASSED [ 91%]",
+        "2026-10-06T11:42:36.7901445Z tests/unit/test_session_daemon_signed_version.py::test_a_forged_or_unsigned_version_is_refused_not_stopped[wrong_version_signed] PASSED [ 91%]",
+        "2026-10-06T11:42:36.8181318Z tests/unit/test_session_daemon_signed_version.py::test_signed_version_helpers_accept_the_real_reply_and_reject_a_stripped_proof PASSED [ 91%]"
+      ],
+      "cache_observations": [],
+      "final_summary": [
+        "2026-10-06T11:45:48.5555430Z = 10994 passed, 747 skipped, 3 deselected, 2 xfailed, 4 warnings in 2064.49s (0:34:24) ="
+      ],
+      "job": {
+        "id": 112236925517,
+        "name": "test-python (windows-latest, py3.12)",
+        "run_id": 37453425025,
+        "run_attempt": 1,
+        "head_sha": "7ef470fe1880825c32af8e124104e8a90391d14d",
+        "status": "completed",
+        "conclusion": "success",
+        "html_url": "https://github.com/oimiragieo/tensor-grep/actions/runs/37453425025/job/112236925517"
+      }
+    }
+  ],
+  "limits": "No CI retry. Missing env/cache lines are not proof of absent injected state. Exact Windows runner image unavailable locally; cause unproved.",
+  "historical_pr_retry": {
+    "head": "e6f180fe5e5e226979ecbedf281837e8ebc95bdc",
+    "run": 37443145599,
+    "failed_attempt": 1,
+    "failed_job": 112203552092,
+    "retry_count": 1,
+    "successful_attempt": 2,
+    "successful_job": 112219288470,
+    "raw": {
+      "file": "labels-ci-retry-outcome.json",
+      "sha256": "e040397c76e26ae03c3d4f1f120847b4b0ad68dcc9111765a1f654d2807999d9",
+      "bytes": 30110
+    }
+  }
+}
