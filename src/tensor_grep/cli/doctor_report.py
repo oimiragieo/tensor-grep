@@ -1284,7 +1284,6 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             ",".join(str(device_id) for device_id in requested_gpu_device_ids),
             "--json",
             "--no-ignore",
-            "-F",
             # End-of-options sentinel (CWE-88 class, AGENTS.md), BEFORE EVERY POSITIONAL.
             #
             # The first cut of this put it BETWEEN `sentinel` and `probe_target`, terminating
@@ -1346,22 +1345,27 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         base["status"] = "failed"
         base["error"] = f"GPU runtime probe returned invalid JSON: {exc}"
         return base
+    if not isinstance(payload, dict):
+        base["status"] = "failed"
+        base["error"] = "GPU runtime probe returned invalid JSON object: expected a JSON object"
+        return base
 
     routing_backend = str(payload.get("routing_backend") or "")
-    sidecar_used = bool(payload.get("sidecar_used", False))
+    raw_sidecar_used = payload.get("sidecar_used")
+    sidecar_used = raw_sidecar_used if isinstance(raw_sidecar_used, bool) else None
     base.update({
         "routing_backend": routing_backend or None,
         "routing_reason": payload.get("routing_reason"),
         "sidecar_used": sidecar_used,
         "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
     })
-    if routing_backend == "NativeGpuBackend" and not sidecar_used:
+    if routing_backend == "NativeGpuBackend" and sidecar_used is False:
         base["status"] = "supported"
         return base
 
     base["status"] = "unsupported"
     base["error"] = (
-        "GPU route did not use NativeGpuBackend "
+        "GPU route lacks proved native execution "
         f"(routing_backend={routing_backend or 'unknown'}, sidecar_used={sidecar_used})."
     )
     return base

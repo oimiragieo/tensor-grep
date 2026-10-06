@@ -29,6 +29,25 @@ def _fake_native_gpu_payload() -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (
+            {"routing_backend": "NativeGpuBackend", "sidecar_used": None},
+            "(routing_backend=NativeGpuBackend, sidecar_used=None).",
+        ),
+        (
+            {"routing_backend": "OtherBackend", "sidecar_used": False},
+            "(routing_backend=OtherBackend, sidecar_used=False).",
+        ),
+    ],
+)
+def test_native_gpu_route_rejection_describes_missing_execution_proof(payload, expected):
+    reason = agent_capsule._native_gpu_route_rejection(payload)
+
+    assert reason == "GPU evidence command lacks proved native execution " + expected
+
+
 def test_agent_gpu_evidence_cross_domain_translates_probe_path(monkeypatch, tmp_path):
     translated_path = "C:\\Users\\x\\AppData\\Local\\Temp\\tg-agent-gpu-probe-abc"
 

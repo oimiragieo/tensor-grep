@@ -6,6 +6,8 @@ Claude Code guidance for the **tensor-grep** repository.
 > Claude Code auto-loads this `CLAUDE.md`; `AGENTS.md` (read by other agents) holds the full rules, so
 > this file points there to keep them DRY.
 
+Current bounded dogfood work: [implementation ledger](docs/audits/2026-10-05-dogfood-fixes.md).
+
 `AGENTS.md` covers, among other things:
 
 - **The evidence laws — the largest and most load-bearing thing in `AGENTS.md`, and the reason to read

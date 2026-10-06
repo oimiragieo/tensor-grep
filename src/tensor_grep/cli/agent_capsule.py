@@ -486,10 +486,16 @@ def _agent_gpu_tg_command() -> str:
     return which_tg if which_tg is not None else "tg"
 
 
+def _reported_sidecar_used(payload: dict[str, Any]) -> bool | None:
+    """Return sidecar proof only when the payload reports a JSON boolean."""
+    value = payload.get("sidecar_used")
+    return value if isinstance(value, bool) else None
+
+
 def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
     backend = str(payload.get("routing_backend") or "")
-    sidecar_used = bool(payload.get("sidecar_used"))
-    if backend == "NativeGpuBackend" and not sidecar_used:
+    sidecar_used = _reported_sidecar_used(payload)
+    if backend == "NativeGpuBackend" and sidecar_used is False:
         return None
     if sidecar_used or "Sidecar" in backend:
         return (
@@ -497,8 +503,8 @@ def _native_gpu_route_rejection(payload: dict[str, Any]) -> str | None:
             "use a CUDA-enabled native tg route."
         )
     return (
-        "GPU evidence command did not use NativeGpuBackend "
-        f"(routing_backend={backend or 'unknown'})."
+        "GPU evidence command lacks proved native execution "
+        f"(routing_backend={backend or 'unknown'}, sidecar_used={sidecar_used})."
     )
 
 
@@ -506,7 +512,7 @@ def _gpu_route_fields(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "routing_backend": str(payload.get("routing_backend") or "unknown"),
         "routing_reason": str(payload.get("routing_reason") or "unknown"),
-        "sidecar_used": bool(payload.get("sidecar_used")),
+        "sidecar_used": _reported_sidecar_used(payload),
     }
 
 

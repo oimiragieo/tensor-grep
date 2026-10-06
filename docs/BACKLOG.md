@@ -1,5 +1,7 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## 2026-10-06: bounded dogfood fixes — IN_FLIGHT: diagnostics #1214, decoding #1217, filename ranking #1215, labels #1216. Owners, exact artifacts, review and replay receipts: [dogfood ledger](audits/2026-10-05-dogfood-fixes.md). Wave 3 remains out of scope.
+
 ## 2026-10-05: 2026-10-03 bug hunt closeout -- 13 PRs merged and released (#1194-#1206; v1.123.13-v1.123.18); OPEN #1207 W2b H, #1208 front-door loop (P0), #1209 hermetic tests; wave 3 not started -- canonical status + per-PR receipts in `docs/audits/2026-10-03-bughunt-tracker.md` (Wave status).
 
 ## 2026-09-24: v1.122.1 dogfood remediation SHIPPED (#1173-#1178 -> 1.122.2/1.123.0/1.123.1). OPEN: this file is AT its line ceiling -- do the archival split `scripts/check_governance_doc_size.py` prescribes; `--focus` demand-gated; verify model2vec-rs license.

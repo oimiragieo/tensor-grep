@@ -2,17 +2,14 @@
 
 ## Live reconciliation (2026-10-05)
 
-At `origin/main` `6862df3`, `pyproject.toml` identifies v1.123.18 (PyPI serves 1.123.18).
-Releases since the prior stamp (v1.123.12) all come from the 2026-10-03 bug hunt (per-PR receipts:
-`docs/audits/2026-10-03-bughunt-tracker.md`, Wave status): v1.123.13 (`05bfdb6`), v1.123.14
-(`700d3d1`; first tag push `161fd53` failed and self-healed), v1.123.15 (`14d8596`), v1.123.16
-(`f9e5167`), v1.123.17 (`9d1a1a0`), v1.123.18 (`6862df3`) -- PRs #1194-#1205, plus docs-only #1206.
-None owns a canonical row, so no canonical row's Status changed. Open PRs (queried 2026-10-05):
-#1207 (wave 2b Part H), #1208 (P0: native and Python front doors re-delegated `search -s|-N --json`
-to each other without bound), #1209 (host-dependent tests made hermetic). The prior 2026-10-03
-stamp covered #1185-#1188. Read CI verdicts per SHA
-(`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not treat the dated
-open-PR tables below as live.
+Intake: main `99c1ea1` / v1.123.21; prior main CI `37402418507` completed with
+44 terminal jobs and zero failures. Canonical venv metadata was 1.123.19 and the managed
+launcher 1.123.20, so neither is used as source-version evidence.
+[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS is
+IN_FLIGHT in PR #1214; DOGFOOD-DECODING is IN_FLIGHT in PR #1217, DOGFOOD-FILENAME
+in PR #1215, and DOGFOOD-LABELS in PR #1216. Each retains its own review and release gate.
+These four scoped fixes do not close existing strategic rows. Open unrelated PR #1212 owns
+the earlier bug-hunt documentation closeout; Wave 3 remains outside this campaign.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
@@ -578,5 +575,4 @@ None at this snapshot. #109 shipped in PR #605. WSL path bugs above are program-
 - Historical ledger: `docs/BACKLOG.md` · Contracts: `docs/CONTRACTS.md` · Laws: `AGENTS.md`
 - Release mechanics + positioning rules: `.claude/skills/tensor-grep-release-and-positioning`
 - What counts as proof: `.claude/skills/tensor-grep-validation-and-qa` (oracle forms 1–10)
-
 
