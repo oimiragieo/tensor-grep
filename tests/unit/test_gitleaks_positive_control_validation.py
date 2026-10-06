@@ -96,7 +96,9 @@ def test_gitleaks_detects_non_allowlisted_aws_credentials() -> None:
             f"Baseline scan not clean: rc={baseline.returncode} {baseline.stdout}{baseline.stderr}"
         )
 
+        # These fixed synthetic values must be written in clear text to test detection.
         (repo / "secrets.txt").write_text(
+            # codeql[py/clear-text-storage-sensitive-data]
             f"AWS_ACCESS_KEY_ID={ACCESS_KEY}\nAWS_SECRET_ACCESS_KEY={SECRET_KEY}\n"
         )
         _git(repo, "add", "--", "secrets.txt")
