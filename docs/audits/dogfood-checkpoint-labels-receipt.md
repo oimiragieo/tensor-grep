@@ -131,3 +131,19 @@ independent/Opus reviews and CI remain required. After diagnostics release compl
 merge the three green candidates in subprocess/ranking/labels order during one window.
 Verify actual merged source and final published Windows native/wheel artifacts before
 claiming these items shipped. A release tag alone is not publication proof.
+
+## Inherited test-double correction
+
+The combined candidate now includes subprocess `574d18b` through clean merge `2b1aa12`.
+Subprocess full CI had exposed stale upgrade mock signatures. Its deterministic census also
+found three info-action siblings; fourteen mocks now accept explicit decoding arguments and
+three assert the UTF-8/replacement policy. Runtime and scripts remain byte-identical to
+independently reviewed `2efe5bb`. Superseded labels CI `37428513653` was cancelled to avoid
+continuing with the known inherited test failure; it gives no clearance.
+
+Both complete affected files pass 144 tests in the canonical Windows venv against clean
+combined source `2b1aa12`, and focused Ruff/preview plus unchanged size gates pass. The raw
+bundle retains exact-source clean-start receipts. Preceding PRs must land first; verify the
+remaining labels delta against actual main, refreshing ancestry/metadata if needed. Squash
+merges do not automatically refresh this branch's merge base. Fresh final-head independent,
+security and CI gates remain required.
