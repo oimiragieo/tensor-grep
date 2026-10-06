@@ -1335,7 +1335,7 @@
     "identity": "cli/subprocess_policy.py:run_subprocess:subprocess.run:6eaec4d190ffafae3d3f611906e7558f07e7f694cb80feb84d63e8de95060f85:0",
     "path": "cli/subprocess_policy.py",
     "function": "run_subprocess",
-    "line": 120,
+    "line": 102,
     "column": 11,
     "target": "subprocess.run",
     "policy": "forwarder",

@@ -11,6 +11,8 @@ Production subprocess callsites choose one decoding contract from the shape of t
 
 `subprocess.run(text=True)` uses one decoder and newline translation for both captured streams. Strict text decoding is rejected by the guard: on Windows a reader-thread exception can lose a stream instead of reaching the caller's exception handler. Capture protocol bytes and decode explicitly in the consumer. Also use bytes when stdout and stderr have different contracts or path/content bytes must remain intact. `run_subprocess` remains a timeout wrapper and forwards caller options; each caller still owns its output contract.
 
+The three pure decoders live in `core/subprocess_decoding.py`, so backend consumers depend on the core layer. `cli/subprocess_policy.py` explicitly re-exports the same function objects for existing callers and continues to own timeout configuration and the subprocess wrapper.
+
 The MCP rewrite subprocess helper captures bytes for both JSON/index callers and display-only diff previews. JSON remains strict, including disclosed exit-2 partial results; previews use replacement decoding. A failed command's malformed unused stdout cannot mask its exit/stderr classification. Git path bytes that the Windows filesystem codec cannot represent make the codemap census or revision evidence unavailable, rather than producing a lossy path or a false clean result.
 
 Classification and validation share one text-mode predicate covering `text`, `universal_newlines`, `encoding`, and `errors`. An explicit encoding enables decoding even with `text=False`; such strict capture is rejected. Implicit UTF-8 replacement decoding is classified as diagnostic text, rather than mislabeled as bytes.
