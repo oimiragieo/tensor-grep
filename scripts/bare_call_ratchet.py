@@ -97,8 +97,7 @@ def evaluate(counts: dict[str, int], pins: dict[str, int]) -> list[str]:
                 f"RATCHET REGRESSION: {rel} has {actual} bare calls to monkeypatched symbols, "
                 f"above its pin of {pinned}. A bare call to a patched name welds its function to "
                 f"this file -- moving it elsewhere leaves the test passing while production runs "
-                f"the unpatched original. Use `_self.NAME(...)` (see "
-                f"docs/design/2026-08-19-split-floor-escape.md) instead of `NAME(...)`."
+                f"the unpatched original. Use `_self.NAME(...)` instead of `NAME(...)`."
             )
         elif actual < pinned and actual > 0:
             failures.append(

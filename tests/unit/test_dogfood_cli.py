@@ -123,7 +123,7 @@ def test_dogfood_release_docs_worktree_status_reports_dirty_docs(
 
     class Completed:
         returncode = 0
-        stdout = " M README.md\n?? docs/SESSION_HANDOFF.md\n"
+        stdout = " M README.md\n?? docs/CONTRACTS.md\n"
         stderr = ""
 
     def fake_run(command, **_kwargs):
@@ -135,7 +135,7 @@ def test_dogfood_release_docs_worktree_status_reports_dirty_docs(
     status = dogfood_module._build_release_docs_worktree_status(tmp_path)
 
     assert status["status"] == "dirty"
-    assert status["dirty_paths"] == ["README.md", "docs/SESSION_HANDOFF.md"]
+    assert status["dirty_paths"] == ["README.md", "docs/CONTRACTS.md"]
     assert status["read_only"] is True
     assert calls
     assert calls[0][:4] == ["git", "-C", str(tmp_path.resolve()), "status"]
