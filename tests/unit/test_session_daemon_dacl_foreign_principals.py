@@ -148,9 +148,9 @@ def _grant(path: Path, spec: str) -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
 def test_a_foreign_full_control_grant_on_the_real_secret_directory_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_daemon_secret_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = tmp_path / "secret"
+    secret_dir = trusted_daemon_secret_dir  # ancestors the product accepts on any box
     monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
     assert trust._load_or_create_user_secret() is not None  # control: works before the grant
     path = secret_dir / "daemon-secret.json"
@@ -163,9 +163,9 @@ def test_a_foreign_full_control_grant_on_the_real_secret_directory_is_refused(
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
 def test_a_new_secret_directory_is_created_user_only_even_under_a_foreign_modify_parent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_daemon_secret_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    grand = tmp_path / "grand"
+    grand = trusted_daemon_secret_dir.parent / "grand"
     grand.mkdir()
     _grant(grand, "*S-1-5-4:(OI)(CI)(M)")  # would be INHERITED by a plain mkdir
     secret_dir = grand / "secret"

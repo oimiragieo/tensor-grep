@@ -28,8 +28,10 @@ _SRC = str(Path(sd.__file__).resolve().parents[2])
 
 
 @pytest.fixture(autouse=True)
-def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(tmp_path / "secret"))
+def _env(trusted_daemon_secret_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Not a bare ``tmp_path / "secret"``: a dev box whose %TEMP% grants foreign accounts modify
+    # rights fails the product's (correct) ancestor-trust walk. See ``tests/conftest.py``.
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(trusted_daemon_secret_dir))
 
 
 def _run_cli(root: Path, *flags: str, timeout: float = 120.0) -> subprocess.CompletedProcess[str]:
