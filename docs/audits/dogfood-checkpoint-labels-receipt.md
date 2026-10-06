@@ -101,3 +101,33 @@ including `budget_remediable=true`, and the wire advertised 1.12.0. Following th
 test-only `b62099c502633a51a3b7a1fa578d2ddf0cc8f4cd` updates the dedicated pin to 1.12.0.
 The declared key population, equality assertion and literal allowlist are unchanged. Both
 wire controls and the literal ratchet pass (3 tests). Production source is still unchanged.
+
+## Combined integration
+
+Source `d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82` starts from actual main release commit
+`911b37c7d1a4c340352439e3b4499b9ba6eeba18` (v1.123.22), incorporates subprocess candidate
+`129e3739bd6e0ed088c07c5a67efd9e206c24329` and ranking candidate
+`03147141002778460a157c4a10c59458872ee80b`, then applies reviewed labels from
+`f662f61e66f272632989d69dafdfd85807e0588b`. The dependencies remain unmerged.
+Shared main/checkpoint definitions preserve both reviewed ASTs; 15 dedicated source/test
+files match their reviewed blobs after line-ending normalization. The strict subprocess
+census retains all identities, policies, options and seven exact exceptions; only advisory
+locations changed. Handler records retain identities/classifications, with one additional
+out-of-span main location re-anchored.
+
+All 15 bounded canonical Windows batches record clean `d205a8e`: 107 label/CLI/undo checks,
+38 checkpoint boundary checks, 44 wire/docs checks, 124 subprocess checks (two platform
+skips), 32 filename checks, 97 guard checks, cross-interpreter full inventory comparison,
+full Ruff/preview/mypy, size/bare gates, handler assertions, trackers and 47 source replay
+rows. Overlapping groups are not summed. Mypy covers 176 source files; the size census
+has 1123 files and no regressions; no pin increased. The five real handler assertions and
+negative control memoize pure AST reads, so unchanged full pytest remains a CI gate.
+All three interpreter inventories match completely. The replay log combines expected
+negative-control stderr with its report; the raw bundle preserves both separately as well.
+
+Status conflicts preserve diagnostics as merged but awaiting publication/replay and the
+other three items as IN_FLIGHT, with all 44 strategic rows unchanged. Exact final-head
+independent/Opus reviews and CI remain required. After diagnostics release completion,
+merge the three green candidates in subprocess/ranking/labels order during one window.
+Verify actual merged source and final published Windows native/wheel artifacts before
+claiming these items shipped. A release tag alone is not publication proof.

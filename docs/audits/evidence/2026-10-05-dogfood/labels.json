@@ -429,5 +429,2336 @@
         "raw_output": "...                                                                      [100%]\n3 passed in 31.92s\n"
       }
     ]
+  },
+  "combined_integration": {
+    "source_head": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+    "actual_main_base": "911b37c7d1a4c340352439e3b4499b9ba6eeba18",
+    "main_version": "1.123.22",
+    "dependency_union_commit": "ebbe9a7cf1c349692fec9d772637411ac7c3a243",
+    "subprocess_candidate": "129e3739bd6e0ed088c07c5a67efd9e206c24329",
+    "ranking_candidate": "03147141002778460a157c4a10c59458872ee80b",
+    "prior_labels_head": "f662f61e66f272632989d69dafdfd85807e0588b",
+    "union_proof": {
+      "labels_reviewed_head": "f662f61e66f272632989d69dafdfd85807e0588b",
+      "subprocess_reviewed_candidate": "129e3739bd6e0ed088c07c5a67efd9e206c24329",
+      "ranking_reviewed_head": "03147141002778460a157c4a10c59458872ee80b",
+      "shared_source_definition_unions": [
+        {
+          "path": "src/tensor_grep/cli/main.py",
+          "label_definitions": [
+            "checkpoint_create",
+            "checkpoint_list"
+          ],
+          "runtime_definitions": [
+            "_run_rg_compatible_info_action",
+            "_run_upgrade",
+            "main_entry",
+            "upgrade"
+          ],
+          "all_reviewed_definitions_equal": true
+        },
+        {
+          "path": "src/tensor_grep/cli/checkpoint_store.py",
+          "label_definitions": [
+            "CheckpointCreateResult",
+            "CheckpointRecord",
+            "_load_index",
+            "_rebuild_index_from_checkpoint_metadata",
+            "_write_checkpoint_metadata",
+            "create_checkpoint",
+            "load_checkpoint_metadata"
+          ],
+          "runtime_definitions": [
+            "_detect_checkpoint_scope"
+          ],
+          "all_reviewed_definitions_equal": true
+        }
+      ],
+      "unchanged_reviewed_files": [
+        {
+          "path": "src/tensor_grep/cli/checkpoint_labels.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "src/tensor_grep/cli/mcp_checkpoint_label_args.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "src/tensor_grep/cli/mcp_audit_tools.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "src/tensor_grep/cli/mcp_server.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "tests/unit/test_checkpoint_labels.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "tests/unit/test_checkpoint_labels_mcp_wire.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "tests/unit/test_mcp_passthrough_wire_surface.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "tests/unit/test_mcp_server_shared.py",
+          "reviewed_commit": "f662f61e66f272632989d69dafdfd85807e0588b"
+        },
+        {
+          "path": "src/tensor_grep/cli/repo_map.py",
+          "reviewed_commit": "03147141002778460a157c4a10c59458872ee80b"
+        },
+        {
+          "path": "src/tensor_grep/cli/repo_map_ranking.py",
+          "reviewed_commit": "03147141002778460a157c4a10c59458872ee80b"
+        },
+        {
+          "path": "tests/unit/test_filename_phrase_ranking.py",
+          "reviewed_commit": "03147141002778460a157c4a10c59458872ee80b"
+        },
+        {
+          "path": "scripts/check_subprocess_decoding.py",
+          "reviewed_commit": "129e3739bd6e0ed088c07c5a67efd9e206c24329"
+        },
+        {
+          "path": "tests/unit/test_subprocess_decoding_guard.py",
+          "reviewed_commit": "129e3739bd6e0ed088c07c5a67efd9e206c24329"
+        },
+        {
+          "path": "src/tensor_grep/cli/doctor_report.py",
+          "reviewed_commit": "129e3739bd6e0ed088c07c5a67efd9e206c24329"
+        },
+        {
+          "path": "src/tensor_grep/cli/repair_env.py",
+          "reviewed_commit": "129e3739bd6e0ed088c07c5a67efd9e206c24329"
+        }
+      ],
+      "guard_inventory_identity_policy_options_unchanged_except_locations": true,
+      "sink_count": 72,
+      "generated_count": 12,
+      "decoding_count": 16,
+      "exceptions": 7
+    },
+    "ledger_relocation": {
+      "execution": {
+        "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+        "head_sha_at_start": "ebbe9a7cf1c349692fec9d772637411ac7c3a243",
+        "status_at_start": "M  .claude/skills/tensor-grep-run-and-operate/SKILL.md\nM  docs/BACKLOG.md\nM  docs/CONTRACTS.md\nM  docs/SESSION_HANDOFF.md\nM  docs/TASK_BOARD.md\nM  docs/architecture.md\nM  docs/audits/2026-08-20-handler-dispositions.json\nA  docs/audits/dogfood-checkpoint-labels-receipt.md\nA  docs/audits/evidence/2026-10-05-dogfood/labels.json\nM  docs/harness_api.md\nM  docs/harness_cookbook.md\nA  src/tensor_grep/cli/checkpoint_labels.py\nM  src/tensor_grep/cli/checkpoint_store.py\nM  src/tensor_grep/cli/main.py\nM  src/tensor_grep/cli/mcp_audit_tools.py\nA  src/tensor_grep/cli/mcp_checkpoint_label_args.py\nM  src/tensor_grep/cli/mcp_server.py\nA  tests/unit/test_checkpoint_labels.py\nA  tests/unit/test_checkpoint_labels_mcp_wire.py\nM  tests/unit/test_mcp_passthrough_wire_surface.py\nM  tests/unit/test_mcp_server_shared.py\n",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:/dev/projects/tg-dogfood-evidence/check_handler_locations.py",
+          "C:/dev/projects/tg-dogfood-labels-deliver",
+          "--write",
+          "--allowed-module",
+          "cli/main.py"
+        ],
+        "exit_code": 0,
+        "seconds": 8.14,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-ledger-relocation.log"
+      },
+      "output": "{\n  \"root\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\",\n  \"records\": 340,\n  \"missing\": [],\n  \"out_of_span\": [\n    {\n      \"module\": \"cli/main.py\",\n      \"symbol\": \"ledger_claim\",\n      \"index\": 0,\n      \"old\": 12701,\n      \"actual\": 12783\n    }\n  ],\n  \"updated\": true\n}\n"
+    },
+    "cross_interpreter_full_inventory_comparison": {
+      "all_full_inventories_and_exact_pins_equal": true,
+      "hash_method": "UTF-8 compact sorted-key ensure_ascii JSON of complete inventory and exact exception records",
+      "checks": [
+        {
+          "python": "3.11.14 (main, Feb 12 2026, 00:37:49) [MSC v.1944 64 bit (AMD64)]",
+          "executable": "C:\\Users\\oimir\\AppData\\Roaming\\uv\\python\\cpython-3.11-windows-x86_64-none\\python.exe",
+          "command": [
+            "C:/Users/oimir/AppData/Roaming/uv/python/cpython-3.11-windows-x86_64-none/python.exe",
+            "-I",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\fingerprint_inventory_probe.py",
+            "C:\\dev\\projects\\tg-dogfood-labels-deliver\\scripts\\check_subprocess_decoding.py"
+          ],
+          "exit_code": 0,
+          "output": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-fingerprints-python311.stdout.json",
+          "inventory_and_exceptions_sha256": "1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43"
+        },
+        {
+          "python": "3.12.12 (main, Feb 12 2026, 00:40:26) [MSC v.1944 64 bit (AMD64)]",
+          "executable": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+          "command": [
+            "C:/dev/projects/tensor-grep/.venv/Scripts/python.exe",
+            "-I",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\fingerprint_inventory_probe.py",
+            "C:\\dev\\projects\\tg-dogfood-labels-deliver\\scripts\\check_subprocess_decoding.py"
+          ],
+          "exit_code": 0,
+          "output": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-fingerprints-python312.stdout.json",
+          "inventory_and_exceptions_sha256": "1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43"
+        },
+        {
+          "python": "3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]",
+          "executable": "C:\\Users\\oimir\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
+          "command": [
+            "C:/Users/oimir/AppData/Local/Programs/Python/Python313/python.exe",
+            "-I",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\fingerprint_inventory_probe.py",
+            "C:\\dev\\projects\\tg-dogfood-labels-deliver\\scripts\\check_subprocess_decoding.py"
+          ],
+          "exit_code": 0,
+          "output": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-fingerprints-python313.stdout.json",
+          "inventory_and_exceptions_sha256": "1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43"
+        }
+      ]
+    },
+    "checks": [
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_checkpoint_labels.py",
+            "tests/unit/test_checkpoint_labels_mcp_wire.py",
+            "tests/unit/test_checkpoint_cli.py",
+            "tests/unit/test_checkpoint_atomic_undo.py",
+            "tests/unit/test_checkpoint_undo_preserves_empty_dirs.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 126.84,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-labels.log"
+        },
+        "raw_output": "........................................................................ [ 67%]\n...................................                                      [100%]\n107 passed in 125.09s (0:02:05)\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_checkpoint_containment.py",
+            "tests/unit/test_checkpoint_create_ancestor_confinement.py",
+            "tests/unit/test_checkpoint_disk_budget.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 31.28,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-checkpoint-boundaries.log"
+        },
+        "raw_output": "......................................                                   [100%]\n38 passed in 29.58s\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_mcp_passthrough_wire_surface.py",
+            "tests/unit/test_mcp_contract_stamp_ratchet.py",
+            "tests/unit/test_mcp_contract_version_docs_are_pinned.py",
+            "tests/unit/test_mcp_server_shared.py",
+            "tests/unit/test_harness_api_docs.py",
+            "tests/unit/test_harness_cookbook.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 173.5,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-wire-docs.log"
+        },
+        "raw_output": "............................................                             [100%]\n44 passed in 171.35s (0:02:51)\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_mcp_server_rewrite_audit.py",
+            "tests/unit/test_agent_capsule_gpu_probe.py",
+            "tests/unit/test_cli_modes_upgrade.py",
+            "tests/unit/test_subprocess_path_transport.py",
+            "tests/unit/test_ripgrep_timeout_partial.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 16.62,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-subprocess-consumers.log"
+        },
+        "raw_output": "........................................................................ [ 57%]\n.............................................ss.......                   [100%]\n124 passed, 2 skipped in 15.00s\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_filename_phrase_ranking.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 4.28,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-ranking.log"
+        },
+        "raw_output": "................................                                         [100%]\n32 passed in 2.98s\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_subprocess_decoding_guard.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 57.33,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-guard.log"
+        },
+        "raw_output": "........................................................................ [ 74%]\n.........................                                                [100%]\n97 passed in 56.04s\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\compare_fingerprint_interpreters.py",
+            "C:/dev/projects/tg-dogfood-labels-deliver",
+            "labels-integrated-fingerprints"
+          ],
+          "exit_code": 0,
+          "seconds": 11.25,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-interpreters-gate.log"
+        },
+        "raw_output": "{\n  \"all_full_inventories_and_exact_pins_equal\": true,\n  \"hash_method\": \"UTF-8 compact sorted-key ensure_ascii JSON of complete inventory and exact exception records\",\n  \"checks\": [\n    {\n      \"python\": \"3.11.14 (main, Feb 12 2026, 00:37:49) [MSC v.1944 64 bit (AMD64)]\",\n      \"executable\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Roaming\\\\uv\\\\python\\\\cpython-3.11-windows-x86_64-none\\\\python.exe\",\n      \"command\": [\n        \"C:/Users/oimir/AppData/Roaming/uv/python/cpython-3.11-windows-x86_64-none/python.exe\",\n        \"-I\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\fingerprint_inventory_probe.py\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\scripts\\\\check_subprocess_decoding.py\"\n      ],\n      \"exit_code\": 0,\n      \"output\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\labels-integrated-fingerprints-python311.stdout.json\",\n      \"inventory_and_exceptions_sha256\": \"1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43\"\n    },\n    {\n      \"python\": \"3.12.12 (main, Feb 12 2026, 00:40:26) [MSC v.1944 64 bit (AMD64)]\",\n      \"executable\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n      \"command\": [\n        \"C:/dev/projects/tensor-grep/.venv/Scripts/python.exe\",\n        \"-I\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\fingerprint_inventory_probe.py\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\scripts\\\\check_subprocess_decoding.py\"\n      ],\n      \"exit_code\": 0,\n      \"output\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\labels-integrated-fingerprints-python312.stdout.json\",\n      \"inventory_and_exceptions_sha256\": \"1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43\"\n    },\n    {\n      \"python\": \"3.13.5 (tags/v3.13.5:6cb20a2, Jun 11 2025, 16:15:46) [MSC v.1943 64 bit (AMD64)]\",\n      \"executable\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\",\n      \"command\": [\n        \"C:/Users/oimir/AppData/Local/Programs/Python/Python313/python.exe\",\n        \"-I\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\fingerprint_inventory_probe.py\",\n        \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\scripts\\\\check_subprocess_decoding.py\"\n      ],\n      \"exit_code\": 0,\n      \"output\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-evidence\\\\labels-integrated-fingerprints-python313.stdout.json\",\n      \"inventory_and_exceptions_sha256\": \"1e1b146dea2bf9f772bb39013ba92d48a2e09d9be36dd213d8dde1d5325fde43\"\n    }\n  ]\n}\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "ruff",
+            "check",
+            "."
+          ],
+          "exit_code": 0,
+          "seconds": 0.22,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-ruff.log"
+        },
+        "raw_output": "All checks passed!\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "ruff",
+            "format",
+            "--preview",
+            "--check",
+            "."
+          ],
+          "exit_code": 0,
+          "seconds": 0.27,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-format.log"
+        },
+        "raw_output": "1233 files already formatted\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "mypy",
+            "src/"
+          ],
+          "exit_code": 0,
+          "seconds": 29.67,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-mypy.log"
+        },
+        "raw_output": "Success: no issues found in 176 source files\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "scripts/file_size_budget.py"
+          ],
+          "exit_code": 0,
+          "seconds": 4.08,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-size.log"
+        },
+        "raw_output": "file-size budget OK: 1123 files scanned, 25 grandfathered, 0 regressions\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "scripts/bare_call_ratchet.py"
+          ],
+          "exit_code": 0,
+          "seconds": 16.12,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-bare.log"
+        },
+        "raw_output": "bare-call ratchet OK: 3 modules, 0 bare calls, 0 regressions\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\run_handler_gate_cached.py",
+            "C:/dev/projects/tg-dogfood-labels-deliver"
+          ],
+          "exit_code": 0,
+          "seconds": 5.52,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-handler-ledger.log"
+        },
+        "raw_output": "{\n  \"root\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\",\n  \"records\": 340,\n  \"passed_actual_assertions\": [\n    \"test_ledger_locatability\",\n    \"test_ledger_completeness_over_the_whole_tree\",\n    \"test_ledger_uniqueness\",\n    \"test_ledger_vocabulary\",\n    \"test_ledger_evidence_and_reason_non_empty_and_distinct\"\n  ],\n  \"memoized_modules\": 176,\n  \"negative_control\": \"cli/mcp_audit_tools.py: lineno 1 outside 'tg_checkpoint_undo''s span [1296, 1369]\",\n  \"limitation\": \"Per-module pure AST reads memoized locally; this is not an unmodified pytest run. CI must run the unchanged gate.\"\n}\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "tests/unit/test_task_board_freshness.py",
+            "tests/unit/test_backlog_tracker_truth.py",
+            "tests/unit/test_backlog_self_consistency.py",
+            "tests/unit/test_enterprise_docs_governance.py",
+            "-q"
+          ],
+          "exit_code": 0,
+          "seconds": 3.5,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-trackers.log"
+        },
+        "raw_output": "........................................................................ [ 90%]\n........                                                                 [100%]\n80 passed in 2.51s\n"
+      },
+      {
+        "execution": {
+          "root": "C:/dev/projects/tg-dogfood-labels-deliver",
+          "head_sha_at_start": "d205a8e196eeadac415a4fc76c9ee6cf0f5f4f82",
+          "status_at_start": "",
+          "command": [
+            "uv",
+            "run",
+            "--no-sync",
+            "python",
+            "C:\\dev\\projects\\tg-dogfood-evidence\\published_replay.py"
+          ],
+          "exit_code": 0,
+          "seconds": 11.17,
+          "log": "C:\\dev\\projects\\tg-dogfood-evidence\\labels-integrated-replay.log"
+        },
+        "raw_output": "[tensor-grep-mcp] index_search_subprocess_utf8 failed: Traceback (most recent call last):\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 1284, in _execute_index_search_command\n    completed = _self._run_rewrite_subprocess(command)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 629, in _run_rewrite_subprocess\n    stdout = decode_protocol_output(completed.stdout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\subprocess_policy.py\", line 21, in decode_protocol_output\n    return value.decode(\"utf-8\")\n           ^^^^^^^^^^^^^^^^^^^^^\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\n[mcp] native rewrite stderr: invalid pattern\ufffd\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\n{\n  \"version\": \"1.123.19\",\n  \"python\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n  \"package\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\__init__.py\",\n  \"rows\": [\n    {\n      \"issue\": \"repair_env_utf8_malformed\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: installer: \\u2603 bad=\\ufffd\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.051\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: installer: \\\\u2603 bad=\\\\ufffd\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.051\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"repair_env_absent_output\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: Process exited with 17\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.0\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: Process exited with 17\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.0\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"repair_env_timeout\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: Command '['C:\\\\\\\\dev\\\\\\\\projects\\\\\\\\tensor-grep\\\\\\\\.venv\\\\\\\\Scripts\\\\\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\\\\\Users\\\\\\\\oimir\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\tg-published-dogfood-yt2d3eyv\\\\\\\\editable', '--no-deps']' timed out after 60 seconds\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.0\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: Command '['C:\\\\\\\\\\\\\\\\dev\\\\\\\\\\\\\\\\projects\\\\\\\\\\\\\\\\tensor-grep\\\\\\\\\\\\\\\\.venv\\\\\\\\\\\\\\\\Scripts\\\\\\\\\\\\\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\oimir\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\tg-published-dogfood-yt2d3eyv\\\\\\\\\\\\\\\\editable', '--no-deps']' timed out after 60 seconds\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.0\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_NativeGpuBackend_False\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"sidecar_used\": false\n        },\n        \"consumer\": {\n          \"status\": \"supported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"routing_reason\": null,\n          \"sidecar_used\": false,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": null\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-mn4_in6f\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_GpuSidecar_True\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"GpuSidecar\",\n          \"sidecar_used\": true\n        },\n        \"consumer\": {\n          \"status\": \"unsupported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"GpuSidecar\",\n          \"routing_reason\": null,\n          \"sidecar_used\": true,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": \"GPU route lacks proved native execution (routing_backend=GpuSidecar, sidecar_used=True).\"\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-ca0s4nur\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_NativeGpuBackend_None\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"sidecar_used\": null\n        },\n        \"consumer\": {\n          \"status\": \"unsupported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"routing_reason\": null,\n          \"sidecar_used\": null,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": \"GPU route lacks proved native execution (routing_backend=NativeGpuBackend, sidecar_used=None).\"\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-xrq1mx3v\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_non_object_json\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 0,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU runtime probe returned invalid JSON object: expected a JSON object\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_positive\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning')\"\n        ],\n        \"returncode\": 0,\n        \"stdout\": \"[]\",\n        \"stderr\": \"warning\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_malformed_stderr\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning\\\\xff')\"\n        ],\n        \"returncode\": 0,\n        \"stdout\": \"[]\",\n        \"stderr\": \"warning\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_malformed_stdout\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[\\\\xff]'); sys.stderr.buffer.write(b'warning')\"\n        ],\n        \"exception\": \"BackendExecutionError\",\n        \"message\": \"ast-grep command returned invalid UTF-8 protocol output.\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_utf8_input\",\n      \"raw\": {\n        \"stdout\": \"snowman \\u2603\",\n        \"stderr\": \"\",\n        \"returncode\": 0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_git_error\",\n      \"raw\": {\n        \"resolved\": null,\n        \"error\": \"Could not resolve --against ref 'missing': fatal unresolved\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_agent_exit_0\",\n      \"raw\": {\n        \"status\": \"malformed\",\n        \"command\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe -B -c \\\"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(0)\\\"\",\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(0)\"\n        ],\n        \"exit_code\": 0,\n        \"stderr\": \"GPU unavailable\\ufffd\",\n        \"reason\": \"GPU evidence command returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_doctor_exit_0\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 0,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU runtime probe returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_agent_exit_17\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"command\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe -B -c \\\"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(17)\\\"\",\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(17)\"\n        ],\n        \"exit_code\": 17,\n        \"stderr\": \"GPU unavailable\\ufffd\",\n        \"reason\": \"GPU evidence command exited with code 17.\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_doctor_exit_17\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 17,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU unavailable\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stdout_valid\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e322e330a\",\n        \"versions\": [\n          \"1.2.3\"\n        ]\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stdout_malformed\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e32ff2e330a\",\n        \"versions\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stderr_valid\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e322e330a\",\n        \"versions\": [\n          \"1.2.3\"\n        ]\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stderr_malformed\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e32ff2e330a\",\n        \"versions\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_partial\",\n      \"raw\": {\n        \"wire_hex\": \"7b226d617463686573223a205b7b2266696c65223a20227061727469616c2e7079222c20226c696e655f6e756d626572223a20312c202274657874223a202278227d5d2c2022746f74616c5f6d617463686573223a20312c2022726573756c745f696e636f6d706c657465223a20747275652c2022696e636f6d706c6574655f726561736f6e5f636c617373223a20227363616e5f6c696d6974227d\",\n        \"producer_exit\": 2,\n        \"consumer\": {\n          \"matches\": [\n            {\n              \"file\": \"partial.py\",\n              \"line_number\": 1,\n              \"text\": \"x\"\n            }\n          ],\n          \"total_matches\": 1,\n          \"result_incomplete\": true,\n          \"incomplete_reason_class\": \"scan_limit\",\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_diff_content\",\n      \"raw\": {\n        \"wire_hex\": \"2d2d2d20610a2b2b2b20620a2dff0a\",\n        \"producer_exit\": 0,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"routing_backend\": \"AstBackend\",\n          \"routing_reason\": \"ast-native\",\n          \"sidecar_used\": false,\n          \"diff\": \"--- a\\n+++ b\\n-\\ufffd\\n\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_invalid_protocol\",\n      \"raw\": {\n        \"wire_hex\": \"7bff7d\",\n        \"producer_exit\": 0,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false,\n          \"query\": \"x\",\n          \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\",\n          \"error\": {\n            \"code\": \"invalid_output\",\n            \"message\": \"Index search command returned invalid UTF-8 JSON output.\"\n          }\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_failed_protocol\",\n      \"raw\": {\n        \"wire_hex\": \"7bff7d\",\n        \"producer_exit\": 17,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false,\n          \"query\": \"x\",\n          \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\",\n          \"error\": {\n            \"code\": \"invalid_input\",\n            \"message\": \"Invalid rewrite input or options.\"\n          }\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_windows_git_codemap\",\n      \"raw\": {\n        \"wire_hex\": \"636166e92e74787400\",\n        \"consumer\": null\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_windows_git_revision\",\n      \"raw\": {\n        \"wire_hex\": \"2323206d61696e00204d20636166e92e74787400\",\n        \"consumer\": {\n          \"status\": \"unavailable\",\n          \"reason\": \"git status path could not be represented: 'utf-8' codec can't decode byte 0xe9 in position 3: invalid continuation byte\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_timeout_counts_lf\",\n      \"raw\": {\n        \"wire_hex\": \"206c656164696e67206e616d653a320a6f746865723a3132\",\n        \"total_matches\": 2,\n        \"total_files\": 1,\n        \"paths\": [\n          \" leading name\"\n        ],\n        \"counts\": {\n          \" leading name\": 2\n        },\n        \"incomplete\": true,\n        \"reason_class\": \"timeout\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_timeout_counts_nul\",\n      \"raw\": {\n        \"wire_hex\": \"206c656164696e67206e616d6500320a6f74686572003132\",\n        \"total_matches\": 2,\n        \"total_files\": 1,\n        \"paths\": [\n          \" leading name\"\n        ],\n        \"counts\": {\n          \" leading name\": 2\n        },\n        \"incomplete\": true,\n        \"reason_class\": \"timeout\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ndjson_path_match\",\n      \"raw\": {\n        \"producer\": {\n          \"type\": \"match\",\n          \"data\": {\n            \"path\": {\n              \"bytes\": \"c3JjL3Nub3dtYW5f4piDLnB5\"\n            },\n            \"lines\": {\n              \"bytes\": \"bGluZf8K\"\n            },\n            \"line_number\": 1,\n            \"absolute_offset\": 0,\n            \"submatches\": []\n          }\n        },\n        \"matches\": [\n          {\n            \"file\": \"src/snowman_\\u2603.py\",\n            \"line\": 1,\n            \"text\": \"line\\ufffd\"\n          }\n        ],\n        \"paths\": [\n          \"src/snowman_\\u2603.py\"\n        ],\n        \"counts\": {\n          \"src/snowman_\\u2603.py\": 1\n        },\n        \"total\": 1\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ndjson_path_context\",\n      \"raw\": {\n        \"producer\": {\n          \"type\": \"context\",\n          \"data\": {\n            \"path\": {\n              \"bytes\": \"c3JjL3Nub3dtYW5f4piDLnB5\"\n            },\n            \"lines\": {\n              \"bytes\": \"bGluZf8K\"\n            },\n            \"line_number\": 1,\n            \"absolute_offset\": 0,\n            \"submatches\": []\n          }\n        },\n        \"matches\": [\n          {\n            \"file\": \"src/snowman_\\u2603.py\",\n            \"line\": 1,\n            \"text\": \"line\\ufffd\"\n          }\n        ],\n        \"paths\": [],\n        \"counts\": {},\n        \"total\": 0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"filename_render\",\n      \"raw\": {\n        \"version\": 1,\n        \"schema_version\": 1,\n        \"routing_backend\": \"RepoMap\",\n        \"routing_reason\": \"context-render\",\n        \"sidecar_used\": false,\n        \"coverage\": {\n          \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n          \"symbol_navigation\": \"parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:\",\n          \"test_matching\": \"filename+import+graph-heuristic\"\n        },\n        \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\",\n        \"files\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"symbols\": [\n          {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          }\n        ],\n        \"imports\": [],\n        \"tests\": [],\n        \"related_paths\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"query\": \"repair env\",\n        \"file_matches\": [\n          {\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"score\": 41,\n            \"reasons\": [\n              \"path\",\n              \"source\",\n              \"graph-centrality\",\n              \"filename-phrase\"\n            ],\n            \"provenance\": [\n              \"filename-convention\",\n              \"heuristic\",\n              \"graph-derived\"\n            ],\n            \"graph_score\": 0.5\n          }\n        ],\n        \"file_summaries\": [\n          {\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"symbols\": [\n              {\n                \"name\": \"repair_environment\",\n                \"kind\": \"function\",\n                \"line\": 1\n              }\n            ]\n          }\n        ],\n        \"test_matches\": [],\n        \"ranking_quality\": \"moderate\",\n        \"coverage_summary\": {\n          \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n          \"parser_backed_fields\": [\n            \"defs\",\n            \"source\",\n            \"refs\",\n            \"callers\"\n          ],\n          \"heuristic_fields\": [\n            \"test-matching\",\n            \"graph-ranking\"\n          ],\n          \"graph_completeness\": \"moderate\",\n          \"evidence_counts\": {\n            \"parser_backed\": 0,\n            \"graph_derived\": 2,\n            \"heuristic\": 3\n          },\n          \"evidence_ratios\": {\n            \"parser_backed\": 0.0,\n            \"graph_derived\": 0.4,\n            \"heuristic\": 0.6\n          },\n          \"reference_kind_counts\": {\n            \"call\": 0,\n            \"import\": 0,\n            \"type\": 0,\n            \"field\": 0,\n            \"value\": 0\n          }\n        },\n        \"sources\": [\n          {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"source\": \"def repair_environment():\\n    return 'ready'\\n\",\n            \"render_profile\": \"full\",\n            \"optimize_context\": false,\n            \"rendered_source\": \"def repair_environment():\\n    return 'ready'\\n\",\n            \"line_map\": [\n              {\n                \"rendered_start_line\": 1,\n                \"rendered_end_line\": 2,\n                \"original_start_line\": 1,\n                \"original_end_line\": 2\n              }\n            ],\n            \"render_diagnostics\": {\n              \"original_line_count\": 2,\n              \"rendered_line_count\": 2,\n              \"removed_line_count\": 0,\n              \"removed_comment_lines\": 0,\n              \"removed_blank_lines\": 0,\n              \"removed_docstring_lines\": 0,\n              \"removed_boilerplate_lines\": 0,\n              \"js_jsdoc_removed\": 0,\n              \"ts_type_imports_removed\": 0,\n              \"rust_doc_comments_removed\": 0,\n              \"rust_attributes_removed\": 0\n            }\n          }\n        ],\n        \"max_files\": 1,\n        \"max_sources\": 1,\n        \"max_symbols_per_file\": 1,\n        \"max_render_chars\": null,\n        \"max_tokens\": null,\n        \"model\": null,\n        \"optimize_context\": false,\n        \"render_profile\": \"full\",\n        \"semantic_provider\": \"native\",\n        \"edit_plan_seed\": {\n          \"primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"primary_symbol\": {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          },\n          \"primary_span\": {\n            \"start_line\": 1,\n            \"end_line\": 2\n          },\n          \"primary_test\": null,\n          \"validation_tests\": [],\n          \"validation_commands\": [],\n          \"validation_plan\": [],\n          \"validation_alignment\": {\n            \"status\": \"no-validation\",\n            \"primary_target_language\": \"python\",\n            \"kept_count\": 0,\n            \"filtered_count\": 0,\n            \"issues\": []\n          },\n          \"suggested_validation_commands\": [],\n          \"reasons\": [\n            \"path\",\n            \"source\",\n            \"graph-centrality\",\n            \"filename-phrase\"\n          ],\n          \"confidence\": {\n            \"file\": 1.0,\n            \"symbol\": 0.75,\n            \"test\": 0.0,\n            \"overall\": 1.0\n          },\n          \"related_spans\": [],\n          \"suggested_edits\": [],\n          \"dependency_trust\": {\n            \"import_resolution_quality\": \"weak\",\n            \"parser_backed_count\": 0,\n            \"heuristic_count\": 0\n          },\n          \"plan_trust_summary\": \"Ranking moderate; coverage moderate (parser_backed=0, graph_derived=2, heuristic=3); dependency trust weak (parser_backed=0, heuristic=0).\",\n          \"dependent_files\": [],\n          \"edit_ordering\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"rollback_risk\": 0.0,\n          \"blast_radius_scope\": {\n            \"max_files\": 4,\n            \"source\": \"selected-context\",\n            \"original_file_count\": 2,\n            \"scoped_file_count\": 1\n          }\n        },\n        \"graph_trust_summary\": {\n          \"edge_kind\": \"reverse-import\",\n          \"confidence\": \"weak\",\n          \"provenance\": [\n            \"graph-derived\"\n          ],\n          \"depth_count\": 1,\n          \"evidence_counts\": {\n            \"parser_backed\": 0,\n            \"heuristic\": 0,\n            \"by_ref_kind\": {}\n          }\n        },\n        \"candidate_edit_targets\": {\n          \"files\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"symbols\": [\n            {\n              \"name\": \"repair_environment\",\n              \"kind\": \"function\",\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"line\": 1,\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"score\": 8,\n              \"filename_phrase_match\": true\n            }\n          ],\n          \"tests\": [],\n          \"ranking_quality\": \"moderate\",\n          \"coverage_summary\": {\n            \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n            \"parser_backed_fields\": [\n              \"defs\",\n              \"source\",\n              \"refs\",\n              \"callers\"\n            ],\n            \"heuristic_fields\": [\n              \"test-matching\",\n              \"graph-ranking\"\n            ],\n            \"graph_completeness\": \"moderate\",\n            \"evidence_counts\": {\n              \"parser_backed\": 0,\n              \"graph_derived\": 2,\n              \"heuristic\": 3\n            },\n            \"evidence_ratios\": {\n              \"parser_backed\": 0.0,\n              \"graph_derived\": 0.4,\n              \"heuristic\": 0.6\n            },\n            \"reference_kind_counts\": {\n              \"call\": 0,\n              \"import\": 0,\n              \"type\": 0,\n              \"field\": 0,\n              \"value\": 0\n            }\n          },\n          \"spans\": [\n            {\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"symbol\": \"repair_environment\",\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"depth\": 0,\n              \"score\": 49,\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ],\n              \"provenance\": [\n                \"filename-convention\",\n                \"heuristic\",\n                \"graph-derived\"\n              ],\n              \"rationale\": \"Selected repair_environment because it is connected by path, source, graph-centrality, filename-phrase at depth 0.\"\n            }\n          ]\n        },\n        \"navigation_pack\": {\n          \"primary_target\": {\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"symbol\": \"repair_environment\",\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n            \"reasons\": [\n              \"path\",\n              \"source\",\n              \"graph-centrality\",\n              \"filename-phrase\"\n            ],\n            \"confidence\": {\n              \"file\": 1.0,\n              \"symbol\": 0.75,\n              \"test\": 0.0,\n              \"overall\": 1.0\n            }\n          },\n          \"follow_up_reads\": [\n            {\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"symbol\": \"repair_environment\",\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n              \"role\": \"primary\",\n              \"rationale\": \"Primary edit target selected from ranked symbols and file matches.\",\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ],\n              \"provenance\": []\n            }\n          ],\n          \"parallel_read_groups\": [\n            {\n              \"phase\": 0,\n              \"label\": \"primary\",\n              \"can_parallelize\": false,\n              \"mentions\": [\n                \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\"\n              ],\n              \"files\": [\n                \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n              ],\n              \"roles\": [\n                \"primary\"\n              ]\n            }\n          ],\n          \"related_tests\": [],\n          \"validation_commands\": [],\n          \"suggested_validation_commands\": [],\n          \"validation_alignment\": {\n            \"status\": \"no-validation\",\n            \"primary_target_language\": \"python\",\n            \"kept_count\": 0,\n            \"filtered_count\": 0,\n            \"issues\": []\n          },\n          \"edit_ordering\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"rollback_risk\": 0.0\n        },\n        \"primary_target\": {\n          \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"symbol\": \"repair_environment\",\n          \"start_line\": 1,\n          \"end_line\": 2,\n          \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n          \"reasons\": [\n            \"path\",\n            \"source\",\n            \"graph-centrality\",\n            \"filename-phrase\"\n          ],\n          \"confidence\": {\n            \"file\": 1.0,\n            \"symbol\": 0.75,\n            \"test\": 0.0,\n            \"overall\": 1.0\n          }\n        },\n        \"edit_order\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"plan\": {\n          \"query\": \"repair env\",\n          \"primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"primary_symbol\": {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          },\n          \"primary_span\": {\n            \"start_line\": 1,\n            \"end_line\": 2\n          },\n          \"edit_order\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"validation_commands\": [],\n          \"suggested_validation_commands\": [],\n          \"rollback_risk\": 0.0,\n          \"ranking_quality\": \"moderate\"\n        },\n        \"validation_commands\": [],\n        \"suggested_validation_commands\": [],\n        \"rendered_context\": \"Query: repair env\\n\\nSource:\\n```text\\ndef repair_environment():\\n    return 'ready'\\n```\\n\\nFile: C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\\nSummary:\\n- function repair_environment @ line 1\",\n        \"sections\": [\n          {\n            \"kind\": \"query\",\n            \"start\": 0,\n            \"end\": 17,\n            \"token_estimate\": 5\n          },\n          {\n            \"kind\": \"source\",\n            \"start\": 17,\n            \"end\": 83,\n            \"token_estimate\": 19,\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"symbol\": \"repair_environment\",\n            \"provenance\": {\n              \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"symbol\": \"repair_environment\",\n              \"score\": 41,\n              \"graph_score\": 0.5,\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ],\n              \"symbol_score\": 8\n            }\n          },\n          {\n            \"kind\": \"summary\",\n            \"start\": 83,\n            \"end\": 228,\n            \"token_estimate\": 42,\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"provenance\": {\n              \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"score\": 41,\n              \"graph_score\": 0.5,\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ]\n            }\n          }\n        ],\n        \"truncated\": false,\n        \"token_estimate\": 66,\n        \"omitted_sections\": [],\n        \"context_consistency\": {\n          \"primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"navigation_primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"query_language_hints\": [],\n          \"primary_target_language\": \"python\",\n          \"validation_alignment\": {\n            \"status\": \"no-validation\",\n            \"primary_target_language\": \"python\",\n            \"kept_count\": 0,\n            \"filtered_count\": 0,\n            \"issues\": []\n          },\n          \"validation_filtered_count\": 0,\n          \"primary_file_included\": true,\n          \"primary_symbol\": \"repair_environment\",\n          \"primary_symbol_included\": true,\n          \"primary_symbol_truncated\": false,\n          \"render_matches_primary_target\": true,\n          \"rendered_context_includes_primary\": true,\n          \"rendered_context_includes_primary_symbol\": true,\n          \"confidence_downgraded\": false,\n          \"omitted_primary_reason\": null\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"filename_edit\",\n      \"raw\": {\n        \"version\": 1,\n        \"schema_version\": 1,\n        \"routing_backend\": \"RepoMap\",\n        \"routing_reason\": \"context-edit-plan\",\n        \"sidecar_used\": false,\n        \"coverage\": {\n          \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n          \"symbol_navigation\": \"parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:\",\n          \"test_matching\": \"filename+import+graph-heuristic\"\n        },\n        \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\",\n        \"files\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"symbols\": [\n          {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          }\n        ],\n        \"imports\": [],\n        \"tests\": [],\n        \"related_paths\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"query\": \"repair env\",\n        \"file_matches\": [\n          {\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"score\": 41,\n            \"reasons\": [\n              \"path\",\n              \"source\",\n              \"graph-centrality\",\n              \"filename-phrase\"\n            ],\n            \"provenance\": [\n              \"filename-convention\",\n              \"heuristic\",\n              \"graph-derived\"\n            ],\n            \"graph_score\": 0.5\n          }\n        ],\n        \"file_summaries\": [\n          {\n            \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"symbols\": [\n              {\n                \"name\": \"repair_environment\",\n                \"kind\": \"function\",\n                \"line\": 1\n              }\n            ]\n          }\n        ],\n        \"test_matches\": [],\n        \"ranking_quality\": \"moderate\",\n        \"coverage_summary\": {\n          \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n          \"parser_backed_fields\": [\n            \"defs\",\n            \"source\",\n            \"refs\",\n            \"callers\"\n          ],\n          \"heuristic_fields\": [\n            \"test-matching\",\n            \"graph-ranking\"\n          ],\n          \"graph_completeness\": \"moderate\",\n          \"evidence_counts\": {\n            \"parser_backed\": 0,\n            \"graph_derived\": 2,\n            \"heuristic\": 3\n          },\n          \"evidence_ratios\": {\n            \"parser_backed\": 0.0,\n            \"graph_derived\": 0.4,\n            \"heuristic\": 0.6\n          },\n          \"reference_kind_counts\": {\n            \"call\": 0,\n            \"import\": 0,\n            \"type\": 0,\n            \"field\": 0,\n            \"value\": 0\n          }\n        },\n        \"max_files\": 1,\n        \"max_symbols\": 1,\n        \"max_sources\": 1,\n        \"max_tokens\": null,\n        \"semantic_provider\": \"native\",\n        \"edit_plan_seed\": {\n          \"primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"primary_symbol\": {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          },\n          \"primary_span\": {\n            \"start_line\": 1,\n            \"end_line\": 2\n          },\n          \"primary_test\": null,\n          \"validation_tests\": [],\n          \"validation_commands\": [],\n          \"validation_plan\": [],\n          \"validation_alignment\": {\n            \"status\": \"no-validation\",\n            \"primary_target_language\": \"python\",\n            \"kept_count\": 0,\n            \"filtered_count\": 0,\n            \"issues\": []\n          },\n          \"suggested_validation_commands\": [],\n          \"reasons\": [\n            \"path\",\n            \"source\",\n            \"graph-centrality\",\n            \"filename-phrase\"\n          ],\n          \"confidence\": {\n            \"file\": 1.0,\n            \"symbol\": 0.75,\n            \"test\": 0.0,\n            \"overall\": 1.0\n          },\n          \"related_spans\": [],\n          \"suggested_edits\": [],\n          \"dependency_trust\": {\n            \"import_resolution_quality\": \"weak\",\n            \"parser_backed_count\": 0,\n            \"heuristic_count\": 0\n          },\n          \"plan_trust_summary\": \"Ranking moderate; coverage moderate (parser_backed=0, graph_derived=2, heuristic=3); dependency trust weak (parser_backed=0, heuristic=0).\",\n          \"dependent_files\": [],\n          \"edit_ordering\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"rollback_risk\": 0.0,\n          \"blast_radius_scope\": {\n            \"max_files\": 4,\n            \"source\": \"selected-context\",\n            \"original_file_count\": 2,\n            \"scoped_file_count\": 1\n          }\n        },\n        \"graph_trust_summary\": {\n          \"edge_kind\": \"reverse-import\",\n          \"confidence\": \"weak\",\n          \"provenance\": [\n            \"graph-derived\"\n          ],\n          \"depth_count\": 1,\n          \"evidence_counts\": {\n            \"parser_backed\": 0,\n            \"heuristic\": 0,\n            \"by_ref_kind\": {}\n          }\n        },\n        \"candidate_edit_targets\": {\n          \"files\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"symbols\": [\n            {\n              \"name\": \"repair_environment\",\n              \"kind\": \"function\",\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"line\": 1,\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"score\": 8,\n              \"filename_phrase_match\": true\n            }\n          ],\n          \"tests\": [],\n          \"ranking_quality\": \"moderate\",\n          \"coverage_summary\": {\n            \"language_scope\": \"c-cpp-csharp-go-java-javascript-php-python-rust-typescript\",\n            \"parser_backed_fields\": [\n              \"defs\",\n              \"source\",\n              \"refs\",\n              \"callers\"\n            ],\n            \"heuristic_fields\": [\n              \"test-matching\",\n              \"graph-ranking\"\n            ],\n            \"graph_completeness\": \"moderate\",\n            \"evidence_counts\": {\n              \"parser_backed\": 0,\n              \"graph_derived\": 2,\n              \"heuristic\": 3\n            },\n            \"evidence_ratios\": {\n              \"parser_backed\": 0.0,\n              \"graph_derived\": 0.4,\n              \"heuristic\": 0.6\n            },\n            \"reference_kind_counts\": {\n              \"call\": 0,\n              \"import\": 0,\n              \"type\": 0,\n              \"field\": 0,\n              \"value\": 0\n            }\n          },\n          \"spans\": [\n            {\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"symbol\": \"repair_environment\",\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"depth\": 0,\n              \"score\": 49,\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ],\n              \"provenance\": [\n                \"filename-convention\",\n                \"heuristic\",\n                \"graph-derived\"\n              ],\n              \"rationale\": \"Selected repair_environment because it is connected by path, source, graph-centrality, filename-phrase at depth 0.\"\n            }\n          ]\n        },\n        \"navigation_pack\": {\n          \"primary_target\": {\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"symbol\": \"repair_environment\",\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n            \"reasons\": [\n              \"path\",\n              \"source\",\n              \"graph-centrality\",\n              \"filename-phrase\"\n            ],\n            \"confidence\": {\n              \"file\": 1.0,\n              \"symbol\": 0.75,\n              \"test\": 0.0,\n              \"overall\": 1.0\n            }\n          },\n          \"follow_up_reads\": [\n            {\n              \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n              \"symbol\": \"repair_environment\",\n              \"start_line\": 1,\n              \"end_line\": 2,\n              \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n              \"role\": \"primary\",\n              \"rationale\": \"Primary edit target selected from ranked symbols and file matches.\",\n              \"reasons\": [\n                \"path\",\n                \"source\",\n                \"graph-centrality\",\n                \"filename-phrase\"\n              ],\n              \"provenance\": []\n            }\n          ],\n          \"parallel_read_groups\": [\n            {\n              \"phase\": 0,\n              \"label\": \"primary\",\n              \"can_parallelize\": false,\n              \"mentions\": [\n                \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\"\n              ],\n              \"files\": [\n                \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n              ],\n              \"roles\": [\n                \"primary\"\n              ]\n            }\n          ],\n          \"related_tests\": [],\n          \"validation_commands\": [],\n          \"suggested_validation_commands\": [],\n          \"validation_alignment\": {\n            \"status\": \"no-validation\",\n            \"primary_target_language\": \"python\",\n            \"kept_count\": 0,\n            \"filtered_count\": 0,\n            \"issues\": []\n          },\n          \"edit_ordering\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"rollback_risk\": 0.0\n        },\n        \"primary_target\": {\n          \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"symbol\": \"repair_environment\",\n          \"start_line\": 1,\n          \"end_line\": 2,\n          \"mention_ref\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py#L1-L2\",\n          \"reasons\": [\n            \"path\",\n            \"source\",\n            \"graph-centrality\",\n            \"filename-phrase\"\n          ],\n          \"confidence\": {\n            \"file\": 1.0,\n            \"symbol\": 0.75,\n            \"test\": 0.0,\n            \"overall\": 1.0\n          }\n        },\n        \"edit_order\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n        ],\n        \"plan\": {\n          \"query\": \"repair env\",\n          \"primary_file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n          \"primary_symbol\": {\n            \"name\": \"repair_environment\",\n            \"kind\": \"function\",\n            \"file\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\",\n            \"line\": 1,\n            \"start_line\": 1,\n            \"end_line\": 2,\n            \"score\": 8,\n            \"filename_phrase_match\": true\n          },\n          \"primary_span\": {\n            \"start_line\": 1,\n            \"end_line\": 2\n          },\n          \"edit_order\": [\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\ranking\\\\src\\\\repair_env.py\"\n          ],\n          \"validation_commands\": [],\n          \"suggested_validation_commands\": [],\n          \"rollback_risk\": 0.0,\n          \"ranking_quality\": \"moderate\"\n        },\n        \"validation_commands\": [],\n        \"suggested_validation_commands\": [],\n        \"validation_plan\": [],\n        \"confidence\": {\n          \"overall\": 1.0,\n          \"downgrade_reasons\": []\n        },\n        \"ask_user_before_editing\": {\n          \"required\": true,\n          \"reasons\": [\n            \"no validation command evidence\"\n          ]\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_create\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006071212-a94180c7\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"created_at\": \"2026-10-06T07:12:12.257009+00:00\",\n          \"file_count\": 1,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006071212-a94180c7\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006071212-a94180c7 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": [\n            \"sample.py\"\n          ],\n          \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\",\n          \"version\": 1,\n          \"schema_version\": 1\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_list\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"version\": 1,\n          \"schema_version\": 1,\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"mode\": \"filesystem-snapshot\",\n          \"checkpoint_count\": 1,\n          \"checkpoints\": [\n            {\n              \"version\": 1,\n              \"checkpoint_id\": \"ckpt-20261006071212-a94180c7\",\n              \"mode\": \"filesystem-snapshot\",\n              \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n              \"created_at\": \"2026-10-06T07:12:12.257009+00:00\",\n              \"file_count\": 1,\n              \"label\": \"Before \\u518d\\u78ba\\u8a8d \\ud83e\\udded\"\n            }\n          ]\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_scoped_undo_by_id\",\n      \"raw\": {\n        \"exit\": 0,\n        \"payload\": {\n          \"checkpoint_id\": \"ckpt-20261006071212-a94180c7\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"restored_files\": 1,\n          \"removed_paths\": 0,\n          \"diverged_paths\": [\n            \"sample.py\"\n          ],\n          \"version\": 1,\n          \"schema_version\": 1\n        },\n        \"restored\": \"before\\n\",\n        \"unscoped\": \"must remain\\n\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_invalid_no_write\",\n      \"raw\": {\n        \"exit\": 2,\n        \"output\": \"Checkpoint label must contain 1 to 120 printable characters.\\n\",\n        \"entries\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint_create\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"title\": \"tg_checkpoint_createArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006071213-1b413edb\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"created_at\": \"2026-10-06T07:12:13.640080+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006071213-1b413edb\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006071213-1b413edb C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"legacy MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_tg_checkpoint\",\n      \"raw\": {\n        \"schema\": {\n          \"properties\": {\n            \"action\": {\n              \"title\": \"Action\",\n              \"type\": \"string\"\n            },\n            \"checkpoint_id\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Checkpoint Id\"\n            },\n            \"path\": {\n              \"default\": \".\",\n              \"title\": \"Path\",\n              \"type\": \"string\"\n            },\n            \"label\": {\n              \"anyOf\": [\n                {\n                  \"type\": \"string\"\n                },\n                {\n                  \"type\": \"null\"\n                }\n              ],\n              \"default\": null,\n              \"title\": \"Label\"\n            }\n          },\n          \"required\": [\n            \"action\"\n          ],\n          \"title\": \"tg_checkpointArguments\",\n          \"type\": \"object\"\n        },\n        \"payload\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.12.0\",\n          \"schema_version\": 1,\n          \"checkpoint_id\": \"ckpt-20261006071214-55784106\",\n          \"mode\": \"filesystem-snapshot\",\n          \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"created_at\": \"2026-10-06T07:12:14.229017+00:00\",\n          \"file_count\": 2,\n          \"undo_argv\": [\n            \"tg\",\n            \"checkpoint\",\n            \"undo\",\n            \"ckpt-20261006071214-55784106\",\n            \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n          ],\n          \"undo_command\": \"tg checkpoint undo ckpt-20261006071214-55784106 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n          \"skipped_nested_repos\": [],\n          \"scoped_paths\": null,\n          \"label\": \"meta MCP label\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_list\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:list\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"list\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_mcp_reject_undo\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"routing_backend\": \"MCPMeta\",\n        \"routing_reason\": \"tg_checkpoint:undo\",\n        \"sidecar_used\": false,\n        \"tool\": \"tg_checkpoint\",\n        \"action\": \"undo\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"label is only accepted when action='create'.\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_null\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071214-cb7d1820\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:14.916233+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071214-cb7d1820\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071214-cb7d1820 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"null\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_[\\\"x\\\"]\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071215-81e068ee\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:15.649571+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071215-81e068ee\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071215-81e068ee C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"[\\\"x\\\"]\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_create_{\\\"a\\\":1}\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071216-8bf732a7\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:16.417638+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071216-8bf732a7\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071216-8bf732a7 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"{\\\"a\\\":1}\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_null\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071217-24df930d\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:17.210215+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071217-24df930d\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071217-24df930d C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"null\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_[\\\"x\\\"]\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071217-585b0882\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:17.841162+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071217-585b0882\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071217-585b0882 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"[\\\"x\\\"]\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_literal_tg_checkpoint_{\\\"a\\\":1}\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"schema_version\": 1,\n        \"checkpoint_id\": \"ckpt-20261006071218-c944cfb8\",\n        \"mode\": \"filesystem-snapshot\",\n        \"root\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"created_at\": \"2026-10-06T07:12:18.481420+00:00\",\n        \"file_count\": 2,\n        \"undo_argv\": [\n          \"tg\",\n          \"checkpoint\",\n          \"undo\",\n          \"ckpt-20261006071218-c944cfb8\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\"\n        ],\n        \"undo_command\": \"tg checkpoint undo ckpt-20261006071218-c944cfb8 C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\labels\",\n        \"skipped_nested_repos\": [],\n        \"scoped_paths\": null,\n        \"label\": \"{\\\"a\\\":1}\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"label_invalid_path_redacted\",\n      \"raw\": {\n        \"version\": 1,\n        \"mcp_contract_version\": \"1.12.0\",\n        \"error\": {\n          \"code\": \"invalid_input\",\n          \"message\": \"Checkpoint label must contain 1 to 120 printable characters.\"\n        },\n        \"path\": \"[refused]\"\n      },\n      \"verdict\": \"PASS\"\n    }\n  ],\n  \"compiled_extension\": {\n    \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-labels-deliver\\\\src\\\\tensor_grep\\\\rust_core.pyd\",\n    \"sha256\": \"4c77228288637aa228ec2594a3a01ac9362819acdc4b3c9e150ff103c69df54e\"\n  }\n}\n"
+      }
+    ],
+    "replay_expected_stderr_preamble": "[tensor-grep-mcp] index_search_subprocess_utf8 failed: Traceback (most recent call last):\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 1284, in _execute_index_search_command\n    completed = _self._run_rewrite_subprocess(command)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 629, in _run_rewrite_subprocess\n    stdout = decode_protocol_output(completed.stdout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\cli\\subprocess_policy.py\", line 21, in decode_protocol_output\n    return value.decode(\"utf-8\")\n           ^^^^^^^^^^^^^^^^^^^^^\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\n[mcp] native rewrite stderr: invalid pattern\ufffd\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\n",
+    "replay_raw_json": {
+      "version": "1.123.19",
+      "python": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+      "package": "C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\__init__.py",
+      "rows": [
+        {
+          "issue": "repair_env_utf8_malformed",
+          "raw": {
+            "exit": 1,
+            "payload": {
+              "status": "failed",
+              "error": "Repair failed: installer: \u2603 bad=\ufffd",
+              "previous_version": "1.123.19",
+              "duration_seconds": 0.051
+            },
+            "stdout": "{\n  \"status\": \"failed\",\n  \"error\": \"Repair failed: installer: \\u2603 bad=\\ufffd\",\n  \"previous_version\": \"1.123.19\",\n  \"duration_seconds\": 0.051\n}\n",
+            "exception": {
+              "type": "SystemExit",
+              "message": "1"
+            },
+            "producer_kwargs": {
+              "capture_output": true,
+              "text": true,
+              "encoding": "utf-8",
+              "errors": "replace",
+              "check": false,
+              "timeout": 60
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "repair_env_absent_output",
+          "raw": {
+            "exit": 1,
+            "payload": {
+              "status": "failed",
+              "error": "Repair failed: Process exited with 17",
+              "previous_version": "1.123.19",
+              "duration_seconds": 0.0
+            },
+            "stdout": "{\n  \"status\": \"failed\",\n  \"error\": \"Repair failed: Process exited with 17\",\n  \"previous_version\": \"1.123.19\",\n  \"duration_seconds\": 0.0\n}\n",
+            "exception": {
+              "type": "SystemExit",
+              "message": "1"
+            },
+            "producer_kwargs": {
+              "capture_output": true,
+              "text": true,
+              "encoding": "utf-8",
+              "errors": "replace",
+              "check": false,
+              "timeout": 60
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "repair_env_timeout",
+          "raw": {
+            "exit": 1,
+            "payload": {
+              "status": "failed",
+              "error": "Repair failed: Command '['C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-yt2d3eyv\\\\editable', '--no-deps']' timed out after 60 seconds",
+              "previous_version": "1.123.19",
+              "duration_seconds": 0.0
+            },
+            "stdout": "{\n  \"status\": \"failed\",\n  \"error\": \"Repair failed: Command '['C:\\\\\\\\dev\\\\\\\\projects\\\\\\\\tensor-grep\\\\\\\\.venv\\\\\\\\Scripts\\\\\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\\\\\Users\\\\\\\\oimir\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\tg-published-dogfood-yt2d3eyv\\\\\\\\editable', '--no-deps']' timed out after 60 seconds\",\n  \"previous_version\": \"1.123.19\",\n  \"duration_seconds\": 0.0\n}\n",
+            "exception": {
+              "type": "SystemExit",
+              "message": "1"
+            },
+            "producer_kwargs": {
+              "capture_output": true,
+              "text": true,
+              "encoding": "utf-8",
+              "errors": "replace",
+              "check": false,
+              "timeout": 60
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "gpu_proof_NativeGpuBackend_False",
+          "raw": {
+            "injected_producer": {
+              "routing_backend": "NativeGpuBackend",
+              "sidecar_used": false
+            },
+            "consumer": {
+              "status": "supported",
+              "requested_gpu_device_ids": [
+                0
+              ],
+              "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+              "exit_code": 0,
+              "routing_backend": "NativeGpuBackend",
+              "routing_reason": null,
+              "sidecar_used": false,
+              "routing_gpu_device_ids": [],
+              "native_error_kind": null,
+              "error": null
+            },
+            "argv": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe",
+              "search",
+              "--gpu-device-ids",
+              "0",
+              "--json",
+              "--no-ignore",
+              "--",
+              "tg doctor gpu runtime probe",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-doctor-gpu-probe-mn4_in6f\\probe.log"
+            ],
+            "timeout": 2.0
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "gpu_proof_GpuSidecar_True",
+          "raw": {
+            "injected_producer": {
+              "routing_backend": "GpuSidecar",
+              "sidecar_used": true
+            },
+            "consumer": {
+              "status": "unsupported",
+              "requested_gpu_device_ids": [
+                0
+              ],
+              "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+              "exit_code": 0,
+              "routing_backend": "GpuSidecar",
+              "routing_reason": null,
+              "sidecar_used": true,
+              "routing_gpu_device_ids": [],
+              "native_error_kind": null,
+              "error": "GPU route lacks proved native execution (routing_backend=GpuSidecar, sidecar_used=True)."
+            },
+            "argv": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe",
+              "search",
+              "--gpu-device-ids",
+              "0",
+              "--json",
+              "--no-ignore",
+              "--",
+              "tg doctor gpu runtime probe",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-doctor-gpu-probe-ca0s4nur\\probe.log"
+            ],
+            "timeout": 2.0
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "gpu_proof_NativeGpuBackend_None",
+          "raw": {
+            "injected_producer": {
+              "routing_backend": "NativeGpuBackend",
+              "sidecar_used": null
+            },
+            "consumer": {
+              "status": "unsupported",
+              "requested_gpu_device_ids": [
+                0
+              ],
+              "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+              "exit_code": 0,
+              "routing_backend": "NativeGpuBackend",
+              "routing_reason": null,
+              "sidecar_used": null,
+              "routing_gpu_device_ids": [],
+              "native_error_kind": null,
+              "error": "GPU route lacks proved native execution (routing_backend=NativeGpuBackend, sidecar_used=None)."
+            },
+            "argv": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe",
+              "search",
+              "--gpu-device-ids",
+              "0",
+              "--json",
+              "--no-ignore",
+              "--",
+              "tg doctor gpu runtime probe",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-doctor-gpu-probe-xrq1mx3v\\probe.log"
+            ],
+            "timeout": 2.0
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "gpu_non_object_json",
+          "raw": {
+            "status": "failed",
+            "requested_gpu_device_ids": [
+              0
+            ],
+            "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+            "exit_code": 0,
+            "routing_backend": null,
+            "routing_reason": null,
+            "sidecar_used": null,
+            "routing_gpu_device_ids": [],
+            "native_error_kind": null,
+            "error": "GPU runtime probe returned invalid JSON object: expected a JSON object"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ast_positive",
+          "raw": {
+            "argv": [
+              "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+              "-B",
+              "-c",
+              "import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning')"
+            ],
+            "returncode": 0,
+            "stdout": "[]",
+            "stderr": "warning"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ast_malformed_stderr",
+          "raw": {
+            "argv": [
+              "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+              "-B",
+              "-c",
+              "import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning\\xff')"
+            ],
+            "returncode": 0,
+            "stdout": "[]",
+            "stderr": "warning\ufffd"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ast_malformed_stdout",
+          "raw": {
+            "argv": [
+              "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+              "-B",
+              "-c",
+              "import sys; sys.stdout.buffer.write(b'[\\xff]'); sys.stderr.buffer.write(b'warning')"
+            ],
+            "exception": "BackendExecutionError",
+            "message": "ast-grep command returned invalid UTF-8 protocol output."
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ast_utf8_input",
+          "raw": {
+            "stdout": "snowman \u2603",
+            "stderr": "",
+            "returncode": 0
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_git_error",
+          "raw": {
+            "resolved": null,
+            "error": "Could not resolve --against ref 'missing': fatal unresolved\ufffd"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_agent_exit_0",
+          "raw": {
+            "status": "malformed",
+            "command": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe -B -c \"import sys; sys.stdout.buffer.write(b'{\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\xff'); sys.exit(0)\"",
+            "argv": [
+              "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+              "-B",
+              "-c",
+              "import sys; sys.stdout.buffer.write(b'{\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\xff'); sys.exit(0)"
+            ],
+            "exit_code": 0,
+            "stderr": "GPU unavailable\ufffd",
+            "reason": "GPU evidence command returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_doctor_exit_0",
+          "raw": {
+            "status": "failed",
+            "requested_gpu_device_ids": [
+              0
+            ],
+            "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+            "exit_code": 0,
+            "routing_backend": null,
+            "routing_reason": null,
+            "sidecar_used": null,
+            "routing_gpu_device_ids": [],
+            "native_error_kind": null,
+            "error": "GPU runtime probe returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_agent_exit_17",
+          "raw": {
+            "status": "failed",
+            "command": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe -B -c \"import sys; sys.stdout.buffer.write(b'{\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\xff'); sys.exit(17)\"",
+            "argv": [
+              "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+              "-B",
+              "-c",
+              "import sys; sys.stdout.buffer.write(b'{\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\xff'); sys.exit(17)"
+            ],
+            "exit_code": 17,
+            "stderr": "GPU unavailable\ufffd",
+            "reason": "GPU evidence command exited with code 17."
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_doctor_exit_17",
+          "raw": {
+            "status": "failed",
+            "requested_gpu_device_ids": [
+              0
+            ],
+            "command": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>",
+            "exit_code": 17,
+            "routing_backend": null,
+            "routing_reason": null,
+            "sidecar_used": null,
+            "routing_gpu_device_ids": [],
+            "native_error_kind": null,
+            "error": "GPU unavailable\ufffd"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_pip_stdout_valid",
+          "raw": {
+            "wire_hex": "417661696c61626c652076657273696f6e733a20312e322e330a",
+            "versions": [
+              "1.2.3"
+            ]
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_pip_stdout_malformed",
+          "raw": {
+            "wire_hex": "417661696c61626c652076657273696f6e733a20312e32ff2e330a",
+            "versions": []
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_pip_stderr_valid",
+          "raw": {
+            "wire_hex": "417661696c61626c652076657273696f6e733a20312e322e330a",
+            "versions": [
+              "1.2.3"
+            ]
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_pip_stderr_malformed",
+          "raw": {
+            "wire_hex": "417661696c61626c652076657273696f6e733a20312e32ff2e330a",
+            "versions": []
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_mcp_index_partial",
+          "raw": {
+            "wire_hex": "7b226d617463686573223a205b7b2266696c65223a20227061727469616c2e7079222c20226c696e655f6e756d626572223a20312c202274657874223a202278227d5d2c2022746f74616c5f6d617463686573223a20312c2022726573756c745f696e636f6d706c657465223a20747275652c2022696e636f6d706c6574655f726561736f6e5f636c617373223a20227363616e5f6c696d6974227d",
+            "producer_exit": 2,
+            "consumer": {
+              "matches": [
+                {
+                  "file": "partial.py",
+                  "line_number": 1,
+                  "text": "x"
+                }
+              ],
+              "total_matches": 1,
+              "result_incomplete": true,
+              "incomplete_reason_class": "scan_limit",
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "routing_backend": "TrigramIndex",
+              "routing_reason": "index-accelerated",
+              "sidecar_used": false
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_mcp_diff_content",
+          "raw": {
+            "wire_hex": "2d2d2d20610a2b2b2b20620a2dff0a",
+            "producer_exit": 0,
+            "consumer": {
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "schema_version": 1,
+              "routing_backend": "AstBackend",
+              "routing_reason": "ast-native",
+              "sidecar_used": false,
+              "diff": "--- a\n+++ b\n-\ufffd\n"
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_mcp_index_invalid_protocol",
+          "raw": {
+            "wire_hex": "7bff7d",
+            "producer_exit": 0,
+            "consumer": {
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "routing_backend": "TrigramIndex",
+              "routing_reason": "index-accelerated",
+              "sidecar_used": false,
+              "query": "x",
+              "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv",
+              "error": {
+                "code": "invalid_output",
+                "message": "Index search command returned invalid UTF-8 JSON output."
+              }
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_mcp_index_failed_protocol",
+          "raw": {
+            "wire_hex": "7bff7d",
+            "producer_exit": 17,
+            "consumer": {
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "routing_backend": "TrigramIndex",
+              "routing_reason": "index-accelerated",
+              "sidecar_used": false,
+              "query": "x",
+              "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv",
+              "error": {
+                "code": "invalid_input",
+                "message": "Invalid rewrite input or options."
+              }
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_windows_git_codemap",
+          "raw": {
+            "wire_hex": "636166e92e74787400",
+            "consumer": null
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_windows_git_revision",
+          "raw": {
+            "wire_hex": "2323206d61696e00204d20636166e92e74787400",
+            "consumer": {
+              "status": "unavailable",
+              "reason": "git status path could not be represented: 'utf-8' codec can't decode byte 0xe9 in position 3: invalid continuation byte"
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_timeout_counts_lf",
+          "raw": {
+            "wire_hex": "206c656164696e67206e616d653a320a6f746865723a3132",
+            "total_matches": 2,
+            "total_files": 1,
+            "paths": [
+              " leading name"
+            ],
+            "counts": {
+              " leading name": 2
+            },
+            "incomplete": true,
+            "reason_class": "timeout"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_timeout_counts_nul",
+          "raw": {
+            "wire_hex": "206c656164696e67206e616d6500320a6f74686572003132",
+            "total_matches": 2,
+            "total_files": 1,
+            "paths": [
+              " leading name"
+            ],
+            "counts": {
+              " leading name": 2
+            },
+            "incomplete": true,
+            "reason_class": "timeout"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ndjson_path_match",
+          "raw": {
+            "producer": {
+              "type": "match",
+              "data": {
+                "path": {
+                  "bytes": "c3JjL3Nub3dtYW5f4piDLnB5"
+                },
+                "lines": {
+                  "bytes": "bGluZf8K"
+                },
+                "line_number": 1,
+                "absolute_offset": 0,
+                "submatches": []
+              }
+            },
+            "matches": [
+              {
+                "file": "src/snowman_\u2603.py",
+                "line": 1,
+                "text": "line\ufffd"
+              }
+            ],
+            "paths": [
+              "src/snowman_\u2603.py"
+            ],
+            "counts": {
+              "src/snowman_\u2603.py": 1
+            },
+            "total": 1
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "decoding_ndjson_path_context",
+          "raw": {
+            "producer": {
+              "type": "context",
+              "data": {
+                "path": {
+                  "bytes": "c3JjL3Nub3dtYW5f4piDLnB5"
+                },
+                "lines": {
+                  "bytes": "bGluZf8K"
+                },
+                "line_number": 1,
+                "absolute_offset": 0,
+                "submatches": []
+              }
+            },
+            "matches": [
+              {
+                "file": "src/snowman_\u2603.py",
+                "line": 1,
+                "text": "line\ufffd"
+              }
+            ],
+            "paths": [],
+            "counts": {},
+            "total": 0
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "filename_render",
+          "raw": {
+            "version": 1,
+            "schema_version": 1,
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-render",
+            "sidecar_used": false,
+            "coverage": {
+              "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+              "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+              "test_matching": "filename+import+graph-heuristic"
+            },
+            "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking",
+            "files": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "symbols": [
+              {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              }
+            ],
+            "imports": [],
+            "tests": [],
+            "related_paths": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "query": "repair env",
+            "file_matches": [
+              {
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "score": 41,
+                "reasons": [
+                  "path",
+                  "source",
+                  "graph-centrality",
+                  "filename-phrase"
+                ],
+                "provenance": [
+                  "filename-convention",
+                  "heuristic",
+                  "graph-derived"
+                ],
+                "graph_score": 0.5
+              }
+            ],
+            "file_summaries": [
+              {
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "symbols": [
+                  {
+                    "name": "repair_environment",
+                    "kind": "function",
+                    "line": 1
+                  }
+                ]
+              }
+            ],
+            "test_matches": [],
+            "ranking_quality": "moderate",
+            "coverage_summary": {
+              "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+              "parser_backed_fields": [
+                "defs",
+                "source",
+                "refs",
+                "callers"
+              ],
+              "heuristic_fields": [
+                "test-matching",
+                "graph-ranking"
+              ],
+              "graph_completeness": "moderate",
+              "evidence_counts": {
+                "parser_backed": 0,
+                "graph_derived": 2,
+                "heuristic": 3
+              },
+              "evidence_ratios": {
+                "parser_backed": 0.0,
+                "graph_derived": 0.4,
+                "heuristic": 0.6
+              },
+              "reference_kind_counts": {
+                "call": 0,
+                "import": 0,
+                "type": 0,
+                "field": 0,
+                "value": 0
+              }
+            },
+            "sources": [
+              {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "start_line": 1,
+                "end_line": 2,
+                "source": "def repair_environment():\n    return 'ready'\n",
+                "render_profile": "full",
+                "optimize_context": false,
+                "rendered_source": "def repair_environment():\n    return 'ready'\n",
+                "line_map": [
+                  {
+                    "rendered_start_line": 1,
+                    "rendered_end_line": 2,
+                    "original_start_line": 1,
+                    "original_end_line": 2
+                  }
+                ],
+                "render_diagnostics": {
+                  "original_line_count": 2,
+                  "rendered_line_count": 2,
+                  "removed_line_count": 0,
+                  "removed_comment_lines": 0,
+                  "removed_blank_lines": 0,
+                  "removed_docstring_lines": 0,
+                  "removed_boilerplate_lines": 0,
+                  "js_jsdoc_removed": 0,
+                  "ts_type_imports_removed": 0,
+                  "rust_doc_comments_removed": 0,
+                  "rust_attributes_removed": 0
+                }
+              }
+            ],
+            "max_files": 1,
+            "max_sources": 1,
+            "max_symbols_per_file": 1,
+            "max_render_chars": null,
+            "max_tokens": null,
+            "model": null,
+            "optimize_context": false,
+            "render_profile": "full",
+            "semantic_provider": "native",
+            "edit_plan_seed": {
+              "primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "primary_symbol": {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              },
+              "primary_span": {
+                "start_line": 1,
+                "end_line": 2
+              },
+              "primary_test": null,
+              "validation_tests": [],
+              "validation_commands": [],
+              "validation_plan": [],
+              "validation_alignment": {
+                "status": "no-validation",
+                "primary_target_language": "python",
+                "kept_count": 0,
+                "filtered_count": 0,
+                "issues": []
+              },
+              "suggested_validation_commands": [],
+              "reasons": [
+                "path",
+                "source",
+                "graph-centrality",
+                "filename-phrase"
+              ],
+              "confidence": {
+                "file": 1.0,
+                "symbol": 0.75,
+                "test": 0.0,
+                "overall": 1.0
+              },
+              "related_spans": [],
+              "suggested_edits": [],
+              "dependency_trust": {
+                "import_resolution_quality": "weak",
+                "parser_backed_count": 0,
+                "heuristic_count": 0
+              },
+              "plan_trust_summary": "Ranking moderate; coverage moderate (parser_backed=0, graph_derived=2, heuristic=3); dependency trust weak (parser_backed=0, heuristic=0).",
+              "dependent_files": [],
+              "edit_ordering": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "rollback_risk": 0.0,
+              "blast_radius_scope": {
+                "max_files": 4,
+                "source": "selected-context",
+                "original_file_count": 2,
+                "scoped_file_count": 1
+              }
+            },
+            "graph_trust_summary": {
+              "edge_kind": "reverse-import",
+              "confidence": "weak",
+              "provenance": [
+                "graph-derived"
+              ],
+              "depth_count": 1,
+              "evidence_counts": {
+                "parser_backed": 0,
+                "heuristic": 0,
+                "by_ref_kind": {}
+              }
+            },
+            "candidate_edit_targets": {
+              "files": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "symbols": [
+                {
+                  "name": "repair_environment",
+                  "kind": "function",
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "line": 1,
+                  "start_line": 1,
+                  "end_line": 2,
+                  "score": 8,
+                  "filename_phrase_match": true
+                }
+              ],
+              "tests": [],
+              "ranking_quality": "moderate",
+              "coverage_summary": {
+                "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+                "parser_backed_fields": [
+                  "defs",
+                  "source",
+                  "refs",
+                  "callers"
+                ],
+                "heuristic_fields": [
+                  "test-matching",
+                  "graph-ranking"
+                ],
+                "graph_completeness": "moderate",
+                "evidence_counts": {
+                  "parser_backed": 0,
+                  "graph_derived": 2,
+                  "heuristic": 3
+                },
+                "evidence_ratios": {
+                  "parser_backed": 0.0,
+                  "graph_derived": 0.4,
+                  "heuristic": 0.6
+                },
+                "reference_kind_counts": {
+                  "call": 0,
+                  "import": 0,
+                  "type": 0,
+                  "field": 0,
+                  "value": 0
+                }
+              },
+              "spans": [
+                {
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "symbol": "repair_environment",
+                  "start_line": 1,
+                  "end_line": 2,
+                  "depth": 0,
+                  "score": 49,
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ],
+                  "provenance": [
+                    "filename-convention",
+                    "heuristic",
+                    "graph-derived"
+                  ],
+                  "rationale": "Selected repair_environment because it is connected by path, source, graph-centrality, filename-phrase at depth 0."
+                }
+              ]
+            },
+            "navigation_pack": {
+              "primary_target": {
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "symbol": "repair_environment",
+                "start_line": 1,
+                "end_line": 2,
+                "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+                "reasons": [
+                  "path",
+                  "source",
+                  "graph-centrality",
+                  "filename-phrase"
+                ],
+                "confidence": {
+                  "file": 1.0,
+                  "symbol": 0.75,
+                  "test": 0.0,
+                  "overall": 1.0
+                }
+              },
+              "follow_up_reads": [
+                {
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "symbol": "repair_environment",
+                  "start_line": 1,
+                  "end_line": 2,
+                  "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+                  "role": "primary",
+                  "rationale": "Primary edit target selected from ranked symbols and file matches.",
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ],
+                  "provenance": []
+                }
+              ],
+              "parallel_read_groups": [
+                {
+                  "phase": 0,
+                  "label": "primary",
+                  "can_parallelize": false,
+                  "mentions": [
+                    "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2"
+                  ],
+                  "files": [
+                    "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+                  ],
+                  "roles": [
+                    "primary"
+                  ]
+                }
+              ],
+              "related_tests": [],
+              "validation_commands": [],
+              "suggested_validation_commands": [],
+              "validation_alignment": {
+                "status": "no-validation",
+                "primary_target_language": "python",
+                "kept_count": 0,
+                "filtered_count": 0,
+                "issues": []
+              },
+              "edit_ordering": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "rollback_risk": 0.0
+            },
+            "primary_target": {
+              "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "symbol": "repair_environment",
+              "start_line": 1,
+              "end_line": 2,
+              "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+              "reasons": [
+                "path",
+                "source",
+                "graph-centrality",
+                "filename-phrase"
+              ],
+              "confidence": {
+                "file": 1.0,
+                "symbol": 0.75,
+                "test": 0.0,
+                "overall": 1.0
+              }
+            },
+            "edit_order": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "plan": {
+              "query": "repair env",
+              "primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "primary_symbol": {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              },
+              "primary_span": {
+                "start_line": 1,
+                "end_line": 2
+              },
+              "edit_order": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "validation_commands": [],
+              "suggested_validation_commands": [],
+              "rollback_risk": 0.0,
+              "ranking_quality": "moderate"
+            },
+            "validation_commands": [],
+            "suggested_validation_commands": [],
+            "rendered_context": "Query: repair env\n\nSource:\n```text\ndef repair_environment():\n    return 'ready'\n```\n\nFile: C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py\nSummary:\n- function repair_environment @ line 1",
+            "sections": [
+              {
+                "kind": "query",
+                "start": 0,
+                "end": 17,
+                "token_estimate": 5
+              },
+              {
+                "kind": "source",
+                "start": 17,
+                "end": 83,
+                "token_estimate": 19,
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "symbol": "repair_environment",
+                "provenance": {
+                  "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "symbol": "repair_environment",
+                  "score": 41,
+                  "graph_score": 0.5,
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ],
+                  "symbol_score": 8
+                }
+              },
+              {
+                "kind": "summary",
+                "start": 83,
+                "end": 228,
+                "token_estimate": 42,
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "provenance": {
+                  "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "score": 41,
+                  "graph_score": 0.5,
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ]
+                }
+              }
+            ],
+            "truncated": false,
+            "token_estimate": 66,
+            "omitted_sections": [],
+            "context_consistency": {
+              "primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "navigation_primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "query_language_hints": [],
+              "primary_target_language": "python",
+              "validation_alignment": {
+                "status": "no-validation",
+                "primary_target_language": "python",
+                "kept_count": 0,
+                "filtered_count": 0,
+                "issues": []
+              },
+              "validation_filtered_count": 0,
+              "primary_file_included": true,
+              "primary_symbol": "repair_environment",
+              "primary_symbol_included": true,
+              "primary_symbol_truncated": false,
+              "render_matches_primary_target": true,
+              "rendered_context_includes_primary": true,
+              "rendered_context_includes_primary_symbol": true,
+              "confidence_downgraded": false,
+              "omitted_primary_reason": null
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "filename_edit",
+          "raw": {
+            "version": 1,
+            "schema_version": 1,
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-edit-plan",
+            "sidecar_used": false,
+            "coverage": {
+              "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+              "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+              "test_matching": "filename+import+graph-heuristic"
+            },
+            "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking",
+            "files": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "symbols": [
+              {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              }
+            ],
+            "imports": [],
+            "tests": [],
+            "related_paths": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "query": "repair env",
+            "file_matches": [
+              {
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "score": 41,
+                "reasons": [
+                  "path",
+                  "source",
+                  "graph-centrality",
+                  "filename-phrase"
+                ],
+                "provenance": [
+                  "filename-convention",
+                  "heuristic",
+                  "graph-derived"
+                ],
+                "graph_score": 0.5
+              }
+            ],
+            "file_summaries": [
+              {
+                "path": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "symbols": [
+                  {
+                    "name": "repair_environment",
+                    "kind": "function",
+                    "line": 1
+                  }
+                ]
+              }
+            ],
+            "test_matches": [],
+            "ranking_quality": "moderate",
+            "coverage_summary": {
+              "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+              "parser_backed_fields": [
+                "defs",
+                "source",
+                "refs",
+                "callers"
+              ],
+              "heuristic_fields": [
+                "test-matching",
+                "graph-ranking"
+              ],
+              "graph_completeness": "moderate",
+              "evidence_counts": {
+                "parser_backed": 0,
+                "graph_derived": 2,
+                "heuristic": 3
+              },
+              "evidence_ratios": {
+                "parser_backed": 0.0,
+                "graph_derived": 0.4,
+                "heuristic": 0.6
+              },
+              "reference_kind_counts": {
+                "call": 0,
+                "import": 0,
+                "type": 0,
+                "field": 0,
+                "value": 0
+              }
+            },
+            "max_files": 1,
+            "max_symbols": 1,
+            "max_sources": 1,
+            "max_tokens": null,
+            "semantic_provider": "native",
+            "edit_plan_seed": {
+              "primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "primary_symbol": {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              },
+              "primary_span": {
+                "start_line": 1,
+                "end_line": 2
+              },
+              "primary_test": null,
+              "validation_tests": [],
+              "validation_commands": [],
+              "validation_plan": [],
+              "validation_alignment": {
+                "status": "no-validation",
+                "primary_target_language": "python",
+                "kept_count": 0,
+                "filtered_count": 0,
+                "issues": []
+              },
+              "suggested_validation_commands": [],
+              "reasons": [
+                "path",
+                "source",
+                "graph-centrality",
+                "filename-phrase"
+              ],
+              "confidence": {
+                "file": 1.0,
+                "symbol": 0.75,
+                "test": 0.0,
+                "overall": 1.0
+              },
+              "related_spans": [],
+              "suggested_edits": [],
+              "dependency_trust": {
+                "import_resolution_quality": "weak",
+                "parser_backed_count": 0,
+                "heuristic_count": 0
+              },
+              "plan_trust_summary": "Ranking moderate; coverage moderate (parser_backed=0, graph_derived=2, heuristic=3); dependency trust weak (parser_backed=0, heuristic=0).",
+              "dependent_files": [],
+              "edit_ordering": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "rollback_risk": 0.0,
+              "blast_radius_scope": {
+                "max_files": 4,
+                "source": "selected-context",
+                "original_file_count": 2,
+                "scoped_file_count": 1
+              }
+            },
+            "graph_trust_summary": {
+              "edge_kind": "reverse-import",
+              "confidence": "weak",
+              "provenance": [
+                "graph-derived"
+              ],
+              "depth_count": 1,
+              "evidence_counts": {
+                "parser_backed": 0,
+                "heuristic": 0,
+                "by_ref_kind": {}
+              }
+            },
+            "candidate_edit_targets": {
+              "files": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "symbols": [
+                {
+                  "name": "repair_environment",
+                  "kind": "function",
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "line": 1,
+                  "start_line": 1,
+                  "end_line": 2,
+                  "score": 8,
+                  "filename_phrase_match": true
+                }
+              ],
+              "tests": [],
+              "ranking_quality": "moderate",
+              "coverage_summary": {
+                "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+                "parser_backed_fields": [
+                  "defs",
+                  "source",
+                  "refs",
+                  "callers"
+                ],
+                "heuristic_fields": [
+                  "test-matching",
+                  "graph-ranking"
+                ],
+                "graph_completeness": "moderate",
+                "evidence_counts": {
+                  "parser_backed": 0,
+                  "graph_derived": 2,
+                  "heuristic": 3
+                },
+                "evidence_ratios": {
+                  "parser_backed": 0.0,
+                  "graph_derived": 0.4,
+                  "heuristic": 0.6
+                },
+                "reference_kind_counts": {
+                  "call": 0,
+                  "import": 0,
+                  "type": 0,
+                  "field": 0,
+                  "value": 0
+                }
+              },
+              "spans": [
+                {
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "symbol": "repair_environment",
+                  "start_line": 1,
+                  "end_line": 2,
+                  "depth": 0,
+                  "score": 49,
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ],
+                  "provenance": [
+                    "filename-convention",
+                    "heuristic",
+                    "graph-derived"
+                  ],
+                  "rationale": "Selected repair_environment because it is connected by path, source, graph-centrality, filename-phrase at depth 0."
+                }
+              ]
+            },
+            "navigation_pack": {
+              "primary_target": {
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "symbol": "repair_environment",
+                "start_line": 1,
+                "end_line": 2,
+                "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+                "reasons": [
+                  "path",
+                  "source",
+                  "graph-centrality",
+                  "filename-phrase"
+                ],
+                "confidence": {
+                  "file": 1.0,
+                  "symbol": 0.75,
+                  "test": 0.0,
+                  "overall": 1.0
+                }
+              },
+              "follow_up_reads": [
+                {
+                  "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                  "symbol": "repair_environment",
+                  "start_line": 1,
+                  "end_line": 2,
+                  "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+                  "role": "primary",
+                  "rationale": "Primary edit target selected from ranked symbols and file matches.",
+                  "reasons": [
+                    "path",
+                    "source",
+                    "graph-centrality",
+                    "filename-phrase"
+                  ],
+                  "provenance": []
+                }
+              ],
+              "parallel_read_groups": [
+                {
+                  "phase": 0,
+                  "label": "primary",
+                  "can_parallelize": false,
+                  "mentions": [
+                    "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2"
+                  ],
+                  "files": [
+                    "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+                  ],
+                  "roles": [
+                    "primary"
+                  ]
+                }
+              ],
+              "related_tests": [],
+              "validation_commands": [],
+              "suggested_validation_commands": [],
+              "validation_alignment": {
+                "status": "no-validation",
+                "primary_target_language": "python",
+                "kept_count": 0,
+                "filtered_count": 0,
+                "issues": []
+              },
+              "edit_ordering": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "rollback_risk": 0.0
+            },
+            "primary_target": {
+              "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "symbol": "repair_environment",
+              "start_line": 1,
+              "end_line": 2,
+              "mention_ref": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py#L1-L2",
+              "reasons": [
+                "path",
+                "source",
+                "graph-centrality",
+                "filename-phrase"
+              ],
+              "confidence": {
+                "file": 1.0,
+                "symbol": 0.75,
+                "test": 0.0,
+                "overall": 1.0
+              }
+            },
+            "edit_order": [
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+            ],
+            "plan": {
+              "query": "repair env",
+              "primary_file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+              "primary_symbol": {
+                "name": "repair_environment",
+                "kind": "function",
+                "file": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+                "score": 8,
+                "filename_phrase_match": true
+              },
+              "primary_span": {
+                "start_line": 1,
+                "end_line": 2
+              },
+              "edit_order": [
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\ranking\\src\\repair_env.py"
+              ],
+              "validation_commands": [],
+              "suggested_validation_commands": [],
+              "rollback_risk": 0.0,
+              "ranking_quality": "moderate"
+            },
+            "validation_commands": [],
+            "suggested_validation_commands": [],
+            "validation_plan": [],
+            "confidence": {
+              "overall": 1.0,
+              "downgrade_reasons": []
+            },
+            "ask_user_before_editing": {
+              "required": true,
+              "reasons": [
+                "no validation command evidence"
+              ]
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_create",
+          "raw": {
+            "exit": 0,
+            "payload": {
+              "checkpoint_id": "ckpt-20261006071212-a94180c7",
+              "mode": "filesystem-snapshot",
+              "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "created_at": "2026-10-06T07:12:12.257009+00:00",
+              "file_count": 1,
+              "undo_argv": [
+                "tg",
+                "checkpoint",
+                "undo",
+                "ckpt-20261006071212-a94180c7",
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+              ],
+              "undo_command": "tg checkpoint undo ckpt-20261006071212-a94180c7 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "skipped_nested_repos": [],
+              "scoped_paths": [
+                "sample.py"
+              ],
+              "label": "Before \u518d\u78ba\u8a8d \ud83e\udded",
+              "version": 1,
+              "schema_version": 1
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_list",
+          "raw": {
+            "exit": 0,
+            "payload": {
+              "version": 1,
+              "schema_version": 1,
+              "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "mode": "filesystem-snapshot",
+              "checkpoint_count": 1,
+              "checkpoints": [
+                {
+                  "version": 1,
+                  "checkpoint_id": "ckpt-20261006071212-a94180c7",
+                  "mode": "filesystem-snapshot",
+                  "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+                  "created_at": "2026-10-06T07:12:12.257009+00:00",
+                  "file_count": 1,
+                  "label": "Before \u518d\u78ba\u8a8d \ud83e\udded"
+                }
+              ]
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_scoped_undo_by_id",
+          "raw": {
+            "exit": 0,
+            "payload": {
+              "checkpoint_id": "ckpt-20261006071212-a94180c7",
+              "mode": "filesystem-snapshot",
+              "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "restored_files": 1,
+              "removed_paths": 0,
+              "diverged_paths": [
+                "sample.py"
+              ],
+              "version": 1,
+              "schema_version": 1
+            },
+            "restored": "before\n",
+            "unscoped": "must remain\n"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_invalid_no_write",
+          "raw": {
+            "exit": 2,
+            "output": "Checkpoint label must contain 1 to 120 printable characters.\n",
+            "entries": []
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_tg_checkpoint_create",
+          "raw": {
+            "schema": {
+              "properties": {
+                "path": {
+                  "default": ".",
+                  "title": "Path",
+                  "type": "string"
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Label"
+                }
+              },
+              "title": "tg_checkpoint_createArguments",
+              "type": "object"
+            },
+            "payload": {
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "schema_version": 1,
+              "checkpoint_id": "ckpt-20261006071213-1b413edb",
+              "mode": "filesystem-snapshot",
+              "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "created_at": "2026-10-06T07:12:13.640080+00:00",
+              "file_count": 2,
+              "undo_argv": [
+                "tg",
+                "checkpoint",
+                "undo",
+                "ckpt-20261006071213-1b413edb",
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+              ],
+              "undo_command": "tg checkpoint undo ckpt-20261006071213-1b413edb C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "skipped_nested_repos": [],
+              "scoped_paths": null,
+              "label": "legacy MCP label"
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_tg_checkpoint",
+          "raw": {
+            "schema": {
+              "properties": {
+                "action": {
+                  "title": "Action",
+                  "type": "string"
+                },
+                "checkpoint_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Checkpoint Id"
+                },
+                "path": {
+                  "default": ".",
+                  "title": "Path",
+                  "type": "string"
+                },
+                "label": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Label"
+                }
+              },
+              "required": [
+                "action"
+              ],
+              "title": "tg_checkpointArguments",
+              "type": "object"
+            },
+            "payload": {
+              "version": 1,
+              "mcp_contract_version": "1.12.0",
+              "schema_version": 1,
+              "checkpoint_id": "ckpt-20261006071214-55784106",
+              "mode": "filesystem-snapshot",
+              "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "created_at": "2026-10-06T07:12:14.229017+00:00",
+              "file_count": 2,
+              "undo_argv": [
+                "tg",
+                "checkpoint",
+                "undo",
+                "ckpt-20261006071214-55784106",
+                "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+              ],
+              "undo_command": "tg checkpoint undo ckpt-20261006071214-55784106 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+              "skipped_nested_repos": [],
+              "scoped_paths": null,
+              "label": "meta MCP label"
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_mcp_reject_list",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "routing_backend": "MCPMeta",
+            "routing_reason": "tg_checkpoint:list",
+            "sidecar_used": false,
+            "tool": "tg_checkpoint",
+            "action": "list",
+            "error": {
+              "code": "invalid_input",
+              "message": "label is only accepted when action='create'."
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_mcp_reject_undo",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "routing_backend": "MCPMeta",
+            "routing_reason": "tg_checkpoint:undo",
+            "sidecar_used": false,
+            "tool": "tg_checkpoint",
+            "action": "undo",
+            "error": {
+              "code": "invalid_input",
+              "message": "label is only accepted when action='create'."
+            }
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_create_null",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071214-cb7d1820",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:14.916233+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071214-cb7d1820",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071214-cb7d1820 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "null"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_create_[\"x\"]",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071215-81e068ee",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:15.649571+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071215-81e068ee",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071215-81e068ee C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "[\"x\"]"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_create_{\"a\":1}",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071216-8bf732a7",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:16.417638+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071216-8bf732a7",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071216-8bf732a7 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "{\"a\":1}"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_null",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071217-24df930d",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:17.210215+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071217-24df930d",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071217-24df930d C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "null"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_[\"x\"]",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071217-585b0882",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:17.841162+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071217-585b0882",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071217-585b0882 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "[\"x\"]"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_literal_tg_checkpoint_{\"a\":1}",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "schema_version": 1,
+            "checkpoint_id": "ckpt-20261006071218-c944cfb8",
+            "mode": "filesystem-snapshot",
+            "root": "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "created_at": "2026-10-06T07:12:18.481420+00:00",
+            "file_count": 2,
+            "undo_argv": [
+              "tg",
+              "checkpoint",
+              "undo",
+              "ckpt-20261006071218-c944cfb8",
+              "C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels"
+            ],
+            "undo_command": "tg checkpoint undo ckpt-20261006071218-c944cfb8 C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-published-dogfood-yt2d3eyv\\labels",
+            "skipped_nested_repos": [],
+            "scoped_paths": null,
+            "label": "{\"a\":1}"
+          },
+          "verdict": "PASS"
+        },
+        {
+          "issue": "label_invalid_path_redacted",
+          "raw": {
+            "version": 1,
+            "mcp_contract_version": "1.12.0",
+            "error": {
+              "code": "invalid_input",
+              "message": "Checkpoint label must contain 1 to 120 printable characters."
+            },
+            "path": "[refused]"
+          },
+          "verdict": "PASS"
+        }
+      ],
+      "compiled_extension": {
+        "path": "C:\\dev\\projects\\tg-dogfood-labels-deliver\\src\\tensor_grep\\rust_core.pyd",
+        "sha256": "4c77228288637aa228ec2594a3a01ac9362819acdc4b3c9e150ff103c69df54e"
+      }
+    },
+    "replay_parsing": "run_gate merges stdout/stderr. Expected malformed-protocol and timeout controls log diagnostics before the single complete report JSON; both preserved. Published replay captures streams separately.",
+    "limits": "Clean source checks pin d205. Exact reviews/CI per PR, ordered burst, merged-source verification and published replay remain separate. Ledger memoizes pure AST reads; not unmodified pytest."
   }
 }
