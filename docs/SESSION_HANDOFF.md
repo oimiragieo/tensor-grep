@@ -2,16 +2,21 @@
 
 Last updated: 2026-10-06
 
-Bounded dogfood campaign: diagnostics #1214 merged as `d0d9f7e`, publication/replay pending;
-IN_FLIGHT decoding #1217, ranking #1215, labels #1216. [Live ledger](audits/2026-10-05-dogfood-fixes.md) records source/installed/CI
-identities and remaining gates. Original detached checkout and untracked files are preserved.
-Main release CI `37422114884` owns the hold window. Subprocess was rebased onto the merged
-diagnostics, then its interpreter-dependent guard fingerprints were corrected. Ranking was
-replayed onto actual diagnostics main; labels now verify the combined source on release commit
-`911b37c` (v1.123.22). [Label receipt](audits/dogfood-checkpoint-labels-receipt.md) retains
-earlier controls separately. Obtain all exact-head CI and independent/security reviews, then
-merge #1217, #1215 and #1216 in order during the same open release window. Published Windows
-artifact replay remains required; the current tag alone does not prove publication complete.
+Bounded dogfood campaign: diagnostics #1214 is SHIPPED in v1.123.22, with release CI
+`37422114884` completed (44 jobs) and eight published Windows replay cases passing.
+Subprocess #1217 merged as `c0e8449`; ranking #1215 merged as `47700556`. Combined main
+CI `37437549841` owns the release hold; publication and those issues' replay remain pending.
+[Live ledger](audits/2026-10-05-dogfood-fixes.md) separates source, installed and CI identities.
+The original detached checkout and untracked files are preserved.
+
+Labels #1216 is IN_FLIGHT. Actual squash integration `e4e280a` preserves the entire reviewed
+`f20551a` tree; four status/inventory conflicts were resolved from that exact labels tree.
+The new MCP label refusal uses a constant message after CI rejected raw exception output.
+[Label receipt](audits/dogfood-checkpoint-labels-receipt.md) retains the failed and corrected
+arms. Fresh exact-head CI and independent review are required. The mandatory Opus seat failed
+with HTTP 429 before review; retry after 2026-10-06 10:10 UTC. This is not security clearance.
+Merge labels only after its final gates and completed main publication. Then replay every
+scoped fix against the published Windows wheel/native artifacts and close the evidence trail.
 
 **2026-09-22 map dogfood correction:** PR #1164 merged as
 `1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure
