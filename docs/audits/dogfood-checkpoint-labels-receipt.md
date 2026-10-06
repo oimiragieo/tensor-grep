@@ -216,3 +216,28 @@ Final-head independent review, restored mandatory Opus review and full CI remain
 The latest Opus invocation failed with HTTP 429 before review; retry after 10:10 UTC on
 2026-10-06. Earlier specialist approval cannot clear the new sanitization amendment.
 Labels must wait for completed main publication before merge, then pass published replay.
+
+## Checkpoint discovery metadata correction
+
+Full CI `37439164677` on `b1b9447` failed the existing legacy-description contract after
+7,051/7,052 passing tests in Linux Python 3.11/3.12. The label docstring rewrite had removed
+the three action bullets consumed by `_annotate_legacy_tools`, so create/list/undo advertised
+`action=?`. The same assertion fails locally on clean b1b and passes on actual main `47700556`.
+The legacy-set iteration order can name any of the three affected tools. The run was cancelled;
+two ordinary cancellation requests returned HTTP 502 before explicit force cancellation succeeded.
+
+The amended plan has raw-worktree SHA-256
+`9206b0956279b564d1a14f76f5faefe00bad21360674f03e2d1e38f5fda97409`.
+Builder `a9a1673` was harvested into clean source `f2f28475c6370c3550ca249b30d896775e1e12c7`.
+Only the eight-line checkpoint meta-tool docstring changes. It restores all three action
+mappings while retaining confined paths, optional printable/trimmed 1–120-character labels,
+create-only acceptance, opaque undo IDs and deletion of newer scoped files. The entire module
+AST is unchanged after normalizing just that docstring. Its 5,700 lines stay below the unchanged
+5,701-line cap; no unrelated prose or code was compressed to create room.
+
+Ten clean-source batches pass: actual advertised-description/AST proof, all 240 affected
+meta-dispatch/sanitization/label/wire/passthrough tests, strict census, full Ruff/preview/mypy,
+size/bare/handler gates and 47 source replay cases. Tests, scripts, inventory, handler ledger
+and all allowances are unchanged. A new exact-head independent review, restored mandatory
+Opus review, fresh full CI and published artifact replay remain required. The old queued
+Opus review timer was stopped before invocation so it cannot review the superseded b1b head.
