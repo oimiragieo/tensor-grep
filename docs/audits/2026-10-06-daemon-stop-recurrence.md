@@ -55,3 +55,17 @@ Decoding and filename selection already shipped in v1.123.23 from `47700556`, re
 33 published Windows cases passed and installed wheel bytes matched the downloaded artifact.
 The [dependency publication evidence](evidence/2026-10-05-dogfood/dependencies-publication.json)
 preserves that proof separately from the failed labels main run.
+
+## Instrumentation review corrections
+
+Independent review of `01a50960` returned FIX-FIRST on two reproduced diagnostic defects:
+concurrent writers could duplicate sequence numbers and exceed the cap without marking overflow;
+an injected snapshot error could replace the original assertion and bypass cleanup. The separate
+Opus security review cleared that head, but did not supersede those demonstrated findings.
+
+Builder `6ca158d7` corrects both under the amended plan: nonwaiting unique reservations into
+128 fixed slots, explicit outstanding/incomplete evidence, and unconditional release/close with
+behavioral failure taking precedence over cleanup and observation failures. Bounded controls
+cover interleaved reservations and snapshot/payload/emission failures. These correct the
+instrument, not the unproved hosted daemon cause. Fresh integrated checks, independent reviews
+and exact-head CI remain required; prior verdicts and CI do not clear the new artifact.
