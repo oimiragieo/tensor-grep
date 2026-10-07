@@ -861,7 +861,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2706,
+    "lineno": 2728,
     "enclosing_symbol": "_warn_unavailable_gpu_device_ids",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
