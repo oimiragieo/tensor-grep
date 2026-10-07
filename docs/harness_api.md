@@ -1603,6 +1603,12 @@ including output limits, ranking options, and path confinement. It also works wi
 `workspace_roots`. Other unrecognized actions still return `invalid_input`.
 `tg_context(action="capsule")` remains a separate operation from `action="render"`.
 
+For text searches through `tg_query`, an omitted path or `path="."` retains the
+same default-root scan protections as `tg_search`, including when a glob or type
+filter is supplied. Each `"."` entry in `workspace_roots` receives that protection
+independently; explicit scoped paths retain their existing behavior. All paths
+remain confined to the MCP root.
+
 `tg_mcp_capabilities()` response fields:
 
 | Field | Type | Notes |

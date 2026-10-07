@@ -34,6 +34,7 @@ from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli import mcp_arg_validation as _av
 from tensor_grep.cli import mcp_checkpoint_label_args as _checkpoint_label_args
 from tensor_grep.cli import mcp_search_bounds as _bounds
+from tensor_grep.cli import mcp_search_scope as _search_scope
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -108,7 +109,7 @@ from tensor_grep.core.pipeline import (
     Pipeline as Pipeline,
 )
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
-from tensor_grep.io.directory_scanner import DirectoryScanner
+from tensor_grep.io.directory_scanner import DirectoryScanner as DirectoryScanner
 
 # Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
@@ -1277,7 +1278,7 @@ def _mcp_broad_root_scan_refusal(
     so no re-scan is needed. ``scanner`` is returned too so the caller can still read its
     post-walk ``scan_truncated`` bookkeeping attribute.
     """
-    scanner = DirectoryScanner(config)
+    scanner = _self.DirectoryScanner(config)
     walker: Iterator[str] = iter(scanner.walk(path))
 
     refuse_vendored, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
@@ -2999,11 +3000,8 @@ def tg_search(
     try:
         search_pattern = pattern or query or ""
 
-        # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
-        # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
-        # reassigned, `path == "."` would always read False and silently defeat the large-root/
-        # vendored-root refusal guard's paths_defaulted logic for every default-path call.
-        paths_defaulted = path == "."
+        # Meta dispatch carries original scope evidence alongside the confined absolute path.
+        paths_defaulted = _search_scope.paths_defaulted(path)
 
         # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
         # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -4497,12 +4495,15 @@ def _tg_query_dispatch(
     limit: int,
     max_tokens: int | None,
     deadline: float | None,
+    paths_defaulted: bool = False,
 ) -> str:
     """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
     if action in {"text", "search"}:
         search_pattern = pattern if pattern is not None else query
-        return _self.tg_search(
+        return _search_scope.call(
+            _self.tg_search,
+            paths_defaulted=paths_defaulted,
             pattern=search_pattern,
             path=path,
             case_sensitive=case_sensitive,
@@ -4631,7 +4632,7 @@ def tg_query(
         except PathConfinementError as exc:
             return _meta_confinement_error("tg_query", action, exc)
 
-        confined_roots: list[str] | None = None
+        confined_roots: list[tuple[str, bool]] | None = None
         if workspace_roots:
             if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
                 return _meta_workspace_roots_cap_error(
@@ -4642,7 +4643,7 @@ def tg_query(
                 )
             try:
                 confined_roots = [
-                    str(_confine_mcp_path(root, label="workspace_roots"))
+                    (str(_confine_mcp_path(root, label="workspace_roots")), root == ".")
                     for root in workspace_roots
                 ]
             except PathConfinementError as exc:
@@ -4656,6 +4657,7 @@ def tg_query(
                     query=query,
                     lang=lang,
                     path=confined_path,
+                    paths_defaulted=path == ".",
                     case_sensitive=case_sensitive,
                     ignore_case=ignore_case,
                     fixed_strings=fixed_strings,
@@ -4678,15 +4680,9 @@ def tg_query(
 
             results_by_root: dict[str, Any] = {}
             omitted_roots: list[str] = []
-            # Share ONE absolute wall-clock deadline across every root in this loop, mirroring the
-            # deadline_monotonic -> remaining-deadline_seconds pattern agent_capsule.py's call-site
-            # evidence rescue scan already uses (agent_capsule.py:565-567) -- computed ONCE, outside
-            # the loop, so root 2 does not get a fresh copy of `deadline` just because root 1 already
-            # consumed the budget (audit C3: previously EVERY root got the full `deadline`
-            # unchanged, so N roots could cost up to N x deadline wall-clock time instead of one
-            # shared `deadline` for the whole call).
+            # Share one absolute deadline across roots; later roots get only the remaining budget.
             loop_deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
-            for root in confined_roots:
+            for root, paths_defaulted in confined_roots:
                 if (
                     loop_deadline_monotonic is not None
                     and time.monotonic() >= loop_deadline_monotonic
@@ -4707,6 +4703,7 @@ def tg_query(
                     query=query,
                     lang=lang,
                     path=root,
+                    paths_defaulted=paths_defaulted,
                     case_sensitive=case_sensitive,
                     ignore_case=ignore_case,
                     fixed_strings=fixed_strings,
@@ -4733,7 +4730,7 @@ def tg_query(
 
             extra: dict[str, Any] = {
                 "path": confined_path,
-                "workspace_roots": confined_roots,
+                "workspace_roots": [root for root, _ in confined_roots],
                 "results_by_root": results_by_root,
             }
             if omitted_roots:

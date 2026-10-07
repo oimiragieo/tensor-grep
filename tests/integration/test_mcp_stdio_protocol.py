@@ -73,6 +73,9 @@ async def _stdio_protocol_roundtrip() -> None:
             query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
             assert '"search"' in query_tool.description
             assert "action" in query_tool.inputSchema["properties"]
+            assert "paths_defaulted" not in query_tool.inputSchema["properties"]
+            search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
+            assert "paths_defaulted" not in search_tool.inputSchema["properties"]
 
             capabilities = await session.call_tool("tg_mcp_capabilities", {})
             assert capabilities.isError is False
