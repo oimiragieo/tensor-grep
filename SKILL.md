@@ -7,9 +7,9 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-release_docs_current_tag: v1.124.0
+release_docs_current_tag: v1.125.0
 
-The current tagged version is `v1.124.0`, and the latest complete public PyPI/release-asset distribution is also `v1.124.0`. Check the installation and release documentation for supported platforms and verification steps.
+The current tagged version is `v1.125.0`, and the latest complete public PyPI/release-asset distribution is also `v1.125.0`. Check the installation and release documentation for supported platforms and verification steps.
 
 Hardening agents can rely on:
 
@@ -21,9 +21,9 @@ Hardening agents can rely on:
 
 Current release facts:
 
-- Current release tag: `v1.124.0`.
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.124.0>.
-- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.124.0 tg --version` reports `tensor-grep 1.124.0`.
+- Current release tag: `v1.125.0`.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.125.0>.
+- PyPI/public install proof: `uvx --refresh-package tensor-grep --from tensor-grep==1.125.0 tg --version` reports `tensor-grep 1.125.0`.
 - Full per-version release history and CI/release proofs: see `CHANGELOG.md` and <https://github.com/oimiragieo/tensor-grep/releases> (this skill records the current release facts, not a hand-maintained proof ledger).
 
 
@@ -258,7 +258,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.124.0` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. `tg dogfood` wraps the same gate with a compact verdict and JSON report. It does not replace the full validation gate.
+This gate checks public shell version resolution, `public-windows-launcher-quoted-patterns`, installed-public advertised search flag acceptance via `public-search-advertised-flag-sweep`, repo doctor sanity, `context_consistency`, `agent-capsule`, `agent-capsule-mixed-language`, `agent-capsule-hardcases`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.125.0` positioning, foreign launcher diagnostics, and the managed native-upgrade contract. `tg dogfood` wraps the same gate with a compact verdict and JSON report. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
