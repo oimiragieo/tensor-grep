@@ -72,9 +72,14 @@ def test_native_reset_to_default_engine_gets_literal_hint(tmp_path, flags):
     helpers, rg_binary, tg_binary = _require_binaries()
     fixture = tmp_path / "code.txt"
     fixture.write_bytes(b"items[\n")
+    env = helpers.build_command_env(rg_binary)
+    # These switches normally delegate to Python, whose extension is optional in
+    # native-only CI. Exercise the Rust engine gate and prove no sidecar was used.
+    env["TG_RUST_EARLY_RG"] = "1"
+    env["TG_SIDECAR_PYTHON"] = str(tmp_path / "missing-python")
     result = subprocess.run(
         [str(tg_binary), "search", "--no-config", *flags, "items[", str(fixture)],
-        env=helpers.build_command_env(rg_binary),
+        env=env,
         capture_output=True,
         timeout=30,
     )
