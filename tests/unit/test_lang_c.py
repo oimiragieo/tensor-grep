@@ -215,7 +215,7 @@ def test_defs_excludes_plain_and_extern_variable_declarations(tmp_path: Path) ->
 # function-pointer VARIABLE's `function_declarator` has its own `declarator` field as a
 # `parenthesized_declarator` wrapping something OTHER than a bare name -- a `pointer_declarator`
 # -> the name -- instead. A `parenthesized_declarator` hop is therefore NOT by itself the tell
-# (an Opus-gate-caught regression on the first cut of this fix: shape 7 was wrongly excluded
+# (an review-caught regression on the first cut of this fix: shape 7 was wrongly excluded
 # before `_c_parenthesized_declarator_wraps_bare_name` was added to distinguish "redundant parens
 # around a bare name" from "parens around a pointer/array declarator"). Every shape below must
 # resolve exactly as annotated -- this is the full no-regression matrix, not just the bug being
@@ -324,7 +324,7 @@ def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
 
 @pytest.mark.requires_grammar
 def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path: Path) -> None:
-    """Opus-gate-caught regression on the first cut of this fix: `int (foo)(void);` is a REAL
+    """review-caught regression on the first cut of this fix: `int (foo)(void);` is a REAL
     function prototype with meaningless redundant parens around the name -- its
     `function_declarator` has its own `declarator` field as a `parenthesized_declarator`, the
     exact same NODE TYPE as shape 4's function-pointer variable. The two are distinguished by

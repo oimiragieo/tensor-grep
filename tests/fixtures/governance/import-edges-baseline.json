@@ -1,0 +1,82 @@
+{
+  "_comment": "Frozen package import graph. Tests reject both added and removed edges; intentional changes require review of the baseline.",
+  "generated": "2026-09-07",
+  "generator": "tensor_grep.core.import_edges.compute_import_edges",
+  "edges": [
+    [
+      "backends",
+      "cli"
+    ],
+    [
+      "backends",
+      "core"
+    ],
+    [
+      "backends",
+      "io"
+    ],
+    [
+      "cli",
+      "backends"
+    ],
+    [
+      "cli",
+      "core"
+    ],
+    [
+      "cli",
+      "io"
+    ],
+    [
+      "core",
+      "backends"
+    ],
+    [
+      "core",
+      "cli"
+    ],
+    [
+      "io",
+      "core"
+    ]
+  ],
+  "_violation_module_edges_comment": "MODULE-granularity freeze of the two package-pair edges the comment above calls pre-existing layering violations (core->cli, backends->cli). The package-pair `edges` list cannot ratchet these down: once [\"core\",\"cli\"] is accepted there, an unbounded number of NEW core->cli imports pass it, because that set records which KINDS of edge exist, not how many or which modules carry them. Measured 2026-09-12: 6 such imports existed and one of them (core.query_analyzer -> cli.runtime_paths, added by cbbd4a0 earlier the same day) had been introduced AFTER the freeze and passed the gate. This list may only SHRINK. Removing an entry as you burn the violation down is the intended edit; adding one requires the same scrutiny as disabling a test, and must be justified in the commit message.",
+  "violation_module_edges": [
+    [
+      "tensor_grep.backends.cpu_backend",
+      "tensor_grep.cli.subprocess_policy"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.rg_root_ignore"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.runtime_paths"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.subprocess_policy"
+    ],
+    [
+      "tensor_grep.core.completeness",
+      "tensor_grep.cli.incompleteness"
+    ],
+    [
+      "tensor_grep.core.query_analyzer",
+      "tensor_grep.cli.runtime_paths"
+    ]
+  ],
+  "_unresolved_import_sites_comment": "Import sites the walker cannot resolve to a module name (dynamic import_module / __import__ / run_module / pkgutil.resolve_name calls with a non-literal or relative-without-package target, the getattr indirection, and a star import from the package root or another layer), frozen as {module: [source text of each site]}. The TEXT is frozen, not a count, so a NEW site, a second site in a listed module, or an EDIT to a listed call's arguments all fail tests/unit/test_import_edges_baseline.py until reviewed and updated here. Reviewed 2026-10-01: backends/__init__ and core/__init__ resolve `_EXPORTS[name]` (16 and 9 targets, all inside their own layer, pinned by test_reviewed_opaque_import_targets_stay_inside_their_layer); cli/_main_binding imports the literal constant _MAIN_MODULE = tensor_grep.cli.main (pinned by test_main_binding_late_import_targets_the_reviewed_cli_main_module). None crosses a layer.",
+  "unresolved_import_sites": {
+    "tensor_grep.backends": [
+      "import_module(_EXPORTS[name])"
+    ],
+    "tensor_grep.cli._main_binding": [
+      "importlib.import_module(_MAIN_MODULE)"
+    ],
+    "tensor_grep.core": [
+      "import_module(_EXPORTS[name])"
+    ]
+  }
+}

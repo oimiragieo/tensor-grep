@@ -1,4 +1,4 @@
-"""TDD for backlog #1 (Fable+thinktank plan, 2026-07-06): the cap-fix chokepoint.
+"""TDD for backlog #1 : the cap-fix chokepoint.
 
 Two changes, tested together because they only make sense as a pair:
 
@@ -329,7 +329,7 @@ def test_defs_on_oversized_repo_still_exits_2(tmp_path: Path) -> None:
     assert scan_limit.get("possibly_truncated") is True
 
 
-# --- BLOCKER (Fable final review of #405): blast-radius must exit 2 on a caller-scan CEILING
+# --- BLOCKER : blast-radius must exit 2 on a caller-scan CEILING
 #     truncation (a SCAN truncation), while a mere --max-callers OUTPUT cap stays exit 0. ---
 
 

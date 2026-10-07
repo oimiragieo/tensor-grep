@@ -1,4 +1,4 @@
-# Agent outcome join (AGT-01, partial)
+# Agent outcome join
 
 `benchmarks/agent_outcome_join.py` joins benchmark predictions to observed patch execution.
 
@@ -42,12 +42,12 @@ existing one.
 
 ## Where the report will be emitted
 
-A later AGT-01 slice will embed the report under the top-level `outcome_join` key of the
+A consumer could embed the report under the top-level `outcome_join` key of the
 scorecard artifact written by `build_external_agent_patch_driver_scorecard.py`. No consumer
 exists yet: this slice defines and verifies `build_outcome_join_report`, but currently emits its
 output nowhere.
 
 ## Not covered
 
-This module does NOT close AGT-01. Holdout curation is not implemented here; it remains a
+This module does not establish end-to-end benchmark success. Holdout curation is not implemented here; it remains a
 separate follow-up that requires real repository fixtures and known-good patches.

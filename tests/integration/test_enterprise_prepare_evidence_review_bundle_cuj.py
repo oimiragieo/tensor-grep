@@ -1,6 +1,6 @@
 """Hermetic enterprise CUJ lock: prepare → evidence emit --sign → review-bundle create/verify.
 
-Campaign W2.b (docs/audits/2026-08-05-enterprise-launch-readiness-census.md PR-C).
+Public prepare/evidence/review-bundle command-path contract.
 
 Bidirectional oracles (AGENTS.md):
   GREEN — signed receipt + min-receipts 1 against HEAD → valid + exit 0

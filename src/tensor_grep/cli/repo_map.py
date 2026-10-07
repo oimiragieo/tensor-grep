@@ -428,7 +428,7 @@ from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
 # globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
@@ -477,7 +477,7 @@ def _clear_all_source_caches() -> None:
     """
     for clear in _MTIME_CACHE_CLEAR_REGISTRY:
         clear()
-    # Fable final-review (advisory B): the JS/TS + Rust per-repo contexts hold parsed tsconfig +
+    # review final-review (advisory B): the JS/TS + Rust per-repo contexts hold parsed tsconfig +
     # re_export_cache keyed by root; they are NOT _mtime_aware_cache wrappers, so without this they
     # survive a refresh and a warm daemon could serve a stale re-export / tsconfig-alias resolution
     # after an edit. Clear them too so the sweep is actually complete (they rebuild on demand).
@@ -489,7 +489,7 @@ def _clear_all_source_caches() -> None:
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
-# backlog #1 (Fable+thinktank plan, 2026-07-06): raised 512 -> 2000 so ROUTING commands
+# backlog #1 : raised 512 -> 2000 so ROUTING commands
 # (edit-plan/agent/context-render/defs/orient/session-open/MCP fallbacks) stop misrouting on
 # repos >512 files -- a file past the old cap never entered the map at all, so the right file
 # could not be found (dogfood-proven: edit-plan "API retry" -> wrong file at 512, correct at
@@ -501,7 +501,7 @@ ROUTING_REASON = "repo-map"
 # is safe for caller-scan latency ONLY because CALLER_SCAN_FILE_CEILING below bounds their
 # actual per-file work independently of how large the map is.
 DEFAULT_AGENT_REPO_MAP_LIMIT = 2000
-# backlog #1 chokepoint (the thinktank's winning insight over "repoint every option default",
+# backlog #1 chokepoint (the review's winning insight over "repoint every option default",
 # which leaks -- e.g. session_store.py's stored-session blast-radius calls
 # build_symbol_blast_radius_from_map directly on a full session repo_map with NO max_repo_files
 # passthrough, so a per-command option default cannot reach it). The caller-scan functions
@@ -1059,7 +1059,7 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
 
 
 def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> None:
-    """Moat P0-6 step 2: carry the deadline PARTIAL signal forward when a symbol builder repackages a
+    """capability P0-6 step 2: carry the deadline PARTIAL signal forward when a symbol builder repackages a
     build_repo_map / build_symbol_defs result into its own payload. Without this, a deadline-truncated
     map silently loses partial:true + deadline_limit the moment it is wrapped, so the agent sees a
     small result with no signal it was cut short. Only propagates when the source was actually
@@ -1699,7 +1699,7 @@ def _precomputed_validation_files_for_root(
     deadline_hit: _DeadlineBreakFlag | None = None,
     unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> list[Path] | None:
-    """#639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this loop does one filesystem ``Path.resolve()``
+    """#639 review nit 1 (dogfood #1 RESIDUAL): this loop does one filesystem ``Path.resolve()``
     syscall per entry in ``file_paths`` -- on a large repo map's ``related_paths``/``files``+
     ``tests`` list (up to ``DEFAULT_AGENT_REPO_MAP_LIMIT`` entries) this was the dominant,
     entirely UNBOUNDED cost behind ``tg agent ROOT Q --deadline 8`` running ~20s despite the scan
@@ -1837,7 +1837,7 @@ def _read_source_cached_bounded(path_str: str) -> bytes:
     return Path(path_str).read_bytes()
 
 
-# PERF increment 1 (parse-product cache, Fable-designed): every JS/TS/Rust symbol/ref/caller
+# PERF increment 1 : every JS/TS/Rust symbol/ref/caller
 # extractor independently did its own `path.read_text(...)` + `parser.parse(...)` on the SAME
 # file -- caller_scan and edit-plan seeding can re-parse one file up to 3x per symbol lookup
 # (_js_ts_parser_symbols during repo-map build, _js_ts_references_and_calls during caller_scan,
@@ -1971,7 +1971,7 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
     if not any(marker in lowered for marker in spec.import_markers):
         return False
     if spec.language_id in ("javascript", "typescript"):
-        # PERF increment 1 / Section C (Fable-designed): a naive mirror of the branch below --
+        # PERF increment 1 / Section C : a naive mirror of the branch below --
         # matching a definition-file alias literally in this file's text -- changes results and
         # drops a pinned caller: _module_aliases_for_path yields the DEFINITION file's own
         # stem/parts, but a barrel re-export consumer (`import { x as y } from "./barrel"`) has
@@ -2036,7 +2036,7 @@ def _repo_map_root_dir(repo_map: dict[str, Any]) -> Path:
     go.mod discovery walk -- must never receive that file itself: unlike ``Path.is_file()``/
     ``.exists()`` (which pathlib silently degrades to ``False`` for a through-a-file path),
     ``subprocess.Popen(cwd=<file>)`` is a raw OS call with no such guard and crashes with
-    ``NotADirectoryError`` (WinError 267 on Windows, ENOTDIR on POSIX) -- the CEO-dogfood-reported
+    ``NotADirectoryError`` (WinError 267 on Windows, ENOTDIR on POSIX) -- the dogfood-reported
     crash on `tg defs <file> <symbol> --provider lsp/hybrid` (native is unaffected; it never reaches
     this code). Mirrors the pre-existing ``root if root.is_dir() else root.parent`` pattern already
     used by ``build_repo_map`` (``context_root``)."""
@@ -2199,7 +2199,7 @@ def _cap_caller_scan_files(
     loop) honors --deadline on a repo raised via --max-repo-files -- see that function's
     docstring.
 
-    CEO #4 parity fix: below the ceiling, this used to return ``files`` UNORDERED whenever a
+    parity fix: below the ceiling, this used to return ``files`` UNORDERED whenever a
     ``--deadline`` was supplied -- unlike ``tg importers``' reverse-candidate ordering
     (``_tier_reverse_importer_candidates``, #221), which ALWAYS orders regardless of ceiling. A
     slow-to-parse repo under the 2000-file ceiling can still blow a tight ``--deadline`` in the
@@ -3300,7 +3300,7 @@ def _discover_validation_tests_for_primary_file(
             unreadable_hit=unreadable_hit,
         )
     for current in candidate_files:
-        # #639 Opus-gate nit 1: the resolve loop above can be bounded and still hand back a
+        # #639 review nit 1: the resolve loop above can be bounded and still hand back a
         # partial `candidate_files` list -- also bound THIS scoring loop directly (test-file
         # detection + node:test probe + path scoring below are each their own, non-trivial cost)
         # so a large candidate set can't itself run the shared budget past zero.
@@ -4318,7 +4318,7 @@ def build_repo_map(
 
         imports: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
-        # moat P0-6: a supplied ABSOLUTE monotonic deadline stops the CPU-bound per-file parse loop
+        # capability P0-6: a supplied ABSOLUTE monotonic deadline stops the CPU-bound per-file parse loop
         # early and returns partial results (partial:true + deadline_limit) instead of running
         # unbounded, so a huge repo degrades gracefully instead of the caller's hard timeout
         # discarding all work. The file LIST above is already walked cheaply; only symbol/import
@@ -4382,7 +4382,7 @@ def build_repo_map(
                 **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
             }
             payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
-        # moat P0-6: signal a deadline-truncated parse as a top-level `partial` flag (the one field
+        # capability P0-6: signal a deadline-truncated parse as a top-level `partial` flag (the one field
         # an agent's parser checks) plus a `deadline_limit` sibling. Kept SEPARATE from scan_limit
         # on purpose: scan_limit means "the FILE LIST was capped by max_repo_files" (remedy: raise
         # --max-repo-files), a deadline means "PARSING ran out of time" (remedy: raise --deadline /
@@ -4739,7 +4739,7 @@ def _is_cli_command_module_path(file_path: str) -> bool:
 
 
 # Task #250 gate NIT-1: a REAL thinness gate, not just "decorated as a command + calls
-# something" -- an independent Opus review on #693 found that shape alone is an EMERGENT ranking
+# something" -- an independent review review on #693 found that shape alone is an EMERGENT ranking
 # property, not a structural guarantee: `search_command` (cli/main.py, the real ~1500-line
 # implementation of `tg search` itself) is ALSO a `.command`-decorated function that calls dozens
 # of other names, and would be treated identically to a genuine one-line passthrough if any one of
@@ -4895,7 +4895,7 @@ def _score_file_path(path: str, terms: list[str]) -> int:
     return _score_text_terms(path_obj.name, terms) + _score_text_terms(repo_like_tail, terms)
 
 
-# Task #254 (Blackbird-style ranking heuristics -- the CEO deep-research #251 steal). Two small,
+# Task #254 . Two small,
 # additive signals layered onto the flat, no-IDF `_score_symbol` scorer (the known-weak point
 # named in the tensor-grep-architecture-contract skill): a soft test-file demotion (heuristic 2)
 # and an exact word-boundary bonus (heuristic 3). A third candidate signal from the same research
@@ -5044,7 +5044,7 @@ def _ranking_quality(
 def _reference_kind_counts(references: list[Any]) -> dict[str, int]:
     """Additive T1 aggregate: counts every ``references`` row by its ``ref_kind`` label.
 
-    Always sums to ``len(references)`` -- ref_kind is additive-only (moat P0-T1), so this must
+    Always sums to ``len(references)`` -- ref_kind is additive-only (capability P0-T1), so this must
     never drift from a straight tally of what is already in the list. F21 fix: a non-dict row
     (defensive-only today -- every real producer emits dicts) used to hit a bare ``continue`` and
     silently vanish from the tally, breaking the sum-equals-``len`` invariant the docstring
@@ -5166,7 +5166,7 @@ def _graph_trust_summary(
         confidence = str(edge_summary.get("confidence", "weak"))
         max_confidence_rank = max(max_confidence_rank, confidence_order.get(confidence, 1))
     rank_to_confidence = {value: key for key, value in confidence_order.items()}
-    # Additive T1 moat closer: by_ref_kind lets a consumer see whether the blast-radius callers
+    # Additive T1 capability closer: by_ref_kind lets a consumer see whether the blast-radius callers
     # are parser-backed CALL sites (strong evidence) vs type/field/value-only mentions
     # (moderate/weak) -- reuses the same ref_kind labels stamped on `calls` (payload["callers"]).
     by_ref_kind: dict[str, int] = {}
@@ -6278,9 +6278,9 @@ def build_context_pack(
     # trees that lack a --max-repo-files default at the CLI layer).
     if max_repo_files is None:
         max_repo_files = DEFAULT_AGENT_REPO_MAP_LIMIT
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg context`
+    # CLI consistency fix : `--deadline` used to be undefined on `tg context`
     # (Click "No such option" exit-2). Converted ONCE to an absolute monotonic budget (mirrors
-    # build_symbol_impact's moat P0-6 step-3 pattern) and shared across both the repo-map build AND
+    # build_symbol_impact's capability P0-6 step-3 pattern) and shared across both the repo-map build AND
     # the symbol-scoring loop below, so a slow ranking pass on a huge repo cannot itself blow past
     # the requested budget after the walk/parse phase already finished inside it.
     deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
@@ -6919,7 +6919,7 @@ def _detect_validation_runners_from_root(
     """#642 gate nit-1 fast-follow: ``deadline_monotonic``/``deadline_hit`` are optional (default
     ``None``, fully backward compatible with every other call site) and thread straight into
     ``_precomputed_validation_files_for_root``'s own per-entry ``Path.resolve()`` loop -- the
-    SECOND validation-plan chain the #642 Opus gate named as still-unbounded for
+    SECOND validation-plan chain the #642 review named as still-unbounded for
     ``tg context-render``/``tg edit-plan``/``tg context`` (repo_map.py ~11987, reached via
     ``_build_edit_plan_seed``). Mirrors the SAME optional-kwarg contract that function already
     documents for its other callers.
@@ -9622,7 +9622,7 @@ def _attach_edit_plan_metadata(
                     if isinstance(scope, dict):
                         resolved_blast_radius_payload["edit_plan_blast_radius_scope"] = dict(scope)
         with _profiling_phase(_profiling_collector, "edit_plan_seed"):
-            # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): the validation-file discovery this seed
+            # #639 review nit 1 (dogfood #1 RESIDUAL): the validation-file discovery this seed
             # runs (_discover_validation_tests_for_primary_file -> _precomputed_validation_files_
             # for_root) does a per-file Path.resolve() pass over the repo map's file list -- a
             # pre-existing UNBOUNDED cost (see that function's own docstring) that let a `tg agent
@@ -9663,7 +9663,7 @@ def _attach_edit_plan_metadata(
             ),
             # Widen the candidate-edit symbol POOL beyond the render cap so a query-relevant
             # implementation symbol cannot be crowded entirely out of `candidate_edit_targets`
-            # by same-tier symbols from a large file (Task #4 / agent-capsule moat). The
+            # by same-tier symbols from a large file (Task #4 / agent-capsule capability). The
             # token-bearing `payload["symbols"]` stays at `max_symbols`; only the alternative
             # pool widens, and the capsule's marker-helper swap can then promote the impl.
             "symbols": ranked_symbols[: max(max_symbols, 8)],
@@ -9781,7 +9781,7 @@ def _attach_lightweight_navigation_metadata(
                 else None
             ),
         ),
-        # #642 gate nit-1 fast-follow (Opus-gate N1): this is the render's `include_edit_plan_seed=
+        # #642 gate nit-1 fast-follow : this is the render's `include_edit_plan_seed=
         # False` lightweight-navigation sibling of _build_edit_plan_seed's own validation-plan call
         # above -- no LIVE caller currently sets include_edit_plan_seed=False, so this path is
         # unreachable today (the return-time backstop below would already catch it either way),
@@ -9843,7 +9843,7 @@ def _attach_lightweight_navigation_metadata(
             limit=max_files,
         ),
         # Widen the candidate-edit symbol pool beyond the render cap (Task #4 / agent-capsule
-        # moat) — same rationale as build_context_render: don't let a large file's same-tier
+        # capability) — same rationale as build_context_render: don't let a large file's same-tier
         # symbols crowd a query-relevant implementation out of the candidate pool.
         "symbols": ranked_symbols[: max(max_symbols, 8)],
         "tests": list(payload.get("tests", []))[:max_files],
@@ -9894,8 +9894,8 @@ def build_context_edit_plan(
     same way scan time already is. Existing ``deadline_seconds``-only callers are unaffected: the
     fallback computation below is byte-identical to the prior behavior."""
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg edit-plan`
-    # (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3 pattern) and shared across
+    # CLI consistency fix : `--deadline` used to be undefined on `tg edit-plan`
+    # (Click "No such option" exit-2). Converted ONCE (capability P0-6 step-3 pattern) and shared across
     # the repo-map build AND edit-plan's own symbol-scoring pass in `_from_map` below.
     if deadline_monotonic is None:
         deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
@@ -10010,7 +10010,7 @@ def build_context_edit_plan_from_map(
     # structured steps already exist at `edit_plan_seed.validation_plan`. Purely additive -- does
     # not change `validation_commands`/`suggested_validation_commands` above.
     payload["validation_plan"] = _top_level_validation_plan(payload)
-    # Parity fix (CEO v1.72.1 dogfood): `tg agent --json` already surfaces a top-level `confidence`
+    # Parity fix : `tg agent --json` already surfaces a top-level `confidence`
     # (float-bearing object) and `ask_user_before_editing` gate; edit-plan had neither (`confidence`
     # read as `null`, `ask_user_before_editing` was absent). Purely additive -- see
     # `_edit_plan_confidence_and_ask`'s docstring for exactly what is/isn't reused from agent.
@@ -10096,8 +10096,8 @@ def build_context_render(
     same way scan time already is. Existing ``deadline_seconds``-only callers are unaffected: the
     fallback computation below is byte-identical to the prior behavior."""
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
-    # `tg context-render`/`tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6
+    # CLI consistency fix : `--deadline` used to be undefined on
+    # `tg context-render`/`tg agent` (Click "No such option" exit-2). Converted ONCE (capability P0-6
     # step-3 pattern) and shared across the repo-map build AND the render's own symbol-scoring pass.
     if deadline_monotonic is None:
         deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
@@ -10425,11 +10425,11 @@ def _edit_plan_confidence_and_ask(
     *,
     query: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parity fix (CEO v1.72.1 dogfood): `tg edit-plan --json` had no top-level `confidence`/
+    """Parity fix : `tg edit-plan --json` had no top-level `confidence`/
     `ask_user_before_editing` even though `tg agent --json` already surfaces both (the same class
     of gap `_top_level_validation_plan` above closed for `validation_plan`). Delegates to
     `agent_capsule._capsule_confidence_and_ask_without_render`, which reproduces agent's confidence
-    + ambiguity ladder (INCLUDING the tie/marker-helper ask-gate -- Opus-gate safety MUST-FIX on
+    + ambiguity ladder (INCLUDING the tie/marker-helper ask-gate -- review safety MUST-FIX on
     c63f509) against this exact edit-plan payload, using agent's own helpers. A DEFERRED import,
     since `agent_capsule` imports this module at load time (`from tensor_grep.cli import repo_map`)
     and a module-level import here would cycle; same precedent as this module's existing local
@@ -11993,7 +11993,7 @@ def build_symbol_defs(
     max_tests: int | None = None,
     deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg defs`
+    # CLI consistency fix : `--deadline` used to be undefined on `tg defs`
     # (Click "No such option" exit-2), unlike its true siblings build_symbol_refs/_callers/_impact.
     # build_repo_map already accepts deadline_monotonic, so this is the same thin thread-through
     # those wrappers use -- `_copy_partial_signal` below guarantees the signal reaches the top-level
@@ -12258,7 +12258,7 @@ def build_symbol_source(
     deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
+    # v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
     # option" exit-2) even though its true sibling build_symbol_defs already had it -- same thin,
     # additive thread-through build_repo_map already accepts (mirrors #581's build_symbol_defs).
     deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
@@ -12396,7 +12396,7 @@ def build_symbol_impact(
     max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    # moat P0-6 step 3: convert the relative --deadline once to an ABSOLUTE monotonic timestamp so
+    # capability P0-6 step 3: convert the relative --deadline once to an ABSOLUTE monotonic timestamp so
     # the underlying repo scan can bound itself and return partial results.
     deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
     payload = _self.build_repo_map(
@@ -12881,7 +12881,7 @@ def build_symbol_refs_from_map(
     refs_scan_deadline_hit = False
     refs_files_scanned = 0
     for current in bounded_files:
-        # moat P0-6 step 6: bound the reference-scan traversal so a CENTRAL symbol honors --deadline
+        # capability P0-6 step 6: bound the reference-scan traversal so a CENTRAL symbol honors --deadline
         # instead of hanging past it (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s timeout,
         # no partial). Same per-file-scan hot loop as callers.
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -13128,7 +13128,7 @@ def build_symbol_refs_json(
     )
 
 
-# #74 moat: `tg imports FILE` / `tg importers FILE [ROOT]` -- the scoped file-dependency
+# #74 capability: `tg imports FILE` / `tg importers FILE [ROOT]` -- the scoped file-dependency
 # primitive. The benchmark that motivated this (docs/benchmarks.md P4) showed `tg` losing to
 # plain grep ~10x on file-dependency lookups because the only existing primitive was the
 # whole-repo `tg map` (~53K tokens on a mid-size repo); these two commands answer "what does
@@ -13167,8 +13167,7 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     # unresolved (never a fabricated `resolved` path or a fabricated `external=True`). TRUE
     # import-string -> target-file resolution (and the `tg importers` reverse-edge CONFIRM step,
     # gated separately by `_confirm_import_edges`'s own language tuple below) stays deferred for
-    # all three -- see docs/BACKLOG.md and this PR's body for the per-language resolver scope
-    # that is still missing.
+    # all three: parser-backed per-file facts do not provide cross-file target resolution.
     "go",
     "php",
     "csharp",
@@ -13177,7 +13176,7 @@ _SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset({
     # lang_cpp.cpp_imports_with_lines, `_resolve_raw_import_entry` reporting them honestly
     # unresolved. TRUE `#include` -> file resolution is deferred and harder than go/php/csharp's
     # own deferred resolvers -- C/C++ have no standardized manifest (no
-    # go.mod/composer.json/.csproj equivalent) to resolve against; see docs/BACKLOG.md.
+    # go.mod/composer.json/.csproj equivalent) to resolve against.
     "c",
     "cpp",
 })
@@ -13198,7 +13197,7 @@ def _resolve_raw_import_entry(
         # #93 SUB-1: the module argument isn't a static string literal (e.g.
         # `import_module(pkg_var)` / `import(path)`) -- there is no name to resolve against.
         # Fail closed: never guess a target file for an import whose identity we don't actually
-        # know (over-reporting here would be a precision regression in a moat feature).
+        # know (over-reporting here would be a precision regression in a capability feature).
         resolved, external, provenance, confidence = None, False, [], 0.0
     elif language_id in ("javascript", "typescript"):
         candidate_info = _js_ts_module_candidates(importer_path, module, repo_root)
@@ -13285,7 +13284,7 @@ def _resolve_raw_import_entry(
         # Payload-bloat fix (#93 SUB-1 follow-up): only stamp the dynamic markers on an entry
         # that is ACTUALLY dynamic. Stamping "dynamic": false / "dynamic_unresolved": false on
         # every static entry (the overwhelming majority) conveys nothing and tipped
-        # `tg importers`' payload past the <10%-of-`tg map` token-economy guard (a MOAT
+        # `tg importers`' payload past the <10%-of-`tg map` token-economy guard (a capability
         # invariant -- see test_importers_payload_is_far_smaller_than_map). Presence of
         # "dynamic" now itself MEANS "this is a dynamic import" -- callers must use
         # `.get("dynamic", False)`, not a hard subscript.
@@ -13527,7 +13526,7 @@ def _tier_reverse_importer_candidates(
             break
         current = parent
     target_suffix = target_path.suffix.lower()
-    # Opus-gate nit (PR #670, same class as the #639 precedent at :1149): _tier runs once per
+    # review nit (PR #670, same class as the #639 precedent at :1149): _tier runs once per
     # candidate via sorted() below, and for every non-same-ancestry candidate (the majority on a
     # large multi-repo ROOT) used to pay ~3 filesystem syscalls -- its own
     # candidate_path.resolve(), a SECOND resolve of that identical path inside
@@ -13882,7 +13881,7 @@ def build_symbol_callers_from_map(
     caller_files_scanned = 0
     with _profiling_phase(_profiling_collector, "caller_scan"):
         for current in bounded_files:
-            # moat P0-6 step 6: bound the CALLER-SCAN traversal, not just the repo-map parse. A
+            # capability P0-6 step 6: bound the CALLER-SCAN traversal, not just the repo-map parse. A
             # CENTRAL symbol's cost is scanning many files for references here (leaf symbols were
             # bounded by the parse-loop deadline; central ones hung past it because this loop was
             # unbounded -- dogfood 1.35.0). Break + return partial callers instead of overrunning.
@@ -14226,7 +14225,7 @@ def build_symbol_callers_from_map(
         or related_tests_deadline_hit.hit
         or context_pack_deadline_hit.hit
     ):
-        # moat P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
+        # capability P0-6 step 6: the caller-scan was cut short by --deadline -> partial (the callers list
         # holds what was found before the budget). graph_completeness downgrades so an agent does not
         # trust a small/zero caller count on a deadline-truncated central-symbol scan.
         payload["partial"] = True
@@ -14356,7 +14355,7 @@ def build_symbol_blast_radius(
     deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    # moat P0-6 step 3: ONE absolute deadline shared across BOTH the initial scan and the
+    # capability P0-6 step 3: ONE absolute deadline shared across BOTH the initial scan and the
     # literal-seed retry below -- a per-call re-derivation would double the wall-clock for exactly
     # the already-truncated huge repos that need a deadline most.
     deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
@@ -14818,7 +14817,7 @@ def build_symbol_blast_radius_from_map(
     _copy_lsp_evidence_status(payload, callers_payload)
     if "scan_limit" in repo_map:
         payload["scan_limit"] = dict(repo_map["scan_limit"])
-    # moat P0-6 step 6: the direct-caller scan may have been cut by --deadline for a CENTRAL symbol
+    # capability P0-6 step 6: the direct-caller scan may have been cut by --deadline for a CENTRAL symbol
     # -> carry its partial + deadline_limit onto the blast radius so a caller does not trust a
     # truncated caller_tree / blast_radius_score as complete.
     # task #61: OR in this function's OWN preferred-definition-files call (a second, redundant call
@@ -14917,7 +14916,7 @@ def build_symbol_blast_radius_plan(
     deadline_seconds: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan` (Click
+    # v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan` (Click
     # "No such option" exit-2) even though its true sibling build_symbol_blast_radius already had
     # it -- same thin, additive thread-through (mirrors #581's build_symbol_defs / this file's own
     # build_symbol_blast_radius above), threaded into BOTH the initial repo_map build and the

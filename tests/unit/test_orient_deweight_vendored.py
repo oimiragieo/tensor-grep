@@ -179,7 +179,7 @@ def test_strong0_vendor_deweights_central_score_but_keeps_the_file(tmp_path: Pat
 
 
 def test_dropped_vendor_names_are_not_strong0(tmp_path: Path) -> None:
-    # Honest-set guard (Opus-gate NIT): `node_modules`, `vendor`, `external_repos` are ALL in
+    # Honest-set guard : `node_modules`, `vendor`, `external_repos` are ALL in
     # `repo_map._SKIP_DIR_NAMES` (walker-skipped upstream), so they are deliberately NOT STRONG-0.
     # A synthetic `rm` bypassing the walker proves the name-alone promotion does not fire for them:
     # with no manifest and no import-island, the detector returns {} (they still WOULD fire as the
@@ -196,7 +196,7 @@ def test_dropped_vendor_names_are_not_strong0(tmp_path: Path) -> None:
 # M1: STRONG-3 `skills`-named directory SHAPE gauntlet. Unlike the unambiguous STRONG-0 vendor names
 # above, `skills` stays AMBIGUOUS -- a repo's own feature/plugin package could plausibly be named
 # `skills/` -- so it is gated on a gauntlet a real Python package can never pass: (a) >=60% of its
-# immediate children each carry their own SKILL.md/skill.md manifest (Opus-gate: the SOLE positive
+# immediate children each carry their own SKILL.md/skill.md manifest (review: the SOLE positive
 # leaf signal -- a "no imports crossing out" fallback was unsafe because the stem-only import graph
 # can't resolve a `from skills.<subpkg> import <Symbol>` edge), (b) NO `__init__.py` in the tree
 # root or any immediate child, and (c) a best-effort "nothing outside imports in" guard.
@@ -323,7 +323,7 @@ def test_skips_flat_skills_package_with_no_subdirectories(tmp_path: Path) -> Non
 def test_skill_tree_below_leaf_fraction_threshold_is_not_deweighted(tmp_path: Path) -> None:
     # Only 1 of 4 immediate children carries a SKILL.md manifest -- below
     # `_SKILL_LEAF_FRACTION_THRESHOLD` (0.6) -- so the SHAPE check must not fire. The other 3 are
-    # plain code folders with no manifest: under the Opus-gate manifest-required rule they do NOT
+    # plain code folders with no manifest: under the review manifest-required rule they do NOT
     # count toward the leaf fraction (an earlier draft would have vacuously counted them via a
     # "no imports crossing out" fallback, the exact source of the symbol-import false positive).
     root = tmp_path.resolve()
@@ -346,7 +346,7 @@ def test_skill_tree_below_leaf_fraction_threshold_is_not_deweighted(tmp_path: Pa
 
 
 def test_skips_skill_package_consumed_via_subpackage_symbol_import(tmp_path: Path) -> None:
-    # Opus-gate MUST-FIX regression: a genuine product `skills/` package consumed via the COMMON
+    # review MUST-FIX regression: a genuine product `skills/` package consumed via the COMMON
     # idiom `from skills.auth import Auth` (a symbol/subpackage import) must NOT be de-weighted. The
     # stem-only import graph can't resolve that edge (last dotted component `Auth` is a symbol and
     # `skills.auth` is a SUBPACKAGE dir, neither a file stem), so `externally_isolated` is
@@ -371,7 +371,7 @@ def test_skips_skill_package_consumed_via_subpackage_symbol_import(tmp_path: Pat
 
 
 def test_skips_skill_dir_with_init_py_at_root(tmp_path: Path) -> None:
-    # Opus-gate MUST-FIX regression: a `skills/__init__.py` at the tree root is an unambiguous
+    # review MUST-FIX regression: a `skills/__init__.py` at the tree root is an unambiguous
     # "this is a real Python package" marker -- STRONG-3 is refused entirely regardless of how
     # leaf-shaped its children look.
     root = tmp_path.resolve()

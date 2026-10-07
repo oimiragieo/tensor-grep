@@ -3,22 +3,22 @@
   "routing_backend": "RepoMap",
   "routing_reason": "symbol-impact",
   "sidecar_used": false,
-  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+  "path": "C:\\example\\project\\rewrite",
   "symbol": "add",
   "definitions": [
     {
       "name": "add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "line": 1
     }
   ],
   "files": [
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
   ],
   "file_matches": [
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "score": 9,
       "graph_score": 0.5,
       "reasons": [
@@ -29,7 +29,7 @@
   ],
   "file_summaries": [
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "symbols": [
         {
           "name": "add",
@@ -46,13 +46,13 @@
     {
       "name": "add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "line": 1,
       "score": 3
     }
   ],
   "related_paths": [
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
   ],
   "coverage": {
     "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
@@ -60,8 +60,3 @@
     "test_matching": "filename+import+graph-heuristic"
   }
 }
-
-
-
-
-

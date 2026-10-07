@@ -296,7 +296,7 @@ def test_orient_from_map_already_expired_deadline_marks_partial(tmp_path: Path) 
 def test_orient_snippet_loop_breaks_mid_loop_not_just_pre_check(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """Strengthens the already-expired-deadline coverage above with the sharper claim (Opus-gate
+    """Strengthens the already-expired-deadline coverage above with the sharper claim (review
     nit, PR #647): the deadline crosses WHILE the snippet loop is running, not merely pre-expired
     before the first iteration -- so only SOME central files get a snippet and the loop
     demonstrably stopped early rather than exhausting all of them. Mirrors

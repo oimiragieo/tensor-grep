@@ -1,7 +1,7 @@
 """``tg ledger`` -- advisory, code-scoped agent-to-agent coordination (Slice 1: claims; Slice 2:
 findings).
 
-Thesis (CEO-directed feature, `tg ledger` design doc verified against origin/main@7209fad):
+Thesis :
 concurrent coding agents working the same repo need a lightweight way to ADVERTISE intent on
 a symbol/file without ever BLOCKING each other. A claim is advisory only -- it is never a
 lock on an edit. ``submit_claim`` always returns normally on success (even when other live
@@ -20,7 +20,7 @@ grow the index without limit even though none of them are individually expired y
 entries for DISPLAY only and never writes, so listing claims cannot itself create
 ``.tensor-grep/ledger/`` (default-inert until the first ``claim``).
 
-PATH scoping (fix for the CEO v1.92.1 dogfood #1 "PATH-scope footgun" -- this paragraph describes
+PATH scoping (fix for the v1.92.1 dogfood #1 "PATH-scope footgun" -- this paragraph describes
 the Slice 1 fix as it originally shipped; Slice 2 was migrated onto the SAME helper below, so do
 not read "claims" here as excluding findings -- see :func:`_ledger_physical_root` for the current,
 derived membership):
@@ -389,7 +389,7 @@ def _normalize_relative_file(root: Path, raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): physical-root canonicalization + the claim
+# PATH-scope footgun fix : physical-root canonicalization + the claim
 # `scope` concept it enables. See the module docstring's "PATH scoping" paragraph for the full
 # rationale. Used by both slices: Slice 1 (claims: submit_claim/release_claim/list_claims) and
 # Slice 2 (findings: record_finding/find_findings) share this same canonicalization now -- see

@@ -10,7 +10,7 @@ reconstruction from silently dropping a field it does not forward (verified: `af
 while a flag like `-A`/`-B` is a perfectly normal native `rg`-compatible flag with no Python-only
 behavior at all). It is therefore NOT a list of "flags the native binary cannot support" --
 an earlier draft of this test asserted the reverse and found ~90 false-positive "gaps" that are
-not real defects. See `docs/BACKLOG.md`'s HUNT-5 entry for that investigation.
+not real defects. The allow-list below records those intentional differences.
 
 `cli/bootstrap.py`'s `_can_delegate_to_native_tg_search` is a SEPARATE, argv-string fast path
 that passes RAW argv straight to the compiled native binary's own clap parser -- so `-A`/`-B`/

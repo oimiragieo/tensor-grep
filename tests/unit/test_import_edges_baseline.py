@@ -2,8 +2,8 @@
 service extraction can't silently introduce a new cross-package edge. This does NOT enforce a
 layering direction (some baseline edges below are pre-existing violations of the intended
 direction, e.g. core->cli) -- it only catches a NEW edge that wasn't here when frozen. Burning
-down the pre-existing violations is separate, unstarted P13 scope (adopting import-linter with
-an enforced direction), tracked in docs/BACKLOG.md.
+down pre-existing violations requires direction-enforcing checks; the package-pair
+baseline alone cannot distinguish a new import along an already-recorded edge.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from tensor_grep.core.import_edges import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC_ROOT = _REPO_ROOT / "src" / "tensor_grep"
-_BASELINE_PATH = _REPO_ROOT / "docs" / "design" / "2026-09-07-import-edges-baseline.json"
+_BASELINE_PATH = _REPO_ROOT / "tests" / "fixtures" / "governance" / "import-edges-baseline.json"
 
 
 def _load_baseline() -> set[tuple[str, str]]:

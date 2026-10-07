@@ -1,7 +1,7 @@
 """MCP tool family: pure symbol-graph navigation (defs/source/impact/refs/callers,
 file imports/importers, symbol blast-radius).
 
-Split out of mcp_server.py (docs/design/2026-08-19-split-floor-escape.md, Route A) as a
+Split out of mcp_server.py (late-bound module attribute reads) as a
 pure code move: no wire-surface change. See mcp_rewrite_tools.py module docstring for
 the full rationale of the _self-points-at-mcp_server pattern used here.
 """
@@ -530,7 +530,7 @@ def tg_file_imports(file: str) -> str:
             TG_MCP_ROOT if set); a file that legitimately lives outside it must be copied in
             first (fail-closed, not a silent drop).
     """
-    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
+    # round-7 security : confine file to the project root
     # (cwd) before any read -- unconfined it is a file-existence + import-string read-oracle
     # over any path reachable from any MCP client (build_file_imports below stats the file and
     # echoes its resolved path / import list back in the JSON result), same class as
@@ -617,7 +617,7 @@ def tg_file_importers(
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
             return json.dumps(payload, indent=2)
 
-        # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
+        # round-7 security : confine file to the project root
         # (cwd) before any read, same class/rationale as tg_file_imports above.
         try:
             file = str(_confine_read_path(file, _mcp_root(), label="file"))

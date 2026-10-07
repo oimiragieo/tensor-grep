@@ -1300,8 +1300,12 @@ def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch)
     with runner.isolated_filesystem():
         from pathlib import Path
 
-        Path("a.py").write_text('stripe_secret = "sk_live_1234567890abcdef"\n', encoding="utf-8")
-        Path("b.py").write_text("# leaked token sk_live_abcdef1234567890\n", encoding="utf-8")
+        Path("a.py").write_text(
+            'stripe_secret = "' + "sk_live_" + '1234567890abcdef"\n', encoding="utf-8"
+        )
+        Path("b.py").write_text(
+            "# leaked token " + "sk_live_" + "abcdef1234567890\n", encoding="utf-8"
+        )
 
         result = runner.invoke(
             app,

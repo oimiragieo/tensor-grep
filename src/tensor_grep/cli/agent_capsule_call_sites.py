@@ -91,7 +91,7 @@ def _collect_capsule_call_site_evidence(
         }
 
     max_callers = max(1, min(int(max_files) * 2, 8))
-    # CLI consistency fix (CEO v1.71.3 dogfood): this rescue scan is a SECOND, independent
+    # CLI consistency fix : this rescue scan is a SECOND, independent
     # FS-backed build_repo_map (via build_symbol_blast_radius) over the same `path` -- a `tg agent
     # --deadline N` request must not let this second scan run unbounded after the shared budget
     # was already spent on the primary render/ranking pass above. build_symbol_blast_radius already
@@ -149,7 +149,7 @@ def _collect_capsule_call_site_evidence(
         # carries so an agent sees WHY graph_trust_summary was downgraded, not just that it was.
         "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
-    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this rescue scan's own deadline_seconds budget
+    # #639 review nit 1 (dogfood #1 RESIDUAL): this rescue scan's own deadline_seconds budget
     # (floored to >=0.1s above) can itself truncate `radius_payload` -- reuse repo_map's own
     # `_copy_partial_signal` helper (the exact propagation every other symbol builder in this
     # codebase uses) so that signal survives into the evidence dict an agent actually reads,
@@ -168,7 +168,7 @@ def _collect_capsule_call_site_evidence_from_map(
     seed_confidence: float,
     deadline_monotonic: float | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
-    """Task #108 (Tier-2 daemon moat) map-based sibling of ``_collect_capsule_call_site_evidence``:
+    """Task #108 (Tier-2 daemon capability) map-based sibling of ``_collect_capsule_call_site_evidence``:
     identical gating + evidence shape, but resolves the blast radius against an already-built
     ``rm`` (e.g. the warm session daemon's cached map) via ``build_symbol_blast_radius_from_map``
     instead of re-scanning through the cold ``build_symbol_blast_radius`` wrapper.
@@ -296,7 +296,7 @@ def _collect_capsule_call_site_evidence_from_map(
         "graph_trust_summary": _as_dict(radius_payload.get("graph_trust_summary")),
         "resolution_gaps": _as_list_of_dicts(radius_payload.get("resolution_gaps")),
     }
-    # #639 Opus-gate nit 1: structural parity with the cold sibling above -- the map-based
+    # #639 review nit 1: structural parity with the cold sibling above -- the map-based
     # blast-radius lookup does not run a fresh time-bounded scan itself, but `rm` may already be
     # partial from an earlier deadline cutoff; propagate that forward the same way rather than
     # silently dropping it just because this collector was reached via the warm/daemon path.

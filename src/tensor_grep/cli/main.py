@@ -98,7 +98,7 @@ from tensor_grep.io.scan_limits import (
 )
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
 # globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
@@ -121,7 +121,7 @@ if TYPE_CHECKING:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # Re-exports from the modules split out of this file on 2026-08-20 (see
-# docs/design/2026-08-19-split-floor-escape.md and cli/_main_binding.py). EVERY moved name is
+# cli/_main_binding.py). EVERY moved name is
 # rebound here, not only the ones a scan can prove are read. The test suite patches many of
 # them on `main` and the moved code reads them back through `_self`, so the patch target must
 # not move with the code -- and tests reach them through local aliases, so 'nothing references
@@ -332,7 +332,7 @@ _windows_tensor_grep_python_launcher_scan = (
 _windows_user_path_value = _windows_launcher._windows_user_path_value
 _write_windows_exe_bridge_marker = _windows_launcher._write_windows_exe_bridge_marker
 
-# backlog #1 (Fable+thinktank plan, 2026-07-06): kept numerically in sync with
+# backlog #1 : kept numerically in sync with
 # repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT (raised 512 -> 2000 for routing accuracy -- a file past
 # the old cap never entered the map, so edit-plan/agent/context-render/defs misrouted on repos
 # >512 files). This is a SEPARATE literal (not an import) because it is this module's CLI-option
@@ -1046,7 +1046,7 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
 _search_with_cpu_fallback = _backend_fallback.search_with_cpu_fallback
 
 
-# F5 (Fable audit MED): retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per FILE).
+# F5 : retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per FILE).
 # A matched-file set of many small files can still blow past a sane CORPUS-wide total even though
 # no single file trips the per-file guard, so DenseIndex.__init__'s single-batch encode would face
 # unbounded memory. Cap the CORPUS total here too, sharing the same threshold as the per-file guard
@@ -1055,7 +1055,7 @@ _SEMANTIC_CORPUS_CHUNK_CAP = MAX_CHUNKS
 
 
 def _set_semantic_rank_fallback_reason(all_results: "SearchResult") -> None:
-    """Probe dense-leg availability and set ``rank_fallback_reason`` (F16, Fable audit LOW).
+    """Probe dense-leg availability and set ``rank_fallback_reason`` .
 
     Used for the 0-match `--semantic` case: with no matches there is nothing to rerank, so the
     full :func:`_apply_semantic_rerank` path (chunking, model load) is skipped entirely -- but the
@@ -1135,7 +1135,7 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
         all_results.rank_fallback_reason = unavailable_reason
         sys.stderr.write(f"tg: {unavailable_reason}\n")
 
-    # F3 (Fable audit MED): build the chunk corpus ONCE and share it between the BM25 and dense
+    # F3 : build the chunk corpus ONCE and share it between the BM25 and dense
     # legs. Previously the dense leg's corpus was built here while the BM25 leg rebuilt its own
     # corpus from scratch inside `rerank_hybrid` (bm25_index=None) -- a second full file-I/O pass,
     # and a silent RRF-misalignment risk if the two passes' chunk_size/overlap defaults ever
@@ -1259,7 +1259,7 @@ def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "Search
 # must-fix C2), never a silent exit-0 degrade.
 _FIND_CORPUS_CHUNK_CAP = MAX_CHUNKS
 
-# CEO#7: the raw fetch-command hint baked into retrieval_dense.py's `DenseUnavailableError` ("not
+# the raw fetch-command hint baked into retrieval_dense.py's `DenseUnavailableError` ("not
 # fetched" case) predates the one-shot `tg install-dense` command -- see
 # `_friendly_dense_unavailable_message` below.
 _DENSE_FETCH_RAW_HINT = "python -m tensor_grep.core.retrieval_dense --fetch"
@@ -1268,7 +1268,7 @@ _DENSE_FETCH_FRIENDLY_HINT = "tg install-dense"
 
 def _friendly_dense_unavailable_message(exc: BaseException) -> str:
     """CLI-boundary rewrite of the dense leg's raw fetch-command hint into the one-shot
-    `tg install-dense` command (CEO#7) a real `tg find` user should run instead.
+    `tg install-dense` command  a real `tg find` user should run instead.
 
     Deliberately a string substitution at the CALL SITE, not an edit to the library exception
     message itself (`retrieval_dense.py`'s `DenseUnavailableError` "not fetched" message is pinned
@@ -1294,7 +1294,7 @@ def _friendly_dense_unavailable_message(exc: BaseException) -> str:
 # 1:5 bm25:dense ratio); a single whitespace-free token stays at the protected 1.0. A malformed or
 # non-finite override (a typo, `nan`, `inf`) is now treated exactly like unset -- it resolves to
 # the SAME adaptive default rather than silently opting a typo'd operator OUT of the improved
-# default (thinktank rank-lens must-fix, 2026-07-16). An operator who wants the OLD equal-weight
+# default . An operator who wants the OLD equal-weight
 # fusion back must set `TG_FIND_DENSE_WEIGHT=1.0` explicitly.
 _FIND_DENSE_WEIGHT_ENV = "TG_FIND_DENSE_WEIGHT"
 _FIND_DENSE_WEIGHT_DEFAULT = 1.0
@@ -1345,7 +1345,7 @@ def _find_dense_weight(query: str) -> float:
     identifier queries wrongly boosted, only the 2-morpheme `rank_chunks` protected); the
     whitespace gate is the dogfood's own recommended fix.
 
-    KNOWN SCOPE (thinktank rank-lens, 2026-07-16): the whitespace gate is purely structural -- a
+    KNOWN SCOPE : the whitespace gate is purely structural -- a
     2-word LEXICAL phrase (e.g. `"return None"`, `"TODO fixme"`) is indistinguishable from a
     2-word NL phrase and ALSO receives the adaptive boost. The 1:5 sweep is 100% NL queries and
     the literal/identifier3 golden slices are single-token by construction, so this exact shape is
@@ -1404,7 +1404,7 @@ def _find_is_single_token_query(query: str) -> bool:
 
 def _find_combine_mode(query: str) -> Literal["sum", "max"]:
     """Query-adaptive RRF `combine` mode for `tg find`'s `rank_chunks` calls (accuracy-leg
-    max-fusion regression fix, Opus-gate finding on PR #717): `combine="max"` (`rank_chunks`'s own
+    max-fusion regression fix, review finding on PR #717): `combine="max"` (`rank_chunks`'s own
     default, see its docstring) lifts genuinely multi-word/NL queries (ndcg@10 +62.6% on the frozen
     40-query golden set) but REGRESSES single-token literal/identifier lookups -- measured on
     `benchmarks/datasets/literal_golden.jsonl` (10 queries, `dense_weight=1.0` as
@@ -1685,7 +1685,7 @@ def _execute_find(
             combine=_find_combine_mode(query),
         )
     except DenseUnavailableError as exc:
-        # F1 (Opus-gate blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
+        # F1 (review blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
         # main.py:3970-3984): a dense fault raised at QUERY time from INSIDE `rank_chunks`'s call to
         # `DenseIndex.query` (e.g. a dim/shape mismatch) is NOT the DenseIndex CONSTRUCTION path
         # guarded above. `DenseUnavailableError` subclasses `RuntimeError`, so without this it would
@@ -1814,7 +1814,7 @@ def find(
         command invokes;
       * its only control is the undocumented env var `TG_LATE_RERANK=1` -- there is no flag;
       * and the stage is deliberately HELD as measurably regressing on the retrieval-quality
-        benchmark (`docs/BACKLOG.md`), so this is a hold, not an oversight.
+        evaluation; an install path alone is not sufficient to advertise it.
 
     Do not re-add it to the advertised feature list without an install path a user can follow and
     a benchmark result that justifies the stage. See task #15.
@@ -4242,7 +4242,7 @@ def search_command(
             try:
                 all_results = _apply_semantic_rerank(all_results, pattern)
             except BackendExecutionError as exc:
-                # F4 (Fable audit MED): a genuine dense-backend fault (e.g. a corrupt model
+                # F4 : a genuine dense-backend fault (e.g. a corrupt model
                 # directory) must exit cleanly with a `tg:` message, never a raw traceback --
                 # `_apply_semantic_rerank` deliberately does NOT catch this (see its docstring);
                 # this is the CLI boundary the Backend Fail-Closed Contract requires.
@@ -4252,7 +4252,7 @@ def search_command(
                     typer.echo(f"tg: {exc}", err=True)
                 sys.exit(2)
         else:
-            # F16 (Fable audit LOW): probe dense-leg availability even on a 0-match search so
+            # F16 : probe dense-leg availability even on a 0-match search so
             # `rank_fallback_reason` is set whenever the leg is unavailable, regardless of match
             # count -- skipping the probe here silently made the JSON envelope dishonest.
             _set_semantic_rank_fallback_reason(all_results)
@@ -4551,7 +4551,7 @@ def calibrate(
         # boxes the native binary itself exits non-zero when CUDA is unavailable). tg's
         # convention is exit 1 for runtime/unsupported errors, not exit 2 (usage errors).
         # P0-4 (GPU Phase-0 honesty, #596) named a remediation here so this wasn't a dead end.
-        # CEO dogfood follow-up (v1.76.6): #596's "if published ... falls back to CPU when it
+        # dogfood follow-up (v1.76.6): #596's "if published ... falls back to CPU when it
         # is not" framing still invited TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg
         # upgrade` as an obtainable GPU path, but no NVIDIA-enabled asset has ever shipped (the
         # release profile that builds one is held off) -- a permanent dead end dressed up as
@@ -4667,7 +4667,7 @@ def map(
 
     try:
         effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg map`
+        # CLI consistency fix : `--deadline` used to be undefined on `tg map`
         # (Click "No such option" exit-2) even though build_repo_map already accepts
         # deadline_monotonic -- this is a pure CLI-layer wiring gap, not a builder gap.
         effective_deadline = None if no_deadline else deadline
@@ -4850,7 +4850,7 @@ def docs_coverage(
                 typer.echo(_json.dumps(stale_payload))
             else:
                 _safe_stdout_line(render_docs_stale_text(stale_payload))
-            # CEO v1.72.1 dogfood M1: a --deadline-truncated scan is INCOMPLETE -- exit 2, checked
+            # v1.72.1 dogfood M1: a --deadline-truncated scan is INCOMPLETE -- exit 2, checked
             # BEFORE --check's exit-1 below (truncation trumps found, mirrors the symbol-command
             # _emit_symbol_command_result / blast-radius-plan's _scan_incomplete contract). This is
             # scoped to the NEW `partial` (time-budget) signal only -- the pre-existing
@@ -4948,14 +4948,14 @@ def orient(
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
     # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
     # orient_capsule import and the daemon gate, so front-door time counts against --deadline.
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg orient`
+    # CLI consistency fix : `--deadline` used to be undefined on `tg orient`
     # (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
     from tensor_grep.cli.orient_capsule import build_orient_capsule
 
-    # Task #108 (Tier-2 daemon moat): probe BEFORE the try block -- a daemon hit is already a
+    # Task #108 (Tier-2 daemon capability): probe BEFORE the try block -- a daemon hit is already a
     # ready-built dict (no filesystem call left that could raise FileNotFoundError/ValueError), so
     # it does not need the cold path's exception handling. A miss/error/mismatch falls open to the
     # unchanged cold path below (fail-open contract). Skipped entirely when a --deadline was
@@ -5207,7 +5207,7 @@ def context(
             query_option=query,
             command_name="context",
         )
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+        # CLI consistency fix : `--deadline` used to be undefined on
         # `tg context` (Click "No such option" exit-2).
         effective_deadline = None if no_deadline else deadline
         payload = build_context_pack(
@@ -5250,14 +5250,11 @@ def _daemon_directory_path(path: str) -> str | None:
 def _session_daemon_autostart_enabled() -> bool:
     """TG_SESSION_DAEMON_AUTOSTART opt-out for the default Tier-1 warm-daemon fast path.
 
-    Task #94 PR-1 (the conscious default flip flagged by the original Part A comment; cleared
-    after #498 landed the daemon response-cache correctness fix docs/BACKLOG.md's #94 entry
-    gated the flip on). DEFAULT ON: unset -- or any value other than an explicit falsy token
+    DEFAULT ON: unset -- or any value other than an explicit falsy token
     (``0``/``false``/``no``/``off``, see ``env_flag_disabled`` in runtime_paths.py) -- routes
     defs/impact/refs/callers/blast-radius through a running ``tg session daemon``, non-blocking
-    auto-spawning one on a miss. This is the ~20x warm-vs-cold latency win: the cold path pays a
-    6-33s repo-map build on every call. Set the flag to an explicit falsy token to opt back out
-    to the always-cold path, byte-for-byte unchanged from before this PR.
+    auto-spawning one on a miss. Repeated requests can reuse the daemon snapshot; actual
+    latency depends on the workload. Set an explicit falsy token to use the cold path.
 
     Auto-forced OFF whenever CI or GITHUB_ACTIONS is set, regardless of the flag's own value,
     so a CI job can never leave a background session-daemon process (idle-lived up to
@@ -5342,7 +5339,7 @@ def _maybe_orient_via_running_daemon(
     ignore: tuple[str, ...],
     auto_deweight: bool,
 ) -> dict[str, Any] | None:
-    """Task #108 (Tier-2 daemon moat): fail-open warm-daemon fast path for `tg orient`, mirroring
+    """Task #108 (Tier-2 daemon capability): fail-open warm-daemon fast path for `tg orient`, mirroring
     `_maybe_symbol_command_via_running_daemon`'s probe/autostart-on-miss shape (task #94 Tier-1)
     byte-for-byte -- gated behind the SAME `_session_daemon_autostart_enabled` flag Tier-1 uses
     (no separate flag; inherits the CI/GITHUB_ACTIONS force-off), and a probe MISS fires a
@@ -5394,7 +5391,7 @@ def _maybe_agent_via_running_daemon(
     gpu_device_ids: list[int] | None,
     ignore: tuple[str, ...],
 ) -> dict[str, Any] | None:
-    """Task #108 (Tier-2 daemon moat): fail-open warm-daemon fast path for `tg agent`, mirroring
+    """Task #108 (Tier-2 daemon capability): fail-open warm-daemon fast path for `tg agent`, mirroring
     `_maybe_symbol_command_via_running_daemon`'s probe/autostart-on-miss shape. Two additional
     refusals beyond the symbol-command template: a non-native provider (same native-only rule as
     every other daemon-served command) and an explicit `--gpu-device-ids` request -- the GPU
@@ -5616,7 +5613,7 @@ def context_render(
     """Return a prompt-ready repository context bundle for edit planning."""
     # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
     # repo_map import, path resolution, and daemon gate, so front-door time counts against --deadline.
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+    # CLI consistency fix : `--deadline` used to be undefined on
     # `tg context-render` (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
@@ -5708,7 +5705,7 @@ def context_render(
         raise typer.Exit(2)
 
 
-# v1.81.6 dogfood finding #1 (CEO-relayed, both dogfood reports flagged it as the #1 agent
+# v1.81.6 dogfood finding #1 (relayed, both dogfood reports flagged it as the #1 agent
 # confusion): `tg agent --deadline N` can exit 2 with `partial: true` / a deadline-type
 # `partial_reason` while `confidence.overall` is high and `ask_user_before_editing.required` is
 # false -- a genuinely USABLE answer that merely stopped collecting SECONDARY evidence (the
@@ -5881,7 +5878,7 @@ def agent(
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
-        # Task #108 (Tier-2 daemon moat): mirrors edit-plan's daemon-payload gate (:8452-8478
+        # Task #108 (Tier-2 daemon capability): mirrors edit-plan's daemon-payload gate (:8452-8478
         # below) -- print the full daemon payload through the SAME json/text branches and the SAME
         # exit-2-on-scan-truncation contract as the cold path, then return early. A miss/error/
         # mismatch (including the TRAP A `daemon_evidence_unreliable` sentinel) falls open to the
@@ -5951,7 +5948,7 @@ def agent(
         # cannot honor a fresh per-request deadline either way). Collapsing this 60s default into
         # THAT variable, or defaulting it on the typer.Option itself, would make effective_deadline
         # never None on a default call, silently skipping the daemon probe on every single one of
-        # them -- the #108 moat.
+        # them -- the #108 capability.
         cold_deadline_seconds = effective_deadline
         if cold_deadline_seconds is None and not no_deadline:
             cold_deadline_seconds = DEFAULT_AGENT_CLI_DEADLINE_SECONDS
@@ -6083,7 +6080,7 @@ def edit_plan(
     # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
     # computed here, BEFORE the lazy repo_map import, path resolution, and the daemon gate below,
     # so front-door time counts against an explicit --deadline the same way the scan already does.
-    # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
+    # CLI consistency fix : `--deadline` used to be undefined on
     # `tg edit-plan` (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
@@ -7421,7 +7418,7 @@ def defs(
         # task #94 Part A Tier-1: default-OFF warm-daemon fast path. Fails open to the cold
         # build_symbol_defs(...) call below on any miss/error -- see
         # _maybe_symbol_command_via_running_daemon's docstring for the full contract.
-        # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg defs`
+        # CLI consistency fix : `--deadline` used to be undefined on `tg defs`
         # (Click "No such option" exit-2) even though its true siblings refs/callers/impact/
         # blast-radius already had it -- mirrors their exact shape (deadline defaults to None
         # already, no --no-deadline companion) and their daemon gate (skip the warm fast path
@@ -7513,7 +7510,7 @@ def source(
             symbol_option=symbol,
             command_name="source",
         )
-        # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
+        # v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
         # option" exit-2) even though its true sibling `defs` already had it -- mirrors defs's exact
         # shape (deadline defaults to None already, no --no-deadline companion). No daemon fast path
         # exists for `source` today, so there is no daemon-skip gate to add here.
@@ -7958,7 +7955,7 @@ def imports(
     repo scan. Use `tg importers FILE` for the reverse question (who imports this file). Both
     are far cheaper than `tg map` for a single file's dependency edges.
 
-    CEO v1.72.1 dogfood M1: `--deadline` is accepted as a documented NO-OP for command-surface
+    v1.72.1 dogfood M1: `--deadline` is accepted as a documented NO-OP for command-surface
     parity with the scanning symbol commands -- an agent that learned --deadline works elsewhere
     must not get a Click "No such option" exit-2 here. There is no repo scan to bound (this reads
     exactly one file), so the value is intentionally never threaded anywhere below.
@@ -8366,7 +8363,7 @@ def blast_radius(
     # exists to prevent. `caller_scan_truncated` = the backlog-#1 caller-scan ceiling
     # (CALLER_SCAN_FILE_CEILING) dropped files the 2000-map covers -> a SCAN truncation (exit 2),
     # distinct from an output cap. Without this the ceiling would silently exit 0 with a caller-set
-    # truncated at 512 (Fable final review of #405). `_scan_incomplete` is the shared gate reused by
+    # truncated at 512 . `_scan_incomplete` is the shared gate reused by
     # every daemon/render fast-path (map, context-render, edit-plan, blast-radius-render; Cluster B,
     # 2026-07-06) so the scan-vs-output-cap contract is defined exactly once.
     incomplete = _scan_incomplete(payload) or bool(payload.get("result_incomplete"))
@@ -8568,7 +8565,7 @@ def blast_radius_plan(
             symbol_option=symbol,
             command_name="blast-radius-plan",
         )
-        # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan`
+        # v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg blast-radius-plan`
         # (Click "No such option" exit-2) even though its true sibling `blast-radius` already had
         # it -- mirrors that shape. No daemon fast path exists for `blast-radius-plan` today, so
         # there is no daemon-skip gate to add here.
@@ -10754,7 +10751,7 @@ def _is_uv_tool_managed_python(executable: str) -> bool:
 
 # Module-level (not nested in `upgrade()`) so `tg install-dense` can reuse the identical
 # uv-tool -> uv pip -> pip cascade for the `semantic` extra install step, including the
-# uv-tool-managed-python trap handling (audit #2) -- CEO#7.
+# uv-tool-managed-python trap handling (audit #2) -- .
 def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
     pip_cmd = [
         sys.executable,
@@ -11590,12 +11587,12 @@ def upgrade() -> None:
         sys.exit(1)
 
 
-# CEO#7 (P1 -- "semantic find that works out of the box"): `tg find` / `tg search --semantic`
+# (P1 -- "semantic find that works out of the box"): `tg find` / `tg search --semantic`
 # degrade to BM25-only until the `semantic` extra (model2vec + numpy, both torch/GPU-free) is
 # installed AND the potion-code-16M model has been fetched. `tg install-dense` is the one-shot,
 # explicitly opt-in command that does both steps; it deliberately does NOT run automatically from
 # `tg find` (that is Option 3, out of scope here) and the model is NOT bundled into the wheel
-# (a separate, CEO-gated packaging decision).
+# .
 _INSTALL_DENSE_PACKAGE_SPEC = "tensor-grep[semantic]"
 
 

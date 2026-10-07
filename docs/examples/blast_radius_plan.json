@@ -8,14 +8,14 @@
     "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
     "test_matching": "filename+import+graph-heuristic"
   },
-  "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite",
+  "path": "C:\\example\\project\\rewrite",
   "symbol": "add",
   "max_depth": 2,
   "definitions": [
     {
       "name": "add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "line": 1,
       "start_line": 1,
       "end_line": 2,
@@ -26,20 +26,20 @@
     {
       "name": "add",
       "kind": "call",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "line": 4,
       "text": "    return add(value, 1)",
       "provenance": "python-ast"
     }
   ],
   "files": [
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py"
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+    "C:\\example\\project\\rewrite\\rewrite_api.py",
+    "C:\\example\\project\\rewrite\\rewrite_service.py"
   ],
   "file_matches": [
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "depth": 0,
       "score": 8,
       "reasons": [
@@ -50,7 +50,7 @@
       "graph_score": 0.184431
     },
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "depth": 1,
       "score": 13,
       "reasons": [
@@ -60,7 +60,7 @@
       "graph_score": 0.283419
     },
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_service.py",
       "depth": 2,
       "score": 2,
       "reasons": [
@@ -71,7 +71,7 @@
   ],
   "file_summaries": [
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "symbols": [
         {
           "name": "add",
@@ -81,7 +81,7 @@
       ]
     },
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "symbols": [
         {
           "name": "apply_add",
@@ -91,7 +91,7 @@
       ]
     },
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+      "path": "C:\\example\\project\\rewrite\\rewrite_service.py",
       "symbols": [
         {
           "name": "handle_add",
@@ -102,11 +102,11 @@
     }
   ],
   "tests": [
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+    "C:\\example\\project\\rewrite\\test_rewrite_api.py"
   ],
   "test_matches": [
     {
-      "path": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+      "path": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
       "score": 21,
       "reasons": [
         "filename",
@@ -133,7 +133,7 @@
     {
       "depth": 0,
       "files": [
-        "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py"
+        "C:\\example\\project\\rewrite\\rewrite_fixture.py"
       ],
       "provenance": [
         "graph-derived"
@@ -154,7 +154,7 @@
     {
       "depth": 1,
       "files": [
-        "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py"
+        "C:\\example\\project\\rewrite\\rewrite_api.py"
       ],
       "provenance": [
         "graph-derived",
@@ -177,7 +177,7 @@
     {
       "depth": 2,
       "files": [
-        "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py"
+        "C:\\example\\project\\rewrite\\rewrite_service.py"
       ],
       "provenance": [
         "graph-derived",
@@ -198,7 +198,7 @@
       }
     }
   ],
-  "rendered_caller_tree": "Blast radius for add:\nDepth 0:\n- C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py\nDepth 1:\n- C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py\nDepth 2:\n- C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+  "rendered_caller_tree": "Blast radius for add:\nDepth 0:\n- C:\\example\\project\\rewrite\\rewrite_fixture.py\nDepth 1:\n- C:\\example\\project\\rewrite\\rewrite_api.py\nDepth 2:\n- C:\\example\\project\\rewrite\\rewrite_service.py",
   "graph_trust_summary": {
     "edge_kind": "reverse-import",
     "confidence": "strong",
@@ -214,7 +214,7 @@
   },
   "imports": [
     {
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "imports": [
         "rewrite_fixture",
         "rewrite_fixture.add"
@@ -223,7 +223,7 @@
       "score": 2
     },
     {
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
       "imports": [
         "rewrite_api",
         "rewrite_api.apply_add"
@@ -232,7 +232,7 @@
       "score": 2
     },
     {
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
       "imports": [
         "rewrite_api",
         "rewrite_api.apply_add"
@@ -245,7 +245,7 @@
     {
       "name": "apply_add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "line": 3,
       "start_line": 3,
       "end_line": 4,
@@ -254,7 +254,7 @@
     {
       "name": "add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
       "line": 1,
       "start_line": 1,
       "end_line": 2,
@@ -263,7 +263,7 @@
     {
       "name": "handle_add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
       "line": 3,
       "start_line": 3,
       "end_line": 4,
@@ -272,7 +272,7 @@
     {
       "name": "test_apply_add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
       "line": 3,
       "start_line": 3,
       "end_line": 4,
@@ -280,10 +280,10 @@
     }
   ],
   "related_paths": [
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
-    "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+    "C:\\example\\project\\rewrite\\rewrite_api.py",
+    "C:\\example\\project\\rewrite\\rewrite_service.py",
+    "C:\\example\\project\\rewrite\\test_rewrite_api.py"
   ],
   "ranking_quality": "moderate",
   "coverage_summary": {
@@ -325,11 +325,11 @@
     "providers": [
       {
         "language": "python",
-        "workspace_root": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite",
+        "workspace_root": "C:\\example\\project\\rewrite",
         "available": true,
         "running": false,
         "command": [
-          "C:\\Users\\oimir\\AppData\\Roaming\\npm\\pyright-langserver.CMD",
+          "C:\\Users\\example\\AppData\\Roaming\\npm\\pyright-langserver.CMD",
           "--stdio"
         ],
         "capabilities": {},
@@ -344,11 +344,11 @@
   "max_files": 3,
   "max_symbols": 5,
   "edit_plan_seed": {
-    "primary_file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+    "primary_file": "C:\\example\\project\\rewrite\\rewrite_api.py",
     "primary_symbol": {
       "name": "apply_add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "line": 3,
       "start_line": 3,
       "end_line": 4,
@@ -358,9 +358,9 @@
       "start_line": 3,
       "end_line": 4
     },
-    "primary_test": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+    "primary_test": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
     "validation_tests": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+      "C:\\example\\project\\rewrite\\test_rewrite_api.py"
     ],
     "validation_commands": [
       "uv run pytest test_rewrite_api.py -k test_apply_add -q",
@@ -403,7 +403,7 @@
     },
     "related_spans": [
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "symbol": "handle_add",
         "start_line": 3,
         "end_line": 4,
@@ -420,7 +420,7 @@
     ],
     "suggested_edits": [
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "symbol": "handle_add",
         "start_line": 3,
         "end_line": 4,
@@ -430,7 +430,7 @@
         "confidence": 0.45
       },
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "symbol": "apply_add",
         "start_line": 1,
         "end_line": 1,
@@ -447,26 +447,26 @@
     },
     "plan_trust_summary": "Ranking moderate; coverage moderate (parser_backed=7, graph_derived=5, heuristic=2); dependency trust strong (parser_backed=1, heuristic=0).",
     "dependent_files": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py"
+      "C:\\example\\project\\rewrite\\rewrite_service.py"
     ],
     "edit_ordering": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+      "C:\\example\\project\\rewrite\\rewrite_api.py",
+      "C:\\example\\project\\rewrite\\rewrite_service.py",
+      "C:\\example\\project\\rewrite\\test_rewrite_api.py"
     ],
     "rollback_risk": 0.3
   },
   "candidate_edit_targets": {
     "files": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py"
+      "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "C:\\example\\project\\rewrite\\rewrite_api.py",
+      "C:\\example\\project\\rewrite\\rewrite_service.py"
     ],
     "symbols": [
       {
         "name": "apply_add",
         "kind": "function",
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
         "line": 3,
         "start_line": 3,
         "end_line": 4,
@@ -475,7 +475,7 @@
       {
         "name": "add",
         "kind": "function",
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
         "line": 1,
         "start_line": 1,
         "end_line": 2,
@@ -484,7 +484,7 @@
       {
         "name": "handle_add",
         "kind": "function",
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "line": 3,
         "start_line": 3,
         "end_line": 4,
@@ -493,7 +493,7 @@
       {
         "name": "test_apply_add",
         "kind": "function",
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+        "file": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
         "line": 3,
         "start_line": 3,
         "end_line": 4,
@@ -501,7 +501,7 @@
       }
     ],
     "tests": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+      "C:\\example\\project\\rewrite\\test_rewrite_api.py"
     ],
     "ranking_quality": "moderate",
     "coverage_summary": {
@@ -530,7 +530,7 @@
     },
     "spans": [
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
         "symbol": "apply_add",
         "start_line": 3,
         "end_line": 4,
@@ -547,7 +547,7 @@
         "rationale": "Selected apply_add because it directly calls the target symbol and sits at depth 0."
       },
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "symbol": "handle_add",
         "start_line": 3,
         "end_line": 4,
@@ -565,11 +565,11 @@
   },
   "navigation_pack": {
     "primary_target": {
-      "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+      "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
       "symbol": "apply_add",
       "start_line": 3,
       "end_line": 4,
-      "mention_ref": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py#L3-L4",
+      "mention_ref": "C:\\example\\project\\rewrite\\rewrite_api.py#L3-L4",
       "reasons": [
         "caller",
         "graph-depth"
@@ -582,11 +582,11 @@
     },
     "follow_up_reads": [
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_api.py",
         "symbol": "apply_add",
         "start_line": 3,
         "end_line": 4,
-        "mention_ref": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py#L3-L4",
+        "mention_ref": "C:\\example\\project\\rewrite\\rewrite_api.py#L3-L4",
         "role": "primary",
         "rationale": "Primary edit target selected from ranked symbols and file matches.",
         "reasons": [
@@ -596,11 +596,11 @@
         "provenance": []
       },
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
+        "file": "C:\\example\\project\\rewrite\\rewrite_service.py",
         "symbol": "handle_add",
         "start_line": 3,
         "end_line": 4,
-        "mention_ref": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py#L3-L4",
+        "mention_ref": "C:\\example\\project\\rewrite\\rewrite_service.py#L3-L4",
         "role": "related",
         "rationale": "Selected handle_add because it is connected by graph-depth at depth 2.",
         "reasons": [
@@ -611,11 +611,11 @@
         ]
       },
       {
-        "file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py",
+        "file": "C:\\example\\project\\rewrite\\test_rewrite_api.py",
         "symbol": "test_apply_add",
         "start_line": 3,
         "end_line": 4,
-        "mention_ref": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py#L3-L4",
+        "mention_ref": "C:\\example\\project\\rewrite\\test_rewrite_api.py#L3-L4",
         "role": "test",
         "rationale": "Validation target likely to confirm the primary edit outcome.",
         "reasons": [
@@ -627,7 +627,7 @@
       }
     ],
     "related_tests": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+      "C:\\example\\project\\rewrite\\test_rewrite_api.py"
     ],
     "validation_commands": [
       "uv run pytest test_rewrite_api.py -k test_apply_add -q",
@@ -635,9 +635,9 @@
       "uv run pytest -q"
     ],
     "edit_ordering": [
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_api.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\rewrite_service.py",
-      "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\rewrite\\test_rewrite_api.py"
+      "C:\\example\\project\\rewrite\\rewrite_api.py",
+      "C:\\example\\project\\rewrite\\rewrite_service.py",
+      "C:\\example\\project\\rewrite\\test_rewrite_api.py"
     ],
     "rollback_risk": 0.3
   }

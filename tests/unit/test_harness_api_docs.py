@@ -441,7 +441,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert payload["validation_plan"]
                 assert payload["validation_plan"] == payload["edit_plan_seed"]["validation_plan"]
                 assert payload["validation_commands"]
-                # Parity fix (CEO v1.72.1 dogfood): edit-plan's top-level `confidence` /
+                # Parity fix : edit-plan's top-level `confidence` /
                 # `ask_user_before_editing` must exist and match the `agent` capsule contract's
                 # shape -- `confidence.overall` non-null, `ask_user_before_editing.required` a
                 # bool with a `reasons` list.

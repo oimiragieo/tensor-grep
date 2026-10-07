@@ -156,7 +156,7 @@ def _repo_revision_identity(
 ) -> dict[str, Any]:
     """`git rev-parse HEAD` + `git status --porcelain=v1 -b` -> commit/branch/dirty identity.
 
-    Exactly 2 git subprocess calls (the CEO's performance mandate): the porcelain `-b` flag folds
+    Exactly two Git subprocess calls: the porcelain `-b` flag folds
     the branch name into the SAME `git status` call that reports dirty entries, so a second
     `rev-parse --abbrev-ref HEAD` call is unnecessary. Fails closed to `status: "unavailable"` on
     any git error (not a repo, git missing, timeout) -- never raises, never fabricates a value.

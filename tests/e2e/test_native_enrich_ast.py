@@ -1,5 +1,5 @@
 """Full-path belt: `tg search --enrich-ast` must reach the Python sidecar through the REAL native
-release binary, not just through `CliRunner` (HUNT-4, docs/BACKLOG.md, 2026-09-13).
+release binary, not just through `CliRunner` (public command-path regression).
 
 WHY THIS FILE EXISTS
 --------------------

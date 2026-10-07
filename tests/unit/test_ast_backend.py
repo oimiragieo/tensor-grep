@@ -145,7 +145,7 @@ class TestAstBackend:
     def test_should_match_sexpr_query_via_query_cursor_on_real_tree_sitter(
         self, tmp_path, monkeypatch
     ):
-        """Regression for the tree-sitter >=0.25 `_get_query` migration (found by the Opus gate):
+        """Regression for the tree-sitter >=0.25 `_get_query` migration :
         a non-simple ``(...)`` S-expr pattern routes through ``_get_query`` -> the
         ``tree_sitter.Query(language, source)`` constructor + ``QueryCursor`` (mirroring the
         capture site in ``search()``). tree-sitter 0.26 REMOVED ``Language.query``, so on the

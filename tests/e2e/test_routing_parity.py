@@ -704,9 +704,9 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
 ):
     """Audit #97 item 1: test_empty_invocation_fallback_help_matches_public_contract already proves
     the clap fallback's auto-generated Commands: list has always contained every public command
-    name (moat and maintenance alike) -- that part of the audit's "missing moat commands" framing
+    name (capability and maintenance alike) -- that part of the audit's "missing capability commands" framing
     does not hold against current code. What the fallback lacked was a curated, agent-oriented
-    pointer to the flagship/moat commands positioned where an agent would actually see it, mirroring
+    pointer to the flagship/capability commands positioned where an agent would actually see it, mirroring
     the Typer help's "AI workflows" section. This asserts that pointer exists and appears before the
     undifferentiated ~40-command wall, not buried after it."""
     if sys.platform == "win32":
@@ -720,7 +720,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
     assert native_help.returncode == 0
     stdout = _strip_ansi(native_help.stdout)
     assert native_help.stderr.strip() == ""
-    assert "AI agent moat commands" in stdout
+    assert "Repository analysis commands" in stdout
 
     for moat_command in (
         "orient",
@@ -735,13 +735,13 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
         "mcp",
     ):
         assert moat_command in stdout, (
-            f"Missing moat command {moat_command!r} in native fallback help"
+            f"Missing capability command {moat_command!r} in native fallback help"
         )
 
-    moat_header_pos = stdout.index("AI agent moat commands")
+    moat_header_pos = stdout.index("Repository analysis commands")
     commands_list_pos = stdout.index("Commands:")
     assert moat_header_pos < commands_list_pos, (
-        "the curated moat-commands pointer must appear before the auto-generated Commands: list "
+        "the curated capability-commands pointer must appear before the auto-generated Commands: list "
         "so an agent that stops reading early still sees it"
     )
 
@@ -793,7 +793,7 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
     for result in (native_help, default_help):
         assert result.returncode == 0
         assert "Usage:" in result.stdout
-        assert "AI agent moat commands" in _strip_ansi(result.stdout)
+        assert "Repository analysis commands" in _strip_ansi(result.stdout)
         assert result.stderr.strip() == ""
 
 

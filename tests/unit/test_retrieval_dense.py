@@ -76,7 +76,7 @@ class TestDenseAvailable:
         assert "model2vec not installed" in reason
         assert "tensor-grep[semantic]" in reason
         # v1.92.1 dogfood item 3 (install-hint alignment): `tg install-dense` must be the
-        # PRIMARY hint now, ahead of the pip-extra parenthetical -- CEO dogfood flagged the old
+        # PRIMARY hint now, ahead of the pip-extra parenthetical -- dogfood flagged the old
         # message for still only mentioning `pip install 'tensor-grep[semantic]'`.
         assert "tg install-dense" in reason
         assert reason.index("tg install-dense") < reason.index("tensor-grep[semantic]"), reason
@@ -142,7 +142,7 @@ class TestDenseIndexShapeValidation:
             DenseIndex(chunks, _FixedDimModel(dim=4, row_count_delta=1))
 
     def test_encode_raw_runtime_error_becomes_backend_execution_error(self) -> None:
-        # F2 (Fable audit MED): a bare RuntimeError from model.encode (e.g. a broken/incompatible
+        # F2 : a bare RuntimeError from model.encode (e.g. a broken/incompatible
         # model2vec runtime) must never propagate raw -- it violates the module's fail-closed
         # contract. It is unrecoverable (not the deliberate shape-mismatch degrade), so it must
         # become BackendExecutionError, not crash the caller with an unhandled RuntimeError.

@@ -48,7 +48,7 @@ def _build_prepare_blast_radius_floor(
     related_call_sites: list[dict[str, Any]],
     deadline_monotonic: float | None,
 ) -> tuple[dict[str, Any], bool]:
-    """Blast-radius floor keyed on the capsule's SELECTED ``primary_target.symbol`` (CEO #5).
+    """Blast-radius floor keyed on the capsule's SELECTED ``primary_target.symbol`` .
 
     ``_collect_capsule_call_site_evidence`` (agent_capsule.py:514) only collects call-site
     evidence when the query names the primary symbol AND its pre-cap confidence is >=0.75
@@ -277,7 +277,7 @@ def _build_prepare_payload(
     include_next_action: bool = False,
     repo_map: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Thin composition (CEO #5): ONE repo-map build supplies primary target, confidence,
+    """Thin composition : ONE repo-map build supplies primary target, confidence,
     ask-user, and validation verbatim; the only NEW scan is the blast-radius floor (see
     ``_build_prepare_blast_radius_floor``). No new ranking/scan logic lives here.
 

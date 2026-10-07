@@ -450,7 +450,7 @@ def _read_path_case_review_bundle_verify_bundle(
     return mcp_server.tg_review_bundle_verify(str(escape))
 
 
-# --- round-7 coverage gap (Opus adversarial gate on #81, fix-council item #2): the #74 file-
+# --- round-7 coverage gap : the #74 file-
 # dependency primitives (tg_file_imports/tg_file_importers/tg_session_file_importers) and
 # tg_rewrite_apply's `policy` param were missed by the original round-7 sweep above -- same
 # class (a caller-named read path forwarded unconfined, echoing file existence / import

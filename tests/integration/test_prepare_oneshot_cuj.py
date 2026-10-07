@@ -1,4 +1,4 @@
-"""Real-binary TDD for `tg prepare` (CEO #5 flagship): a single edit-readiness CUJ call that
+"""Real-binary TDD for `tg prepare` : a single edit-readiness CUJ call that
 replaces the orient -> search -> agent -> route-test -> callers -> evidence -> ledger loop.
 
 Real subprocess (`python -m tensor_grep`), not CliRunner, per AGENTS.md's "dogfood the real

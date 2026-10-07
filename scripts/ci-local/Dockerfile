@@ -1,17 +1,7 @@
 # Local CI-parity harness: runs the lanes this shared dev box forbids.
 #
-# WHY THIS EXISTS
-# ---------------
-# AGENTS.md/CLAUDE.md ban `cargo build/test/check/clippy` and `tests/e2e/test_routing_parity.py`
-# on this machine, because it is a SHARED SERVER and those lanes saturate it. That ban left F5
-# (Task 8 steps 3-5), F8 (Tasks 12-13) and Task 2C -- and therefore MCP-SURFACE -- unbuildable
-# locally, and pushed every Rust verification onto GitHub runners, which costs money and minutes.
-#
-# A container does not remove CPU cost by itself. What makes this safe is the RUN-TIME CPU CAP in
-# `run.sh` (`--cpus`), which bounds the work to a fraction of the box instead of letting cargo's
-# default `-j <ncpu>` take all 16 cores. The ban's PURPOSE (do not saturate the shared box) is
-# honoured by the cap; the ban's LETTER (never run cargo here) is superseded by it, deliberately
-# and with the operator's explicit instruction.
+# Run the Linux validation lanes in a container with the CPU limit configured by
+# run.sh. A container does not impose a CPU limit by itself.
 #
 # PARITY WITH ci.yml -- every value below is copied from a named source, not guessed:
 #   * Rust toolchain      : rust_core/rust-toolchain.toml pins channel 1.96.0 + rustfmt/clippy.

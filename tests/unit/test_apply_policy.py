@@ -1974,7 +1974,7 @@ def test_run_policy_command_denies_when_exec_parent_canonicalization_fails(
     assert "could not canonicalize" in str(result["detail"])
 
 
-# --- #126 Opus re-gate: the 4th same-class edge -- UNC / network-share smuggling ---
+# --- #126 review re-gate: the 4th same-class edge -- UNC / network-share smuggling ---
 #
 # The gate reproduced a fourth bypass END-TO-END against the real _run_policy_command: a UNC
 # loopback admin-share spelling of the identical in-repo shadow gets SPAWNED. argv[0] spellings of

@@ -3,7 +3,7 @@
 Everything here is JS/TS dialect knowledge -- ESM/CJS import-binding extraction, tsconfig-aware
 module candidate resolution, re-export chasing, default-export naming, dynamic `import()` hits,
 and the test-runner command shapes -- plus the private helpers only those paths call. Split out
-of `repo_map.py` under docs/design/2026-08-19-split-floor-escape.md.
+of `repo_map.py` using late-bound `_self` attribute reads.
 
 `_javascript_parser`, `_js_ts_classify_ref_kind`, `_javascript_test_function_candidates` and
 `_javascript_test_file_uses_node_test` deliberately stay in `repo_map`: the test suite
@@ -24,7 +24,7 @@ from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_ca
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 from tensor_grep.cli.repo_map_shell_inert import Derived, DerivedFilter, Omission, render_command
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its
@@ -530,7 +530,7 @@ def _js_ts_import_update_target(
     except (OSError, UnicodeDecodeError):
         return None
 
-    # PERF increment 1 / read site 5 (Fable-designed, the "surprise 5th" site): this used to
+    # PERF increment 1 / read site 5 : this used to
     # re-read + re-parse the file on every (file, symbol, definition) pair -- edit-plan seeding
     # and _build_import_graph_consumers_from_map call it once per definition_file, profiled at
     # ~26% of edit_plan wall time. Share the parse product with every other JS/TS extractor via
@@ -717,7 +717,7 @@ def _js_ts_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    # PERF increment 1 / Section B (Fable-designed): binding resolution only needs the source
+    # PERF increment 1 / Section B : binding resolution only needs the source
     # TEXT (not a parse tree), so it now runs BEFORE the parse -- letting a symbol-absent file
     # skip tree-sitter parsing entirely below (the refs loop that follows has no prefilter,
     # unlike the caller-scan literal check, so this is the biggest single payoff in this file).

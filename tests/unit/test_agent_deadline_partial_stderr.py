@@ -1,4 +1,4 @@
-"""TDD for the v1.81.6 dogfood finding #1 (CEO-relayed, both dogfood reports flagged it as the
+"""TDD for the v1.81.6 dogfood finding #1 (relayed, both dogfood reports flagged it as the
 #1 agent confusion): `tg agent <path> --deadline N` can exit 2 with `partial: true` / a
 deadline-type `partial_reason` while `confidence.overall` is high (e.g. 0.9) and
 `ask_user_before_editing.required` is false -- a genuinely USABLE answer that merely got

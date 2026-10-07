@@ -1,10 +1,8 @@
 """Recurring re-derivation probe for MCP SDK 1.x maintenance status.
 
-Wired into the ``tensor-grep-release-drift-check`` post-release sweep as trigger T1
-(``upstream_maintenance_end``) and, by the calendar, T6 (``time_bounded_revalidation``) from
-``docs/design/2026-08-20-mcp-2-0-exposure-decision.md``. Replaces the r1 SDK-constant tripwire,
-which the council rejected because it read a constant out of an *installed* 1.x SDK and would
-essentially never observe the ecosystem moving past it (see plan ``W2.5``).
+Checks upstream maintenance and time-bounded revalidation of the MCP SDK 1.x line.
+Reading a constant from an installed SDK cannot detect upstream maintenance changes;
+this probe classifies release metadata instead.
 
 Design: classification is a **pure function** (``classify_mcp_maintenance``) over an
 already-fetched PyPI payload, so it is testable offline with fixtures. The network call lives in

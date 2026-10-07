@@ -3501,7 +3501,7 @@ fn assert_context_edit_plan_example(path: &Path) {
         "{} top-level validation_commands missing or empty",
         path.display()
     );
-    // Parity fix (CEO v1.72.1 dogfood): top-level `confidence` / `ask_user_before_editing` mirror
+    // Parity fix : top-level `confidence` / `ask_user_before_editing` mirror
     // the `agent` capsule contract's own top-level shape (`{overall, downgrade_reasons}` /
     // `{required, reasons}`) -- additive alongside the pre-existing top-level fields above.
     let confidence_overall = object

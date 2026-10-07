@@ -1,6 +1,6 @@
 """Enterprise file-size budget: census, classification, and ratchet enforcement.
 
-The standard (CEO, 2026-08-19):
+The standard (maintainer, 2026-08-19):
 
     data contracts / schemas / interface files   <=  500 lines
     core engine / business-logic modules         <= 1500 lines
@@ -74,13 +74,11 @@ _CONTRACT_PATHS = frozenset({
 
 _SOURCE_SUFFIXES = frozenset({".py", ".rs"})
 
-# Governance docs (AGENTS.md, CLAUDE.md, docs/BACKLOG.md, docs/TASK_BOARD.md) are
+# Governance docs (AGENTS.md and CLAUDE.md) are
 # REPORT-ONLY, never gated -- see governance_doc_census() below for why.
 GOVERNANCE_DOC_PATHS: tuple[str, ...] = (
     "AGENTS.md",
     "CLAUDE.md",
-    "docs/BACKLOG.md",
-    "docs/TASK_BOARD.md",
 )
 
 
@@ -139,29 +137,9 @@ def _count_lines(path: Path) -> int:
 
 
 def governance_doc_census(files: list[str] | None = None) -> list[tuple[str, int, int]]:
-    """(path, lines, bytes) for each GOVERNANCE_DOC_PATHS entry that is git-tracked.
+    """Report line and byte counts for tracked public contributor guidance.
 
-    WHY REPORT-ONLY, NOT GATED
-    ---------------------------
-    AGENTS.md and docs/BACKLOG.md are APPEND-ONLY BY DESIGN: AGENTS.md's dated
-    instrument laws (A1, A2, ...) and BACKLOG.md's council receipts accumulate
-    forever as a permanent, citable record -- that is the whole point of them.
-    The ratchet above exists to make files SHRINK; pointing it at a doc whose
-    house rule is "never edit history, only append" would forbid the exact
-    growth the doc is required to do, and the first honest append would FAIL
-    the gate ("allowlisted file above its pinned baseline"). Adding these paths
-    to file_size_allowlist.json would not fix that -- it would just make the
-    ratchet lie about ever holding, since every future append is expected to
-    grow past whatever baseline got pinned.
-
-    So this function exists purely to make the SIZE VISIBLE (a `--docs-report`
-    flag, never wired into the pass/fail exit code) so a human -- not this
-    script -- can decide when a doc has grown enough to need trimming/splitting.
-    That threshold is a CEO decision, not something this ratchet should infer.
-
-    Only git-tracked docs are counted, reusing _tracked_files()/_count_lines()
-    exactly as census() does, so an untracked worktree artifact sharing one of
-    these filenames can never be reported as if it were the real governance doc.
+    This informational report does not change the source-file budget exit status.
     """
     tracked = set(files if files is not None else _tracked_files())
     results: list[tuple[str, int, int]] = []

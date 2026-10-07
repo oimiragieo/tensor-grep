@@ -1,4 +1,4 @@
-"""TDD for CEO#8 (enterprise close-the-loop, P1): a review bundle can embed signed
+"""TDD for (enterprise close-the-loop, P1): a review bundle can embed signed
 EvidenceReceipts (Change A), and `tg review-bundle verify --against <ref>` gates the whole
 bundle closed on a stale, tampered, unsigned, untrusted, dirty, or unresolvable-ref receipt
 (Change B) -- never "unknown, so pass".
@@ -659,7 +659,7 @@ def test_cli_review_bundle_verify_unresolvable_against_exits_one_real_subprocess
 
 
 # ---------------------------------------------------------------------------
-# 5. Post-gate hardening (independent Opus review, SHIP-WITH-NITS): coverage gaps flagged by the
+# 5. Post-gate hardening : coverage gaps flagged by the
 #    gate -- receipt revision status != "present", a malformed (non-dict) evidence_receipts list
 #    entry, and NIT-1 (the important one): --min-receipts / --expect-key close the empty-bundle
 #    bypass a bundle author who controls review-bundle.json could otherwise exploit (strip every

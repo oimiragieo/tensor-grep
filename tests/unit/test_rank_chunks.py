@@ -350,7 +350,7 @@ def test_rank_chunks_combine_parameter_threads_to_fusion(monkeypatch) -> None:  
 
 def test_rank_chunks_combine_sum_recovers_literal_regression_scenario() -> None:
     """A black-box (output-order) proof of WHY the routing fix matters, reproducing the exact
-    mechanism the Opus gate found on ``literal_golden.jsonl`` (query "bind_address", the set's own
+    mechanism the review found on ``literal_golden.jsonl`` (query "bind_address", the set's own
     first entry) with real ``Bm25Index``/``DenseIndex`` objects, not hand-rolled score dicts.
 
     chunk 0 ("competitor.py") is absent from bm25 for this query but ranks BEST on the dense leg
@@ -399,7 +399,7 @@ def test_rank_chunks_combine_sum_recovers_literal_regression_scenario() -> None:
     assert max_order[0] == 0, (
         "max: chunk 0 (dense-only) and chunk 1 (bm25+dense) tie at the same best-single-leg term "
         "1/(k+1) -- the ascending-index tie-break picks chunk 0, reproducing the literal-query "
-        "regression the Opus gate found"
+        "regression the review found"
     )
 
     sum_order, _ = rank_chunks(

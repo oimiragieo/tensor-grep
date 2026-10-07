@@ -2,10 +2,8 @@
 
 WHY THIS EXISTS
 ---------------
-``cli/main.py`` is being split into sibling helper modules
-(``docs/design/2026-08-19-split-floor-escape.md``). The thing that made that split
-impossible until PR #1042 is that Python resolves a bare name through the DEFINING
-module's globals: a function that calls a monkeypatched name as a bare identifier is
+Sibling helper modules must preserve the original module's monkeypatch targets.
+Python resolves a bare name through the DEFINING module's globals: a function that calls a monkeypatched name as a bare identifier is
 welded to the file the tests patch. Move it and **the test still passes while production
 runs the unpatched original** -- a silent false green.
 

@@ -1,5 +1,5 @@
 """TDD for task #108: extend the warm session daemon (task #94 Tier-1) to serve
-``tg orient`` and ``tg agent`` (Tier-2 of the latency moat).
+``tg orient`` and ``tg agent`` (Tier-2 of the latency capability).
 
 Neither command was daemon-served before this: `orient` called `build_orient_capsule`
 directly and `agent` called `build_agent_capsule` directly, so every call paid the full
@@ -631,7 +631,7 @@ def test_agent_never_touches_daemon_when_forced_off_in_ci(tmp_path: Path, monkey
 
 
 # ------------------------------------------------------------------------------------------
-# 12. Opus-gate FIX-FIRST: the COLD `tg agent` path must keep the literal-seed rescue (recover
+# 12. review FIX-FIRST: the COLD `tg agent` path must keep the literal-seed rescue (recover
 #     callers whose symbol def sorts BEYOND the scan cap). The task #108 refactor accidentally
 #     routed cold through the rescue-LESS `_from_map` collector (making the rescue-equipped
 #     `_collect_capsule_call_site_evidence` dead code AND letting the internal

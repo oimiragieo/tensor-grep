@@ -24,8 +24,8 @@ from patch_runner_common import derive_patch_from_repo_changes, isolated_repo_pa
 
 from tensor_grep.perf_guard import write_json  # noqa: E402
 
-DEFAULT_SKILL_DIR = ROOT_DIR / ".gemini" / "skills" / "tensor-grep"
-DEFAULT_CONTEXT_PATH = ROOT_DIR / "GEMINI.md"
+DEFAULT_SKILL_DIR = ROOT_DIR / "benchmarks" / "fixtures" / "gemini" / "skills" / "tensor-grep"
+DEFAULT_CONTEXT_PATH = ROOT_DIR / "benchmarks" / "fixtures" / "gemini" / "GEMINI.md"
 DEFAULT_WORK_ROOT = Path(tempfile.gettempdir()) / "tensor_grep_gemini_ab"
 EXPECTED_SYSTEMS = frozenset({"gemini-baseline", "gemini-enhanced"})
 

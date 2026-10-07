@@ -484,7 +484,7 @@ def test_dar_fail_safe_on_parse_error_emits_no_keys_and_does_not_raise(
 ) -> None:
     paths = _write_dar_project(tmp_path)
     # task #108: build_agent_capsule now runs a REAL build_repo_map before delegating to
-    # build_agent_capsule_from_map (the map is shared with the daemon-moat call-site-evidence
+    # build_agent_capsule_from_map (the map is shared with the daemon-capability call-site-evidence
     # step instead of a second independent scan) -- that initial scan would ALSO hit the
     # _imports_and_symbols_for_path mock below and blow up before DAR's own fail-safe is ever
     # exercised. Mock it out with a minimal map, same isolation boundary the full

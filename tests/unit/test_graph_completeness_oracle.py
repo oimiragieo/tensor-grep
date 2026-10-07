@@ -1,4 +1,4 @@
-"""CEO /goal #4 (P0, "completeness you can trust"): a PERMANENT bidirectional-oracle regression
+"""/goal #4 (P0, "completeness you can trust"): a PERMANENT bidirectional-oracle regression
 gate proving the documented three-state exit-code contract (docs/CONTRACTS.md:112-113) actually
 holds for `tg importers`, `tg callers`, and `tg blast-radius`:
 
@@ -35,7 +35,7 @@ asserts ``exit_code != 0`` alongside ``exit_code == 2`` -- a wrong/dropped-edge 
 this gate, not just a correct answer PASS it. This is the bidirectional half of the oracle: a
 one-sided "does it work on a clean repo" smoke test would miss a regression that silently starts
 reporting exit 0 on a truncated scan (the exact "exit 2 sometimes means 0 hits, maybe incomplete"
-trust gap CEO /goal #4 calls out).
+trust gap /goal #4 calls out).
 
 The whole-suite autouse fixture in tests/conftest.py (``_disable_session_daemon_autostart_by_
 default``) already forces ``TG_SESSION_DAEMON_AUTOSTART=0`` for every test in this file, so these

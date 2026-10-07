@@ -14,7 +14,7 @@ from tensor_grep.core.result import SearchResult
 
 # A message shaped like a real Python exception: an absolute filesystem path
 # plus internal module structure that must never reach the MCP client.
-_SECRET_PATH = r"C:\Users\oimir\secret_project\internal\credentials_loader.py"
+_SECRET_PATH = r"C:\Users\example\secret_project\internal\credentials_loader.py"
 _LEAKY_MESSAGE = f"boom while reading {_SECRET_PATH} in module tensor_grep.internal.cache"
 
 

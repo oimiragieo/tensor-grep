@@ -1,13 +1,7 @@
 # Rebuild guide: `tg ledger` (claim / release / list / record / find)
 
-> Verified against `origin/main` `0b9d33f` (2026-08-20). Every symbol below was opened and read
-> at that revision; every command output shown was actually run against the real, installed `tg`
-> binary (`tg --version` = `1.110.16`), not described from memory. Treat the JSON in this doc as
-> a real example, not a frozen contract — re-run the commands yourself before depending on an
-> exact field name.
->
-> This is the second rebuild guide in `docs/rebuild-guides/` (see `tg-checkpoint.md`, the worked
-> template, and `README.md` for the convention).
+Examples illustrate the state format and command flow. Re-run them against the
+version being changed in a disposable directory; they are not current release evidence.
 
 ## 1. The problem this feature solves
 
@@ -28,8 +22,7 @@ the same repository. It has two independent slices under one CLI sub-app:
   recorded `receipt_sha256`. A tampered or corrupted blob raises `LedgerIntegrityError` (CLI exit
   2) rather than silently serving bad data.
 
-Both slices share one design constraint worth stating up front, because it drove the feature's
-one real historical bug (§5 below): every claim/list/release/record/find call names a `path`
+Both slices share a path-scoping constraint (§5): every claim/list/release/record/find call names a `path`
 argument, but that path is NOT simply where the on-disk index lives — see §5.
 
 ## 2. Data flow, end to end
@@ -211,7 +204,7 @@ share a symbol name under a shared ancestor scope. When a release matches nothin
 names what IS live elsewhere (`unmatched_reason` / `live_claims_elsewhere`) instead of an
 indistinguishable `released_count: 0`.
 
-**Live demonstration — this exact scenario was actually run:**
+**Example repository-scope round trip:**
 
 ```
 $ tg ledger claim . --symbol foo_bar --agent-id agentA --json      # from repo root
@@ -248,19 +241,13 @@ $ tg ledger release . --symbol nope_symbol --agent-id agentA --json
 returned `"released_count": 0`, `"unmatched_reason": "No live claim matched the given
 --claim-id/--symbol; 2 live claim(s) exist in this repository -- see live_claims_elsewhere."`,
 with `live_claims_elsewhere` naming both remaining live claims (agentC's `.`-scoped and agentB's
-`core/hooks`-scoped) — the honesty fields described above, real output.
+`core/hooks`-scoped) — the honesty fields described above, example output.
 
-**Slice 2 inherited the identical bug, fixed later.** From the module docstring: Slice 2
-(`record_finding`/`find_findings`) originally kept the old literal-path resolution deliberately
-("per the same footgun it has not (yet) been reported for") — then WAS reported, twice, in live
-external dogfoods (v1.101.7 and v1.101.9), with the identical symptom: `record` from the repo
-root and `find` from a subtree resolved to different physical indices, so a lookup returned
-nothing and a sibling agent silently recomputed an artifact that was already on disk. Both entry
-points now use `_ledger_physical_root` on the same terms as Slice 1. This is a genuine "same bug
-class shipped twice, months apart, because the justification for skipping the fix the first time
-quietly expired" lesson.
+**Shared findings scope.** Findings use `_ledger_physical_root` on the same
+terms as claims, so recording at the repository root and finding from a subtree
+operate on the same index.
 
-**Live demonstration of the Slice-2 fix (also actually run):** a finding was `record`ed from the
+**Example findings round trip:** a finding was `record`ed from the
 repo root (via `tg evidence emit --query foo_bar --out receipt.json` then `tg ledger record .
 --receipt receipt.json --artifact-kind evidence-receipt --symbol foo_bar --agent-id agentA
 --json`); `tg ledger find . --symbol foo_bar --json` from a DIFFERENT subtree (`core/hooks`)
@@ -279,7 +266,7 @@ round-trips correctly.
    $ tg ledger claim . --files "../../etc/passwd" --json
    ```
 
-   real output: `{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
+   example error: `{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
    "Refusing claim --files entry outside repo root: '../../etc/passwd'"}}`, exit code 2. The same
    refusal, same `fail_closed` error code, same exit 2, fires for an absolute path. Cite
    `_normalize_relative_file` (ledger_store.py:374) as the guard and `LedgerTraversalError`
@@ -294,10 +281,9 @@ round-trips correctly.
    $ tg ledger find . --symbol foo_bar --json
    ```
 
-   real output: `{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
+   example error: `{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
    "Finding finding-20260820210740411003-662f8209 blob content does not match its recorded
-   receipt_sha256 (tampered or corrupted)."}}`, exit code 2 (verified: the shell exit status after
-   the command was `2`). Cite `LedgerIntegrityError` (ledger_store.py:223) and the blob-hash
+   receipt_sha256 (tampered or corrupted)."}}`, exit code 2. Cite `LedgerIntegrityError` (ledger_store.py:223) and the blob-hash
    re-check at `_verify_finding_blob` (ledger_store.py:1314) — the recorded `receipt_sha256` is
    re-derived from the blob's actual bytes on every read, not trusted from the index alone.
 
@@ -319,7 +305,7 @@ round-trips correctly.
    non-git-repo case demonstrated in §7: `list` from an unrelated non-git directory correctly
    returns `count: 0` rather than crashing or fabricating a match.
 
-## 7. Non-git fallback (real, run)
+## 7. Non-git fallback
 
 A fresh, non-git directory with a subdirectory. `tg ledger claim . --symbol z --agent-id a1
 --json` from the top returns `scope: "."` (same as the git case — `_normalize_scope` degrades
@@ -337,8 +323,7 @@ python -m pytest tests/unit/test_ledger_store.py tests/unit/test_ledger_cli.py \
     tests/unit/test_ledger_concurrency.py tests/unit/test_findings_ledger_is_repo_scoped.py -q
 ```
 
-Real result when run against this revision: **135 passed** (no skips, no failures). A handful of
-test names are close to a spec on their own:
+Tests that describe important behavior include:
 
 - `test_ledger_store.py::test_claim_refuses_files_outside_root` (trap 2)
 - `test_ledger_store.py::test_claim_subpath_rolls_up_into_root_list` (§5 rollup)
@@ -366,7 +351,7 @@ python -m pytest tests/unit/test_public_docs_governance.py tests/unit/test_skill
   stale-lock reclaim) is treated as a given, shared dependency — not re-derived here. See
   `tg-checkpoint.md` if a locking deep-dive is needed (`checkpoint_store.py` uses the same
   primitive).
-- No MCP tool wraps `tg ledger` (verified, §2/§3) — this guide covers only the CLI surface.
+- No MCP tool wraps `tg ledger` — this guide covers only the CLI surface.
 - `--artifact-kind` values other than `evidence-receipt` (`blast-radius`, `context-pack`,
-  `repo-map`) were not independently exercised in this guide's live demo; only their presence in
-  `tg ledger record --help`'s option list is cited.
+  `repo-map`) are not illustrated by the round trip above. Exercise each required artifact kind
+  when rebuilding the feature.

@@ -1,6 +1,6 @@
 """`tg scan` / `tg test` ruleset loading, suppression, and AST-scan payload construction.
 
-Split out of `cli/main.py` (see `docs/design/2026-08-19-split-floor-escape.md`). This is the
+Split out of `cli/main.py` (see `src/tensor_grep/cli/_main_binding.py`). This is the
 whole `--ruleset` pipeline behind `tg scan`: reading `sgconfig.yml` and inline rule specs,
 resolving baselines and suppressions, running the scan, and shaping the JSON payload.
 
@@ -70,7 +70,7 @@ def _load_inline_rule_specs(
         need anchors/aliases, and an aliased node graph is a billion-laughs
         memory-exhaustion vector: the downstream ``str()`` coercions on ``id``/``severity``/
         ``message`` (below) deep-walk the SHARED alias graph and expand it ~9^depth. Audit
-        #95 Part-2 Opus gate BLOCK proved a 469-byte aliased payload hangs >15s -- the
+        #95 Part-2 review BLOCK proved a 469-byte aliased payload hangs >15s -- the
         ``_MAX_INLINE_RULES_CHARS`` length cap admits depth ~1000 while detonation is at
         depth ~9, so the length cap alone is insufficient; reject at the loader level. This
         shared helper guards BOTH the MCP ``tg_ruleset_scan(inline_rules=...)`` tool and the

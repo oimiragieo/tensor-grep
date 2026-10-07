@@ -1,7 +1,6 @@
 """`tg doctor`'s payload assembly and text renderer.
 
-The tail half of the `cli/doctor_report.py` split (2026-08-20,
-`docs/design/2026-08-19-split-floor-escape.md`): `_build_doctor_payload` calls the whole
+`_build_doctor_payload` calls the whole
 `_doctor_*` probe family in `cli/doctor_report.py` and shapes the JSON envelope;
 `_render_doctor_payload` turns that envelope into the human-readable report. Nothing in
 `doctor_report.py` calls back into this module, so the dependency runs one way.

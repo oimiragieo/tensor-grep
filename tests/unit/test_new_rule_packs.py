@@ -209,7 +209,7 @@ _CANONICAL_SECURITY_PACK_NAMES = {
 
 
 # ---------------------------------------------------------------------------
-# CEO#6(c): resolve-only 1:1 ruleset mental-model aliases.
+# resolve-only 1:1 ruleset mental-model aliases.
 # ---------------------------------------------------------------------------
 
 

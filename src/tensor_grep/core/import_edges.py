@@ -21,7 +21,7 @@ from tensor_grep.core.python_parse import parse_python
 TOP_LEVEL_PACKAGES = ("cli", "core", "backends", "io")
 
 #: The package-pair edges the frozen baseline itself labels as PRE-EXISTING LAYERING
-#: VIOLATIONS (see ``docs/design/2026-09-07-import-edges-baseline.json``). The package-pair
+#: VIOLATIONS (see ``tests/fixtures/governance/import-edges-baseline.json``). The package-pair
 #: freeze cannot ratchet these down: once ``("core", "cli")`` is in the baseline set, an
 #: unbounded number of NEW ``core -> cli`` imports pass it, because the set records which
 #: KINDS of edge exist and not how many or which modules carry them. That is the

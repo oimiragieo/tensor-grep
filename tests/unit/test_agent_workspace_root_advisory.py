@@ -1,4 +1,4 @@
-"""Tests for the multi-project-workspace-root advisory on `tg agent` (CEO #2 auto-narrow,
+"""Tests for the multi-project-workspace-root advisory on `tg agent` (auto-narrow,
 2026-07-20) -- the agent-capsule sibling of test_orient_workspace_root_advisory.py.
 
 `build_agent_capsule_from_map` now computes the SAME `_detect_workspace_root` (orient_capsule.py)
@@ -75,7 +75,7 @@ def test_agent_capsule_does_not_perturb_exit_relevant_fields(tmp_path: Path) -> 
 
 
 def test_agent_capsule_single_project_workspace_root_detected_absent(tmp_path: Path) -> None:
-    """THE NEGATIVE / NO-REGRESSION GUARD (literal CEO fixture): one pyproject.toml at root, a
+    """THE NEGATIVE / NO-REGRESSION GUARD : one pyproject.toml at root, a
     plain src/ dir -- must never trigger, end to end, with no monkeypatching at all."""
     _write_single_project(tmp_path)
 

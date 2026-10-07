@@ -6,7 +6,7 @@ because the ast-grep backend is absent. Measured on the PUBLISHED v1.111.1 wheel
 container. A listing that advertises 33 runnable rules when zero of them can execute is worse than
 an honest "unavailable here": it sends the user to a command that fails and gives them no reason.
 
-This is the ADVERTISEMENT half of RULESET-UNREACHABLE-ON-STOCK-INSTALL (docs/BACKLOG.md). It does
+This tests availability disclosure, not installation of the scanner backend. It does
 not make the rulesets work; it stops the listing from overstating what this install can do.
 
 Both arms are exercised, because a disclosure that is always printed is as useless as one that is

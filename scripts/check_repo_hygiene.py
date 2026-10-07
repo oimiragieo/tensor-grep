@@ -11,6 +11,177 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_TRACKED_FILES = ("rust_core/Cargo.lock",)
 RUST_PACKAGE_NAME = "tensor_grep_rs"
 
+# New public documentation and repository configuration require an explicit review.
+# Source files remain extensible within the established implementation directories.
+APPROVED_ROOT_FILES = frozenset({
+    ".dockerignore",
+    ".gitattributes",
+    ".gitignore",
+    ".gitmodules",
+    ".tg-registration.toml",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "SECURITY.md",
+    "SKILL.md",
+    "mkdocs.yml",
+    "pyproject.toml",
+    "uv.lock",
+})
+APPROVED_ROOT_DIRECTORIES = frozenset({
+    ".claude",
+    ".github",
+    "benchmarks",
+    "docs",
+    "npm",
+    "rust_core",
+    "scripts",
+    "src",
+    "tests",
+})
+APPROVED_GITHUB_FILES = frozenset({
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/config.yml",
+    ".github/ISSUE_TEMPLATE/docs.yml",
+    ".github/ISSUE_TEMPLATE/feature_request.yml",
+    ".github/ISSUE_TEMPLATE/question.yml",
+    ".github/dependabot.yml",
+    ".github/workflows/audit.yml",
+    ".github/workflows/benchmark.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/dependabot-automation.yml",
+    ".github/workflows/issue-triage.yml",
+    ".github/workflows/public-gpu-proof.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/stacked-pr-guard.yml",
+    ".github/workflows/trust-benchmark.yml",
+})
+APPROVED_AGENT_FILES = frozenset({
+    ".claude/skills/tensor-grep/SKILL.md",
+    ".claude/skills/tensor-grep/REFERENCE.md",
+    ".claude/skills/tensor-grep-build-and-env/SKILL.md",
+    ".claude/skills/tensor-grep-architecture-contract/SKILL.md",
+    ".claude/skills/tensor-grep-add-language/SKILL.md",
+    ".claude/skills/tensor-grep-validation-and-qa/SKILL.md",
+    ".claude/skills/tensor-grep-docs-and-writing/SKILL.md",
+})
+APPROVED_DOC_FILES = frozenset({
+    "docs/CI_PIPELINE.md",
+    "docs/CONTRACTS.md",
+    "docs/ENGINEER_ONBOARDING.md",
+    "docs/EXPERIMENTAL.md",
+    "docs/HOTFIX_PROCEDURE.md",
+    "docs/ONBOARDING_CI_LOCAL.md",
+    "docs/RELEASE_CHECKLIST.md",
+    "docs/SUPPORT_MATRIX.md",
+    "docs/agent_outcome_join.md",
+    "docs/architecture.md",
+    "docs/assets/logo.jpg",
+    "docs/benchmarks.md",
+    "docs/benchmarks_ast.md",
+    "docs/enterprise_review_bundle_ci.md",
+    "docs/examples/ast_run.json",
+    "docs/examples/attempt_ledger.json",
+    "docs/examples/audit_manifest_verify.json",
+    "docs/examples/blast_radius.json",
+    "docs/examples/blast_radius_plan.json",
+    "docs/examples/blast_radius_render.json",
+    "docs/examples/calibrate.json",
+    "docs/examples/callers.json",
+    "docs/examples/context_pack.json",
+    "docs/examples/context_render.json",
+    "docs/examples/defs.json",
+    "docs/examples/defs_provider_disagreement.json",
+    "docs/examples/edit_plan.json",
+    "docs/examples/gpu_cpu_fallback_search.json",
+    "docs/examples/gpu_sidecar_search.json",
+    "docs/examples/impact.json",
+    "docs/examples/index_search.json",
+    "docs/examples/mcp_rewrite_diff.json",
+    "docs/examples/multi_session_attempt_ledger.json",
+    "docs/examples/multi_task_attempt_ledger.json",
+    "docs/examples/patch_bakeoff.json",
+    "docs/examples/patch_bakeoff_incomplete.json",
+    "docs/examples/patch_bakeoff_no_patch.json",
+    "docs/examples/provider_status_unavailable.json",
+    "docs/examples/refs.json",
+    "docs/examples/repo_map.json",
+    "docs/examples/rewrite_apply_verify.json",
+    "docs/examples/rewrite_apply_verify_validation_failed.json",
+    "docs/examples/rewrite_plan.json",
+    "docs/examples/ruleset_scan.json",
+    "docs/examples/rulesets.json",
+    "docs/examples/search.json",
+    "docs/examples/search.ndjson",
+    "docs/examples/session_context.json",
+    "docs/examples/session_invalid_request_stale.json",
+    "docs/examples/session_open.json",
+    "docs/examples/source.json",
+    "docs/getting-started.md",
+    "docs/gpu_crossover.md",
+    "docs/harness_api.md",
+    "docs/harness_cookbook.md",
+    "docs/index.md",
+    "docs/installation.md",
+    "docs/multi_agent_context_plane.md",
+    "docs/package_manager_publish.md",
+    "docs/rebuild-guides/README.md",
+    "docs/rebuild-guides/cache-and-schema-versioning.md",
+    "docs/rebuild-guides/tg-checkpoint.md",
+    "docs/rebuild-guides/tg-ledger.md",
+    "docs/rebuild-guides/verification-checklist.md",
+    "docs/routing_policy.md",
+    "docs/runbooks/cache-management.md",
+    "docs/runbooks/gpu-troubleshooting.md",
+    "docs/runbooks/resident-worker.md",
+    "docs/session_daemon_protocol.md",
+    "docs/subprocess-output-policy-inventory.json",
+    "docs/subprocess-output-policy-inventory.md",
+    "docs/subprocess-output-policy.md",
+    "docs/tool_comparison.md",
+})
+PRIVATE_NOTE_NAMES = frozenset({
+    "gates.md",
+    "memory.md",
+    "session_handoff.md",
+    "continuation_plan.md",
+    "gemini.md",
+    "backlog.md",
+    "task_board.md",
+})
+APPROVED_ASSISTANT_FIXTURES = frozenset({
+    "benchmarks/fixtures/gemini/GEMINI.md",
+})
+
+
+def publication_boundary_reason(path: str) -> str | None:
+    parts = path.split("/")
+    if any(part == ".env" or part.startswith(".env.") for part in parts):
+        return "environment configuration is private"
+    if parts[-1].lower() in PRIVATE_NOTE_NAMES and path not in APPROVED_ASSISTANT_FIXTURES:
+        return "private operating notes do not belong in the public repository"
+    if len(parts) == 1 and path not in APPROVED_ROOT_FILES:
+        return "root file has not been approved for publication"
+    if len(parts) > 1 and parts[0] not in APPROVED_ROOT_DIRECTORIES:
+        return "root directory has not been approved for publication"
+    if parts[0] == ".github" and path not in APPROVED_GITHUB_FILES:
+        return "GitHub configuration has not been approved for publication"
+    if parts[0] == ".claude" and path not in APPROVED_AGENT_FILES:
+        return "agent configuration has not been approved for publication"
+    if parts[0] == "docs" and path not in APPROVED_DOC_FILES:
+        return "documentation has not been approved for publication"
+    if (
+        any(part.startswith(".") for part in parts[1:])
+        and path != "scripts/release-templates/.release_notes.md.j2"
+    ):
+        return "nested local configuration has not been approved for publication"
+    return None
+
+
 EXPLICIT_FORBIDDEN_TRACKED_PATHS = {
     ".coverage",
     ".env",
@@ -89,6 +260,8 @@ def _cargo_lock_package_version(content: str) -> str:
 
 
 def _forbidden_tracked_reason(path: str) -> str | None:
+    if reason := publication_boundary_reason(path):
+        return reason
     if path in EXPLICIT_FORBIDDEN_TRACKED_PATHS:
         return "tracked scratch/debug artifact"
     if NESTED_ROOT_SCRATCH_FILE_RE.fullmatch(path):

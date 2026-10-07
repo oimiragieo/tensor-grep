@@ -88,7 +88,7 @@ def test_fallback_none_when_common_parent_outside_root() -> None:
 
 
 def test_fallback_none_when_dotdot_escapes_root() -> None:
-    # Defense-in-depth (Opus gate): a ``..``-prefixed path lexically "starts with" root but
+    # Defense-in-depth : a ``..``-prefixed path lexically "starts with" root but
     # escapes it. The unhardened guard (plain ``relative_to``) would emit ``/repo/../../etc/x``;
     # the normpath collapse + ``..``-in-parts check must reject it. Unreachable in the current
     # wiring (all callers pre-resolve + skip symlinks) but the confinement guard must be

@@ -545,7 +545,7 @@ def test_select_ast_backend_should_reject_ast_grep_metavariable_pattern_when_wra
 def test_select_ast_backend_prefers_wrapper_when_ast_grep_available(monkeypatch):
     """Invariant C (delete-dead-lsp-tensor-gnn): with ast-grep AVAILABLE, tg run/tg scan MUST
     select the wrapper even for a native-shaped pattern with ast_prefer_native=True. This is the
-    exact production scenario the Opus gate flagged: tree-sitter present (native is_available now
+    exact production scenario the review flagged: tree-sitter present (native is_available now
     True) + ast-grep present. The native tree-sitter AstBackend uses a different query DSL and
     returns different results, so it must NOT be silently preferred -- that would change results
     for every ast-grep + tree-sitter box without CUDA. (Native-as-CPU-default is task #141.)
@@ -1132,7 +1132,7 @@ def test_typer_run_rejects_existing_path_with_semantic_options_without_pattern(t
 
 
 # ---------------------------------------------------------------------------
-# CEO#6(b): tg run zero-match remediation (default text / --files-with-matches / --json).
+# tg run zero-match remediation (default text / --files-with-matches / --json).
 # ---------------------------------------------------------------------------
 
 
@@ -1366,7 +1366,7 @@ def test_scan_command_source_never_calls_run_remediation_helper():
 
 
 # ---------------------------------------------------------------------------
-# CEO#6(a): honest error when a $-metavariable pattern needs ast-grep but `sg` is absent.
+# honest error when a $-metavariable pattern needs ast-grep but `sg` is absent.
 # ---------------------------------------------------------------------------
 
 

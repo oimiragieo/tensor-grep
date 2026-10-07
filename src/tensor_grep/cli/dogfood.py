@@ -21,8 +21,6 @@ RELEASE_DOCS_GOVERNANCE_PATHS = (
     "AGENTS.md",
     "README.md",
     "SKILL.md",
-    "docs/SESSION_HANDOFF.md",
-    "docs/CONTINUATION_PLAN.md",
     "docs/CONTRACTS.md",
     "tests/unit/test_public_docs_governance.py",
 )

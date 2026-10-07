@@ -20,8 +20,6 @@ RELEASE_DOC_PATHS = (
     "AGENTS.md",
     "README.md",
     "SKILL.md",
-    "docs/SESSION_HANDOFF.md",
-    "docs/CONTINUATION_PLAN.md",
     "docs/CONTRACTS.md",
 )
 # The full set of blocking gates the `release` (Semantic Release) job must depend on. Spot-checking

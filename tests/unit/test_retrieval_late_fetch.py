@@ -168,7 +168,7 @@ def test_fetch_download_exceeding_byte_cap_is_rejected(
 
 
 def test_download_exceeds_total_deadline_raises(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-    # H-new (Opus security-gate nit #87): `_download_bounded` must bound the TOTAL wall-clock
+    # H-new : `_download_bounded` must bound the TOTAL wall-clock
     # time of a download, not just the per-recv socket timeout and the total byte cap. A
     # malicious/compromised HF server could slow-drip bytes forever -- each individual recv small
     # and fast enough to dodge both existing bounds -- and hang the fetch indefinitely.

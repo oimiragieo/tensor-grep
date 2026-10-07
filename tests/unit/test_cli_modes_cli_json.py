@@ -1106,7 +1106,7 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     popen_calls: list[list[str]] = []
 
     locked_error = (
-        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "failed to remove file `C:\\Users\\example\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
         "The process cannot access the file because it is being used by another process. "
         "(os error 32)"
     )
@@ -1172,9 +1172,9 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
     monkeypatch, tmp_path
 ):
     popen_calls: list[list[str]] = []
-    daemon_root = r"C:\dev\projects\tensor-grep"
+    daemon_root = r"C:\example\project"
     locked_error = (
-        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "failed to remove file `C:\\Users\\example\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
         "The process cannot access the file because it is being used by another process. "
         "(os error 32)"
     )
@@ -1247,7 +1247,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
     popen_calls: list[list[str]] = []
 
     locked_error = (
-        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "failed to remove file `C:\\Users\\example\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
         "The process cannot access the file because it is being used by another process. "
         "(os error 32)"
     )
@@ -1592,17 +1592,17 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
         " Downloaded cryptography\n"
         "Prepared 14 packages in 1.00s\n"
         "error: failed to remove file "
-        "`C:\\Users\\oimir\\.tensor-grep\\.venv\\Lib\\site-packages\\../../Scripts\\tg.exe`: "
+        "`C:\\Users\\example\\.tensor-grep\\.venv\\Lib\\site-packages\\../../Scripts\\tg.exe`: "
         "The process cannot access the file because it is being used by another process. "
         "(os error 32)"
     )
     pip_missing_error = (
-        "C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\python.exe: No module named pip"
+        "C:\\Users\\example\\.tensor-grep\\.venv\\Scripts\\python.exe: No module named pip"
     )
     ensurepip_locked_error = (
         "ERROR: Could not install packages due to an OSError: [WinError 32] "
         "The process cannot access the file because it is being used by another process: "
-        "'c:\\users\\oimir\\.tensor-grep\\.venv\\scripts\\tg.exe'\n"
+        "'c:\\users\\example\\.tensor-grep\\.venv\\scripts\\tg.exe'\n"
         "Check the permissions."
     )
 

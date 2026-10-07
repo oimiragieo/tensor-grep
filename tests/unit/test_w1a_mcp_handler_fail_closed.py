@@ -5,7 +5,7 @@ WHY THIS FILE EXISTS
 ``docs/plans/2026-08-20-worldclass-closeout-plan.md`` W1.3 RED-3: a classification of
 INTENTIONAL-BOUNDARY is a *claim about behaviour*, so on the network-reachable MCP surface it
 gets a behavioural test rather than a reading. Every handler classified INTENTIONAL-BOUNDARY in
-``docs/audits/2026-08-20-handler-dispositions.json`` for the four ``cli/mcp_*`` modules is
+``tests/fixtures/governance/handler-dispositions.json`` for the four ``cli/mcp_*`` modules is
 represented here: the tool's own success-path callee is forced to raise, and the tool must
 answer with an EXPLICIT error -- never a clean, empty-but-successful result, which is the exact
 shape ``AGENTS.md``'s Backend Fail-Closed Contract forbids, and never a raw exception escaping

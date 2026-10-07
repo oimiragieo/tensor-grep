@@ -15,7 +15,7 @@ Root-only, exactly matching the native engine's scope (`native_search.rs::build_
 `index.rs::collect_file_entries`'s unconditional `add_ignore` trio): no parent-directory ascent,
 no nested-directory walk. NOT `--no-require-git`: that would additionally pull in nested and
 global gitignores via rg's normal parent-ascending discovery, diverging from tg's deliberately
-root-only scope (`docs/BACKLOG.md:154`).
+root-only scope (`src/tensor_grep/cli/rg_root_ignore.py`).
 """
 
 from __future__ import annotations

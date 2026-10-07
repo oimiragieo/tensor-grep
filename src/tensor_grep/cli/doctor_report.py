@@ -1,6 +1,6 @@
 """`tg doctor`: every probe that feeds the diagnostics payload, and the text renderer.
 
-Split out of `cli/main.py` (see `docs/design/2026-08-19-split-floor-escape.md`). Holds the
+Split out of `cli/main.py` (see `src/tensor_grep/cli/_main_binding.py`). Holds the
 whole `_doctor_*` probe family -- installation health, PATH/launcher shadowing, the LSP and
 ast-grep provider probes, GPU tier and runtime probes, cache and daemon status -- plus
 `_build_doctor_payload` and `_render_doctor_payload`. The `doctor` COMMAND itself stays in
@@ -439,7 +439,7 @@ def _doctor_ast_grep_status() -> dict[str, Any]:
 
 
 def _doctor_dense_model_status() -> dict[str, Any]:
-    """CEO#7: has the `tg find` / `tg search --semantic` dense-embedding leg been fetched?
+    """has the `tg find` / `tg search --semantic` dense-embedding leg been fetched?
 
     A pure filesystem check (mirrors `load_dense_model`'s own "is it fetched" test -- does the
     directory exist -- rather than actually loading the model, so this stays cheap for `tg doctor`)
@@ -593,7 +593,7 @@ def _doctor_rust_binary_remediation(
     ) or rust_binary_version_status == "stale-skipped":
         return (
             "Rebuild the in-tree native tg binary, for example "
-            "`C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml "
+            "`cargo build --manifest-path rust_core/Cargo.toml "
             "--release`, or set TG_NATIVE_TG_BINARY to opt in to a specific native binary."
         )
     if rust_binary_version_status == "mismatch":

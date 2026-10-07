@@ -647,7 +647,7 @@ def _warn_windows_single_quote_pattern(pattern: str) -> None:
         )
 
 
-# CEO#6(b): static idiom catalog for zero-match `tg run` remediation. Deliberately NOT a
+# static idiom catalog for zero-match `tg run` remediation. Deliberately NOT a
 # "did-you-mean X" correction against the user's actual pattern -- a guessed correction could
 # be actively wrong and mislead the caller (AGENTS.md's Backend Fail-Closed / honest-empty
 # discipline); a static shape catalog can never be wrong, only unhelpful.

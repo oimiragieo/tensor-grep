@@ -1,6 +1,6 @@
 """W1-b: SILENT-SWALLOW hardening receipts + behavioural fail-closed proof for the four
 `cli/doctor_report.py` / `cli/native_frontdoor.py` / `cli/windows_launcher.py` / `cli/ast_scan.py`
-handlers dispositioned in ``docs/audits/2026-08-20-handler-dispositions.json``.
+handlers dispositioned in ``tests/fixtures/governance/handler-dispositions.json``.
 
 RED-2 (per SILENT-SWALLOW). ``_doctor_ast_cache_status`` used to be
 ``except Exception: pass``, which left ``stale`` at whatever it was set to before the

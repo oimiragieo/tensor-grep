@@ -111,7 +111,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # also matched checkpoint_store's #297 data-loss. See the header note on where the
     # "model the class" rule stops.
     # 15 -> 6 + 5 + 4 by the cli/main.py SPLIT (2026-08-20,
-    # docs/design/2026-08-19-split-floor-escape.md). NOT a fix and NOT a regression: nine of the
+    # src/tensor_grep/cli/_main_binding.py). NOT a fix and NOT a regression: nine of the
     # fifteen handlers moved, byte-identical, into two extracted siblings, and this census is
     # keyed by FILE. The arithmetic is spelled out because this file has been burned by a hand
     # count before, and because the invariant that matters here is CONSERVATION, not each

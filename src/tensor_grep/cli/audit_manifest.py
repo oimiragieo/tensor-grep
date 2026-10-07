@@ -28,7 +28,7 @@ _REVIEW_BUNDLE_COMPONENTS = (
     "scan_results",
     "checkpoint_metadata",
     "diff",
-    # CEO#8 enterprise close-the-loop: an OPTIONAL list of embedded EvidenceReceipt objects.
+    # enterprise close-the-loop: an OPTIONAL list of embedded EvidenceReceipt objects.
     # Deliberately NOT added to _REVIEW_BUNDLE_REQUIRED_COMPONENTS below -- every existing
     # receipt-less bundle (on disk from a prior tg version, or freshly created without --receipt)
     # must stay byte-valid and verify green. Because this tuple drives BOTH create_review_bundle's
@@ -109,16 +109,10 @@ def _normalize_optional_str(value: Any) -> str | None:
 def _resolve_root(path: Path) -> Path:
     # KNOWN DIVERGENT TWIN (2026-08-23, council finding, NOT fixed here).
     #
-    # This is byte-identical to the pre-fix `session_store._resolve_root`, which was anchored to
-    # the project root on 2026-08-23 to close G4.1/G4.2 (a subtree got its own session store and
-    # could not see a daemon started at the repo root). This copy still returns the caller's path
-    # as-is, so `_audit_dir` has the SAME cwd-keying behaviour: an audit manifest written from
-    # `<repo>/src` lands in `src/.tensor-grep/` and is not found from the repo root.
-    #
-    # Deliberately left alone. The 2026-08-23 slice was scoped to session/daemon lookups, and
-    # widening it here without its own RED arm and a check for existing on-disk manifests would be
-    # exactly the silent scope expansion that slice forbade. Recorded so the next reader knows it
-    # is a KNOWN gap rather than an oversight -- see docs/BACKLOG.md.
+    # Audit storage remains scoped to the caller's directory: a manifest written from
+    # `<repo>/src` lands in `src/.tensor-grep/` and is not discovered from the repo root.
+    # This differs from project-root-scoped session storage. Changing it requires an
+    # explicit policy for existing manifests so a move does not silently orphan them.
     resolved = path.expanduser().resolve()
     return resolved if resolved.is_dir() else resolved.parent
 
@@ -488,7 +482,7 @@ def verify_review_bundle(
             errs = manifest_result.get("errors") or []
             manifest_signature_error = errs[0] if errs else "Embedded manifest signature invalid."
 
-    # CEO#8 enterprise close-the-loop (Change B): re-verify each embedded EvidenceReceipt's
+    # enterprise close-the-loop (Change B): re-verify each embedded EvidenceReceipt's
     # signature/trust via the SAME crypto `tg evidence verify` uses (never reimplemented here), and
     # -- only when `against` is supplied -- its freshness against a resolved git ref. An
     # unresolvable `--against` ref fails the WHOLE bundle closed regardless of whether any receipts
@@ -544,7 +538,7 @@ def verify_review_bundle(
     against_resolution_valid = against_check is None or bool(against_check["valid"])
     receipts_valid = all(bool(entry["valid"]) for entry in receipt_checks)
 
-    # NIT-1 (post-gate hardening, CEO#8): close the empty-bundle bypass. Without an opt-in
+    # NIT-1 : close the empty-bundle bypass. Without an opt-in
     # minimum, `evidence_receipts` null/absent/[] trivially passes (`all([]) == True`) and
     # `bundle_sha256` is cosmetic against an author who controls review-bundle.json -- they can
     # strip every receipt, recompute the KEYLESS checksums, and greenlight the gate with NO

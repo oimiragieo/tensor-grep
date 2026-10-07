@@ -735,8 +735,6 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
         "AGENTS.md:release_docs_current_tag:tf",
         "README.md:release_docs_current_tag:tf",
         "SKILL.md:release_docs_current_tag:tf",
-        "docs/SESSION_HANDOFF.md:release_docs_current_tag:tf",
-        "docs/CONTINUATION_PLAN.md:release_docs_current_tag:tf",
         "docs/CONTRACTS.md:release_docs_current_tag:tf",
     }
     missing_toml = sorted(required_toml_entries - set(version_toml))

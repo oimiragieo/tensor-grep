@@ -139,8 +139,8 @@ def test_deterministic_repeated_calls_with_weights() -> None:
 # by construction: a chunk's fused score is the BEST single-leg contribution it earns, never the
 # sum of all legs -- so a weak/near-floor leg (bm25 on a vocabulary-mismatched NL query) can only
 # ever HELP a doc's rank (if it ranks the doc even higher than the strong leg did) and can never
-# DRAG a strong leg's pick down by simply failing to rank it. See docs/PAPER.md for the full
-# golden-set evidence; these tests pin the MECHANISM in isolation.
+# DRAG a strong leg's pick down by simply failing to rank it. These tests pin the mechanism
+# in isolation; retrieval quality requires a separate corpus evaluation.
 
 
 def test_default_combine_is_max() -> None:

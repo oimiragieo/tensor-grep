@@ -1,4 +1,4 @@
-"""PERF increment 1 (Fable-designed): parse-product cache.
+"""PERF increment 1 : parse-product cache.
 
 _js_ts_parser_symbols, _js_ts_references_and_calls, _rust_parser_symbols,
 _rust_references_and_calls, and _js_ts_import_update_target each used to independently

@@ -483,7 +483,7 @@ def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
     reason="Rich legacy Windows pipe workaround is Windows-specific.",
 )
 def test_main_module_import_should_not_disable_rich_as_a_side_effect():
-    # Regression guard for the "order-dependent help flake" (docs/BACKLOG.md): merely importing
+    # Regression guard for the "order-dependent help flake": merely importing
     # tensor_grep.cli.main -- which many unrelated modules do, for helper symbols -- must never
     # mutate process-wide TYPER_USE_RICH. That mutation belongs to main_entry() only, scoped to
     # the actual CLI invocation, not to whichever module happens to import this one first.
@@ -512,7 +512,7 @@ def test_bootstrap_main_entry_should_disable_rich_when_windows_stdout_is_redirec
     # cli.main.main_entry(). Via the real bootstrap -> _run_full_cli() launcher path, placing it
     # in cli.main.main_entry() runs too late: Rich's render mode is already resolved by then, so
     # it silently stayed enabled and truncated long option names in `tg`'s real --help output
-    # (docs/BACKLOG.md "the order-dependent help flake is deterministic").
+    # Bootstrap must choose the mode before Typer begins help rendering.
     from tensor_grep.cli import bootstrap as cli_bootstrap
 
     monkeypatch.delenv("TYPER_USE_RICH", raising=False)

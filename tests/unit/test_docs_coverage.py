@@ -262,7 +262,7 @@ def test_render_text_is_ascii_and_lists_uncovered(tmp_path):
 
 
 # ==================================================================================================
-# CEO v1.72.1 dogfood M1: docs-coverage was missing --deadline entirely (repo-scanning command like
+# v1.72.1 dogfood M1: docs-coverage was missing --deadline entirely (repo-scanning command like
 # its siblings). Mirrors test_repo_map_deadline.py's "already expired" idiom -- an ALREADY-PAST
 # absolute deadline (deadline_seconds=-1.0 -> time.monotonic() - 1.0) deterministically trips the
 # walk's own deadline check on its very first iteration, with zero wall-clock racing (no dependency

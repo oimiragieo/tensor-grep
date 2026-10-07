@@ -1,4 +1,4 @@
-"""TDD for the #74 moat: `tg imports FILE` / `tg importers FILE [ROOT]`.
+"""TDD for the #74 capability: `tg imports FILE` / `tg importers FILE [ROOT]`.
 
 The scoped file-dependency primitive that closes the P4 benchmark gap (docs/benchmarks.md):
 `tg map` alone made tg ~10x WORSE than grep on file-dependency lookups because it had no
@@ -933,7 +933,7 @@ def test_session_importers_matches_cold_importers(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# Dogfood #104 (P0, CEO 1.54.6/WSL2): `tg importers` FILE-relative-to-ROOT path DOUBLING.
+# Dogfood #104 : `tg importers` FILE-relative-to-ROOT path DOUBLING.
 #
 # `build_file_importers_from_map` used to assume ANY non-absolute FILE arg was meant relative to
 # ROOT (`repo_root / resolved_file`). From a PARENT cwd, a FILE arg typed relative to CWD (the
@@ -1461,7 +1461,7 @@ def test_build_file_importers_never_asserts_edge_for_unresolved_dynamic_import(
 
 
 # ---------------------------------------------------------------------------------------------
-# #152 fix (CEO v1.69.3 dogfood, 2 HIGH): `sys.path.insert`/`sys.path.append` path-hacked
+# #152 fix : `sys.path.insert`/`sys.path.append` path-hacked
 # modules. Before this fix, a file that made a sibling/vendored directory importable via a
 # same-repo path hack (e.g. `sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))`
 # then `from mymod import x`) was left `external`/`resolved=None` on the forward side
@@ -1471,7 +1471,7 @@ def test_build_file_importers_never_asserts_edge_for_unresolved_dynamic_import(
 
 
 def test_build_file_imports_resolves_sys_path_insert_hacked_module(tmp_path: Path) -> None:
-    """The exact CEO dogfood repro shape: `sys.path.insert(0, os.path.join(
+    """The exact dogfood repro shape: `sys.path.insert(0, os.path.join(
     os.path.dirname(__file__), "lib"))` then `from mymod import x` must resolve `mymod` to the
     real file under `lib/`, not stay external."""
     project = tmp_path / "project"
@@ -1750,7 +1750,7 @@ def test_build_file_imports_sys_path_insert_here_alias_resolves(tmp_path: Path) 
 
 
 # ---------------------------------------------------------------------------------------------
-# CEO dogfood feature 6 -- the dynamic-import LITERAL slice. The base recall (#93 SUB-1, block
+# dogfood feature 6 -- the dynamic-import LITERAL slice. The base recall (#93 SUB-1, block
 # above) already turns a literal `importlib.import_module("x")` / bare `import_module("x")` /
 # `__import__("x")` call into a resolvable edge with `dynamic: true`. This block closes three
 # real gaps found by re-verifying that base feature against the ACTUAL code (not just reading
@@ -2120,7 +2120,7 @@ def test_build_file_imports_unresolvable_dynamic_literal_stays_external(tmp_path
 
 
 # ---------------------------------------------------------------------------------------------
-# #703 gate NIT-1 (banked follow-up, independent Opus gate on PR #703 -- "SHIP-WITH-NITS"):
+# #703 gate NIT-1 :
 # `_python_imports_and_symbols`'s prefilter emission (repo_map.py:1988, just above the false-edge
 # test block above) keys on `dynamic_entry["module"]` truthiness ALONE, ignoring
 # `dynamic_unresolved` -- so the SAME unresolved relative literal (`".sibling"`) that

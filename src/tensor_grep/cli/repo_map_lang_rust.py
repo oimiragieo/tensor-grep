@@ -3,7 +3,7 @@
 Everything here is Rust dialect knowledge -- `use`/`mod` binding resolution, crate and
 workspace module trees, `impl` block ownership, and the `#[test]` / `#[tokio::test]`
 attribute scan -- plus the private helpers only those paths call. Split out of
-`repo_map.py` under docs/design/2026-08-19-split-floor-escape.md.
+`repo_map.py` using late-bound `_self` attribute reads.
 
 `_rust_parser` and `_rust_classify_ref_kind` deliberately stay in `repo_map`: the test
 suite monkeypatches both there, so a moved copy would be the unpatched one.
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its
@@ -671,7 +671,7 @@ def _rust_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    # PERF increment 1 / Section B mirror (Fable-designed): same alias-aware early exit as
+    # PERF increment 1 / Section B mirror : same alias-aware early exit as
     # _js_ts_references_and_calls above -- bindings only need the source TEXT, so they're
     # resolved before the parse, and a symbol-absent file with no matching `use` binding skips
     # tree-sitter parsing entirely.

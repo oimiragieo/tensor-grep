@@ -692,7 +692,7 @@ def test_real_binary_dogfood_tampered_receipt_exits_nonzero(
 
 
 # ---------------------------------------------------------------------------
-# 14. Opus-gate FIX-FIRST follow-ups: (a) the `--previous` file read is DoS-bounded on BOTH the
+# 14. review FIX-FIRST follow-ups: (a) the `--previous` file read is DoS-bounded on BOTH the
 # emit and verify CLI paths, and (b) a visible stderr warning fires when a trusted key is supplied
 # without --require-trusted (the un-enforced-trust footgun). Real front door, not CliRunner.
 # ---------------------------------------------------------------------------

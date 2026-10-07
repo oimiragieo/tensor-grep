@@ -833,7 +833,7 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "existing file is never overwritten -- same fixed-content-marker shape as `main.py::_"
         "write_windows_exe_bridge_marker` above."
     ),
-    # --- H2 (backlog closeout, docs/BACKLOG.md): individually reviewed against the real source,
+    # --- Individually reviewed against the source,
     # classifying the 17-line-item / 16-identity population the task named. ---
     ("ast_workflows.py", "test_command", "Path.write_text"): (
         "`temp_name` (the snippet fallback-path write) is written inside `with TemporaryDirectory"
@@ -1601,7 +1601,7 @@ _EXPECTED_SANCTIONED = {
     ("session_daemon_trust.py", "_write_secret_posix", "os.open"),
 }
 
-# H2 (docs/BACKLOG.md backlog closeout) classified and, where warranted, fixed all 16
+# Source review classified and, where warranted, fixed all 16
 # (module, outer_function, operation) identities this set used to carry (the task's brief named
 # "17 sites" by counting individual call-site LINES; `checkpoint_store.py::undo_checkpoint`'s
 # `Path.write_bytes` rollback fires at two lines that share one identity, so the brief's own line

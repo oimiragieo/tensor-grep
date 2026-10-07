@@ -10,15 +10,12 @@ RELEASE_DOC_PATHS = (
     "AGENTS.md",
     "README.md",
     "SKILL.md",
-    "docs/SESSION_HANDOFF.md",
-    "docs/CONTINUATION_PLAN.md",
     "docs/CONTRACTS.md",
 )
 GPU_DOGFOOD_DOC_PATHS = (
     "README.md",
     "docs/benchmarks.md",
     "docs/gpu_crossover.md",
-    "docs/PAPER.md",
 )
 STAMPED_DOC_PATHS = tuple(dict.fromkeys((*RELEASE_DOC_PATHS, *GPU_DOGFOOD_DOC_PATHS)))
 
@@ -104,8 +101,8 @@ def _stamp_release_doc(content: str, *, version: str) -> str:
             rf"\g<1>{tag}\2",
         ),
         # The four patterns below replace one former unanchored `post-`vX`` sweep that rewrote
-        # EVERY occurrence of the phrase on every release, including dated historical notes in
-        # docs/PAPER.md and dated audit entries in docs/gpu_crossover.md (e.g. "dogfood note
+        # EVERY occurrence of the phrase on every release, including dated historical
+        # entries in docs/gpu_crossover.md (e.g. "dogfood note
         # (2026-05-14):"), silently marching their frozen version forward release after release
         # (audit #71/#73). Each pattern below is anchored with `(?m)^` to one of the small number
         # of genuine "current state" live-pointer shapes (verified via `git log -L` to be

@@ -1407,7 +1407,7 @@ def test_build_context_edit_plan_surfaces_top_level_validation_plan(tmp_path: Pa
     assert payload["edit_plan_seed"]["validation_plan"][0]["command"] != "mutated"
 
 
-# --- CEO v1.72.1 dogfood: `tg edit-plan --json` top-level `confidence` / `ask_user_before_editing`
+# --- v1.72.1 dogfood: `tg edit-plan --json` top-level `confidence` / `ask_user_before_editing`
 # parity ------------------------------------------------------------------------------------------
 # `tg agent --json` already surfaces a top-level `confidence` (an `{overall, downgrade_reasons}`
 # object) and an `ask_user_before_editing` gate (`{required, reasons}`); `tg edit-plan --json` had
@@ -1510,7 +1510,7 @@ def test_build_context_edit_plan_ask_required_without_validation_evidence(tmp_pa
 def test_build_agent_capsule_confidence_and_ask_unchanged_by_edit_plan_parity_refactor(
     tmp_path: Path,
 ) -> None:
-    """Golden parity test (CEO v1.72.1 dogfood): `tg agent --json`'s top-level `confidence`/
+    """Golden parity test : `tg agent --json`'s top-level `confidence`/
     `ask_user_before_editing` must be BYTE-IDENTICAL to their pre-refactor values, both in the
     clean case and the scan-truncated case (the exact ask-reasons-ladder lines the edit-plan
     parity fix mechanically extracted into `_capsule_validation_evidence_ask_reason` /
@@ -1552,7 +1552,7 @@ def _write_tie_project(project: Path) -> None:
     query, so one is ranked primary (flat 0.9 seed confidence) and the other surfaces as a
     high-confidence (1.0) alternative that TIES it -- with no test file, so no targeted validation
     evidence exists to resolve the tie. This is the exact ambiguity `tg agent` flags with
-    `ask_user_before_editing.required = true`; `tg edit-plan` must match (Opus-gate MUST-FIX)."""
+    `ask_user_before_editing.required = true`; `tg edit-plan` must match ."""
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (project / "pyproject.toml").write_text(
@@ -1567,7 +1567,7 @@ def _write_tie_project(project: Path) -> None:
 
 
 def test_build_context_edit_plan_flags_tie_ambiguity_matching_agent(tmp_path: Path) -> None:
-    """Opus-gate safety MUST-FIX (on c63f509): `ask_user_before_editing.required` IS the hard
+    """review safety MUST-FIX (on c63f509): `ask_user_before_editing.required` IS the hard
     auto-edit safety gate, so on an AMBIGUOUS (alternative-target-tie) plan it must match `tg
     agent` in the unsafe direction. Pre-fix, `tg edit-plan` omitted tie detection and returned
     `required = false` on the exact plan where `tg agent` returns `true` -- an agent trusting
@@ -1610,7 +1610,7 @@ def test_build_context_edit_plan_flags_tie_ambiguity_matching_agent(tmp_path: Pa
 def test_build_agent_capsule_tie_confidence_and_ask_unchanged_by_edit_plan_parity_refactor(
     tmp_path: Path,
 ) -> None:
-    """Golden byte-unchanged pin for the AMBIGUOUS case (Opus-gate MUST-FIX): reproducing agent's
+    """Golden byte-unchanged pin for the AMBIGUOUS case : reproducing agent's
     tie/marker ladder inside edit-plan's `_capsule_confidence_and_ask_without_render` must NOT
     perturb `tg agent`'s own output (agent never calls that helper). Values captured from
     `build_agent_capsule` on this exact tie fixture."""

@@ -388,7 +388,7 @@ def test_l10_calibrate_exits_one_when_unsupported(monkeypatch) -> None:
     # remediation pointer -- not just "not found" with no next step.
     assert "tg upgrade" in result.output
     assert "tg doctor" in result.output
-    # CEO dogfood follow-up (v1.76.6): the message must state the honest, evergreen fact
+    # dogfood follow-up (v1.76.6): the message must state the honest, evergreen fact
     # (GPU experimental / needs a CUDA-enabled build) instead of inviting
     # TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg upgrade` as an obtainable GPU path --
     # no NVIDIA-enabled asset has ever shipped, so that framing was a permanent dead end.

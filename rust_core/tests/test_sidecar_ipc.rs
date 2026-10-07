@@ -730,7 +730,7 @@ fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duratio
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("AI agent moat commands"),
+        stdout.contains("Repository analysis commands"),
         "expected the enriched native fallback help (probe={probe_timeout_ms}ms); stdout={stdout}"
     );
     elapsed
@@ -849,7 +849,7 @@ fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_i
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("AI agent moat commands"),
+        stdout.contains("Repository analysis commands"),
         "expected the enriched native fallback help; stdout={stdout}"
     );
 }

@@ -3,7 +3,7 @@
 Everything here is Python dialect knowledge -- module-path candidate roots, `sys.path` hack
 detection, relative-import bases, dynamic `importlib` calls, decorator qualnames, and the
 pytest function/parametrize candidate scan -- plus the private helpers only those paths call.
-Split out of `repo_map.py` under docs/design/2026-08-19-split-floor-escape.md.
+Extracted from `repo_map.py` using late-bound `_self` attribute reads.
 
 `_python_references_and_calls` deliberately stays in `repo_map`: the test suite monkeypatches
 it there, so a moved copy would be the unpatched one.
@@ -22,7 +22,7 @@ from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_ca
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 from tensor_grep.core.python_parse import parse_python
 
-# Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
+# Late-bound module attributes preserve the original patch targets. `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
 # bare call resolved through this file's globals would run the unpatched original while the
 # test still passed. A plain import would be circular (repo_map imports this module at its
@@ -97,7 +97,7 @@ def _python_dynamic_import_entry_for_call(node: ast.AST) -> dict[str, Any] | Non
 
     Fails CLOSED on the non-literal-argument case: `module` is `""` rather than a guessed name --
     asserting a fabricated edge for an import whose target we can't actually read would be a
-    precision regression in a moat feature (see `_resolve_raw_import_entry` /
+    precision regression in a capability feature (see `_resolve_raw_import_entry` /
     `_confirm_import_edges`, which both skip resolution entirely when `dynamic_unresolved` is
     set).
 
@@ -383,7 +383,7 @@ def _python_import_update_target(
 def _python_classify_ref_kind(node: ast.AST, parent: ast.AST | None, *, in_annotation: bool) -> str:
     """Classify an already-matched Python Name/Attribute reference node (T1 additive).
 
-    Only called for nodes the existing matcher already emits a row for (moat P0-T1: classify
+    Only called for nodes the existing matcher already emits a row for (capability P0-T1: classify
     EXISTING rows, never widen the match set -- that would change row counts). Precedence: a
     node that IS the callee of its parent ``ast.Call`` is "call" even inside an annotation
     subtree (unlikely but keeps the check order simple); otherwise annotation subtrees are
@@ -573,7 +573,7 @@ def _python_import_update_target_for_registry(
     return _python_import_update_target(file_path, symbol, definition_path)
 
 
-# #74 moat: `tg imports`/`tg importers` -- the scoped file-dependency primitive. Companion to
+# #74 capability: `tg imports`/`tg importers` -- the scoped file-dependency primitive. Companion to
 # `_imports_and_symbols_for_path` above, which collapses imports to a deduped, line-less
 # `list[str]` (fine for the reverse-import alias graph, useless for a command that must report
 # *where* each import statement lives). Mirrors that function's per-language extraction sources
@@ -664,7 +664,7 @@ def _python_relative_base_dir(importer_path: Path, level: int) -> Path:
     return current
 
 
-# #152 fix (CEO v1.69.3 dogfood, 2 HIGH): a Python file that path-hacks its own module
+# #152 fix : a Python file that path-hacks its own module
 # resolution via `sys.path.insert(...)`/`sys.path.append(...)` -- a common same-repo vendoring
 # idiom, e.g.:
 #

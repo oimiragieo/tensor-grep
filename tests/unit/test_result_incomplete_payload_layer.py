@@ -91,7 +91,7 @@ def test_build_symbol_source_truncated_no_match_carries_result_incomplete(tmp_pa
     for name in ("a", "b", "c", "d", "e", "f"):
         (tmp_path / f"{name}.py").write_text(f"def {name}_fn():\n    return 1\n", encoding="utf-8")
     payload = repo_map.build_symbol_source("f_fn", str(tmp_path), max_repo_files=1)
-    # Assert the precondition (not guard on it) so the test can't vacuously pass (Fable final review).
+    # Assert the precondition (not guard on it) so the test can't vacuously pass .
     assert payload.get("no_match") is True
     assert payload.get("scan_limit", {}).get("possibly_truncated") is True
     assert payload.get("result_incomplete") is True
@@ -108,7 +108,7 @@ def test_build_symbol_source_truncated_no_match_carries_result_incomplete(tmp_pa
     ],
 )
 def test_all_graph_builders_carry_result_incomplete_on_truncated_no_match(tmp_path, builder_name):
-    # Fable final review: impact/refs/blast-radius inherit result_incomplete via a dict copy today; a
+    # review final review: impact/refs/blast-radius inherit result_incomplete via a dict copy today; a
     # refactor to a fresh envelope (which is exactly what dropped it in build_symbol_source_from_map)
     # would silently regress with no test failing. Pin the contract across every graph builder.
     import tensor_grep.cli.repo_map as repo_map

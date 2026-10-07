@@ -38,6 +38,9 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
     rc = module.stamp_assets(check_only=False)
 
     assert rc == 0
+    for retired in ("docs/SESSION_HANDOFF.md", "docs/CONTINUATION_PLAN.md", "docs/PAPER.md"):
+        assert retired not in module.STAMPED_DOC_PATHS
+        assert not (root / retired).exists()
     assert 'TENSOR_GREP_VERSION = "1.2.3"' in (root / "scripts" / "tensor-grep.rb").read_text(
         encoding="utf-8"
     )
@@ -118,7 +121,7 @@ def test_stamp_release_assets_syncs_release_doc_current_version_prose(tmp_path):
         "For the current `v1.9.10` release line it checks readiness.\n",
         encoding="utf-8",
     )
-    for relative in ("AGENTS.md", "docs/SESSION_HANDOFF.md", "docs/CONTINUATION_PLAN.md"):
+    for relative in ("AGENTS.md",):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -142,7 +145,7 @@ def test_stamp_release_assets_syncs_release_doc_current_version_prose(tmp_path):
     assert "- Current release tag: `v1.9.12`." in skill
     assert "tensor-grep==1.9.12 tg --version` reports `tensor-grep 1.9.12`" in skill
     assert "tensor-grep==1.9.10" not in skill
-    for relative in ("AGENTS.md", "docs/SESSION_HANDOFF.md", "docs/CONTINUATION_PLAN.md"):
+    for relative in ("AGENTS.md",):
         content = (root / relative).read_text(encoding="utf-8")
         assert "latest complete public PyPI/release-asset distribution is also `v1.9.12`" in content
         assert (
@@ -185,13 +188,13 @@ def test_stamp_release_assets_syncs_latest_release_labels(tmp_path):
     for relative in (
         "AGENTS.md",
         "SKILL.md",
-        "docs/CONTINUATION_PLAN.md",
+        "AGENTS.md",
         "docs/CONTRACTS.md",
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("release_docs_current_tag: v1.9.12\n", encoding="utf-8")
-    (root / "docs" / "SESSION_HANDOFF.md").write_text(
+    (root / "docs" / "CONTRACTS.md").write_text(
         "release_docs_current_tag: v1.9.12\n"
         "- Latest tagged version: `v1.9.10`\n"
         "- Latest complete PyPI version: `v1.9.10`\n",
@@ -206,7 +209,7 @@ def test_stamp_release_assets_syncs_latest_release_labels(tmp_path):
     assert "Latest tagged GitHub release: [`v1.9.12`]" in readme
     assert "Latest complete PyPI release: [`v1.9.12`]" in readme
     assert "/releases/tag/v1.9.12" in readme
-    handoff = (root / "docs" / "SESSION_HANDOFF.md").read_text(encoding="utf-8")
+    handoff = (root / "docs" / "CONTRACTS.md").read_text(encoding="utf-8")
     assert "- Latest tagged version: `v1.9.12`" in handoff
     assert "- Latest complete PyPI version: `v1.9.12`" in handoff
 
@@ -245,8 +248,6 @@ def test_stamp_release_assets_preserves_verified_release_proof_blocks(tmp_path):
     for relative in (
         "AGENTS.md",
         "SKILL.md",
-        "docs/SESSION_HANDOFF.md",
-        "docs/CONTINUATION_PLAN.md",
         "docs/CONTRACTS.md",
     ):
         path = root / relative
@@ -271,7 +272,7 @@ def test_stamp_release_assets_preserves_verified_release_proof_blocks(tmp_path):
 def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
     # Regression test for audit #71/#73: the old unanchored `post-`vX`` sweep rewrote EVERY
     # occurrence of the phrase on every release, including dated historical notes in
-    # docs/PAPER.md and dated audit entries in docs/gpu_crossover.md, silently marching a frozen
+    # dated technical notes, silently marching a frozen
     # historical version forward release after release (e.g. a 2026-05-14 note ending up stamped
     # `post-`v1.51.4``, a much later release). The fix anchors the sweep to the small number of
     # genuine "current state" live-pointer line shapes (verified against real doc history to be
@@ -302,8 +303,6 @@ def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
     for relative in (
         "AGENTS.md",
         "SKILL.md",
-        "docs/SESSION_HANDOFF.md",
-        "docs/CONTINUATION_PLAN.md",
         "docs/CONTRACTS.md",
     ):
         path = root / relative
@@ -330,7 +329,6 @@ def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
         "README.md",
         "docs/benchmarks.md",
         "docs/gpu_crossover.md",
-        "docs/PAPER.md",
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +343,6 @@ def test_stamp_release_assets_syncs_gpu_dogfood_live_pointers_only(tmp_path):
         "README.md",
         "docs/benchmarks.md",
         "docs/gpu_crossover.md",
-        "docs/PAPER.md",
     ):
         content = (root / relative).read_text(encoding="utf-8")
         # The four anchored live-pointer shapes advance to the current tag.
@@ -390,8 +387,6 @@ def test_stamp_release_assets_does_not_touch_undated_prose_without_a_live_pointe
     for relative in (
         "AGENTS.md",
         "SKILL.md",
-        "docs/SESSION_HANDOFF.md",
-        "docs/CONTINUATION_PLAN.md",
         "docs/CONTRACTS.md",
     ):
         path = root / relative
@@ -405,7 +400,6 @@ def test_stamp_release_assets_does_not_touch_undated_prose_without_a_live_pointe
         "README.md",
         "docs/benchmarks.md",
         "docs/gpu_crossover.md",
-        "docs/PAPER.md",
     ):
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -419,7 +413,6 @@ def test_stamp_release_assets_does_not_touch_undated_prose_without_a_live_pointe
         "README.md",
         "docs/benchmarks.md",
         "docs/gpu_crossover.md",
-        "docs/PAPER.md",
     ):
         content = (root / relative).read_text(encoding="utf-8")
         assert content == unanchored_sentence

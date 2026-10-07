@@ -174,7 +174,7 @@ def _confidence(
     downgrade_reasons: list[str],
     consistency: dict[str, Any],
 ) -> dict[str, Any]:
-    """``snippets=None`` (edit-plan parity fix, CEO v1.72.1 dogfood) is a distinct sentinel from
+    """``snippets=None``  is a distinct sentinel from
     ``[]``: it means the caller's contract has NO rendered-snippet concept at all (edit-plan
     emits no rendered source text -- see docs/harness_api.md), so the "no snippets" degrade below
     must not fire. ``[]`` keeps its existing meaning for agent -- snippets ARE part of the
@@ -286,7 +286,7 @@ def _capsule_confidence_and_ask_without_render(
     *,
     query: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Parity fix (CEO v1.72.1 dogfood): the non-render counterpart to the top-level
+    """Parity fix : the non-render counterpart to the top-level
     `confidence`/`ask_user_before_editing` derivation `build_agent_capsule_from_map` computes,
     for a caller (`tg edit-plan`, via `repo_map.build_context_edit_plan_from_map`) that never
     renders source text (docs/harness_api.md's Edit Plan JSON `max_tokens` note).
@@ -297,14 +297,14 @@ def _capsule_confidence_and_ask_without_render(
     `_capsule_validation_alignment`, `_tied_alternative_targets`,
     `_primary_target_is_unrequested_marker_helper`, `_confidence`, and the shared ask-reason
     helpers -- so the >=0.75 no-ask threshold, the query-language / validation-alignment
-    downgrades, the scan-truncation gate, AND (Opus-gate MUST-FIX) the alternative-target-TIE
+    downgrades, the scan-truncation gate, AND  the alternative-target-TIE
     downgrade + unrequested-marker-helper ask-reason all fire IDENTICALLY to `tg agent`.
 
     The tie + marker-helper ambiguity signals need only the payload's `candidate_edit_targets`
     /`file_matches` alternatives and the `query` (see `_alternative_targets`) -- NO snippets, NO
     call-site evidence -- so they MUST be computed here: omitting them let edit-plan report
     `ask_user_before_editing.required = false` on an ambiguous plan where `tg agent` returns
-    `true`, a safety under-report in the unsafe (auto-edit) direction (Opus gate on c63f509).
+    `true`, a safety under-report in the unsafe (auto-edit) direction .
 
     Only the genuinely snippet-/call-site-/LSP-evidence-gated enrichments stay agent-only, because
     edit-plan structurally lacks the evidence they corroborate against (faking them would be

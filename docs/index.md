@@ -24,7 +24,6 @@
 
 ## Maintainers and operators
 
-- [Project task board](https://github.com/oimiragieo/tensor-grep/blob/main/docs/TASK_BOARD.md) tracks current work; planning records stay in the source repository.
 - [Benchmarks](benchmarks.md) records accepted comparisons and their limits.
 - [Tool comparison](tool_comparison.md) describes workload-specific strengths and limits.
 - [CI pipeline](CI_PIPELINE.md), [release checklist](RELEASE_CHECKLIST.md), and [package publishing](package_manager_publish.md) cover delivery.

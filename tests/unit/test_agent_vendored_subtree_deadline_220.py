@@ -28,7 +28,7 @@ docstrings' own contract:
      entry-only check, and to ~3.4s once the internal loops were also bounded -- see
      `tests/integration/test_agent_cold_deadline_tail_sla_220.py`'s module docstring for the
      real-binary numbers).
-  4. An independent Opus gate on the resulting PR (#669) found ONE MORE un-gated span this fix
+  4. An independent review on the resulting PR (#669) found ONE MORE un-gated span this fix
      initially missed: between the manifest-probe loop's check and the dedup loop's check sits
      the reverse-import-graph re-derivation (`_code_files_and_import_graph`) AND the STRONG-3
      skill-leaf validation loop (`_is_skill_leaf_tree`) that consumes it -- measured on the real
@@ -300,7 +300,7 @@ def test_detect_vendored_subtrees_outermost_dedup_loop_has_own_deadline_check(
 def test_detect_vendored_subtrees_post_manifest_loop_gate_skips_import_graph_and_skill_leaf_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#220 Opus-gate follow-up (independent gate on PR #669, real-workspace-measured): between
+    """#220 review follow-up (independent gate on PR #669, real-workspace-measured): between
     the manifest-probe loop's own per-iteration check and the outermost-dedup loop's own
     per-iteration check sat an UN-GATED middle section -- the reverse-import-graph re-derivation
     (`_code_files_and_import_graph`) AND the STRONG-3 skill-leaf validation loop
@@ -387,7 +387,7 @@ def test_detect_vendored_subtrees_post_manifest_loop_gate_skips_import_graph_and
 
     assert sentinel_calls == 0, (
         "_code_files_and_import_graph ran even though the deadline had already tripped by the "
-        "post-manifest-loop check -- the #220 Opus-gate middle-section gate regressed"
+        "post-manifest-loop check -- the #220 review middle-section gate regressed"
     )
     assert deadline_hit.hit is True
     assert result == {}

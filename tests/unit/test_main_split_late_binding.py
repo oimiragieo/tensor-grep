@@ -2,7 +2,7 @@
 
 `cli/main.py` was split on 2026-08-20 into `ast_scan`, `doctor_report`, `doctor_payload`,
 `native_frontdoor` and `windows_launcher` (see
-`docs/design/2026-08-19-split-floor-escape.md`). The whole reason that split was blocked until
+`src/tensor_grep/cli/_main_binding.py`). The whole reason that split was blocked until
 PR #1042 is that a bare name resolves through the DEFINING module's globals: move a function
 that bare-calls a monkeypatched name and **the test still passes while production runs the
 unpatched original.** That failure is silent, so it needs a check that would go red if the

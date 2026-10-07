@@ -359,7 +359,7 @@ def run_command(
     try:
         backend = _select_ast_backend_for_pattern(cfg, pattern)
     except ConfigurationError as exc:
-        # CEO#6(a): honest-error mirror of Task #166's main.py `_exit_search_error` pattern
+        # honest-error mirror of Task #166's main.py `_exit_search_error` pattern
         # (main.py's Pipeline-construction ConfigurationError handler). A `$`-metavariable
         # (wrapper-shaped) pattern requires the ast-grep `sg` binary; when neither the wrapper
         # nor a native-shaped fallback can serve it, _select_ast_backend_for_pattern
@@ -556,7 +556,7 @@ def run_command(
             ],
         }
         if all_results.total_matches == 0:
-            # CEO#6(b): payload must be enriched BEFORE serialization so the additive
+            # payload must be enriched BEFORE serialization so the additive
             # "remediation" key ships in the same JSON line -- never a second write.
             _emit_ast_run_remediation(pattern, lang, json_payload=payload)
         _safe_stdout_line(json.dumps(payload))
@@ -580,7 +580,7 @@ def run_command(
         for matched_path in ordered_paths:
             _safe_stdout_line(matched_path)
         if not ordered_paths:
-            # CEO#6(b): remediation goes to STDERR here (like the Windows-quote hint just
+            # remediation goes to STDERR here (like the Windows-quote hint just
             # above it) so `--files-with-matches`' stdout stays a clean, parseable path list.
             _warn_windows_single_quote_pattern(pattern)
             _emit_ast_run_remediation(pattern, lang)

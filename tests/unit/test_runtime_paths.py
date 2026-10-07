@@ -616,7 +616,7 @@ class TestNativeBinaryTargetsWindows:
         assert runtime_paths.native_binary_targets_windows("/some/path/TG.EXE") is True
 
     def test_mnt_drive_mount_without_exe_is_not_windows_target(self):
-        # Opus MF-1: a `/mnt/<drive>/` location is NOT itself a Windows signal. A Linux ELF built
+        # review MF-1: a `/mnt/<drive>/` location is NOT itself a Windows signal. A Linux ELF built
         # in-place on a Windows-drive checkout lives here (the default resolver returns `tg`, not
         # `tg.exe`, on Linux) and is same-domain -- flagging it would break a working WSL config.
         assert runtime_paths.native_binary_targets_windows("/mnt/c/tg") is False
@@ -639,7 +639,7 @@ class TestNativeBinaryTargetsWindows:
 
 
 class TestNativeFrontdoorMetadataTargetsWindows:
-    """2026-07-21 CEO WSL dogfood: both installers generate a bare-named (`tg`, no `.exe`) POSIX
+    """2026-07-21 WSL dogfood: both installers generate a bare-named (`tg`, no `.exe`) POSIX
     shim that internally `exec`s the real `tg.exe` -- the extension-only check can't see through
     it, so this second signal reads the sibling `tg-native-metadata.json` instead."""
 
@@ -743,7 +743,7 @@ class TestNativeFrontdoorMetadataTargetsWindows:
 
 
 class TestSiblingNativeWindowsBinaryExists:
-    """2026-07-21 CEO WSL dogfood: the signal that actually catches the live repro -- the
+    """2026-07-21 WSL dogfood: the signal that actually catches the live repro -- the
     distributed shim-dir copies (`~/bin/tg`, `~/.local/bin/tg`) that installer wiring puts on
     `$PATH` carry a co-located `tg.exe` but NOT a copy of `tg-native-metadata.json`."""
 
@@ -889,7 +889,7 @@ class TestIsCrossDomainNativeBinary:
         assert runtime_paths.is_cross_domain_native_binary(native_tg) is False
 
     def test_false_on_wsl_host_with_linux_elf_on_windows_drive_mount(self, monkeypatch):
-        """Opus MF-1 regression: the DEFAULT resolver on WSL looks for `tg` (not `tg.exe`), so a
+        """review MF-1 regression: the DEFAULT resolver on WSL looks for `tg` (not `tg.exe`), so a
         repo checked out + built in-place on a Windows drive yields a genuine Linux ELF at
         `/mnt/c/.../rust_core/target/release/tg`. That binary is same-domain -- it opens a `/tmp`
         sentinel fine -- so it must NOT be flagged cross-domain (which would translate its `/tmp`
@@ -902,7 +902,7 @@ class TestIsCrossDomainNativeBinary:
         assert runtime_paths.is_cross_domain_native_binary(linux_elf_on_mount) is False
 
     def test_true_on_bare_shim_via_sibling_windows_metadata(self, monkeypatch, tmp_path):
-        """2026-07-21 CEO WSL dogfood repro: `resolve_native_tg_binary()` returns the managed
+        """2026-07-21 WSL dogfood repro: `resolve_native_tg_binary()` returns the managed
         installer's bare-named (`tg`, no `.exe`) POSIX shim, which internally `exec`s the real
         `tg.exe`. The `.exe`-suffix check alone misses this; the sibling metadata signal must
         catch it so the doctor/agent probes translate the path instead of reporting the

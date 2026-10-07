@@ -111,7 +111,7 @@ _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # Same underlying value as the context-render/edit-plan limits above (kept as a distinct name
 # for intent clarity at the call site, not a distinct behavior).
 _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
-# task #108 (Tier-2 daemon moat): same underlying default as every limit above -- `orient` has no
+# task #108 (Tier-2 daemon capability): same underlying default as every limit above -- `orient` has no
 # CLI --max-repo-files flag at all (always resolves this value), `agent`'s mirrors the
 # symbol-command default. Kept as distinct names for intent clarity at the call site, not a
 # distinct behavior.
@@ -520,7 +520,7 @@ def _stale_changeset(
     current_paths: dict[str, Path] = {}
     if detect_added_files:
         context_root = root if root.is_dir() else root.parent
-        # M3 (Fable completeness review): bound the added-file probe walk to the session's
+        # M3 : bound the added-file probe walk to the session's
         # own recorded scan cap (or the shared default) instead of an unbounded full
         # recursive enumeration -- this is reachable from MCP on every tg_session_* call
         # with refresh_on_stale=True (_load_session_payload / refresh_session).
@@ -1322,7 +1322,7 @@ def _serve_session_request_from_payload(
         if not query:
             raise ValueError("context requests require a non-empty query")
         # #203: same warm-daemon default deadline bound as context_render/context_edit_plan below --
-        # build_context_pack_from_map already accepts deadline_monotonic (moat P0-6), but this
+        # build_context_pack_from_map already accepts deadline_monotonic (capability P0-6), but this
         # branch never threaded one through, so a plain `context` request ran fully unbounded.
         deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_pack_from_map(
@@ -1406,7 +1406,7 @@ def _serve_session_request_from_payload(
         response["routing_reason"] = "session-context-edit-plan"
         return response
 
-    # moat P0-4: thread the requested engine through EVERY daemon-served symbol command. Without
+    # capability P0-4: thread the requested engine through EVERY daemon-served symbol command. Without
     # this, all 7 branches dropped semantic_provider and silently pinned refs/callers/impact/
     # blast-radius to native even when the client asked for lsp/hybrid. repo_map normalizes +
     # fails closed to native for an unknown value, so no re-validation here.
@@ -1462,7 +1462,7 @@ def _serve_session_request_from_payload(
         if not symbol:
             raise ValueError("refs requests require a non-empty symbol")
         # #203: same warm-daemon default deadline bound as context/defs/impact above --
-        # build_symbol_refs_from_map already accepts deadline_monotonic (moat P0-6 step 6) and
+        # build_symbol_refs_from_map already accepts deadline_monotonic (capability P0-6 step 6) and
         # bounds both its reference-scan and string-refs traversal loops, but this branch never
         # threaded one through, so a plain `refs` request ran fully unbounded.
         deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
@@ -1482,7 +1482,7 @@ def _serve_session_request_from_payload(
         if not symbol:
             raise ValueError("callers requests require a non-empty symbol")
         # #203: same warm-daemon default deadline bound as context/defs/impact/refs above --
-        # build_symbol_callers_from_map already accepts deadline_monotonic (moat P0-6 step 6,
+        # build_symbol_callers_from_map already accepts deadline_monotonic (capability P0-6 step 6,
         # task #61) and folds five sibling-loop deadline signals into partial, but this branch
         # never threaded one through, so a plain `callers` request ran fully unbounded -- the
         # exact #390 daemon-path shape this task (#203) closes.
@@ -1595,7 +1595,7 @@ def _serve_session_request_from_payload(
         return response
 
     if command == "orient":
-        # Task #108 (Tier-2 daemon moat): no _limited_session_repo_map slicing, unlike
+        # Task #108 (Tier-2 daemon capability): no _limited_session_repo_map slicing, unlike
         # context_render/context_edit_plan/blast_radius_plan above -- orient's centrality ranking
         # is a whole-map graph computation (import in-degree/out-degree over ALL scanned files);
         # slicing an already-cached bigger map down to N files post-hoc is not equivalent to

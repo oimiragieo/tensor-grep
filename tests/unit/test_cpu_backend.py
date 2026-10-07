@@ -63,7 +63,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Simulate the native engine being genuinely ABSENT (audit #111 Opus-gate hardening: the
+        # Simulate the native engine being genuinely ABSENT (audit #111 review hardening: the
         # Python fallback loop is now reachable for a non-fixed-strings pattern ONLY via the
         # ImportError branch -- a present-but-failing Rust fails closed instead). This test is
         # about binary-file handling, not ReDoS, so routing it through the Rust-absent fall-open
@@ -700,7 +700,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -728,7 +728,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -851,7 +851,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -878,7 +878,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -903,7 +903,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -934,7 +934,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -964,7 +964,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -1004,7 +1004,7 @@ class TestCPUBackend:
 
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -1048,7 +1048,7 @@ class TestCPUBackend:
         log.write_text("the color is red\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -1071,7 +1071,7 @@ class TestCPUBackend:
         log.write_text("flagok\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -1093,7 +1093,7 @@ class TestCPUBackend:
         log.write_text("workers\nunrelated line\n", encoding="utf-8")
         rust_mod = types.ModuleType("tensor_grep.rust_core")
 
-        # Audit #111 (Opus-gate hardening): the Python prefilter loop is reachable for a
+        # Audit #111 : the Python prefilter loop is reachable for a
         # non-fixed-strings pattern ONLY when the native engine is genuinely ABSENT (a
         # present-but-failing Rust now fails closed). Simulate absence via ImportError so this
         # prefilter test stays on a currently-reachable path.
@@ -1133,7 +1133,7 @@ class TestCPUBackend:
                 CPUBackend().search(str(f), r"(?=(a+)+)$", config=SearchConfig())
 
     def test_should_fail_closed_on_nonsyntax_rust_runtime_failure_for_regex(self, tmp_path):
-        # Audit #111 Opus-gate hardening (must-fix #2): a present-but-failing Rust (non-syntax
+        # Audit #111 review hardening (must-fix #2): a present-but-failing Rust (non-syntax
         # runtime fault, NOT a syntax rejection, NOT --pcre2) must NOT fall open to unbounded
         # Python `re` for an arbitrary pattern -- a hazard pattern would then backtrack unbounded.
         # Fail CLOSED, matching the -w/-x/-C/--ltl/--pcre2 siblings. (Before this fix it returned
@@ -1310,7 +1310,7 @@ def test_context_and_word_regexp_combined_hazard_pattern_is_bounded_not_hung(tmp
     )
 
 
-# --- Audit #111 + Opus-gate hardening: UTF-8-fallback / native-failure ReDoS gate --------------
+# --- Audit #111 + review hardening: UTF-8-fallback / native-failure ReDoS gate --------------
 #
 # `cpu_backend.py`'s "simple pattern" path attempts the linear-time Rust engine first. Two of its
 # residual paths used to fall through to raw, unbounded Python `re.search()`: (1) the
@@ -1321,7 +1321,7 @@ def test_context_and_word_regexp_combined_hazard_pattern_is_bounded_not_hung(tmp
 # backtrack under Python's backtracking engine.
 #
 # Catastrophic backtracking has TWO independent sources, so NO static pattern check is a sound
-# gate (the Opus security gate proved this by breaking an earlier "no `*+?{` quantifier char"
+# gate (the review security gate proved this by breaking an earlier "no `*+?{` quantifier char"
 # heuristic):
 #   * nested quantifiers -- `(a+)+$`
 #   * variable-length ALTERNATION -- `(a|aa)(a|aa)...(a|aa)b` (i.e. `"(a|aa)"*k + "b"`) backtracks
@@ -1396,7 +1396,7 @@ def test_should_fail_closed_for_nested_quantifier_bomb_on_non_utf8_file(tmp_path
 
 
 def test_should_fail_closed_for_alternation_bomb_on_non_utf8_file(tmp_path):
-    """Opus-gate counterexample (must-fix #3): variable-length ALTERNATION
+    """review counterexample (must-fix #3): variable-length ALTERNATION
     `(a|aa)...(a|aa)b` backtracks 2^k under Python `re` with NO quantifier metacharacter --
     the exact bomb that broke the earlier "no `*+?{` char" static allow-list. Must fail closed
     exactly like `(a+)+$`. k=26 backtracks ~25s unfixed (measured k=24 -> 6.19s), well past the

@@ -1,4 +1,4 @@
-"""TDD coverage for Cluster A of the MCP unbounded-scan audit (cursor+thinktank).
+"""TDD coverage for Cluster A of the MCP unbounded-scan audit .
 
 Several MCP tools used to call `build_repo_map` / the `build_symbol_*` builders with an
 implicit `max_repo_files=None` (no cap), which lets an MCP agent trigger a full-repo
@@ -48,7 +48,7 @@ def test_mcp_symbol_defs_exposes_and_forwards_max_repo_files(
 def test_mcp_symbol_source_exposes_and_forwards_max_repo_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """H1 (Fable completeness review): `tg_symbol_source` called `build_symbol_source`
+    """H1 : `tg_symbol_source` called `build_symbol_source`
     with no cap, defaulting to an unbounded `build_repo_map`. Same one-param fix as the
     other symbol/AST tools in this file."""
     from tensor_grep.cli import mcp_server
@@ -319,7 +319,7 @@ def test_mcp_search_exposes_max_repo_files_default() -> None:
 
 
 def test_mcp_search_bounds_the_non_ripgrep_directory_walk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """M2 (Fable completeness review): when the pipeline picks a non-RipgrepBackend (rg
+    """M2 : when the pipeline picks a non-RipgrepBackend (rg
     absent / GPU / hybrid / python-regex), `tg_search` used to loop `scanner.walk(path)`
     per-file with no cap other than DirectoryScanner's 200k-entry defensive budget. Must
     stop invoking the backend once `max_repo_files` files have been searched."""
@@ -390,7 +390,7 @@ def test_mcp_search_reports_no_cap_hit_when_under_the_limit(
 def test_mcp_search_folds_scanner_scan_truncated_into_possibly_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fable LOW: DirectoryScanner's own 200k-entry defensive traversal budget
+    """review LOW: DirectoryScanner's own 200k-entry defensive traversal budget
     (`scanner.scan_truncated`) can trip and truncate the walk BELOW `max_repo_files`,
     without the per-file counter ever reaching the cap. `possibly_truncated` must still
     surface that so an agent caller never reads it as a complete scan."""

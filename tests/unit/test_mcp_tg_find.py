@@ -121,7 +121,7 @@ def test_tg_find_confines_root_before_walk(tmp_path, monkeypatch):
 
 
 def test_tg_find_accepts_in_root_path(tmp_path, monkeypatch):
-    """Positive-path regression guard (Opus adversarial gate precedent, audit #81 fix #2):
+    """Positive-path regression guard :
     confining `path` must not break a legitimate in-root call."""
     monkeypatch.chdir(tmp_path)
     _write_invoice_corpus(tmp_path)

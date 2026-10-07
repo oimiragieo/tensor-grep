@@ -1294,7 +1294,7 @@ def test_main_entry_should_not_passthrough_single_project_root_with_top_level_ve
 def test_main_entry_should_not_passthrough_oversized_implicit_single_project_root(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """Item #105 (CEO dogfood v1.92.x directive): a bare, flag-less, unscoped `tg search
+    """Item #105 : a bare, flag-less, unscoped `tg search
     PATTERN` on a large ORDINARY single-project root -- no top-level vendored dir name, no
     independently-marked sibling projects, so NEITHER `_search_paths_include_workspace_root`
     NOR `_search_paths_include_vendored_root` fires -- used to sail straight into

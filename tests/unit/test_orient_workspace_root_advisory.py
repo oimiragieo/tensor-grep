@@ -1,6 +1,6 @@
-"""Tests for the multi-project-workspace-root advisory (CEO #2 auto-narrow, 2026-07-20).
+"""Tests for the multi-project-workspace-root advisory .
 
-CEO #2: "Complete results live on REPO/src; root/mega-repo often partial/null-symbol. Agents
+"Complete results live on REPO/src; root/mega-repo often partial/null-symbol. Agents
 shouldn't have to know that tribal knowledge. Auto-detect package roots, suggest/apply narrow
 scope, or refuse with a one-line fix."
 
@@ -51,7 +51,7 @@ def _write_sibling_projects(root: Path, names: list[str]) -> None:
 
 
 def _write_single_project(root: Path) -> None:
-    """The literal CEO negative fixture: one pyproject.toml AT THE ROOT (marking the root itself),
+    """The literal negative fixture: one pyproject.toml AT THE ROOT (marking the root itself),
     plus a plain src/ dir with no manifest of its own -- must never trigger."""
     (root / "pyproject.toml").write_text("[project]\nname = 'solo'\n", encoding="utf-8")
     src = root / "src"
@@ -85,7 +85,7 @@ def test_fires_with_mixed_marker_kinds_including_nested_git(tmp_path: Path) -> N
 
 
 def test_single_project_repo_with_one_src_dir_does_not_fire(tmp_path: Path) -> None:
-    """The literal CEO negative fixture."""
+    """The literal negative fixture."""
     _write_single_project(tmp_path)
     rm = {"path": str(tmp_path), "files": [str(tmp_path / "src" / "main.py")]}
     assert _detect_workspace_root(rm) is False
@@ -212,7 +212,7 @@ def test_build_orient_capsule_returns_plain_dict_no_exit_path_change(tmp_path: P
 def test_build_orient_capsule_single_project_workspace_root_detected_absent(
     tmp_path: Path,
 ) -> None:
-    """THE NEGATIVE / NO-REGRESSION GUARD (literal CEO fixture): one pyproject.toml at root, a
+    """THE NEGATIVE / NO-REGRESSION GUARD : one pyproject.toml at root, a
     plain src/ dir -- must never trigger, end to end, with no monkeypatching at all."""
     _write_single_project(tmp_path)
 

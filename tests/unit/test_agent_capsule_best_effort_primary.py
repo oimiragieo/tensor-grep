@@ -15,7 +15,7 @@ contract (`main._scan_incomplete`, keyed only on `scan_limit`/`caller_scan_limit
 `caller_scan_truncated`) is untouched by construction -- this fix never sets or clears any of those
 fields, only `primary_target`.
 
-Opus-gate SHIP-WITH-NITS hardening: "partial_primary implies confidence.overall <= 0.55 AND
+review SHIP-WITH-NITS hardening: "partial_primary implies confidence.overall <= 0.55 AND
 primary_target.confidence <= 0.55" now holds STRUCTURALLY, not just emergently -- a dedicated cap
 (`_BEST_EFFORT_PRIMARY_MAX_CONFIDENCE`) runs LAST in `build_agent_capsule_from_map`, after every
 other confidence mutation including the T2 uplift, so a future change upstream cannot silently let
@@ -142,7 +142,7 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
 
 
 # ---------------------------------------------------------------------------
-# 1b. Structural confidence cap (Opus-gate NIT-1): the <0.75 guarantee must hold BY
+# 1b. Structural confidence cap : the <0.75 guarantee must hold BY
 # CONSTRUCTION, not merely because `_confidence`'s existing downgrade ladder happens to fire.
 # ---------------------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-"""Moat P0-6 STEP 1: build_repo_map deadline -> partial results on a time budget.
+"""capability P0-6 STEP 1: build_repo_map deadline -> partial results on a time budget.
 
 A supplied ABSOLUTE monotonic deadline stops the CPU-bound per-file parse loop early and returns
 partial:true + a deadline_limit sibling, instead of the caller's hard timeout discarding all work
@@ -79,7 +79,7 @@ def _install_advancing_clock(monkeypatch, base: float = 1000.0) -> None:
 
 
 def test_step3_top_level_builders_thread_deadline_to_partial(tmp_path: Path, monkeypatch) -> None:
-    # moat P0-6 step 3: each top-level symbol builder converts deadline_seconds to one absolute
+    # capability P0-6 step 3: each top-level symbol builder converts deadline_seconds to one absolute
     # budget, threads it into build_repo_map, and surfaces partial:true on the wrapped output.
     _make_repo(tmp_path, 12)
     _install_advancing_clock(monkeypatch)  # deadline crosses after ~5 parses (base + 5.0)
@@ -88,8 +88,8 @@ def test_step3_top_level_builders_thread_deadline_to_partial(tmp_path: Path, mon
         repo_map.build_symbol_callers,
         repo_map.build_symbol_impact,
         repo_map.build_symbol_blast_radius,
-        repo_map.build_symbol_source,  # CEO v1.72.1 dogfood M1
-        repo_map.build_symbol_blast_radius_plan,  # CEO v1.72.1 dogfood M1
+        repo_map.build_symbol_source,  # v1.72.1 dogfood M1
+        repo_map.build_symbol_blast_radius_plan,  # v1.72.1 dogfood M1
     ):
         result = builder("f1", str(tmp_path), deadline_seconds=5.0)
         assert result.get("partial") is True, (
@@ -104,7 +104,7 @@ def test_step3_deadline_none_leaves_builders_unbounded(tmp_path: Path) -> None:
     assert "deadline_limit" not in result
 
 
-# --- CEO v1.72.1 dogfood M1: build_symbol_source / build_symbol_blast_radius_plan join the #581
+# --- v1.72.1 dogfood M1: build_symbol_source / build_symbol_blast_radius_plan join the #581
 # --deadline threading pattern (same builders as above, called out individually so a regression in
 # either one's OWN wiring -- not just the shared loop above -- fails with an unambiguous name). ---
 
@@ -141,7 +141,7 @@ def test_m1_blast_radius_plan_deadline_none_is_unaffected(tmp_path: Path) -> Non
     assert "deadline_limit" not in result
 
 
-# --- #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): _precomputed_validation_files_for_root did a
+# --- #639 review nit 1 (dogfood #1 RESIDUAL): _precomputed_validation_files_for_root did a
 # per-entry Path.resolve() filesystem syscall with NO deadline awareness at all -- on a large repo
 # map's file list (up to DEFAULT_AGENT_REPO_MAP_LIMIT entries) this was the dominant unbounded cost
 # behind a `tg agent --deadline` request overrunning in the validation-file-discovery tail even
@@ -191,7 +191,7 @@ def _make_caller_repo(root: Path, callers: int) -> None:
 
 
 def test_step6_caller_scan_honors_already_expired_deadline(tmp_path: Path) -> None:
-    # moat P0-6 step 6: the CALLER-SCAN traversal (not just the repo-map parse) must honor the
+    # capability P0-6 step 6: the CALLER-SCAN traversal (not just the repo-map parse) must honor the
     # deadline -- this is why central symbols hung past --deadline while leaf symbols didn't.
     _make_caller_repo(tmp_path, 6)
     rm = repo_map.build_repo_map(str(tmp_path))  # full map, no deadline
@@ -213,7 +213,7 @@ def test_step6_caller_scan_no_deadline_is_complete(tmp_path: Path) -> None:
 
 
 def test_step6_blast_radius_honors_caller_scan_deadline(tmp_path: Path) -> None:
-    # moat P0-6 step 6: blast-radius runs the same direct-caller scan, so it must honor --deadline
+    # capability P0-6 step 6: blast-radius runs the same direct-caller scan, so it must honor --deadline
     # for central symbols too (the 1.35.0 dogfood: `blast-radius QueryEngine --deadline 10` hung 90s+).
     _make_caller_repo(tmp_path, 6)
     rm = repo_map.build_repo_map(str(tmp_path))
@@ -232,7 +232,7 @@ def test_step6_blast_radius_no_deadline_is_complete(tmp_path: Path) -> None:
 
 
 def test_step6_refs_honors_scan_deadline(tmp_path: Path) -> None:
-    # moat P0-6 step 6: refs runs the same per-file reference scan -> must honor --deadline for
+    # capability P0-6 step 6: refs runs the same per-file reference scan -> must honor --deadline for
     # central symbols (1.35.0 dogfood: `refs QueryEngine --deadline 15` -> 45s timeout, no partial).
     _make_caller_repo(tmp_path, 6)
     rm = repo_map.build_repo_map(str(tmp_path))

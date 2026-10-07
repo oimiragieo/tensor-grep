@@ -1,6 +1,6 @@
 # Resident AST Worker Runbook
 
-The Resident AST Worker keeps the AST metadata warm in memory, achieving extremely low latency for repeated searches. It communicates via TCP IPC.
+The Resident AST Worker keeps AST metadata in memory for supported repeated requests. Measure end-to-end latency for the actual workload before assuming an improvement. It communicates via TCP IPC.
 
 ## Experimental Status
 This feature is currently experimental and must be explicitly opted into by setting:

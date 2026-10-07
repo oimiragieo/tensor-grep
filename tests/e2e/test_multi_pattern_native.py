@@ -311,7 +311,7 @@ def test_many_fixed_patterns_dedupe_overlapping_lines_at_scale(
     (`test_multi_e_native_reports_both_match_line_once` /
     `test_multi_pattern_golden_parity_pattern_file_deterministic_cpu_backend`); this test
     pins the SAME rg-parity "reported once, never once per matching pattern" contract at
-    a REALISTIC pattern count (100, matching the CEO benchmark's own scale) with TWO
+    a REALISTIC pattern count  with TWO
     distinct overlap widths (one line hit by exactly 2 patterns, one line hit by exactly
     3), which a naive performance fix could regress if it swapped in the ALREADY-SHIPPED
     but currently-buggy native AhoCorasick multi-pattern fast path
