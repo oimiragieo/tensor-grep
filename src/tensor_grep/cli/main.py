@@ -74,6 +74,7 @@ from tensor_grep.cli.runtime_paths import (
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
 from tensor_grep.cli.symbol_output import defined_without_results, source_text_lines
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
+from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
@@ -1651,10 +1652,6 @@ def _execute_find(
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates -- the
         # command boundary (C1) must catch it and exit 2, never degrade here.
 
-    # Name WHAT RAN: both fields are `required`/minLength-1 in the envelope `tg find` reuses and
-    # were emitted null. `rank_fallback_reason` says WHY the dense leg is absent; these say which.
-    result.routing_backend, result.routing_reason, result.install_state = route_labels(dense_index)
-
     late_reranker = None
     if os.environ.get("TG_LATE_RERANK") == "1":
         from tensor_grep.core.retrieval_late import (
@@ -1683,6 +1680,7 @@ def _execute_find(
             late_reranker=late_reranker,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            **retrieval_symbols.evidence_options(result),
         )
     except DenseUnavailableError as exc:
         # F1 (review blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
@@ -1701,6 +1699,7 @@ def _execute_find(
             else degrade_reason
         )
         sys.stderr.write(f"tg: {exc}\n")
+        dense_index = None
         fused_order, late_fallback_reason = rank_chunks(
             query,
             chunks,
@@ -1709,7 +1708,11 @@ def _execute_find(
             late_reranker=None,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            **retrieval_symbols.evidence_options(result),
         )
+    result.routing_backend, result.routing_reason, result.install_state = route_labels(
+        dense_index, result.rank_fusion
+    )
     if late_fallback_reason:
         result.rank_fallback_reason = (
             f"{result.rank_fallback_reason}; {late_fallback_reason}"
@@ -5589,7 +5592,7 @@ def context_render(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     provider: str = typer.Option(
         "native",
@@ -8448,7 +8451,7 @@ def blast_radius_render(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
@@ -8934,7 +8937,7 @@ def session_context_render_cmd(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     refresh_on_stale: bool = typer.Option(
         False,
@@ -9287,7 +9290,7 @@ def session_blast_radius_render_cmd(
     render_profile: str = typer.Option(
         "full",
         "--render-profile",
-        help="Render profile: full, compact, or llm.",
+        help="Render profile: full, compact, llm, or focused.",
     ),
     refresh_on_stale: bool = typer.Option(
         False,

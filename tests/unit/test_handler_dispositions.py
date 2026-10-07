@@ -348,11 +348,16 @@ def test_ledger_locatability() -> None:
     its advisory lineno falls within the enclosing symbol's span."""
 
     ledger = _load_ledger()
+    # The source tree is fixed during this check. Parse each module once, rather than
+    # repeating the same large AST walk for every ledger entry in that module.
+    handlers_by_module = {
+        module: _real_handlers_for_module(module) for module in {r["module"] for r in ledger}
+    }
     for record in ledger:
         module = record["module"]
         symbol = record["enclosing_symbol"]
         idx = record["handler_index_within_symbol"]
-        real = _real_handlers_for_module(module)
+        real = handlers_by_module[module]
         matches = [h for h in real if h[0] == symbol and h[1] == idx]
         assert matches, f"{module}: no real broad handler at ({symbol!r}, idx={idx})"
         _, _, _, span_start, span_end = matches[0]

@@ -103,22 +103,43 @@ mis-call this command.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `schema_version` | `integer` | Find-envelope schema version, distinct from the envelope's own `version`. |
-| `rank_fallback_reason` | `string \| null` | `null` when the dense leg ran. A NON-NULL string means the dense leg was unavailable and the result is BM25-only — the documented visible-never-silent fallback. Example value: `"semantic ranking unavailable: model2vec not installed -- run \`tg install-dense\` (or pip install 'tensor-grep[semantic]') (No module named 'model2vec')"`. A BM25-only `tg find` is still a fully supported mode, so this field is an explanation, not an error. |
+| `rank_fallback_reason` | `string \| null` | Explains unavailable ranking legs, partial AST evidence, or late-rerank degradation. A dense-unavailable reason means no model evidence contributed; it does not imply that an enabled AST leg also failed. This field explains a fallback, not necessarily an error. |
+| `rank_fusion` | `object`, optional | Present with `TG_RRF_SYMBOLS=1`: actual fusion method, combination, `k`, weights, lexical/model/parser evidence, parsed/skipped file counts, and matched exact symbol names. MCP contract 1.15.0 adds this field. |
+
+Set `TG_RRF_SYMBOLS=1` for experimental exact-definition fusion in `tg find`,
+`tg search --rank`, `tg search --semantic`, and their MCP equivalents. With a matching
+declaration, BM25, available dense embeddings, and AST symbols use equal weights in
+sum reciprocal-rank fusion (`k=60`). An optional `TG_RRF_CHANNELS=1` filename leg
+retains its 1.5 weight. With no matching declaration, the prior fusion is preserved.
+For BM25-only `--rank`, this includes preserving grep order on score ties; its
+metadata reports `method="bm25"` without RRF weights, combination, or `k`.
+Unset, this switch changes neither ranking nor output. It does not enable or download a model.
+
+The AST leg matches case-sensitive whole symbol names from query tokens, not calls,
+comments, or strings. Python uses its standard parser; JavaScript/JSX, TypeScript/TSX,
+Rust, and Go require their optional tree-sitter grammars. Supported evidence is named
+function, method, class, and type declarations with parser name fields; it is not
+reference resolution or a dataflow analysis. It reconstructs the ranked chunk snapshot
+without reopening files, rejecting gaps, conflicting overlaps, and syntax errors.
+Missing or partial AST evidence is disclosed while lexical/dense candidates remain eligible.
+
+AST work is limited to 100,000 input chunks, 256 files, 1 million characters and
+10,000 lines per file, 8 million characters and 100,000 lines across chunks
+(including overlaps), and 20,000 syntax nodes per file. Queries over 4,096 characters
+skip the AST leg. JSON/NDJSON expose `rank_fusion`; `rank_fallback_reason` identifies
+skipped evidence. This is an opt-in ranking experiment, with no broad retrieval-quality
+or latency improvement claimed.
 
 Each `matches[]` object carries `file`, `line`, `line_number`, and `text` (both `line` and
 `line_number` are present on this route).
 
-> **KNOWN CONTRACT VIOLATION — do not model your parser on the current behaviour.**
-> As of 2026-08-21 (measured against installed `tg 1.110.16`), `tg find --json` emits
-> **`routing_backend: null` and `routing_reason: null`**. Both fields are `required` in
-> `tests/schemas/tg_output.schema.json` and typed `{"type": "string", "minLength": 1}`, so a
-> schema-validating consumer REJECTS a real `tg find` payload with
-> `None is not of type 'string'`. `tg search --json` on the same tree emits
-> `"NativeCpuBackend"` / `"json_output"`, which is the control proving the fields can be
-> populated. A consumer
-> written today must tolerate `null` on those two fields for `find` specifically; that tolerance
-> should be removed once the defect is fixed. Do NOT "fix" it by relaxing the schema — that would
-> weaken the contract for `tg search`, which is correct.
+Find routing labels identify the executed ranking: `Bm25FindBackend` / `find_bm25_only`
+without dense or AST evidence, and `HybridFindBackend` / `find_bm25_dense_rrf` with
+dense evidence. When the opt-in AST leg contributes, `SymbolHybridFindBackend` uses
+`find_bm25_ast_rrf` or `find_bm25_dense_ast_rrf` according to actual dense availability,
+including query-time degradation. `install_state` likewise identifies dense readiness
+or AST/BM25 readiness with dense unavailable. These are Python ranking routes even
+when invoked through the native executable's passthrough.
 
 ## AST Run JSON
 
@@ -545,6 +566,24 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 
 For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile. That profile uses compact JSON wire formatting and intentionally omits duplicated top-level inventories such as `symbols`, `imports`, `related_paths`, `file_matches`, `file_summaries`, `test_matches`, `coverage`, and `candidate_edit_targets`; agents should read `rendered_context`, `sources`, `edit_plan_seed`, `navigation_pack`, and top-level `validation_commands` first. Use `--render-profile full` when a full pretty-printed inventory is required.
 
+MCP contract 1.14.0 also accepts the opt-in `focused` profile. It retains the selected
+declaration's signature, docstrings/comments, and complete body statements that contain
+query terms, with explicit markers for omitted source ranges. Selection is lexical with
+AST boundaries; it does not establish data-flow completeness or produce an executable patch.
+Python, JavaScript, TypeScript/TSX, Rust, and Go use their optional tree-sitter grammars.
+Unavailable grammars, incomplete parses, queries without a body match, and excerpts that
+would not reduce text size retain the full source and disclose `sources[].focus.fallback_reason`.
+
+For this profile, `sources[].focus` records `selection`, `omitted_line_count`,
+`omitted_ranges` (inclusive original coordinates), and `fallback_reason`. When lines are
+elided, `full_source_read` supplies an argument array for a follow-up `tg source` command.
+`line_map` covers only retained source lines; synthetic markers have no source coordinates.
+The `source` and `rendered_source` fields both contain the excerpt. Focus omissions also
+appear in `omitted_sections`; output budgets can remove additional lines or entire sources.
+When the primary body is elided, context rendering reports `primary_symbol_truncated`,
+lowers confidence, and sets `omitted_primary_reason` to
+`primary_symbol_elided_by_focused_profile`. Read the full source before editing.
+
 The `llm` profile is compact, not summary-only. Selected source blocks include executable body lines by default; compacting can strip comments, docstrings when optimization is requested, blank lines, type-only imports, and boilerplate, but it must not remove the behavior from a selected function.
 
 | Field | Type | Notes |
@@ -572,7 +611,7 @@ The `llm` profile is compact, not summary-only. Selected source blocks include e
 | `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
 | `optimize_context` | `boolean` | Whether comment-only and blank lines were stripped from rendered source blocks. |
-| `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
+| `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, `llm`, or `focused`. |
 | `semantic_provider` | `string` | Effective semantic provider used for primary-target proof. Defaults to `native`; explicit `lsp` / `hybrid` modes may add row-level LSP proof fields only when a completed provider request contributed evidence. |
 | `context_payload_profile` | `string` | Present for compact profiles, such as `llm-compact`. |
 | `payload_compaction` | `object` | Present for compact profiles; records omitted keys and the applied source/file limits. |
@@ -1498,8 +1537,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.12.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
-has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.12.0) and this line has been stale three times now), not the installed CLI/package version and not
+`1.15.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1597,6 +1635,18 @@ Capability modes:
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
 | `meta` | Task-shaped meta-tool composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
+
+Since MCP contract 1.13.0, `tg_query(action="search")` is an exact alias for
+`action="text"`. It accepts the same arguments and returns the same search response,
+including output limits, ranking options, and path confinement. It also works with
+`workspace_roots`. Other unrecognized actions still return `invalid_input`.
+`tg_context(action="capsule")` remains a separate operation from `action="render"`.
+
+For text searches through `tg_query`, an omitted path or `path="."` retains the
+same default-root scan protections as `tg_search`, including when a glob or type
+filter is supplied. Each `"."` entry in `workspace_roots` receives that protection
+independently; explicit scoped paths retain their existing behavior. All paths
+remain confined to the MCP root.
 
 `tg_mcp_capabilities()` response fields:
 

@@ -34,6 +34,7 @@ from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli import mcp_arg_validation as _av
 from tensor_grep.cli import mcp_checkpoint_label_args as _checkpoint_label_args
 from tensor_grep.cli import mcp_search_bounds as _bounds
+from tensor_grep.cli import mcp_search_scope as _search_scope
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -108,7 +109,7 @@ from tensor_grep.core.pipeline import (
     Pipeline as Pipeline,
 )
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
-from tensor_grep.io.directory_scanner import DirectoryScanner
+from tensor_grep.io.directory_scanner import DirectoryScanner as DirectoryScanner
 
 # Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
@@ -177,7 +178,7 @@ def _mcp_server_version() -> str:
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.12.0"  # 1.12.0: checkpoint labels
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.15.0"  # 1.15.0: opt-in rank_fusion evidence
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -391,13 +392,14 @@ _META_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
         "composes": ["tg_search", "tg_ast_search", "tg_find", "tg_index_search"],
         "actions": {
             "text": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "search": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "ast": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "find": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "index": {"native_required": True, "mutation": False, "embedded_fallback": False},
         },
         "notes": (
             "Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search "
-            "(text/ast/find/index). action='index' requires a standalone native tg binary "
+            "(text/search/ast/find/index). search aliases text; index requires a native tg binary "
             "and fails closed (routing_reason='native-tg-unavailable') without one. Accepts "
             "an optional workspace_roots (array of paths, each independently confined) to "
             "run the same action across multiple repo roots in one call, aggregated under "
@@ -1228,7 +1230,9 @@ def _apply_selected_gpu_defaults(
 
 
 def _finalize_aggregate_result(all_results: SearchResult) -> None:
-    all_results.matched_file_paths = sorted(dict.fromkeys(all_results.matched_file_paths))
+    all_results.matched_file_paths = sorted(
+        set(all_results.matched_file_paths).union(match.file for match in all_results.matches)
+    )
     if not all_results.match_counts_by_file and all_results.matches:
         for match in all_results.matches:
             all_results.match_counts_by_file[match.file] = (
@@ -1276,7 +1280,7 @@ def _mcp_broad_root_scan_refusal(
     so no re-scan is needed. ``scanner`` is returned too so the caller can still read its
     post-walk ``scan_truncated`` bookkeeping attribute.
     """
-    scanner = DirectoryScanner(config)
+    scanner = _self.DirectoryScanner(config)
     walker: Iterator[str] = iter(scanner.walk(path))
 
     refuse_vendored, vendored_dirs = _should_refuse_unbounded_vendored_root_scan(
@@ -1985,7 +1989,7 @@ def tg_context_render(
         max_files / max_sources / max_symbols_per_file / max_render_chars: bundle size caps.
         max_tokens: Bundle bound (default ~16000; 0/None = unbounded); model: token-estimation
             model; optimize_context: strip blank/comment-only source lines.
-        render_profile: full, compact, or llm.
+        render_profile: full, compact, llm, or focused.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         profile: Include a render profiling breakdown.
     """
@@ -2282,7 +2286,7 @@ def tg_session_context_render(
         max_symbols_per_file: Maximum summary symbols to include per file.
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
-        render_profile: Render profile to use: full, compact, or llm.
+        render_profile: Render profile to use: full, compact, llm, or focused.
         max_tokens: Bundle bound (default ~16000; 0/None = unbounded).
     """
     try:
@@ -2586,7 +2590,7 @@ def tg_session_blast_radius_render(
         max_symbols_per_file: Maximum summary symbols to include per file.
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
-        render_profile: Render profile to use: full, compact, or llm.
+        render_profile: Render profile to use: full, compact, llm, or focused.
     """
     try:
         from tensor_grep.cli.session_store import (
@@ -2998,11 +3002,8 @@ def tg_search(
     try:
         search_pattern = pattern or query or ""
 
-        # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
-        # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
-        # reassigned, `path == "."` would always read False and silently defeat the large-root/
-        # vendored-root refusal guard's paths_defaulted logic for every default-path call.
-        paths_defaulted = path == "."
+        # Meta dispatch carries original scope evidence alongside the confined absolute path.
+        paths_defaulted = _search_scope.paths_defaulted(path)
 
         # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
         # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -3346,6 +3347,8 @@ def tg_search(
                     payload["scan_limit"] = scan_limit_payload
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
+                if all_results.rank_fusion is not None:
+                    payload["rank_fusion"] = all_results.rank_fusion
                 if byte_cap or _bounds._hit_rendering_ceiling(max_results, all_results):
                     payload["output_truncated"] = True
                 # M14: the results envelope crossed the wire un-stamped.
@@ -4390,7 +4393,7 @@ def tg_impact(
         max_render_chars: Maximum characters in rendered_context (blast_radius_render).
         optimize_context: Strip blank/comment-only lines from rendered source
             (blast_radius_render).
-        render_profile: Render profile: full, compact, or llm (blast_radius_render).
+        render_profile: Render profile: full, compact, llm, or focused (blast_radius_render).
         profile: Include a render profiling breakdown (blast_radius_render).
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
@@ -4468,7 +4471,7 @@ def tg_impact(
 _MAX_WORKSPACE_ROOTS = 8
 
 
-_TG_QUERY_ACTIONS = ("text", "ast", "find", "index")
+_TG_QUERY_ACTIONS = ("text", "search", "ast", "find", "index")
 
 
 def _tg_query_dispatch(
@@ -4496,12 +4499,15 @@ def _tg_query_dispatch(
     limit: int,
     max_tokens: int | None,
     deadline: float | None,
+    paths_defaulted: bool = False,
 ) -> str:
     """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
-    if action == "text":
+    if action in {"text", "search"}:
         search_pattern = pattern if pattern is not None else query
-        return _self.tg_search(
+        return _search_scope.call(
+            _self.tg_search,
+            paths_defaulted=paths_defaulted,
             pattern=search_pattern,
             path=path,
             case_sensitive=case_sensitive,
@@ -4584,21 +4590,21 @@ def tg_query(
     Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
     Composes 4 legacy tools by `action`:
 
-    - action="text": regex/literal pattern search, optional BM25/hybrid re-rank (= tg_search)
+    - action="text" or "search": regex/literal search, optional BM25/hybrid re-rank (= tg_search)
     - action="ast": structural ast-grep/tree-sitter pattern search (= tg_ast_search)
     - action="find": whole-repo hybrid semantic search, no pattern pre-filter (= tg_find)
     - action="index": native trigram-index search; REQUIRES a standalone native tg binary
       and fails closed (routing_reason="native-tg-unavailable") without one (= tg_index_search)
 
     Args:
-        action: One of "text", "ast", "find", "index".
+        action: One of "text", "search" (alias for "text"), "ast", "find", "index".
         pattern: Regex/literal search pattern (text/index) or AST pattern (ast). Accepted as
             a `query` alias for action="text"/"find".
         query: Free-text query (find) or a `pattern` alias (text). Required for find.
         lang: Tree-sitter language name. Required for action="ast".
         path: File or directory to search. Confined to the MCP server root as the first
             operation, regardless of action.
-        action="text" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
+        action="text"/"search" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
             (-F), word_regexp (-w), context (-C), max_count (-m), count_matches (-c), glob,
             type_filter; max_results (default 150) / max_files (default 15) bound output;
             rank re-ranks by BM25; semantic re-ranks by BM25 + local dense embeddings (wins
@@ -4630,7 +4636,7 @@ def tg_query(
         except PathConfinementError as exc:
             return _meta_confinement_error("tg_query", action, exc)
 
-        confined_roots: list[str] | None = None
+        confined_roots: list[tuple[str, bool]] | None = None
         if workspace_roots:
             if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
                 return _meta_workspace_roots_cap_error(
@@ -4641,7 +4647,7 @@ def tg_query(
                 )
             try:
                 confined_roots = [
-                    str(_confine_mcp_path(root, label="workspace_roots"))
+                    (str(_confine_mcp_path(root, label="workspace_roots")), root == ".")
                     for root in workspace_roots
                 ]
             except PathConfinementError as exc:
@@ -4655,6 +4661,7 @@ def tg_query(
                     query=query,
                     lang=lang,
                     path=confined_path,
+                    paths_defaulted=path == ".",
                     case_sensitive=case_sensitive,
                     ignore_case=ignore_case,
                     fixed_strings=fixed_strings,
@@ -4677,15 +4684,9 @@ def tg_query(
 
             results_by_root: dict[str, Any] = {}
             omitted_roots: list[str] = []
-            # Share ONE absolute wall-clock deadline across every root in this loop, mirroring the
-            # deadline_monotonic -> remaining-deadline_seconds pattern agent_capsule.py's call-site
-            # evidence rescue scan already uses (agent_capsule.py:565-567) -- computed ONCE, outside
-            # the loop, so root 2 does not get a fresh copy of `deadline` just because root 1 already
-            # consumed the budget (audit C3: previously EVERY root got the full `deadline`
-            # unchanged, so N roots could cost up to N x deadline wall-clock time instead of one
-            # shared `deadline` for the whole call).
+            # Share one absolute deadline across roots; later roots get only the remaining budget.
             loop_deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
-            for root in confined_roots:
+            for root, paths_defaulted in confined_roots:
                 if (
                     loop_deadline_monotonic is not None
                     and time.monotonic() >= loop_deadline_monotonic
@@ -4706,6 +4707,7 @@ def tg_query(
                     query=query,
                     lang=lang,
                     path=root,
+                    paths_defaulted=paths_defaulted,
                     case_sensitive=case_sensitive,
                     ignore_case=ignore_case,
                     fixed_strings=fixed_strings,
@@ -4732,7 +4734,7 @@ def tg_query(
 
             extra: dict[str, Any] = {
                 "path": confined_path,
-                "workspace_roots": confined_roots,
+                "workspace_roots": [root for root, _ in confined_roots],
                 "results_by_root": results_by_root,
             }
             if omitted_roots:
@@ -4807,7 +4809,7 @@ def tg_context(
             defaults 1200); pass 0 for explicitly unbounded on pack/render/capsule.
         model: Optional model name used for token estimation (render/capsule).
         optimize_context: Strip blank/comment-only lines from rendered source (render).
-        render_profile: Render profile: full, compact, or llm (render).
+        render_profile: Render profile: full, compact, llm, or focused (render).
         provider: Semantic provider for primary target proof: native, lsp, or hybrid
             (edit_plan/render/capsule).
         profile: Include a render profiling breakdown (render).
@@ -5027,7 +5029,7 @@ def tg_session(
             max_render_chars (context_render/blast_radius_render).
         model (token estimation), profile (render profiling): context_render.
             optimize_context (strip blank/comment-only lines), render_profile (full, compact,
-            llm): context_render/blast_radius_render.
+            llm, focused): context_render/blast_radius_render.
         max_tokens: Bound the output for prompt injection (context/context_render). None
             uses the composed action's own default; pass 0 for explicitly unbounded.
         max_depth: Maximum reverse-import depth (blast_radius* actions).

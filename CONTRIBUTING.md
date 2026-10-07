@@ -4,6 +4,13 @@
 
 ## Local Validation
 
+Prepare the native development environment before running readiness checks. The
+`repo-cli-build-warmup` check in `python scripts/agent_readiness.py` uses
+`uv run --no-sync tg --version`: it checks the prepared entrypoint's version without
+triggering dependency synchronization or a Rust rebuild. After dependency or Rust
+source changes, run `uv sync --frozen --extra dev --extra ast` first. A matching
+version alone does not prove that the compiled extension contains local Rust edits.
+
 Run these before proposing a change:
 
 ```bash

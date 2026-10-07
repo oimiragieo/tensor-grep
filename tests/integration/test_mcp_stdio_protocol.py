@@ -70,6 +70,12 @@ async def _stdio_protocol_roundtrip() -> None:
             # defaults ON, so the 46 legacy names -- including tg_rulesets above -- stay too).
             assert "tg_navigate" in tool_names
             assert "tg_rewrite" in tool_names
+            query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
+            assert '"search"' in query_tool.description
+            assert "action" in query_tool.inputSchema["properties"]
+            assert "paths_defaulted" not in query_tool.inputSchema["properties"]
+            search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
+            assert "paths_defaulted" not in search_tool.inputSchema["properties"]
 
             capabilities = await session.call_tool("tg_mcp_capabilities", {})
             assert capabilities.isError is False
@@ -84,6 +90,26 @@ async def _stdio_protocol_roundtrip() -> None:
             rulesets_payload = json.loads(rulesets.content[0].text)
             assert rulesets_payload["schema_version"] == rulesets_payload["version"]
             assert {rule["name"] for rule in rulesets_payload["rulesets"]} >= {"secrets-basic"}
+
+            search_payloads = []
+            for action in ("text", "search"):
+                result = await session.call_tool(
+                    "tg_query",
+                    {
+                        "action": action,
+                        "pattern": "KNOWN_COMMANDS",
+                        "path": "src/tensor_grep/cli/commands.py",
+                        "fixed_strings": True,
+                        "max_results": 1,
+                    },
+                )
+                assert result.isError is False
+                payload = json.loads(result.content[0].text)
+                assert "error" not in payload
+                assert payload["total_matches"] > 0
+                assert payload["mcp_contract_version"] == _TG_MCP_SERVER_CONTRACT_VERSION
+                search_payloads.append(payload)
+            assert search_payloads[0]["matches"] == search_payloads[1]["matches"]
 
 
 def test_tg_mcp_stdio_initialize_tools_list_and_call_roundtrip() -> None:

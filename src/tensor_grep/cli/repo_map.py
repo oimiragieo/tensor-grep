@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from urllib.parse import unquote, urlparse
 
+from tensor_grep.cli import focused_rendering as _focused_rendering
 from tensor_grep.cli import (
     lang_c,
     lang_cpp,
@@ -660,7 +661,7 @@ _SOURCE_FIRST_SUFFIXES = {
     ".tpp",
     *lang_suffixes.JS_TS_SUFFIXES,
 }
-_RENDER_PROFILES = {"full", "compact", "llm"}
+_RENDER_PROFILES = {"full", "compact", "llm", "focused"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _QUERY_TERM_SYNONYMS = {
     "resolved": ("resolve",),
@@ -10597,7 +10598,10 @@ def _source_truncates_primary_symbol(
     if str(source.get("file", "") or "") != primary_file:
         return False
     source_budget = source.get("source_budget")
-    if not isinstance(source_budget, dict) or not bool(source_budget.get("truncated")):
+    focused_omissions = source.get("focus", {}).get("omitted_line_count", 0)
+    if not focused_omissions and not (
+        isinstance(source_budget, dict) and source_budget.get("truncated")
+    ):
         return False
     source_symbol = str(source.get("name") or source.get("symbol") or "")
     overlaps_primary_span = _line_map_overlaps_span(source.get("line_map"), primary_span)
@@ -10780,7 +10784,7 @@ def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, 
             "primary file metadata was selected but omitted from rendered_context budget"
         )
     elif primary_file and primary_symbol_truncated:
-        omitted_reason = "primary_symbol_truncated_by_source_budget"
+        omitted_reason = _focused_rendering.primary_omission_reason(payload, primary_file)
     elif primary_file and not rendered_includes_primary_symbol:
         omitted_reason = "primary_symbol_omitted_from_rendered_context"
 
@@ -11002,14 +11006,7 @@ def build_context_render_from_map(
             semantic_provider=semantic_provider,
             deadline_monotonic=deadline_monotonic,
             _profiling_collector=collector,
-            # #212 (broader B9/#661 flag-lie): the "full" render profile (the default for text
-            # output, and explicitly selectable for --json) has no downstream cap on suggested_edits
-            # at all -- _compact_context_render_payload's _compact_edit_plan_seed truncation only
-            # runs for render_profile in {"compact", "llm"} (see that function's own guard). Opting
-            # into the SAME suggested_edits_max mechanism build_context_edit_plan_from_map already
-            # uses closes the gap for "full" while being a provable no-op for "compact"/"llm" --
-            # _compact_edit_plan_seed's OWN [:max_files] truncation downstream already reduces those
-            # profiles to <=max_files, so bounding at the source produces the identical final list.
+            # Bound suggested edits in every profile, including those without downstream compaction.
             suggested_edits_max=max_files,
         )
     else:
@@ -11032,6 +11029,9 @@ def build_context_render_from_map(
         optimize_context=optimize_context,
         _profiling_collector=collector,
     )
+    if normalized_profile == "focused":
+        sources = _focused_rendering.focus_sources(sources, query)
+    focused_omissions = _focused_rendering.omissions(sources)
     sources, source_budget, source_omitted_sections = _apply_source_output_budget(
         sources,
         max_tokens=normalized_max_tokens,
@@ -11039,6 +11039,7 @@ def build_context_render_from_map(
         _profiling_collector=collector,
     )
     payload["sources"] = sources
+    source_omitted_sections += focused_omissions
     if source_budget is not None:
         payload["source_budget"] = source_budget
     (
@@ -15157,6 +15158,8 @@ def build_symbol_blast_radius_render_from_map(
         }
         for summary in list(payload.get("file_summaries", []))[:max_files]
     ]
+    if normalized_profile == "focused":
+        sources = _focused_rendering.focus_sources(sources, symbol)
     payload["sources"] = sources
     payload["max_files"] = max_files
     payload["max_sources"] = max_sources
@@ -15177,9 +15180,10 @@ def build_symbol_blast_radius_render_from_map(
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
-    payload["truncated"] = truncated
+    focused_omissions = _focused_rendering.omissions(sources)
+    payload["truncated"] = truncated or bool(focused_omissions)
     payload["token_estimate"] = token_estimate
-    payload["omitted_sections"] = omitted_sections
+    payload["omitted_sections"] = [*focused_omissions, *omitted_sections]
     payload = _self._attach_edit_plan_metadata(
         repo_map,
         payload,
@@ -15202,6 +15206,8 @@ def build_symbol_blast_radius_render_from_map(
         # Opt into the same mechanism build_context_edit_plan_from_map already uses.
         suggested_edits_max=max_files,
     )
+    if normalized_profile == "focused":
+        payload = _self._apply_context_consistency_invariants(payload)
     # task #203: fold this function's OWN source-lookup loop deadline signal into partial --
     # `dict(radius_payload)` above already copied forward any partial/deadline_limit that
     # build_symbol_blast_radius_from_map (or _attach_edit_plan_metadata's own edit_plan_seed fold-in

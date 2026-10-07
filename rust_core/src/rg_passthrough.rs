@@ -572,6 +572,23 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
 
     let status = command.status().context("failed to execute ripgrep")?;
+    let may_use_pcre2 =
+        !args.no_auto_hybrid_regex && (args.auto_hybrid_regex || (args.pcre2 && !args.no_pcre2));
+    if status.code() == Some(2)
+        && !args.files
+        && (!args.fixed_strings || args.no_fixed_strings)
+        && !may_use_pcre2
+        && (args.no_config || env::var_os("RIPGREP_CONFIG_PATH").is_none())
+    {
+        if let Some(hint) = args
+            .patterns
+            .iter()
+            .take(64)
+            .find_map(|pattern| crate::regex_hint::literal_pattern_hint(pattern))
+        {
+            eprintln!("{hint}");
+        }
+    }
     Ok(crate::exit_codes::child_exit_code(status))
 }
 

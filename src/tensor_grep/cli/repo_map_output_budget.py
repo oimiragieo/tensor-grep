@@ -543,6 +543,7 @@ def _render_source_block(
     *,
     render_profile: str,
     optimize_context: bool,
+    focus_query: str | None = None,
     _profiling_collector: _self._ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _self._profiling_phase(_profiling_collector, "source_rendering"):
@@ -566,7 +567,7 @@ def _render_source_block(
 
         original_lines = block.splitlines()
         diagnostics["original_line_count"] = len(original_lines)
-        if normalized_profile == "full":
+        if normalized_profile in {"full", "focused"}:
             rendered_source = block
             if original_lines:
                 line_map.append({
@@ -665,6 +666,10 @@ def _render_source_block(
     rendered["rendered_source"] = rendered_source
     rendered["line_map"] = line_map
     rendered["render_diagnostics"] = diagnostics
+    if normalized_profile == "focused":
+        from tensor_grep.cli.focused_rendering import focus_source
+
+        return focus_source(rendered, focus_query)
     return rendered
 
 

@@ -166,6 +166,7 @@ class SearchResult:
     # (reserved for a full engine swap) and from `incomplete_reason` (partial results). Emitted
     # to stderr + this field so a BM25-only result is never mislabeled "semantic" output.
     rank_fallback_reason: str | None = None
+    rank_fusion: dict[str, object] | None = None
     install_state: str | None = None
 
     @property

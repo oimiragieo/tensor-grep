@@ -1222,9 +1222,13 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
         no_ignore_dot=_flag_present(search_args, {"--no-ignore-dot"}),
         unrestricted=int(_search_args_request_unrestricted(search_args)),
     )
-    return _streaming_passthrough_returncode(
+    exit_code = _streaming_passthrough_returncode(
         [binary_name, *ignore_file_ops, *search_args], timeout_env_var="TG_RG_TIMEOUT_SECONDS"
     )
+    from tensor_grep.cli.regex_hint import emit_literal_pattern_hint
+
+    emit_literal_pattern_hint(search_args, exit_code)
+    return exit_code
 
 
 def _run_full_cli() -> None:

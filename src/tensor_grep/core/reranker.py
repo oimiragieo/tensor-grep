@@ -15,8 +15,9 @@ import os
 import sys
 import threading
 from collections import defaultdict
-from typing import Literal
+from typing import Any, Literal
 
+from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.result import SearchResult
 from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS, Chunk, chunk_file
@@ -28,9 +29,8 @@ from tensor_grep.core.retrieval_lexical import split_terms
 # PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
 # filename-token overlap with the query -- a precision signal (a query mentioning "invoice" should
 # surface invoice_parser.py's chunks first). DEFAULT-OFF (gated by `_RRF_CHANNELS_ENV`) so this is
-# a zero-risk additive change pending a golden-set default-flip in a separate PR. A symbol-name
-# channel is DEFERRED to a later phase (it would need a def-scan source and couple this free-file
-# module to repo_map).
+# an additive experiment pending retrieval-quality measurements before any default flip.
+# The separate TG_RRF_SYMBOLS channel parses the existing chunk snapshot in retrieval_symbols.
 _RRF_CHANNELS_ENV: str = "TG_RRF_CHANNELS"
 PATH_CHANNEL_WEIGHT: float = 1.5
 
@@ -211,7 +211,19 @@ def rerank_by_bm25(
             if result.rank_fallback_reason
             else corpus_cap_reason
         )
-        return dataclasses.replace(result, matches=reranked, rank_fallback_reason=combined_reason)
+        result = dataclasses.replace(result, rank_fallback_reason=combined_reason)
+    if retrieval_symbols.enabled():
+        fused = rerank_hybrid(result, query, file_paths, bm25_index=index)
+        evidence = dict(fused.rank_fusion or {})
+        symbols = evidence.get("ast_symbols")
+        if isinstance(symbols, dict) and symbols.get("ranked_chunks"):
+            return fused
+        # No exact-definition vote: preserve BM25's score ties in original grep order.
+        # In particular, the unrelated optional path channel must not affect --rank here.
+        for key in ("combine", "k", "weights"):
+            evidence.pop(key, None)
+        evidence.update(method="bm25", tie_break="input_match_order")
+        return dataclasses.replace(fused, matches=reranked, rank_fusion=evidence)
     return dataclasses.replace(result, matches=reranked)
 
 
@@ -225,6 +237,7 @@ def rank_chunks(
     k: int = DEFAULT_K,
     dense_weight: float = 1.0,
     combine: Literal["sum", "max"] = "max",
+    evidence: dict[str, Any] | None = None,
 ) -> tuple[list[int], str | None]:
     """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
     via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
@@ -260,11 +273,16 @@ def rank_chunks(
     disagree on what counts as literal. :func:`rerank_hybrid` (the ``tg search --semantic`` path)
     never passes this kwarg, so it always gets the default ``"max"`` -- unaffected by this fix.
 
-    Returns ``(fused_order, late_fallback_reason)``:
+    ``TG_RRF_SYMBOLS=1`` adds exact parser-backed declaration evidence from the same chunks.
+    When a definition matches, it overrides the above weights/combine with equal BM25/dense/AST
+    weights and sum RRF; an enabled path leg retains its 1.5 weight. With no definition match,
+    the existing fusion is preserved. Optional ``evidence`` receives the actual legs and weights.
+
+    Returns ``(fused_order, rank_fallback_reason)``:
 
     - ``fused_order``: chunk indices (into ``chunks``) in final rank order -- RRF-fused, then
       MaxSim-reordered over its head when ``late_reranker`` is supplied and does not degrade.
-    - ``late_fallback_reason``: ``None`` unless the late-rerank stage degraded (the
+    - ``rank_fallback_reason``: includes any unavailable/incomplete AST leg or late degradation (the
       ``TG_RERANK_BUDGET_MS`` wall-clock budget exceeded, or a recoverable
       :class:`~tensor_grep.core.retrieval_late.LateRerankUnavailableError`). An UNRECOVERABLE
       encode-time fault (anything else, including a ``BackendExecutionError`` or a
@@ -279,6 +297,7 @@ def rank_chunks(
         rankings.append(dense_ranking)
 
     weights: list[float] | None = None
+    path_ranking: list[int] = []
     if dense_index is not None and dense_weight != 1.0:
         weights = [1.0, dense_weight]
     if _rrf_channels_enabled():
@@ -288,6 +307,35 @@ def rank_chunks(
             rankings.append(path_ranking)
             weights.append(PATH_CHANNEL_WEIGHT)
 
+    symbol_reason: str | None = None
+    if retrieval_symbols.enabled():
+        symbol_order, symbol_evidence = retrieval_symbols.symbol_ranking(chunks, query)
+        if symbol_order:
+            rankings.append(symbol_order)
+            # Exact definitions use equal AST/lexical/dense agreement votes.
+            # Queries without definition evidence keep their existing ordering.
+            weights = [1.0] * len(rankings)
+            if path_ranking:
+                weights[-2] = PATH_CHANNEL_WEIGHT
+            combine = "sum"
+        symbol_reason = retrieval_symbols.fallback_reason(symbol_evidence)
+        if evidence is not None:
+            evidence.update(
+                method="rrf",
+                combine=combine,
+                k=k,
+                bm25={"evidence": "lexical", "ranked_chunks": len(bm25_ranking)},
+                dense={"evidence": "model", "available": dense_index is not None},
+                ast_symbols=symbol_evidence,
+                weights={
+                    "bm25": 1.0,
+                    "dense": (1.0 if symbol_order else dense_weight)
+                    if dense_index is not None
+                    else 0.0,
+                    "ast_symbols": 1.0 if symbol_order else 0.0,
+                    "path": PATH_CHANNEL_WEIGHT if path_ranking else 0.0,
+                },
+            )
     fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)
 
     # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
@@ -352,7 +400,8 @@ def rank_chunks(
         else:
             fused_order = rerank_result[0] + fused_order[pool_k:]
 
-    return fused_order, late_fallback_reason
+    reasons = [reason for reason in (symbol_reason, late_fallback_reason) if reason]
+    return fused_order, "; ".join(reasons) or None
 
 
 def rerank_hybrid(
@@ -412,6 +461,7 @@ def rerank_hybrid(
         bm25_index = Bm25Index(chunks)
     chunks = bm25_index.chunks
 
+    fusion_evidence: dict[str, Any] | None = {} if retrieval_symbols.enabled() else None
     fused_order, late_rank_fallback_reason = rank_chunks(
         query,
         chunks,
@@ -419,6 +469,7 @@ def rerank_hybrid(
         dense_index=dense_index,
         late_reranker=late_reranker,
         k=k,
+        evidence=fusion_evidence,
     )
 
     # Position in the fused order is a monotonic proxy for the underlying RRF score: RRF ties are
@@ -456,17 +507,31 @@ def rerank_hybrid(
     ]
     if combined_parts:
         return dataclasses.replace(
-            result, matches=reranked, rank_fallback_reason="; ".join(combined_parts)
+            result,
+            matches=reranked,
+            rank_fallback_reason="; ".join(combined_parts),
+            rank_fusion=fusion_evidence,
         )
-    return dataclasses.replace(result, matches=reranked)
+    return dataclasses.replace(result, matches=reranked, rank_fusion=fusion_evidence)
 
 
-def route_labels(dense_index: object | None) -> tuple[str, str, str]:
+def route_labels(
+    dense_index: object | None, fusion: dict[str, object] | None = None
+) -> tuple[str, str, str]:
     """(routing_backend, routing_reason, install_state) for `_execute_find`'s envelope, keyed on
     whether the dense leg is present. Both `routing_backend`/`routing_reason` are `required`/
     minLength-1 in the shared envelope `tg find` reuses; `install_state` is the S6 explicit-state
     field so a caller never has to infer readiness from the other two.
     """
+    symbols = (fusion or {}).get("ast_symbols")
+    if isinstance(symbols, dict) and symbols.get("ranked_chunks"):
+        if dense_index is not None:
+            return "SymbolHybridFindBackend", "find_bm25_dense_ast_rrf", "dense_ready"
+        return (
+            "SymbolHybridFindBackend",
+            "find_bm25_ast_rrf",
+            "ast_bm25_ready (dense unavailable; run tg install-dense)",
+        )
     if dense_index:
         return "HybridFindBackend", "find_bm25_dense_rrf", "dense_ready"
     return "Bm25FindBackend", "find_bm25_only", "bm25_only (run tg install-dense)"
