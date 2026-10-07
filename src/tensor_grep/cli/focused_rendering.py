@@ -90,7 +90,7 @@ def focus_source(source: dict[str, Any], query: str | None) -> dict[str, Any]:
         # The grammar provider caches parsers. Give this render its own parser so
         # concurrent MCP requests never mutate a shared parser's state.
         tree = type(parser)(parser.language).parse(textwrap.dedent(block).encode("utf-8"))
-    except (ImportError, ValueError, RuntimeError, UnicodeError):
+    except (ImportError, ValueError, RuntimeError, UnicodeError, TypeError, AttributeError):
         return fallback("parse_unavailable")
     if tree.root_node.has_error:
         return fallback("incomplete_parse")

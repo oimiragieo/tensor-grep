@@ -15206,6 +15206,8 @@ def build_symbol_blast_radius_render_from_map(
         # Opt into the same mechanism build_context_edit_plan_from_map already uses.
         suggested_edits_max=max_files,
     )
+    if normalized_profile == "focused":
+        payload = _self._apply_context_consistency_invariants(payload)
     # task #203: fold this function's OWN source-lookup loop deadline signal into partial --
     # `dict(radius_payload)` above already copied forward any partial/deadline_limit that
     # build_symbol_blast_radius_from_map (or _attach_edit_plan_metadata's own edit_plan_seed fold-in

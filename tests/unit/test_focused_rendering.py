@@ -244,3 +244,35 @@ def test_focused_full_fallback_names_budget_as_omission_cause(tmp_path):
         payload["context_consistency"]["omitted_primary_reason"]
         == "primary_symbol_truncated_by_source_budget"
     )
+
+
+@pytest.mark.parametrize("error", [TypeError, AttributeError])
+def test_grammar_api_incompatibility_preserves_source(tmp_path, monkeypatch, error):
+    from tensor_grep.cli import focused_rendering
+
+    def incompatible(_path):
+        raise error("incompatible grammar binding")
+
+    monkeypatch.setattr(focused_rendering, "_structural_parser_for_path", incompatible)
+    block = "def f():\n    return 1\n"
+    result = _render_source_block(
+        {"file": str(tmp_path / "sample.py"), "source": block, "start_line": 1, "end_line": 2},
+        render_profile="focused",
+        optimize_context=False,
+        focus_query="return",
+    )
+    assert result["rendered_source"] == block
+    assert result["focus"]["fallback_reason"] == "parse_unavailable"
+
+
+def test_blast_radius_focused_primary_elision_downgrades_confidence(tmp_path):
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_render
+
+    block = "def calculate(total):\n" + "".join(f"    setup_{i} = {i}\n" for i in range(20))
+    block += "    return calculate(total - 1) if total else 0\n"
+    (tmp_path / "invoice.py").write_text(block, encoding="utf-8")
+    payload = build_symbol_blast_radius_render("calculate", str(tmp_path), render_profile="focused")
+    assert payload["sources"][0]["focus"]["omitted_line_count"] == 20
+    assert payload["context_consistency"]["primary_symbol_truncated"]
+    assert payload["context_consistency"]["confidence_downgraded"]
+    assert payload["edit_plan_seed"]["confidence"]["overall"] < 1
