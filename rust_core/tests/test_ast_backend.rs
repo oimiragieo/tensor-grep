@@ -147,6 +147,84 @@ fn test_tg_run_json_metadata_uses_ast_backend_routing() {
 }
 
 #[test]
+fn test_tg_run_json_no_match_includes_remediation_and_exits_one() {
+    let (_dir, file_path) = write_source_file("py", "def add(a, b): return a + b\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--json")
+        .arg("print(value)")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "AstBackend");
+    assert_eq!(payload["routing_reason"], "ast-native");
+    assert_eq!(payload["total_matches"], 0);
+    let hints = payload["remediation"]["hints"]
+        .as_array()
+        .expect("zero-match JSON should include remediation hints");
+    assert!(hints.iter().any(|hint| {
+        hint.as_str()
+            .is_some_and(|hint| hint.contains("Common idiom shapes"))
+    }));
+    assert!(hints.iter().any(|hint| {
+        hint.as_str()
+            .is_some_and(|hint| hint.contains("no metavariable"))
+    }));
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn test_tg_run_text_no_match_writes_remediation_to_stderr() {
+    let (_dir, file_path) = write_source_file("py", "def add(a, b): return a + b\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("print(value)")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Common idiom shapes"), "stderr={stderr}");
+    assert!(stderr.contains("no metavariable"), "stderr={stderr}");
+}
+
+#[test]
+fn test_tg_run_json_no_match_preserves_default_language_and_discloses_it() {
+    let (_dir, file_path) = write_source_file("py", "def add(a, b): return a + b\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--json")
+        .arg("print(value)")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "AstBackend");
+    assert_eq!(payload["total_matches"], 0);
+    assert!(payload["remediation"]["hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|hint| hint
+            .as_str()
+            .is_some_and(|hint| hint.contains("No --lang was passed"))));
+}
+
+#[test]
 fn test_tg_run_accepts_ast_grep_pattern_option_and_files_with_matches() {
     let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
 
@@ -271,6 +349,7 @@ fn test_tg_run_rejects_malformed_javascript_method_pattern_after_contextual_fall
         stderr.contains("invalid pattern") || stderr.contains("parse"),
         "stderr={stderr}"
     );
+    assert!(!stderr.contains("Common idiom shapes"), "stderr={stderr}");
     assert!(!stderr.contains("panicked"), "stderr={stderr}");
 }
 

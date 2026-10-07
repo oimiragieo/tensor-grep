@@ -24,6 +24,7 @@ import json
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -480,6 +481,7 @@ def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
         res = subprocess.run(
             [str(native_tg_binary), "--version"],
             env=probe,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=False,
             timeout=2,
@@ -802,6 +804,7 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
             [str(candidate), "--version"],
             capture_output=True,
             env=env,
+            stdin=subprocess.DEVNULL,
             text=False,
             timeout=2,
         )
@@ -1310,6 +1313,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             result = _self.subprocess.run(
                 command,
                 env=probe_env,
+                stdin=subprocess.DEVNULL,
                 check=False,
                 capture_output=True,
                 text=False,

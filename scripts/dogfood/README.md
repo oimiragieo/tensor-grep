@@ -1,7 +1,7 @@
 # Post-release Docker dogfood
 
 **Run this after every release confirms on PyPI.** It installs the *published* `tensor-grep` into a
-clean container and runs the real `tg` binary across every user-facing feature, asserting no
+clean container and runs the real `tg` binary across the selected user-facing scenarios, asserting no
 regression.
 
 ## Why
@@ -10,8 +10,8 @@ Our unit/integration tests use Typer's `CliRunner`, which invokes the `app` obje
 bypasses the real `tg` front door** (`tensor_grep.cli.bootstrap:main_entry`, which forwards plain
 text searches to ripgrep). v1.14.0's `tg search --rank` shipped broken in plain-text mode
 (`rg: unrecognized flag --rank`) and no test caught it — because none ran the installed binary the way
-a customer does. This harness closes that blind spot: a clean install + the real binary + every
-feature.
+a customer does. This harness closes that blind spot: a clean install + the real binary + the selected
+checks.
 
 ## Run it
 
@@ -21,7 +21,7 @@ docker build --build-arg TG_VERSION=1.15.1 -f scripts/dogfood/Dockerfile -t tg-d
 docker run --rm tg-dogfood
 ```
 
-- **Exit 0** — the shipped artifact installs and every feature works.
+- **Exit 0** — the shipped artifact installs and all selected checks pass.
 - **Exit 1** — a regression; the failing `tg <command>` and its output are printed.
 
 The `RUN tg --version` line in the Dockerfile also fails the *build* early if the wheel didn't resolve
@@ -35,6 +35,17 @@ The battery is environment-agnostic — point it at any installed `tg`:
 pip install "tensor-grep==<version>"
 python scripts/dogfood/dogfood_features.py      # or TG_BIN=/path/to/tg python scripts/dogfood/dogfood_features.py
 ```
+
+The report records the selected executable's absolute path, SHA-256, and version,
+plus the package and extension origins from the harness interpreter (or the explicitly
+configured `TG_SIDECAR_PYTHON`). A version mismatch with the harness's installed package
+is refused before feature checks. Run the harness with the isolated install's Python
+to keep those origins meaningful. For candidate builds, the audit environment can supply
+`TG_DOGFOOD_CANDIDATE_COMMIT`; a matching version alone does not prove a local rebuild.
+
+The final count covers only the selected checks. Unavailable symlink controls are
+reported separately as skipped; unlisted command, action, and option combinations
+remain untested. A disclosed BM25 fallback verifies fallback behavior, not dense inference.
 
 ## Coverage & extending
 
@@ -59,7 +70,7 @@ docker build -f scripts/dogfood/Dockerfile.source -t tg-dogfood-src .
 docker run --rm tg-dogfood-src
 ```
 
-- **Exit 0** — the working tree builds, installs, and every feature works against the real binary.
+- **Exit 0** — the working tree builds, installs, and all selected checks pass against the real binary.
 - **Exit 1** — a regression; the failing `tg <command>` and its output are printed.
 
 The build itself fails early if `tg` is not on `PATH` or the PyO3 extension did not load, and it

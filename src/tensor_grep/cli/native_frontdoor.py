@@ -15,9 +15,11 @@ before adding a bare cross-module reference.
 """
 
 import json
+import logging
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -26,10 +28,12 @@ import typer
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.freshness_process import capture_probe as _capture_freshness_probe
 from tensor_grep.cli.runtime_paths import native_frontdoor_metadata_path
 from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 
 _PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
+_LOGGER = logging.getLogger(__name__)
 _PYPI_SIMPLE_URL = "https://pypi.org/simple/tensor-grep/"
 _PYPI_SIMPLE_VERSION_RE = re.compile(
     r"tensor[-_]?grep-([0-9]+(?:\.[0-9]+)*(?:(?:a|b|rc|dev|post)[0-9]+)?)",
@@ -162,7 +166,7 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
     env = os.environ.copy()
     env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
     try:
-        result = _self.subprocess.run(
+        stdout, stderr = _capture_freshness_probe(
             [
                 sys.executable,
                 "-m",
@@ -174,17 +178,53 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
                 "--index-url",
                 "https://pypi.org/simple",
             ],
-            capture_output=True,
-            text=False,
-            check=False,
-            timeout=timeout_seconds,
+            timeout_seconds=timeout_seconds,
             env=env,
         )
         # Both streams are parsed for versions, so neither is merely diagnostic text.
-        output = "\n".join(decode_protocol_output(part) for part in (result.stdout, result.stderr))
+        output = "\n".join(decode_protocol_output(part) for part in (stdout, stderr))
     except Exception:
+        _LOGGER.debug("doctor freshness pip-index probe failed", exc_info=True)
         return []
     return _candidate_versions_from_pip_index_output(output)
+
+
+def _candidate_versions_from_pypi_indices(
+    timeout_seconds: float, headers: dict[str, str]
+) -> list[str]:
+    # urllib's socket timeout cannot bound trickling headers/body or DNS. Keep
+    # those operations in one killable child, with incremental evidence so a
+    # completed surface survives a later stall. No reader threads are needed.
+    request = {
+        "timeout_seconds": timeout_seconds,
+        "urls": [_PYPI_JSON_URL, _PYPI_SIMPLE_URL],
+        "headers": headers,
+    }
+    output: bytes | str | None = None
+    try:
+        output, _ = _capture_freshness_probe(
+            [sys.executable, "-m", "tensor_grep.cli.pypi_probe", json.dumps(request)],
+            timeout_seconds=timeout_seconds,
+        )
+    except OSError:
+        _LOGGER.debug("doctor freshness HTTP worker failed", exc_info=True)
+    candidates: list[str] = []
+    # The child emits at most two short records. Reject unexpected protocol
+    # volume, and ignore an incomplete final record left by deadline cleanup.
+    if output is None or len(output) > 8192:
+        return candidates
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                continue
+            _LOGGER.debug("doctor freshness HTTP stage: %s", event)
+            version = event.get("version")
+            if isinstance(version, str) and len(version) <= 64:
+                candidates.append(version)
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return candidates
 
 
 def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
@@ -195,8 +235,10 @@ def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | Non
     genuinely-offline runs; it is NOT a silent 'clean', it disables the probe)."""
     if os.environ.get("TG_DOCTOR_OFFLINE") == "1":
         return None
-    import urllib.request
-
+    # All freshness surfaces share one monotonic budget, rather than each
+    # starting its own 15-second wait. Preserve the best version observed even
+    # when a subsequent surface uses the rest of the budget.
+    deadline = time.monotonic() + timeout_seconds
     candidates: list[str] = []
     headers = {
         "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
@@ -205,23 +247,17 @@ def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | Non
         "User-Agent": f"tensor-grep/{_self._cli_package_version()}",
     }
 
-    try:
-        request = urllib.request.Request(_PYPI_JSON_URL, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        candidates.extend(_candidate_versions_from_pypi_json(payload))
-    except Exception:
-        pass
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        candidates.extend(_candidate_versions_from_pypi_indices(remaining, headers))
 
-    try:
-        request = urllib.request.Request(_PYPI_SIMPLE_URL, headers=headers)
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            simple_index = response.read().decode("utf-8", errors="replace")
-        candidates.extend(_candidate_versions_from_pypi_simple_index(simple_index))
-    except Exception:
-        pass
-
-    candidates.extend(_candidate_versions_from_pip_index(timeout_seconds))
+    started = time.monotonic()
+    remaining = deadline - started
+    if remaining > 0:
+        candidates.extend(_candidate_versions_from_pip_index(remaining))
+        _LOGGER.debug("doctor freshness pip-index took %.3fs", time.monotonic() - started)
+    else:
+        _LOGGER.debug("doctor freshness shared budget exhausted")
 
     return _highest_tensor_grep_version(candidates)
 

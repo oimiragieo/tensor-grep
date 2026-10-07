@@ -54,6 +54,7 @@ def _is_ast_grep_sg_binary(binary: str) -> bool:
     try:
         result = subprocess.run(
             [binary, "--version"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=False,
             check=False,

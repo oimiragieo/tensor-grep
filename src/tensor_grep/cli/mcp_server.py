@@ -35,6 +35,7 @@ from tensor_grep.cli import mcp_arg_validation as _av
 from tensor_grep.cli import mcp_checkpoint_label_args as _checkpoint_label_args
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli import mcp_search_scope as _search_scope
+from tensor_grep.cli import mcp_serial_execution as _serial_execution
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -156,8 +157,7 @@ def _mcp_server_version() -> str:
 # task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/tg_session/
 # tg_scan/tg_audit/tg_checkpoint/tg_rewrite), always registered, compose the 46 legacy tools by
 # an `action` selector (plus 2 always-on singletons). All 48 legacy names stay registered with
-# identical signatures (`TG_MCP_LEGACY_TOOLS` defaults ON); turning it OFF is a separate,
-# deliberate operator decision. Bumped because `tools[]` grew by 10.
+# identical signatures (`TG_MCP_LEGACY_TOOLS` defaults ON); OFF is operator-controlled.
 # 1.4.0 -> 1.5.0 (task #283): additive FIELDS on `tg_search`'s `scan_limit` payload --
 # `truncation_cause` ("scan_limit" | "unreadable_path" | "unknown"), `budget_remediable` (bool)
 # and, when non-zero, `unreadable_path_count`. Needed because #276 slice 1 widened
@@ -172,9 +172,6 @@ def _mcp_server_version() -> str:
 # gains in the same commit (served at 1.6.0, which promised only `tg_search`'s copy).
 # Lesson: a pass-through handler makes any producer it wraps an MCP wire surface; grep for a
 # handler returning a builder's payload verbatim before calling a change CLI-only.
-#
-# Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
-# existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
@@ -5699,3 +5696,6 @@ async def _run_mcp_stdio_async() -> None:
 def run_mcp_server() -> None:
     """Entry point for the MCP server."""
     anyio.run(_run_mcp_stdio_async)
+
+
+_serial_execution.install_serial_tool_execution(mcp)

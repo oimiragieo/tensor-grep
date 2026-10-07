@@ -11,7 +11,7 @@
 # Usage (run from the repo root so the build context contains the source):
 #   docker build -f scripts/dogfood/Dockerfile.source -t tg-dogfood-src .
 #   docker run --rm tg-dogfood-src
-# Exit 0 = the working tree builds, installs, and every feature works against the real binary.
+# Exit 0 = the working tree builds, installs, and all selected checks pass against the real binary.
 #
 # NOTE: this compiles rust_core, so the first build is slow (release profile + LTO). Layer caching
 # keeps rebuilds cheap as long as Cargo.toml/Cargo.lock are unchanged.

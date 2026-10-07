@@ -21,14 +21,14 @@ FORWARDER_ALLOWLIST: dict[tuple[str, str, str, str, str], str] = {
         "run_subprocess",
         "shim_kwargs",
         "b437e4570d25707596480c6cbc9c39d66191d5d1a3596ce6f0aa090291c210f1",
-        "fca67c50cec3579b51c4cfb44a684d77da27c7466261ac458a6e7fb33341bb97",
+        "3890e2a9e09942d4c1f65eb02dae37e4485ca6c0b2f62ebe5a54702fa6b04286",
     ): "legacy subprocess compatibility call forwards only its constructed shim options",
     (
         "cli/bootstrap.py:_streaming_passthrough_returncode:run_subprocess:5cde2066bd09cb67c745c60f118a265f64eb474bf7fd5a4dc1ef1a0cf83fd330:0",
         "run_subprocess",
         "shim_kwargs",
         "5cde2066bd09cb67c745c60f118a265f64eb474bf7fd5a4dc1ef1a0cf83fd330",
-        "fca67c50cec3579b51c4cfb44a684d77da27c7466261ac458a6e7fb33341bb97",
+        "3890e2a9e09942d4c1f65eb02dae37e4485ca6c0b2f62ebe5a54702fa6b04286",
     ): "legacy subprocess compatibility call forwards only its constructed shim options",
     (
         "cli/dogfood.py:run_dogfood_readiness:subprocess.Popen:e954fccb42ac247b758f13dff473f28117ca45dbbadbd5c3bcddf729a07ed643:0",
@@ -63,7 +63,7 @@ FORWARDER_ALLOWLIST: dict[tuple[str, str, str, str, str], str] = {
         "subprocess.run",
         "kwargs",
         "6eaec4d190ffafae3d3f611906e7558f07e7f694cb80feb84d63e8de95060f85",
-        "103974e4d5d2ceb8009757929a1e2cf0ba48a4daaf48e20b52784a1cded23d33",
+        "d856b8ac8957bd76b077abd059a0b2cbe4c53358497030cc2fe18d85ddc9558b",
     ): "central timeout wrapper forwards caller options without choosing decoding policy",
 }
 
@@ -286,6 +286,11 @@ class _Scanner:
                             "run_subprocess" if item.name == "run_subprocess" else "unknown"
                         )
                         values.pop(bound, None)
+                elif statement.module == "tensor_grep.cli.freshness_process":
+                    for item in statement.names:
+                        bound = item.asname or item.name
+                        env[bound] = "capture_probe" if item.name == "capture_probe" else "unknown"
+                        values.pop(bound, None)
                 elif statement.module == "tensor_grep.cli":
                     for item in statement.names:
                         bound = item.asname or item.name
@@ -474,6 +479,7 @@ class _Scanner:
                 value == "module:subprocess"
                 or value == "module:subprocess-policy"
                 or value == "run_subprocess"
+                or value == "capture_probe"
                 or value.startswith("subprocess.")
                 or value.startswith("injected.subprocess.")
                 or value == "ambiguous-subprocess"
@@ -572,7 +578,9 @@ class _Scanner:
         implicit_text = api in {"getoutput", "getstatusoutput"}
         if implicit_text:
             text = "True"
-        output_captured = implicit_text or api == "check_output" or _captures_output(keywords)
+        output_captured = (
+            implicit_text or api in {"check_output", "capture_probe"} or _captures_output(keywords)
+        )
         call_fingerprint = _fingerprint(node)
         recorded = self._append_sink(
             Sink(
@@ -963,6 +971,7 @@ MACHINE_PROTOCOL_SITES = {
     ("cli/main.py", "main_entry"),
     ("cli/mcp_rewrite_tools.py", "_run_rewrite_subprocess"),
     ("cli/native_frontdoor.py", "_candidate_versions_from_pip_index"),
+    ("cli/native_frontdoor.py", "_candidate_versions_from_pypi_indices"),
     ("cli/native_frontdoor.py", "_verify_target_python_tensor_grep_version"),
     ("cli/runtime_paths.py", "_native_tg_version"),
     ("cli/session_daemon.py", "_restrict_windows_file_to_current_user"),
@@ -1148,9 +1157,9 @@ def check_repository(rows: list[Sink]) -> list[str]:
         problems.append(
             f"production callsite identity/fingerprint manifest changed; missing={missing}; added={added}; changed={changed}"
         )
-    if len(rows) != 72:
+    if len(rows) != 73:
         problems.append(
-            f"production output-capable sink population changed: expected 72, found {len(rows)}"
+            f"production output-capable sink population changed: expected 73, found {len(rows)}"
         )
     generated = [row for row in rows if row.generated_from is not None]
     if len(generated) != 12:
