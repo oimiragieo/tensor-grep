@@ -545,6 +545,24 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 
 For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile. That profile uses compact JSON wire formatting and intentionally omits duplicated top-level inventories such as `symbols`, `imports`, `related_paths`, `file_matches`, `file_summaries`, `test_matches`, `coverage`, and `candidate_edit_targets`; agents should read `rendered_context`, `sources`, `edit_plan_seed`, `navigation_pack`, and top-level `validation_commands` first. Use `--render-profile full` when a full pretty-printed inventory is required.
 
+MCP contract 1.14.0 also accepts the opt-in `focused` profile. It retains the selected
+declaration's signature, docstrings/comments, and complete body statements that contain
+query terms, with explicit markers for omitted source ranges. Selection is lexical with
+AST boundaries; it does not establish data-flow completeness or produce an executable patch.
+Python, JavaScript, TypeScript/TSX, Rust, and Go use their optional tree-sitter grammars.
+Unavailable grammars, incomplete parses, queries without a body match, and excerpts that
+would not reduce text size retain the full source and disclose `sources[].focus.fallback_reason`.
+
+For this profile, `sources[].focus` records `selection`, `omitted_line_count`,
+`omitted_ranges` (inclusive original coordinates), and `fallback_reason`. When lines are
+elided, `full_source_read` supplies an argument array for a follow-up `tg source` command.
+`line_map` covers only retained source lines; synthetic markers have no source coordinates.
+The `source` and `rendered_source` fields both contain the excerpt. Focus omissions also
+appear in `omitted_sections`; output budgets can remove additional lines or entire sources.
+When the primary body is elided, context rendering reports `primary_symbol_truncated`,
+lowers confidence, and sets `omitted_primary_reason` to
+`primary_symbol_elided_by_focused_profile`. Read the full source before editing.
+
 The `llm` profile is compact, not summary-only. Selected source blocks include executable body lines by default; compacting can strip comments, docstrings when optimization is requested, blank lines, type-only imports, and boilerplate, but it must not remove the behavior from a selected function.
 
 | Field | Type | Notes |
@@ -572,7 +590,7 @@ The `llm` profile is compact, not summary-only. Selected source blocks include e
 | `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
 | `optimize_context` | `boolean` | Whether comment-only and blank lines were stripped from rendered source blocks. |
-| `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
+| `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, `llm`, or `focused`. |
 | `semantic_provider` | `string` | Effective semantic provider used for primary-target proof. Defaults to `native`; explicit `lsp` / `hybrid` modes may add row-level LSP proof fields only when a completed provider request contributed evidence. |
 | `context_payload_profile` | `string` | Present for compact profiles, such as `llm-compact`. |
 | `payload_compaction` | `object` | Present for compact profiles; records omitted keys and the applied source/file limits. |
@@ -1498,7 +1516,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.13.0`), which is distinct from the installed CLI/package version and
+`1.14.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,

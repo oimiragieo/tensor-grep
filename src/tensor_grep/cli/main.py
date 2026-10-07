@@ -5589,7 +5589,7 @@ def context_render(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     provider: str = typer.Option(
         "native",
@@ -8448,7 +8448,7 @@ def blast_radius_render(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
@@ -8934,7 +8934,7 @@ def session_context_render_cmd(
     render_profile: str | None = typer.Option(
         None,
         "--render-profile",
-        help="Render profile: full, compact, or llm. Defaults to llm for JSON and full for text.",
+        help="Render profile: full, compact, llm, or focused. Defaults to llm for JSON and full for text.",
     ),
     refresh_on_stale: bool = typer.Option(
         False,
@@ -9287,7 +9287,7 @@ def session_blast_radius_render_cmd(
     render_profile: str = typer.Option(
         "full",
         "--render-profile",
-        help="Render profile: full, compact, or llm.",
+        help="Render profile: full, compact, llm, or focused.",
     ),
     refresh_on_stale: bool = typer.Option(
         False,

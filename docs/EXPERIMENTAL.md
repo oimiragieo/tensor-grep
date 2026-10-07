@@ -16,6 +16,17 @@ This installs the `semantic` Python extra and fetches a checksum-pinned model of
 
 Treat ranked results as suggestions to inspect. The ranking may vary with the chosen backend, model, and corpus. `rg` remains a useful baseline for exact text search, and `tg search` has a separate, documented search contract.
 
+## Focused context excerpts
+
+Use `tg context-render src --query "invoice validation" --render-profile focused --json`
+to request shorter excerpts from selected declarations. The profile retains signatures,
+docstrings, and matching complete statements, and labels elided ranges. Selection uses
+query terms and AST boundaries; it does not trace every dependency needed to edit the code.
+Use the returned full-source read before making changes. Without a supported grammar or
+a useful body match, the profile returns the full source with an explicit fallback reason.
+Savings depend on the query and source; no fixed reduction is guaranteed. See the
+[response contract](harness_api.md) for supported languages and line-map behavior.
+
 ## GPU execution and calibration
 
 GPU support is opt-in and experimental. A CPU-only installation does not need GPU libraries. GPU execution requires a compatible build, device, drivers, and supported route. A GPU-related package or CI matrix entry by itself does not show that a request ran on the GPU. Inspect route evidence described in [GPU troubleshooting](runbooks/gpu-troubleshooting.md) when validating a specific request.

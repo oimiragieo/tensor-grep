@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.13.0"  # 1.13.0: tg_query search action alias
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.14.0"  # 1.14.0: opt-in focused source excerpts
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1987,7 +1987,7 @@ def tg_context_render(
         max_files / max_sources / max_symbols_per_file / max_render_chars: bundle size caps.
         max_tokens: Bundle bound (default ~16000; 0/None = unbounded); model: token-estimation
             model; optimize_context: strip blank/comment-only source lines.
-        render_profile: full, compact, or llm.
+        render_profile: full, compact, llm, or focused.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         profile: Include a render profiling breakdown.
     """
@@ -2284,7 +2284,7 @@ def tg_session_context_render(
         max_symbols_per_file: Maximum summary symbols to include per file.
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
-        render_profile: Render profile to use: full, compact, or llm.
+        render_profile: Render profile to use: full, compact, llm, or focused.
         max_tokens: Bundle bound (default ~16000; 0/None = unbounded).
     """
     try:
@@ -2588,7 +2588,7 @@ def tg_session_blast_radius_render(
         max_symbols_per_file: Maximum summary symbols to include per file.
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
-        render_profile: Render profile to use: full, compact, or llm.
+        render_profile: Render profile to use: full, compact, llm, or focused.
     """
     try:
         from tensor_grep.cli.session_store import (
@@ -4389,7 +4389,7 @@ def tg_impact(
         max_render_chars: Maximum characters in rendered_context (blast_radius_render).
         optimize_context: Strip blank/comment-only lines from rendered source
             (blast_radius_render).
-        render_profile: Render profile: full, compact, or llm (blast_radius_render).
+        render_profile: Render profile: full, compact, llm, or focused (blast_radius_render).
         profile: Include a render profiling breakdown (blast_radius_render).
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
@@ -4805,7 +4805,7 @@ def tg_context(
             defaults 1200); pass 0 for explicitly unbounded on pack/render/capsule.
         model: Optional model name used for token estimation (render/capsule).
         optimize_context: Strip blank/comment-only lines from rendered source (render).
-        render_profile: Render profile: full, compact, or llm (render).
+        render_profile: Render profile: full, compact, llm, or focused (render).
         provider: Semantic provider for primary target proof: native, lsp, or hybrid
             (edit_plan/render/capsule).
         profile: Include a render profiling breakdown (render).
@@ -5025,7 +5025,7 @@ def tg_session(
             max_render_chars (context_render/blast_radius_render).
         model (token estimation), profile (render profiling): context_render.
             optimize_context (strip blank/comment-only lines), render_profile (full, compact,
-            llm): context_render/blast_radius_render.
+            llm, focused): context_render/blast_radius_render.
         max_tokens: Bound the output for prompt injection (context/context_render). None
             uses the composed action's own default; pass 0 for explicitly unbounded.
         max_depth: Maximum reverse-import depth (blast_radius* actions).
