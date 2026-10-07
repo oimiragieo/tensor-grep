@@ -22,8 +22,11 @@ import json
 import time
 from unittest.mock import MagicMock
 
+import pytest
 
-def test_tg_query_workspace_roots_over_cap_fails_closed(monkeypatch, tmp_path):
+
+@pytest.mark.parametrize("action", ["text", "search"])
+def test_tg_query_workspace_roots_over_cap_fails_closed(monkeypatch, tmp_path, action):
     """More than _MAX_WORKSPACE_ROOTS roots (all otherwise valid, in-root paths) must be
     refused fail-closed BEFORE any root is dispatched -- never a crash, never a silent
     truncation to the first N roots."""
@@ -40,7 +43,7 @@ def test_tg_query_workspace_roots_over_cap_fails_closed(monkeypatch, tmp_path):
     spy = MagicMock(return_value="{}")
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
-    out = mcp_server.tg_query(action="text", pattern="foo", workspace_roots=roots)
+    out = mcp_server.tg_query(action=action, pattern="foo", workspace_roots=roots)
     payload = json.loads(out)
 
     assert payload["error"]["code"] == "invalid_input"
@@ -49,7 +52,8 @@ def test_tg_query_workspace_roots_over_cap_fails_closed(monkeypatch, tmp_path):
     spy.assert_not_called()  # fail-closed BEFORE any root is queried
 
 
-def test_tg_query_workspace_roots_at_cap_is_not_rejected(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", ["text", "search"])
+def test_tg_query_workspace_roots_at_cap_is_not_rejected(monkeypatch, tmp_path, action):
     """Exactly _MAX_WORKSPACE_ROOTS roots is the boundary-legal case -- must NOT be rejected
     (the cap is a limit, not an off-by-one trap)."""
     from tensor_grep.cli import mcp_server
@@ -65,7 +69,7 @@ def test_tg_query_workspace_roots_at_cap_is_not_rejected(monkeypatch, tmp_path):
     spy = MagicMock(side_effect=lambda **kwargs: json.dumps({"path": kwargs["path"]}))
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
-    out = mcp_server.tg_query(action="text", pattern="foo", workspace_roots=roots)
+    out = mcp_server.tg_query(action=action, pattern="foo", workspace_roots=roots)
     payload = json.loads(out)
 
     assert "error" not in payload
@@ -73,7 +77,10 @@ def test_tg_query_workspace_roots_at_cap_is_not_rejected(monkeypatch, tmp_path):
     assert len(payload["results_by_root"]) == cap
 
 
-def test_tg_query_workspace_roots_shared_deadline_omits_remaining_roots(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", ["find", "search"])
+def test_tg_query_workspace_roots_shared_deadline_omits_remaining_roots(
+    monkeypatch, tmp_path, action
+):
     """The `deadline` must bound the WHOLE multi-root call as ONE shared wall-clock budget,
     not be handed unchanged to every root. Simulates a slow first root (via a monkeypatched
     clock that jumps forward inside the dispatch spy) that alone consumes the entire shared
@@ -104,7 +111,7 @@ def test_tg_query_workspace_roots_shared_deadline_omits_remaining_roots(monkeypa
     monkeypatch.setattr(mcp_server, "_tg_query_dispatch", spy)
 
     out = mcp_server.tg_query(
-        action="find",
+        action=action,
         query="x",
         deadline=10,
         workspace_roots=["root_a", "root_b", "root_c"],

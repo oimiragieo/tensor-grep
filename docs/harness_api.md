@@ -1498,8 +1498,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.12.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
-has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.12.0) and this line has been stale three times now), not the installed CLI/package version and not
+`1.13.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1597,6 +1596,12 @@ Capability modes:
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
 | `meta` | Task-shaped meta-tool composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
+
+Since MCP contract 1.13.0, `tg_query(action="search")` is an exact alias for
+`action="text"`. It accepts the same arguments and returns the same search response,
+including output limits, ranking options, and path confinement. It also works with
+`workspace_roots`. Other unrecognized actions still return `invalid_input`.
+`tg_context(action="capsule")` remains a separate operation from `action="render"`.
 
 `tg_mcp_capabilities()` response fields:
 

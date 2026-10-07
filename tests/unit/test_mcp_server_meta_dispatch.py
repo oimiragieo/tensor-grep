@@ -51,6 +51,7 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
     ]
     assert tools["tg_rewrite_diff"]["mode"] == "native-required"
     assert tools["tg_index_search"]["mode"] == "native-required"
+    assert tools["tg_query"]["actions"]["search"] == tools["tg_query"]["actions"]["text"]
 
 
 def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
@@ -412,27 +413,29 @@ def test_tg_impact_unknown_action():
     assert payload["error"]["code"] == "invalid_input"
 
 
-def test_tg_query_dispatches_text_with_pattern(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", ["text", "search"])
+def test_tg_query_dispatches_text_with_pattern(monkeypatch, tmp_path, action):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
     spy = MagicMock(return_value="TEXT_SENTINEL")
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
-    result = mcp_server.tg_query(action="text", pattern="foo", rank=True)
+    result = mcp_server.tg_query(action=action, pattern="foo", rank=True)
     assert result == "TEXT_SENTINEL"
     assert spy.call_args.kwargs["pattern"] == "foo"
     assert spy.call_args.kwargs["rank"] is True
 
 
-def test_tg_query_text_query_aliases_pattern(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", ["text", "search"])
+def test_tg_query_text_query_aliases_pattern(monkeypatch, tmp_path, action):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
     spy = MagicMock(return_value="TEXT_SENTINEL")
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
-    mcp_server.tg_query(action="text", query="bar")
+    mcp_server.tg_query(action=action, query="bar")
     assert spy.call_args.kwargs["pattern"] == "bar"
 
 
@@ -509,7 +512,8 @@ def test_tg_query_index_missing_pattern():
     assert payload["error"]["code"] == "invalid_input"
 
 
-def test_tg_query_workspace_roots_dispatches_once_per_root(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", ["text", "search"])
+def test_tg_query_workspace_roots_dispatches_once_per_root(monkeypatch, tmp_path, action):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
@@ -520,7 +524,7 @@ def test_tg_query_workspace_roots_dispatches_once_per_root(monkeypatch, tmp_path
     spy = MagicMock(side_effect=lambda **kwargs: json.dumps({"path": kwargs["path"]}))
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
-    out = mcp_server.tg_query(action="text", pattern="foo", workspace_roots=["root_a", "root_b"])
+    out = mcp_server.tg_query(action=action, pattern="foo", workspace_roots=["root_a", "root_b"])
     payload = json.loads(out)
 
     assert spy.call_count == 2
@@ -533,8 +537,9 @@ def test_tg_query_workspace_roots_dispatches_once_per_root(monkeypatch, tmp_path
     )
 
 
+@pytest.mark.parametrize("action", ["text", "search"])
 def test_tg_query_workspace_roots_one_bad_element_fails_whole_call(
-    monkeypatch, tmp_path, tmp_path_factory
+    monkeypatch, tmp_path, tmp_path_factory, action
 ):
     from tensor_grep.cli import mcp_server
 
@@ -546,11 +551,12 @@ def test_tg_query_workspace_roots_one_bad_element_fails_whole_call(
     monkeypatch.setattr(mcp_server, "tg_search", spy)
 
     out = mcp_server.tg_query(
-        action="text", pattern="foo", workspace_roots=["good_root", str(outside_root)]
+        action=action, pattern="foo", workspace_roots=["good_root", str(outside_root)]
     )
     payload = json.loads(out)
 
     assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["message"] == "workspace_roots must stay within the MCP root (refused)"
     assert "results_by_root" not in payload
     spy.assert_not_called()  # fail-closed BEFORE any root is queried
 

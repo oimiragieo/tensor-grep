@@ -177,7 +177,7 @@ def _mcp_server_version() -> str:
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.12.0"  # 1.12.0: checkpoint labels
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.13.0"  # 1.13.0: tg_query search action alias
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -391,13 +391,14 @@ _META_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
         "composes": ["tg_search", "tg_ast_search", "tg_find", "tg_index_search"],
         "actions": {
             "text": {"native_required": False, "mutation": False, "embedded_fallback": False},
+            "search": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "ast": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "find": {"native_required": False, "mutation": False, "embedded_fallback": False},
             "index": {"native_required": True, "mutation": False, "embedded_fallback": False},
         },
         "notes": (
             "Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search "
-            "(text/ast/find/index). action='index' requires a standalone native tg binary "
+            "(text/search/ast/find/index). search aliases text; index requires a native tg binary "
             "and fails closed (routing_reason='native-tg-unavailable') without one. Accepts "
             "an optional workspace_roots (array of paths, each independently confined) to "
             "run the same action across multiple repo roots in one call, aggregated under "
@@ -4468,7 +4469,7 @@ def tg_impact(
 _MAX_WORKSPACE_ROOTS = 8
 
 
-_TG_QUERY_ACTIONS = ("text", "ast", "find", "index")
+_TG_QUERY_ACTIONS = ("text", "search", "ast", "find", "index")
 
 
 def _tg_query_dispatch(
@@ -4499,7 +4500,7 @@ def _tg_query_dispatch(
 ) -> str:
     """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
-    if action == "text":
+    if action in {"text", "search"}:
         search_pattern = pattern if pattern is not None else query
         return _self.tg_search(
             pattern=search_pattern,
@@ -4584,21 +4585,21 @@ def tg_query(
     Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
     Composes 4 legacy tools by `action`:
 
-    - action="text": regex/literal pattern search, optional BM25/hybrid re-rank (= tg_search)
+    - action="text" or "search": regex/literal search, optional BM25/hybrid re-rank (= tg_search)
     - action="ast": structural ast-grep/tree-sitter pattern search (= tg_ast_search)
     - action="find": whole-repo hybrid semantic search, no pattern pre-filter (= tg_find)
     - action="index": native trigram-index search; REQUIRES a standalone native tg binary
       and fails closed (routing_reason="native-tg-unavailable") without one (= tg_index_search)
 
     Args:
-        action: One of "text", "ast", "find", "index".
+        action: One of "text", "search" (alias for "text"), "ast", "find", "index".
         pattern: Regex/literal search pattern (text/index) or AST pattern (ast). Accepted as
             a `query` alias for action="text"/"find".
         query: Free-text query (find) or a `pattern` alias (text). Required for find.
         lang: Tree-sitter language name. Required for action="ast".
         path: File or directory to search. Confined to the MCP server root as the first
             operation, regardless of action.
-        action="text" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
+        action="text"/"search" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
             (-F), word_regexp (-w), context (-C), max_count (-m), count_matches (-c), glob,
             type_filter; max_results (default 150) / max_files (default 15) bound output;
             rank re-ranks by BM25; semantic re-ranks by BM25 + local dense embeddings (wins
