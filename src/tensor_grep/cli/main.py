@@ -74,6 +74,7 @@ from tensor_grep.cli.runtime_paths import (
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
 from tensor_grep.cli.symbol_output import defined_without_results, source_text_lines
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
+from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
@@ -1683,6 +1684,7 @@ def _execute_find(
             late_reranker=late_reranker,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            **retrieval_symbols.evidence_options(result),
         )
     except DenseUnavailableError as exc:
         # F1 (review blocker; mirrors `_apply_semantic_rerank`'s own query-time catch,
@@ -1709,6 +1711,7 @@ def _execute_find(
             late_reranker=None,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            **retrieval_symbols.evidence_options(result),
         )
     if late_fallback_reason:
         result.rank_fallback_reason = (

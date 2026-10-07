@@ -103,7 +103,30 @@ mis-call this command.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `schema_version` | `integer` | Find-envelope schema version, distinct from the envelope's own `version`. |
-| `rank_fallback_reason` | `string \| null` | `null` when the dense leg ran. A NON-NULL string means the dense leg was unavailable and the result is BM25-only — the documented visible-never-silent fallback. Example value: `"semantic ranking unavailable: model2vec not installed -- run \`tg install-dense\` (or pip install 'tensor-grep[semantic]') (No module named 'model2vec')"`. A BM25-only `tg find` is still a fully supported mode, so this field is an explanation, not an error. |
+| `rank_fallback_reason` | `string \| null` | Explains unavailable ranking legs, partial AST evidence, or late-rerank degradation. A dense-unavailable reason means no model evidence contributed; it does not imply that an enabled AST leg also failed. This field explains a fallback, not necessarily an error. |
+| `rank_fusion` | `object`, optional | Present with `TG_RRF_SYMBOLS=1`: actual fusion method, combination, `k`, weights, lexical/model/parser evidence, parsed/skipped file counts, and matched exact symbol names. MCP contract 1.15.0 adds this field. |
+
+Set `TG_RRF_SYMBOLS=1` for experimental exact-definition fusion in `tg find`,
+`tg search --rank`, `tg search --semantic`, and their MCP equivalents. With a matching
+declaration, BM25, available dense embeddings, and AST symbols use equal weights in
+sum reciprocal-rank fusion (`k=60`). An optional `TG_RRF_CHANNELS=1` filename leg
+retains its 1.5 weight. With no matching declaration, the prior fusion is preserved.
+Unset, this switch changes neither ranking nor output. It does not enable or download a model.
+
+The AST leg matches case-sensitive whole symbol names from query tokens, not calls,
+comments, or strings. Python uses its standard parser; JavaScript/JSX, TypeScript/TSX,
+Rust, and Go require their optional tree-sitter grammars. Supported evidence is named
+function, method, class, and type declarations with parser name fields; it is not
+reference resolution or a dataflow analysis. It reconstructs the ranked chunk snapshot
+without reopening files, rejecting gaps, conflicting overlaps, and syntax errors.
+Missing or partial AST evidence is disclosed while lexical/dense candidates remain eligible.
+
+AST work is limited to 100,000 input chunks, 256 files, 1 million characters and
+10,000 lines per file, 8 million characters and 100,000 lines across chunks
+(including overlaps), and 20,000 syntax nodes per file. Queries over 4,096 characters
+skip the AST leg. JSON/NDJSON expose `rank_fusion`; `rank_fallback_reason` identifies
+skipped evidence. This is an opt-in ranking experiment, with no broad retrieval-quality
+or latency improvement claimed.
 
 Each `matches[]` object carries `file`, `line`, `line_number`, and `text` (both `line` and
 `line_number` are present on this route).
@@ -1516,7 +1539,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.14.0`), which is distinct from the installed CLI/package version and
+`1.15.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,

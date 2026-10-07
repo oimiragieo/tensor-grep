@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.14.0"  # 1.14.0: opt-in focused source excerpts
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.15.0"  # 1.15.0: opt-in rank_fusion evidence
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -3345,6 +3345,8 @@ def tg_search(
                     payload["scan_limit"] = scan_limit_payload
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
+                if all_results.rank_fusion is not None:
+                    payload["rank_fusion"] = all_results.rank_fusion
                 if byte_cap or _bounds._hit_rendering_ceiling(max_results, all_results):
                     payload["output_truncated"] = True
                 # M14: the results envelope crossed the wire un-stamped.

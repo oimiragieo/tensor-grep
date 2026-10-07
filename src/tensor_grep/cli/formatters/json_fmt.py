@@ -140,6 +140,8 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
     # for every other search so the envelope shape stays byte-identical.
     if result.rank_fallback_reason is not None:
         envelope["rank_fallback_reason"] = result.rank_fallback_reason
+    if result.rank_fusion is not None:
+        envelope["rank_fusion"] = result.rank_fusion
     # Partial results (rg exit 2) — a machine-visible "suppression != absence" marker so --json/
     # --ndjson agents don't read a truncated result as complete. Emitted only when incomplete, so
     # the envelope shape is byte-identical for normal (complete) results.
@@ -247,6 +249,7 @@ class JsonFormatter(OutputFormatter):
             "staging_bytes",
             "fallback_reason",
             "rank_fallback_reason",
+            "rank_fusion",
             "result_incomplete",
             "incomplete_reason",
             "incomplete_reason_class",
