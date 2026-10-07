@@ -73,6 +73,7 @@ Character-for-character identity is not required for help formatting, but comman
 Agent automation contracts:
 - `tg search PATTERN` defaults to the current directory when no path is provided.
 - Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
+- On native and Python rg passthroughs, failed default-engine searches with unclosed character classes or malformed brace repetitions append a conditional `--fixed-strings (-F)` hint after rg's original stderr. Matching, stdout, and exit status are unchanged; no literal retry runs automatically. The diagnostic inspects at most 64 inline patterns of at most 16 KiB each using the Rust syntax parser. PCRE2/automatic-engine requests and active rg configuration files are left to the selected engine; `--no-config` permits the default-engine hint. Pattern files are not reread for diagnostics. A Python bootstrap using an older or unavailable Rust extension retains the original rg error without the added hint.
 - `tg search --json` emits a valid tensor-grep aggregate JSON object even when there are zero matches.
 - `tg search --format rg --json` forwards to ripgrep and emits rg JSON Lines events without a tensor-grep envelope for tools that require rg's event schema.
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.

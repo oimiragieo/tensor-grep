@@ -17,6 +17,7 @@ pub mod index_lock;
 pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;
+pub mod regex_hint;
 pub mod rg_passthrough;
 pub mod routing;
 pub mod runtime_paths;
@@ -362,5 +363,11 @@ fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     m.add_function(wrap_pyfunction!(ast_rewrite_plan_json, m)?)?;
     m.add_function(wrap_pyfunction!(ast_rewrite_apply_json, m)?)?;
+    m.add_function(wrap_pyfunction!(_literal_pattern_hint, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+fn _literal_pattern_hint(pattern: &str) -> Option<&'static str> {
+    regex_hint::literal_pattern_hint(pattern)
 }

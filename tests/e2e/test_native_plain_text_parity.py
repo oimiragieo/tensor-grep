@@ -269,9 +269,13 @@ def test_native_plain_text_stdout_is_byte_identical_to_ripgrep(
         f"stdout BYTES differ for {context}\nrg={rg.stdout!r}\ntg={tg.stdout!r}"
     )
     # STDERR is asserted too, not just stdout: a refused request reaches `rg` through
-    # `Stdio::inherit()` so its diagnostics must pass through byte-identically, and an admitted
-    # request must not GAIN a line (the `warning: native CPU search failed...` class).
-    assert tg.stderr == rg.stderr, (
+    # `Stdio::inherit()` so its diagnostics remain byte-identical apart from the explicit
+    # literal-pattern hint below. Admitted requests must not gain a fallback warning.
+    expected_stderr = rg.stderr
+    if pattern == "[" and not flags:
+        # Deliberate diagnostic addition: preserve every rg byte, then append this hint.
+        expected_stderr += b"Hint: If you intended literal code, retry with --fixed-strings (-F).\n"
+    assert tg.stderr == expected_stderr, (
         f"stderr BYTES differ for {context}\nrg={rg.stderr!r}\ntg={tg.stderr!r}"
     )
 

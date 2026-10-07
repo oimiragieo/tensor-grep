@@ -1750,10 +1750,7 @@ fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
         builder.crlf(true);
     }
     builder.build(&config.pattern).with_context(|| {
-        format!(
-            "failed to compile native search pattern '{}'",
-            config.pattern
-        )
+        crate::regex_hint::native_pattern_error_detail(&config.pattern, config.fixed_strings)
     })
 }
 
