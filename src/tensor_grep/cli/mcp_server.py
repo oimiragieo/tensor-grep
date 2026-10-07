@@ -1230,7 +1230,9 @@ def _apply_selected_gpu_defaults(
 
 
 def _finalize_aggregate_result(all_results: SearchResult) -> None:
-    all_results.matched_file_paths = sorted(dict.fromkeys(all_results.matched_file_paths))
+    all_results.matched_file_paths = sorted(
+        set(all_results.matched_file_paths).union(match.file for match in all_results.matches)
+    )
     if not all_results.match_counts_by_file and all_results.matches:
         for match in all_results.matches:
             all_results.match_counts_by_file[match.file] = (

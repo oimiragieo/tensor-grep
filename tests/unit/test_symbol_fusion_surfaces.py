@@ -27,7 +27,7 @@ def corpus(tmp_path, monkeypatch):
 def _assert_evidence(payload):
     assert Path(payload["matches"][0]["file"]).name == "target.py"
     fusion = payload["rank_fusion"]
-    assert fusion["ast_symbols"]["matched_symbols"] == ["target_func"]
+    assert fusion["ast_symbols"]["matched_symbols"] == ["target_func"], fusion
     assert fusion["dense"]["available"] is False
     assert fusion["weights"]["ast_symbols"] == 1.0
 
@@ -49,14 +49,34 @@ def test_search_ndjson_keeps_rank_evidence(corpus):
     )
 
 
-@pytest.mark.parametrize("tool", ["find", "search"])
+@pytest.mark.parametrize("tool", ["find", "search", "search_cpu"])
 def test_mcp_ranked_surfaces(corpus, monkeypatch, tool):
     monkeypatch.chdir(corpus)
+    if tool == "search_cpu":
+        monkeypatch.setattr(
+            "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda _: False
+        )
+        monkeypatch.setattr(
+            "tensor_grep.backends.rust_backend.RustCoreBackend.is_available", lambda _: False
+        )
     if tool == "find":
         payload = json.loads(mcp_server.tg_find("target_func", path=str(corpus)))
     else:
         payload = json.loads(mcp_server.tg_search("target_func", path=str(corpus), rank=True))
     _assert_evidence(payload)
+
+
+def test_mcp_aggregate_preserves_reported_paths_and_adds_match_paths():
+    from tensor_grep.core.result import MatchLine, SearchResult
+
+    result = SearchResult(
+        matches=[MatchLine(1, "match", "b.py"), MatchLine(2, "match", "b.py")],
+        matched_file_paths=["count-only.py", "b.py", "count-only.py"],
+        match_counts_by_file={"count-only.py": 4, "b.py": 2},
+    )
+    mcp_server._finalize_aggregate_result(result)
+    assert result.matched_file_paths == ["b.py", "count-only.py"]
+    assert result.match_counts_by_file == {"count-only.py": 4, "b.py": 2}
 
 
 def test_default_output_has_no_opt_in_evidence(corpus, monkeypatch):
