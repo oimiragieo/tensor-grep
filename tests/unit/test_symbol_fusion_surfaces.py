@@ -64,3 +64,43 @@ def test_default_output_has_no_opt_in_evidence(corpus, monkeypatch):
     result = CliRunner().invoke(app, ["find", "target_func", str(corpus), "--json"])
     assert result.exit_code == 0, result.output
     assert "rank_fusion" not in json.loads(result.stdout)
+
+
+def test_find_labels_name_actual_ast_and_dense_legs(corpus):
+    result = CliRunner().invoke(app, ["find", "target_func", str(corpus), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "SymbolHybridFindBackend"
+    assert payload["routing_reason"] == "find_bm25_ast_rrf"
+    assert payload["install_state"] == "ast_bm25_ready (dense unavailable; run tg install-dense)"
+
+
+def test_find_without_exact_symbol_keeps_default_labels(corpus):
+    result = CliRunner().invoke(app, ["find", "target", str(corpus), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "Bm25FindBackend"
+    assert payload["routing_reason"] == "find_bm25_only"
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_find_labels_follow_query_time_dense_outcome(corpus, monkeypatch, failure):
+    import numpy as np
+
+    class Model:
+        def encode(self, texts):
+            dim = 5 if failure and texts == ["target_func"] else 4
+            return np.ones((len(texts), dim), dtype=np.float32)
+
+    monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
+    monkeypatch.setattr("tensor_grep.core.retrieval_dense.load_dense_model", lambda _: Model())
+    result = CliRunner().invoke(app, ["find", "target_func", str(corpus), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "SymbolHybridFindBackend"
+    assert payload["routing_reason"] == (
+        "find_bm25_ast_rrf" if failure else "find_bm25_dense_ast_rrf"
+    )
+    assert payload["rank_fusion"]["dense"]["available"] is not failure
+    if failure:
+        assert "dim" in payload["rank_fallback_reason"]

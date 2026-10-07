@@ -1652,10 +1652,6 @@ def _execute_find(
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates -- the
         # command boundary (C1) must catch it and exit 2, never degrade here.
 
-    # Name WHAT RAN: both fields are `required`/minLength-1 in the envelope `tg find` reuses and
-    # were emitted null. `rank_fallback_reason` says WHY the dense leg is absent; these say which.
-    result.routing_backend, result.routing_reason, result.install_state = route_labels(dense_index)
-
     late_reranker = None
     if os.environ.get("TG_LATE_RERANK") == "1":
         from tensor_grep.core.retrieval_late import (
@@ -1703,6 +1699,7 @@ def _execute_find(
             else degrade_reason
         )
         sys.stderr.write(f"tg: {exc}\n")
+        dense_index = None
         fused_order, late_fallback_reason = rank_chunks(
             query,
             chunks,
@@ -1713,6 +1710,9 @@ def _execute_find(
             combine=_find_combine_mode(query),
             **retrieval_symbols.evidence_options(result),
         )
+    result.routing_backend, result.routing_reason, result.install_state = route_labels(
+        dense_index, result.rank_fusion
+    )
     if late_fallback_reason:
         result.rank_fallback_reason = (
             f"{result.rank_fallback_reason}; {late_fallback_reason}"

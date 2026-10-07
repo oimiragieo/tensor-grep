@@ -111,6 +111,8 @@ Set `TG_RRF_SYMBOLS=1` for experimental exact-definition fusion in `tg find`,
 declaration, BM25, available dense embeddings, and AST symbols use equal weights in
 sum reciprocal-rank fusion (`k=60`). An optional `TG_RRF_CHANNELS=1` filename leg
 retains its 1.5 weight. With no matching declaration, the prior fusion is preserved.
+For BM25-only `--rank`, this includes preserving grep order on score ties; its
+metadata reports `method="bm25"` without RRF weights, combination, or `k`.
 Unset, this switch changes neither ranking nor output. It does not enable or download a model.
 
 The AST leg matches case-sensitive whole symbol names from query tokens, not calls,
@@ -131,17 +133,13 @@ or latency improvement claimed.
 Each `matches[]` object carries `file`, `line`, `line_number`, and `text` (both `line` and
 `line_number` are present on this route).
 
-> **KNOWN CONTRACT VIOLATION — do not model your parser on the current behaviour.**
-> As of 2026-08-21 (measured against installed `tg 1.110.16`), `tg find --json` emits
-> **`routing_backend: null` and `routing_reason: null`**. Both fields are `required` in
-> `tests/schemas/tg_output.schema.json` and typed `{"type": "string", "minLength": 1}`, so a
-> schema-validating consumer REJECTS a real `tg find` payload with
-> `None is not of type 'string'`. `tg search --json` on the same tree emits
-> `"NativeCpuBackend"` / `"json_output"`, which is the control proving the fields can be
-> populated. A consumer
-> written today must tolerate `null` on those two fields for `find` specifically; that tolerance
-> should be removed once the defect is fixed. Do NOT "fix" it by relaxing the schema — that would
-> weaken the contract for `tg search`, which is correct.
+Find routing labels identify the executed ranking: `Bm25FindBackend` / `find_bm25_only`
+without dense or AST evidence, and `HybridFindBackend` / `find_bm25_dense_rrf` with
+dense evidence. When the opt-in AST leg contributes, `SymbolHybridFindBackend` uses
+`find_bm25_ast_rrf` or `find_bm25_dense_ast_rrf` according to actual dense availability,
+including query-time degradation. `install_state` likewise identifies dense readiness
+or AST/BM25 readiness with dense unavailable. These are Python ranking routes even
+when invoked through the native executable's passthrough.
 
 ## AST Run JSON
 

@@ -178,11 +178,6 @@ def rerank_by_bm25(
     if not result.matches:
         return dataclasses.replace(result, matches=list(result.matches))
 
-    if retrieval_symbols.enabled():
-        return rerank_hybrid(
-            result, query, file_paths, chunk_size=chunk_size, overlap=overlap, bm25_index=index
-        )
-
     corpus_cap_reason: str | None = None
     if index is None:
         chunks, corpus_cap_reason = _chunk_corpus_with_total_cap(
@@ -216,7 +211,19 @@ def rerank_by_bm25(
             if result.rank_fallback_reason
             else corpus_cap_reason
         )
-        return dataclasses.replace(result, matches=reranked, rank_fallback_reason=combined_reason)
+        result = dataclasses.replace(result, rank_fallback_reason=combined_reason)
+    if retrieval_symbols.enabled():
+        fused = rerank_hybrid(result, query, file_paths, bm25_index=index)
+        evidence = dict(fused.rank_fusion or {})
+        symbols = evidence.get("ast_symbols")
+        if isinstance(symbols, dict) and symbols.get("ranked_chunks"):
+            return fused
+        # No exact-definition vote: preserve BM25's score ties in original grep order.
+        # In particular, the unrelated optional path channel must not affect --rank here.
+        for key in ("combine", "k", "weights"):
+            evidence.pop(key, None)
+        evidence.update(method="bm25", tie_break="input_match_order")
+        return dataclasses.replace(fused, matches=reranked, rank_fusion=evidence)
     return dataclasses.replace(result, matches=reranked)
 
 
@@ -508,12 +515,23 @@ def rerank_hybrid(
     return dataclasses.replace(result, matches=reranked, rank_fusion=fusion_evidence)
 
 
-def route_labels(dense_index: object | None) -> tuple[str, str, str]:
+def route_labels(
+    dense_index: object | None, fusion: dict[str, object] | None = None
+) -> tuple[str, str, str]:
     """(routing_backend, routing_reason, install_state) for `_execute_find`'s envelope, keyed on
     whether the dense leg is present. Both `routing_backend`/`routing_reason` are `required`/
     minLength-1 in the shared envelope `tg find` reuses; `install_state` is the S6 explicit-state
     field so a caller never has to infer readiness from the other two.
     """
+    symbols = (fusion or {}).get("ast_symbols")
+    if isinstance(symbols, dict) and symbols.get("ranked_chunks"):
+        if dense_index is not None:
+            return "SymbolHybridFindBackend", "find_bm25_dense_ast_rrf", "dense_ready"
+        return (
+            "SymbolHybridFindBackend",
+            "find_bm25_ast_rrf",
+            "ast_bm25_ready (dense unavailable; run tg install-dense)",
+        )
     if dense_index:
         return "HybridFindBackend", "find_bm25_dense_rrf", "dense_ready"
     return "Bm25FindBackend", "find_bm25_only", "bm25_only (run tg install-dense)"

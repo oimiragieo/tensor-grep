@@ -216,3 +216,22 @@ def test_supported_optional_grammar_or_explicit_fallback(suffix, source):
     else:
         assert order == []
         assert evidence["skipped_files"] == {"grammar_unavailable": 1}
+
+
+@pytest.mark.parametrize("path_channel", ["0", "1"])
+def test_bm25_without_definition_keeps_grep_ties(monkeypatch, path_channel):
+    from tensor_grep.core.reranker import rerank_by_bm25
+    from tensor_grep.core.result import MatchLine, SearchResult
+
+    chunks = [Chunk("needle.py", 1, 1, "# needle"), Chunk("b.py", 1, 1, "# needle")]
+    result = SearchResult(
+        matches=[MatchLine(1, "# needle", "b.py"), MatchLine(1, "# needle", "needle.py")]
+    )
+    monkeypatch.setenv("TG_RRF_CHANNELS", path_channel)
+    monkeypatch.delenv("TG_RRF_SYMBOLS", raising=False)
+    baseline = rerank_by_bm25(result, "needle", [], index=Bm25Index(chunks))
+    monkeypatch.setenv("TG_RRF_SYMBOLS", "1")
+    actual = rerank_by_bm25(result, "needle", [], index=Bm25Index(chunks))
+    assert actual.matches == baseline.matches == result.matches
+    assert actual.rank_fusion["method"] == "bm25"
+    assert actual.rank_fusion["ast_symbols"]["ranked_chunks"] == 0
