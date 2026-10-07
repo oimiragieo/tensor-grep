@@ -40,6 +40,7 @@ def test_python_rg_route_hints_literal_delimiters(tmp_path, rg_path, pattern):
         ([r"items\["], False),
         (["(?x)items # {"], False),
         (["-P", "items{"], False),
+        (["-P", "--no-pcre2", "items["], True),
     ],
 )
 def test_python_hint_preserves_rg_results(tmp_path, rg_path, args, hint_expected):

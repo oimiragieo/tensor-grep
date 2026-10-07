@@ -65,18 +65,17 @@ def test_native_other_patterns_match_same_rg_engine(tmp_path, pattern):
     assert tg.stderr == rg.stderr
 
 
-@pytest.mark.parametrize(
-    "flags", [["-P", "--no-pcre2"], ["--auto-hybrid-regex", "--no-auto-hybrid-regex"]]
-)
-def test_native_reset_to_default_engine_gets_literal_hint(tmp_path, flags):
+def test_native_reset_to_default_engine_gets_literal_hint(tmp_path):
     helpers, rg_binary, tg_binary = _require_binaries()
     fixture = tmp_path / "code.txt"
     fixture.write_bytes(b"items[\n")
     env = helpers.build_command_env(rg_binary)
-    # These switches normally delegate to Python, whose extension is optional in
-    # native-only CI. Exercise the Rust engine gate and prove no sidecar was used.
-    env["TG_RUST_EARLY_RG"] = "1"
-    env["TG_SIDECAR_PYTHON"] = str(tmp_path / "missing-python")
+    flags = ["--auto-hybrid-regex", "--no-auto-hybrid-regex"]
+    # This shape is handled by the native front door. -P/--no-pcre2 instead goes
+    # through Python; that engine-reset shape is covered by the Python e2e suite.
+    sentinel = tmp_path / "not-an-executable"
+    sentinel.write_bytes(b"sidecar execution must fail")
+    env["TG_SIDECAR_PYTHON"] = str(sentinel)
     result = subprocess.run(
         [str(tg_binary), "search", "--no-config", *flags, "items[", str(fixture)],
         env=env,
@@ -86,3 +85,24 @@ def test_native_reset_to_default_engine_gets_literal_hint(tmp_path, flags):
     assert result.returncode == 2
     assert result.stdout == b""
     assert result.stderr.count(b"--fixed-strings (-F)") == 1
+    # --engine default requires the Python route while retaining regex semantics.
+    # An existing non-executable override proves this route fails before rg.
+    delegated = subprocess.run(
+        [
+            str(tg_binary),
+            "search",
+            "--no-config",
+            *flags,
+            "--engine",
+            "default",
+            "items[",
+            str(fixture),
+        ],
+        env=env,
+        capture_output=True,
+        timeout=30,
+    )
+    assert delegated.returncode == 2
+    assert b"regex parse error" not in delegated.stderr
+    assert b"--fixed-strings (-F)" not in delegated.stderr
+    assert sentinel.name.encode() in delegated.stderr
