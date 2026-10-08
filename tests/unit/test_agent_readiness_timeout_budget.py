@@ -100,6 +100,23 @@ def test_total_timeout_budget_covers_the_full_check_plan(monkeypatch, tmp_path, 
     assert module.total_timeout_budget_s(checks) >= _plan_sum(module, checks)
 
 
+@pytest.mark.parametrize("is_windows,expected_timeout", [(True, 240), (False, 120)])
+def test_hardcase_timeout_matches_platform_workload(
+    monkeypatch, tmp_path, is_windows, expected_timeout
+) -> None:
+    module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", is_windows)
+    checks = module.build_check_plan(
+        repo_root=tmp_path,
+        expected_version="1.122.1",
+        include_shell_probes=False,
+        include_wsl_probe=False,
+    )
+    hardcase = next(check for check in checks if check.name == "agent-capsule-hardcases")
+    assert hardcase.timeout_s == expected_timeout
+    assert module.effective_budget_s(hardcase) == expected_timeout
+
+
 @pytest.mark.parametrize("is_windows", [True, False])
 def test_fixed_170s_dogfood_timeout_is_below_the_real_check_plan_sum(
     monkeypatch, tmp_path, is_windows

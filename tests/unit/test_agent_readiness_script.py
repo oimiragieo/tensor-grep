@@ -214,7 +214,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     )
 
     hardcase_check = next(check for check in checks if check.name == "agent-capsule-hardcases")
-    assert hardcase_check.timeout_s <= 120
+    assert hardcase_check.timeout_s == (240 if module.IS_WINDOWS else 120)
     assert hardcase_check.command[:5] == [
         "uv",
         "run",

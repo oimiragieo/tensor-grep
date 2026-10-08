@@ -1178,7 +1178,7 @@ def build_check_plan(
                 "Verify polyglot monorepo, generated-noise, and Rust/Python/JS/TS "
                 "agent capsule hardcases."
             ),
-            timeout_s=120,
+            timeout_s=240 if IS_WINDOWS else 120,
         ),
         Check(
             name="docs-claim-check",

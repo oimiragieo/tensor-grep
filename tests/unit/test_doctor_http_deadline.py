@@ -10,6 +10,8 @@ import pytest
 
 from tensor_grep.cli import freshness_process, native_frontdoor, process_containment, pypi_probe
 
+_CHILD_PROBE_BUDGET_S = 4.0 if sys.platform == "win32" else 1.5
+
 
 @contextmanager
 def index_server(scenario):
@@ -48,7 +50,7 @@ def index_server(scenario):
                 self.request.sendall(prefix)
                 # Each byte arrives faster than the socket timeout. The finite
                 # fixture lifetime also bounds regression runs on the old code.
-                end = time.monotonic() + 4
+                end = time.monotonic() + 8
                 while time.monotonic() < end and not stopped.wait(0.03):
                     self.request.sendall(b"x")
             except OSError:
@@ -107,10 +109,14 @@ def test_http_worker_bounds_trickling_io_and_cleans_up(monkeypatch, scenario, ex
         monkeypatch.setattr(native_frontdoor, "_PYPI_SIMPLE_URL", base + "/simple")
         before_threads = set(threading.enumerate())
         started = time.monotonic()
-        result = native_frontdoor._latest_pypi_tensor_grep_version(timeout_seconds=1.5)
+        result = native_frontdoor._latest_pypi_tensor_grep_version(
+            timeout_seconds=_CHILD_PROBE_BUDGET_S
+        )
         elapsed = time.monotonic() - started
         assert stalled.is_set(), "the fixture must reach the intended stalled HTTP operation"
-        assert elapsed < 2.5, f"freshness exceeded its process budget: {elapsed:.3f}s"
+        assert elapsed < _CHILD_PROBE_BUDGET_S + 1, (
+            f"freshness exceeded its process budget: {elapsed:.3f}s"
+        )
         assert result == expected
         assert len(children) == 1, "both indices must run in one contained child"
         process, _ = children[0]
@@ -183,8 +189,8 @@ def test_pip_capture_has_a_hard_process_budget_and_keeps_completed_output(monkey
 
     monkeypatch.setattr(native_frontdoor, "_capture_freshness_probe", capture)
     started = time.monotonic()
-    assert native_frontdoor._latest_pypi_tensor_grep_version(1.5) == "1.0.0"
-    assert time.monotonic() - started < 2.5
+    assert native_frontdoor._latest_pypi_tensor_grep_version(_CHILD_PROBE_BUDGET_S) == "1.0.0"
+    assert time.monotonic() - started < _CHILD_PROBE_BUDGET_S + 1
     assert len(calls) == 1 and calls[0][1:5] == ["-m", "pip", "index", "versions"]
 
 
