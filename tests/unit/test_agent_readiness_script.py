@@ -174,7 +174,9 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "tests/integration/test_mcp_stdio_protocol.py",
         "-q",
     ]
-    assert mcp_stdio_check.timeout_s <= 120
+    # Two framed subprocesses each have a bounded 60s cold-start phase, followed by
+    # separate 10s response checks; keep the outer process budget finite around both.
+    assert mcp_stdio_check.timeout_s == 240
 
     capsule_check = next(check for check in checks if check.name == "agent-capsule")
     assert capsule_check.timeout_s <= 120

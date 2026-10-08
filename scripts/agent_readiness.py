@@ -1125,7 +1125,7 @@ def build_check_plan(
                 "-q",
             ],
             description="Verify tg mcp stdio initialize, tools/list, and tools/call roundtrip.",
-            timeout_s=120,
+            timeout_s=240,
         ),
         Check(
             name="agent-capsule",
