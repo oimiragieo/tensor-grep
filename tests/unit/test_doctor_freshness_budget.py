@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -85,29 +86,11 @@ def test_offline_control_never_probes(monkeypatch) -> None:
 
 def test_pip_freshness_child_is_noninteractive(monkeypatch) -> None:
     calls = []
-
-    class Process:
-        def poll(self):
-            return 0
-
-        def wait(self, timeout):
-            return 0
-
-    class Containment:
-        def kill(self):
-            return []
-
-        def survivors(self, deadline):
-            return []
-
-        def release(self):
-            pass
+    original_spawn = freshness_process.process_containment.spawn_contained
 
     def spawn(args, **kwargs):
         calls.append(kwargs)
-        kwargs["stdout"].write(b"tensor-grep (1.0.0)")
-        kwargs["stdout"].flush()
-        return Process(), Containment()
+        return original_spawn([sys.executable, "-c", "print('tensor-grep (1.0.0)')"], **kwargs)
 
     monkeypatch.setattr(freshness_process.process_containment, "spawn_contained", spawn)
     assert native_frontdoor._candidate_versions_from_pip_index(1) == ["1.0.0"]
@@ -248,5 +231,5 @@ def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeyp
 
     assert main._latest_pypi_tensor_grep_version(timeout_seconds=1.0) == "0.34.0"
     assert calls
-    assert calls[0][1:5] == ["-m", "pip", "index", "versions"]
+    assert calls[0][1:8] == ["-I", "-X", "utf8", "-m", "pip", "index", "versions"]
     assert "--no-cache-dir" in calls[0]

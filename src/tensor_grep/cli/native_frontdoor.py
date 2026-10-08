@@ -169,6 +169,9 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
         stdout, stderr = _capture_freshness_probe(
             [
                 sys.executable,
+                "-I",
+                "-X",
+                "utf8",
                 "-m",
                 "pip",
                 "index",
@@ -203,7 +206,17 @@ def _candidate_versions_from_pypi_indices(
     output: bytes | str | None = None
     try:
         output, _ = _capture_freshness_probe(
-            [sys.executable, "-m", "tensor_grep.cli.pypi_probe", json.dumps(request)],
+            [
+                sys.executable,
+                "-I",
+                "-X",
+                "utf8",
+                "-c",
+                "import runpy,sys; sys.path.insert(0, sys.argv.pop(1)); "
+                "runpy.run_module('tensor_grep.cli.pypi_probe', run_name='__main__')",
+                str(Path(__file__).resolve().parents[2]),
+                json.dumps(request),
+            ],
             timeout_seconds=timeout_seconds,
         )
     except OSError:

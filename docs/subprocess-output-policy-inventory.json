@@ -23,7 +23,7 @@
     "identity": "backends/ast_wrapper_backend.py:AstGrepWrapperBackend._run_ast_grep_command:subprocess.run:4428f93443dc103b4b7698907aed771ed3cf9481d7ad19ca388ddab98d9f7184:0",
     "path": "backends/ast_wrapper_backend.py",
     "function": "AstGrepWrapperBackend._run_ast_grep_command",
-    "line": 444,
+    "line": 446,
     "column": 24,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -1146,7 +1146,7 @@
     "producer_fingerprint": "5ce44d1d4f3b45f8f05206430199b0400d6cbb72d0fe3f5636bc4d7038567f17"
   },
   {
-    "identity": "cli/native_frontdoor.py:_candidate_versions_from_pip_index:capture_probe:90b7036232cefa155caa281639329316c1c084a5d6a2621a8e0282cca7ac39ce:0",
+    "identity": "cli/native_frontdoor.py:_candidate_versions_from_pip_index:capture_probe:222c04b9c7774849c0c60d4735ca72770ecfbcfa120fcaa207edee44529a7aef:0",
     "path": "cli/native_frontdoor.py",
     "function": "_candidate_versions_from_pip_index",
     "line": 169,
@@ -1162,14 +1162,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "90b7036232cefa155caa281639329316c1c084a5d6a2621a8e0282cca7ac39ce",
-    "producer_fingerprint": "8ce91bac2cd1761577560446fbd8b3c03e7e8226ea9c2a103b0d52a1b00c588e"
+    "call_fingerprint": "222c04b9c7774849c0c60d4735ca72770ecfbcfa120fcaa207edee44529a7aef",
+    "producer_fingerprint": "b1853b73ff468ee1f318a1d9cc4288dfa50bd614b3849a373eb4840155b15c23"
   },
   {
-    "identity": "cli/native_frontdoor.py:_candidate_versions_from_pypi_indices:capture_probe:19f157c3c9ffbfdd8340a40c6e4b92aa16858ab873eebd75a16700428883163c:0",
+    "identity": "cli/native_frontdoor.py:_candidate_versions_from_pypi_indices:capture_probe:6a268164a1cd449ac9cc0aa88777519bc1f6fe91dfdd72b5e8018a37adead4d2:0",
     "path": "cli/native_frontdoor.py",
     "function": "_candidate_versions_from_pypi_indices",
-    "line": 205,
+    "line": 208,
     "column": 20,
     "target": "capture_probe",
     "policy": "strict-protocol",
@@ -1182,14 +1182,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "19f157c3c9ffbfdd8340a40c6e4b92aa16858ab873eebd75a16700428883163c",
-    "producer_fingerprint": "4ab4a360ee77fabd32b21ce461ca9a862558d89f3c2e404372ee4e89ffb6576a"
+    "call_fingerprint": "6a268164a1cd449ac9cc0aa88777519bc1f6fe91dfdd72b5e8018a37adead4d2",
+    "producer_fingerprint": "7114607a4fc11aaf1ea86d64da2c1bb2bde68bbe8547c8c06e171aa4ff0ee2cf"
   },
   {
     "identity": "cli/native_frontdoor.py:_verify_target_python_tensor_grep_version:injected.subprocess.run:a7037ba0af9a5ff1fb9d8bf917ea708c9b8eb0d42b27c4f876649840ad4b25dc:0",
     "path": "cli/native_frontdoor.py",
     "function": "_verify_target_python_tensor_grep_version",
-    "line": 270,
+    "line": 283,
     "column": 17,
     "target": "injected.subprocess.run",
     "policy": "strict-protocol",

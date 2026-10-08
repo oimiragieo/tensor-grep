@@ -33,6 +33,9 @@ def test_pip_index_version_streams_are_strict(
         calls.append(command)
         assert command == [
             sys.executable,
+            "-I",
+            "-X",
+            "utf8",
             "-m",
             "pip",
             "index",
@@ -63,7 +66,7 @@ def test_pip_index_keeps_completed_output_from_contained_child(
         command: list[str], *, timeout_seconds: float, env: dict[str, str]
     ) -> tuple[bytes, bytes]:
         calls.append(command)
-        assert command[1:5] == ["-m", "pip", "index", "versions"]
+        assert command[1:8] == ["-I", "-X", "utf8", "-m", "pip", "index", "versions"]
         assert timeout_seconds == 5
         return freshness_process.capture_probe(
             [

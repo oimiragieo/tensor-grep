@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import socketserver
 import sys
 import threading
@@ -191,36 +193,46 @@ def test_pip_capture_has_a_hard_process_budget_and_keeps_completed_output(monkey
     started = time.monotonic()
     assert native_frontdoor._latest_pypi_tensor_grep_version(_CHILD_PROBE_BUDGET_S) == "1.0.0"
     assert time.monotonic() - started < _CHILD_PROBE_BUDGET_S + 1
-    assert len(calls) == 1 and calls[0][1:5] == ["-m", "pip", "index", "versions"]
+    assert len(calls) == 1 and calls[0][1:8] == [
+        "-I",
+        "-X",
+        "utf8",
+        "-m",
+        "pip",
+        "index",
+        "versions",
+    ]
 
 
 def test_kill_failure_is_reported_and_survivors_verified_before_release(monkeypatch, caplog):
     order = []
-
-    class Process:
-        def poll(self):
-            return 0
-
-        def wait(self, timeout):
-            return 0
-
-    class Containment:
-        def kill(self):
-            order.append("kill")
-            return ["simulated kill failure"]
-
-        def survivors(self, deadline):
-            order.append("verify")
-            assert "release" not in order
-            return []
-
-        def release(self):
-            order.append("release")
+    original_spawn = process_containment.spawn_contained
 
     def spawn(argv, **kwargs):
-        kwargs["stdout"].write(b"completed evidence")
-        kwargs["stdout"].flush()
-        return Process(), Containment()
+        process, containment = original_spawn(
+            [sys.executable, "-c", "print('completed evidence', end='', flush=True)"], **kwargs
+        )
+        original_kill = containment.kill
+        original_survivors = containment.survivors
+        original_release = containment.release
+
+        def kill():
+            order.append("kill")
+            return [*original_kill(), "simulated kill failure"]
+
+        def survivors(deadline):
+            order.append("verify")
+            assert "release" not in order
+            return original_survivors(deadline)
+
+        def release():
+            order.append("release")
+            original_release()
+
+        monkeypatch.setattr(containment, "kill", kill)
+        monkeypatch.setattr(containment, "survivors", survivors)
+        monkeypatch.setattr(containment, "release", release)
+        return process, containment
 
     monkeypatch.setattr(process_containment, "spawn_contained", spawn)
     assert freshness_process.capture_probe(["fixture"], 1) == (b"completed evidence", b"")
@@ -229,28 +241,81 @@ def test_kill_failure_is_reported_and_survivors_verified_before_release(monkeypa
 
 
 def test_captured_output_is_bounded_before_decoding(monkeypatch, caplog):
-    class Process:
-        def poll(self):
-            return 0
-
-        def wait(self, timeout):
-            return 0
-
-    class Containment:
-        def kill(self):
-            return []
-
-        def survivors(self, deadline):
-            return []
-
-        def release(self):
-            pass
-
-    def spawn(argv, **kwargs):
-        kwargs["stdout"].write(b"x" * (freshness_process._MAX_OUTPUT_BYTES + 1))
-        kwargs["stdout"].flush()
-        return Process(), Containment()
-
-    monkeypatch.setattr(process_containment, "spawn_contained", spawn)
-    assert freshness_process.capture_probe(["fixture"], 1) == (b"", b"")
+    assert freshness_process.capture_probe(
+        [
+            sys.executable,
+            "-c",
+            f"import os,sys; os.write(sys.stdout.fileno(), b'x'*{freshness_process._MAX_OUTPUT_BYTES + 1})",
+        ],
+        3,
+    ) == (b"", b"")
     assert "output limit" in caplog.text
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_fast_output_burst_is_stopped_before_completion(stream, caplog, tmp_path):
+    marker = tmp_path / "burst-completed"
+    code = (
+        "import os,sys\nfrom pathlib import Path\n"
+        f"fd=sys.{stream}.fileno()\ndata=b'x'*(16*1024*1024)\n"
+        "while data:\n    data=data[os.write(fd,data):]\n"
+        f"Path({str(marker)!r}).touch()\n"
+    )
+    started = time.monotonic()
+    assert freshness_process.capture_probe([sys.executable, "-c", code], 3) == (b"", b"")
+    assert time.monotonic() - started < 4
+    assert not marker.exists(), "the child must be stopped before finishing the burst"
+    assert "output limit" in caplog.text
+
+
+def test_nonzero_and_partial_stalled_output_is_preserved():
+    assert freshness_process.capture_probe(
+        [sys.executable, "-c", "import os,sys; os.write(1,b'done\\n'); sys.exit(3)"], 3
+    ) == (b"done\n", b"")
+    assert freshness_process.capture_probe(
+        [sys.executable, "-c", "import os,time; os.write(1,b'partial\\n'); time.sleep(30)"], 1
+    ) == (b"partial\n", b"")
+
+
+def test_descendant_holding_output_pipes_is_stopped():
+    code = (
+        "import os,subprocess,sys; "
+        "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
+        "stdout=sys.stdout,stderr=sys.stderr); os.write(1,b'parent\\n')"
+    )
+    started = time.monotonic()
+    assert freshness_process.capture_probe([sys.executable, "-c", code], 2) == (
+        b"parent\n",
+        b"",
+    )
+    assert time.monotonic() - started < 3
+
+
+def test_isolated_worker_ignores_hostile_cwd_and_pythonpath(monkeypatch, tmp_path):
+    hostile = tmp_path / "hostile"
+    hostile.mkdir()
+    marker = tmp_path / "executed"
+    (hostile / "pip.py").write_text(f"from pathlib import Path; Path({str(marker)!r}).touch()")
+    fake_package = hostile / "tensor_grep" / "cli"
+    fake_package.mkdir(parents=True)
+    (fake_package.parent / "__init__.py").touch()
+    (fake_package / "__init__.py").touch()
+    (fake_package / "pypi_probe.py").write_text(
+        f"from pathlib import Path; Path({str(marker)!r}).touch()"
+    )
+    monkeypatch.chdir(hostile)
+    monkeypatch.setenv("PYTHONPATH", str(hostile))
+    stdout, stderr = freshness_process.capture_probe(
+        [sys.executable, "-I", "-X", "utf8", "-m", "pip", "--version"],
+        4,
+        env=os.environ.copy(),
+    )
+    assert b"pip " in stdout or b"No module named pip" in stderr
+    assert not marker.exists()
+
+    index = tmp_path / "index.json"
+    index.write_text(json.dumps({"info": {"version": "1.2.3"}}), encoding="utf-8")
+    monkeypatch.setattr(native_frontdoor, "_PYPI_JSON_URL", index.as_uri())
+    monkeypatch.setattr(native_frontdoor, "_PYPI_SIMPLE_URL", index.as_uri())
+    assert native_frontdoor._candidate_versions_from_pypi_indices(4, {}) == ["1.2.3"]
+    assert not marker.exists()
