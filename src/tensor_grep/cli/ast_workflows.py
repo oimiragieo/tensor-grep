@@ -204,6 +204,35 @@ def _get_cache_dir(root_dir: Path) -> Path:
 _PROJECT_DATA_CACHE_SCHEMA_VERSION = 2
 
 
+def _ast_search_backend_error(
+    detail: str,
+    pattern: str,
+    path: str,
+    *,
+    json_mode: bool,
+    backend_name: str | None = None,
+) -> int:
+    if json_mode:
+        payload: dict[str, Any] = {
+            "version": 1,
+            "schema_version": 1,
+            "mode": "search",
+            "total_matches": 0,
+            "ok": False,
+            "error": "backend_error",
+            "detail": detail,
+        }
+        if backend_name is not None:
+            payload["routing_backend"] = backend_name
+            payload["routing_reason"] = "ast"
+        payload["query"] = pattern
+        payload["path"] = path
+        _safe_stdout_line(json.dumps(payload))
+    else:
+        print(f"Error: {detail}", file=sys.stderr)
+    return 2
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -344,6 +373,10 @@ def run_command(
         return exit_code
 
     search_path = path or "."
+    if path is not None and not stdin and not Path(search_path).exists():
+        return _ast_search_backend_error(
+            f"AST input path not found: {search_path}", pattern, search_path, json_mode=json_mode
+        )
     stdin_input = sys.stdin.read() if stdin else None
     cfg = SearchConfig(
         ast=True,
@@ -411,8 +444,6 @@ def run_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
     try:
-        if path is not None and not stdin and not Path(search_path).exists():
-            raise BackendExecutionError(f"AST input path not found: {search_path}")
         if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             search_paths = [] if stdin else [search_path]
             result = cast(Any, backend).search_many(search_paths, pattern, config=cfg)
@@ -442,27 +473,9 @@ def run_command(
     except BackendExecutionError as exc:
         # audit M2: --selector/--strictness combinations ast-grep rejects must surface as a
         # structured error (or a clean stderr message), never a raw Python traceback.
-        if json_mode:
-            import json
-
-            _safe_stdout_line(
-                json.dumps({
-                    "version": 1,
-                    "schema_version": 1,
-                    "mode": "search",
-                    "total_matches": 0,
-                    "ok": False,
-                    "error": "backend_error",
-                    "detail": str(exc),
-                    "routing_backend": backend_name,
-                    "routing_reason": "ast",
-                    "query": pattern,
-                    "path": search_path,
-                })
-            )
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
-        return 2
+        return _ast_search_backend_error(
+            str(exc), pattern, search_path, json_mode=json_mode, backend_name=backend_name
+        )
 
     # Filter matches
     if filter_regex:

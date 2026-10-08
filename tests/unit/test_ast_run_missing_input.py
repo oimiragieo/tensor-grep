@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from tensor_grep.cli import ast_workflows
+from tensor_grep.core.pipeline import ConfigurationError
 from tensor_grep.core.result import SearchResult
 
 
@@ -51,6 +52,45 @@ def test_ast_run_validates_explicit_input_before_wrapper_scan(
         assert "not found" in payload["detail"].lower()
         assert "remediation" not in payload
         assert "skipped unreadable paths" not in output.err
+
+
+@pytest.mark.parametrize("exists", [False, True])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_missing_input_precedes_backend_availability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exists: bool,
+    json_mode: bool,
+) -> None:
+    target = tmp_path / "target.py"
+    if exists:
+        target.write_text("hub_fn(1)\n", encoding="utf-8")
+    selector = Mock(side_effect=ConfigurationError("ast-grep unavailable"))
+    monkeypatch.setattr(ast_workflows, "_select_ast_backend_for_pattern", selector)
+    status = ast_workflows.run_command(
+        "hub_fn($VALUE)", path=str(target), lang="python", json_mode=json_mode
+    )
+    output = capsys.readouterr()
+    assert status == 2
+    if exists:
+        selector.assert_called_once()
+        expected_error = "configuration_error"
+    else:
+        selector.assert_not_called()
+        expected_error = "backend_error"
+    if json_mode:
+        payload = json.loads(output.out)
+        assert payload["ok"] is False
+        assert payload["error"] == expected_error
+        assert "remediation" not in payload
+        if not exists:
+            assert "not found" in payload["detail"].lower()
+            assert "routing_backend" not in payload
+    else:
+        assert output.out == ""
+        assert ("ast-grep unavailable" if exists else "not found") in output.err.lower()
+        assert "No AST matches found" not in output.err
 
 
 @pytest.mark.parametrize("consolidated", [False, True])
