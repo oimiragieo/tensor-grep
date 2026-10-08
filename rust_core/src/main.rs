@@ -5440,6 +5440,7 @@ mod tests {
             matched_file_paths: Vec::new(),
             match_counts_by_file: std::collections::BTreeMap::new(),
             matches: Vec::new(),
+            remediation: None,
             result_incomplete,
             incomplete_reason_class,
             incomplete_paths_count,

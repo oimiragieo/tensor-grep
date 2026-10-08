@@ -26,8 +26,7 @@ fn hints(pattern: &str, lang_was_implicit: bool) -> Vec<String> {
 
 /// Detect whether the current `tg run` invocation supplied `--lang`, including `--lang=value`.
 pub fn lang_was_implicit() -> bool {
-    let mut args = std::env::args_os().skip(1);
-    while let Some(arg) = args.next() {
+    for arg in std::env::args_os().skip(1) {
         if arg == "--" {
             break;
         }
