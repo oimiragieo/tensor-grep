@@ -389,12 +389,15 @@ def main() -> int:
             "find (available dense route or disclosed BM25 fallback)",
             ["find", "hub_fn", fx, "--json"],
             predicate=lambda payload: (
-                bool(payload.get("routing_backend"))
-                and (
-                    payload.get("routing_backend") != "Bm25FindBackend"
-                    or "install-dense" in json.dumps(payload)
-                ),
-                "missing route or dense-unavailable guidance",
+                (True, "")
+                if (
+                    bool(payload.get("routing_backend"))
+                    and (
+                        payload.get("routing_backend") != "Bm25FindBackend"
+                        or "install-dense" in json.dumps(payload)
+                    )
+                )
+                else (False, "missing route or dense-unavailable guidance")
             ),
         )
 
