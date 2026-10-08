@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from tensor_grep.cli import runtime_paths
 from tensor_grep.cli.rg_contract import RGContractRow
 from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
 from tensor_grep.core.result import strip_line_terminator
@@ -415,13 +416,30 @@ def _command_env(rg_binary: Path) -> dict[str, str]:
 
 
 def resolve_native_tg_binary() -> Path | None:
+    expected = runtime_paths._expected_tg_version()
+    explicit = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
+    if explicit:
+        selected = Path(explicit).expanduser().resolve()
+        if not selected.is_file():
+            raise FileNotFoundError(f"Configured native binary {selected} not found")
+        observed = runtime_paths._native_tg_version(selected)
+        if not runtime_paths._native_tg_version_matches(expected, observed):
+            raise RuntimeError(
+                f"Configured native binary is stale or unverifiable: {selected}; "
+                f"expected {expected}, observed {observed!r}"
+            )
+        return selected
     exe_name = "tg.exe" if sys.platform == "win32" else "tg"
     for worktree_root in _candidate_repo_roots():
         release_path = worktree_root / "rust_core" / "target" / "release" / exe_name
-        if release_path.exists():
+        if runtime_paths._native_candidate_matches_current_package(
+            release_path, expected_version=expected
+        ):
             return release_path.resolve()
         debug_path = worktree_root / "rust_core" / "target" / "debug" / exe_name
-        if debug_path.exists():
+        if runtime_paths._native_candidate_matches_current_package(
+            debug_path, expected_version=expected
+        ):
             return debug_path.resolve()
     return None
 

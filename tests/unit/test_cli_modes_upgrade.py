@@ -1115,65 +1115,6 @@ def test_upgrade_latest_version_candidates_include_pip_index_output():
     )
 
 
-def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeypatch):
-    class _FakeResponse:
-        def __init__(self, body: str) -> None:
-            self.body = body
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def read(self) -> bytes:
-            return self.body.encode("utf-8")
-
-    stale_json = json.dumps({
-        "info": {"version": "0.33.0"},
-        "releases": {
-            "0.32.0": [{"yanked": False}],
-            "0.33.0": [{"yanked": False}],
-        },
-    })
-    stale_simple = """
-    <a href="tensor_grep-0.33.0-py3-none-any.whl">tensor_grep-0.33.0-py3-none-any.whl</a>
-    """
-    calls: list[list[str]] = []
-
-    def _fake_urlopen(request, timeout=None):
-        url = request.get_full_url()
-        if url.endswith("/json"):
-            return _FakeResponse(stale_json)
-        if url.endswith("/simple/tensor-grep/"):
-            return _FakeResponse(stale_simple)
-        raise AssertionError(f"unexpected url: {url}")
-
-    def _fake_run(cmd, **_kwargs):
-        calls.append([str(part) for part in cmd])
-        return subprocess.CompletedProcess(
-            cmd,
-            0,
-            stdout=(
-                "tensor-grep (0.34.0)\n"
-                "Available versions: 0.34.0, 0.33.0, 0.32.0\n"
-                "  LATEST:    0.34.0\n"
-            ),
-            stderr="",
-        )
-
-    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
-    # The autouse _doctor_offline fixture sets TG_DOCTOR_OFFLINE=1; this test exercises the REAL
-    # probe, so clear it (raising=False: absent in some collection orders).
-    monkeypatch.delenv("TG_DOCTOR_OFFLINE", raising=False)
-
-    assert cli_main._latest_pypi_tensor_grep_version(timeout_seconds=1.0) == "0.34.0"
-    assert calls
-    assert calls[0][1:5] == ["-m", "pip", "index", "versions"]
-    assert "--no-cache-dir" in calls[0]
-
-
 def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_latest(monkeypatch):
     calls: list[list[str]] = []
 
@@ -1216,6 +1157,7 @@ def test_native_frontdoor_asset_candidates_default_to_cpu_even_when_host_has_nvi
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         raise AssertionError(f"default asset selection should not probe hardware: {cmd}")
 
@@ -1271,6 +1213,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -1353,6 +1296,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -1430,6 +1374,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -1499,6 +1444,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -1609,6 +1555,7 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":

@@ -5,7 +5,7 @@
 # Usage (run after a release confirms on PyPI):
 #   docker build --build-arg TG_VERSION=1.15.1 -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
 #   docker run --rm tg-dogfood
-# Exit 0 = shipped artifact installs + every feature works. Exit 1 = a regression (failing command shown).
+# Exit 0 = shipped artifact installs + all selected checks pass. Exit 1 = a regression (failing command shown).
 ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim
 

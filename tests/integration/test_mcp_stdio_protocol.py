@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 
@@ -29,6 +30,26 @@ SRC_DIR = REPO_ROOT / "src"
 # re-trip this -- a real MCP message is separately capped at `_MAX_MCP_STDIO_MESSAGE_BYTES`
 # (64 MiB) server-side, so this test-only buffer is well inside that ceiling.
 _SUBPROCESS_STDOUT_LIMIT_BYTES = 8 * 1024 * 1024
+
+# The raw-framing assertions measure the server's response after it starts reading stdin. On a
+# cold Windows host, importing the MCP tool surface can consume the entire response deadline.
+# The child preloads that surface, then runs the same CLI entry point as `python -m tensor_grep mcp`.
+# Its private ready marker is emitted at the start of the server coroutine, after CLI dispatch.
+_FRAMED_SERVER_STARTUP_TIMEOUT_SECONDS = 60.0
+_FRAMED_SERVER_READY = b"tg-mcp-framed-ready\n"
+_FRAMED_SERVER_SCRIPT = (
+    "import sys\n"
+    "import tensor_grep.cli.mcp_server as mcp_server\n"
+    "_original = mcp_server._run_mcp_stdio_async\n"
+    "async def _ready_then_run():\n"
+    f"    sys.stderr.buffer.write({_FRAMED_SERVER_READY!r})\n"
+    "    sys.stderr.buffer.flush()\n"
+    "    await _original()\n"
+    "mcp_server._run_mcp_stdio_async = _ready_then_run\n"
+    "sys.argv = ['tensor_grep', 'mcp']\n"
+    "from tensor_grep.__main__ import main\n"
+    "main()\n"
+)
 
 
 def _mcp_env() -> dict[str, str]:
@@ -123,12 +144,48 @@ async def _read_jsonrpc_line(process: asyncio.subprocess.Process) -> dict[str, o
     return json.loads(raw.decode("utf-8"))
 
 
-async def _stdio_content_length_initialize_roundtrip() -> None:
+async def _close_framed_server(process: asyncio.subprocess.Process) -> None:
+    if process.stdin is not None:
+        process.stdin.close()
+        try:
+            await asyncio.wait_for(process.stdin.wait_closed(), timeout=2.0)
+        except (TimeoutError, BrokenPipeError, ConnectionResetError):
+            pass
+    try:
+        await asyncio.wait_for(process.wait(), timeout=5.0)
+        return
+    except TimeoutError:
+        pass
+
+    if sys.platform == "win32":
+        # The venv launcher can own a second CPython process. Stop the owned tree so a
+        # startup failure cannot leave that reader or its inherited stdio pipes alive.
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill",
+            "/PID",
+            str(process.pid),
+            "/T",
+            "/F",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(killer.wait(), timeout=5.0)
+        except TimeoutError:
+            killer.kill()
+            await asyncio.wait_for(killer.wait(), timeout=5.0)
+    elif process.returncode is None:
+        process.kill()
+    await asyncio.wait_for(process.wait(), timeout=5.0)
+
+
+async def _start_framed_server() -> asyncio.subprocess.Process:
+    started = time.monotonic()
     process = await asyncio.create_subprocess_exec(
         sys.executable,
-        "-m",
-        "tensor_grep",
-        "mcp",
+        "-c",
+        _FRAMED_SERVER_SCRIPT,
         cwd=REPO_ROOT,
         env=_mcp_env(),
         stdin=asyncio.subprocess.PIPE,
@@ -136,6 +193,34 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         stderr=asyncio.subprocess.PIPE,
         limit=_SUBPROCESS_STDOUT_LIMIT_BYTES,
     )
+    assert process.stderr is not None
+    try:
+        ready = await asyncio.wait_for(
+            process.stderr.readline(), timeout=_FRAMED_SERVER_STARTUP_TIMEOUT_SECONDS
+        )
+        assert ready == _FRAMED_SERVER_READY, (
+            f"MCP framed server failed during startup: {ready[:500]!r}; "
+            f"returncode={process.returncode}"
+        )
+    except BaseException as exc:
+        startup_elapsed = time.monotonic() - started
+        stderr_tail = bytes(process.stderr._buffer)[-2000:]
+        returncode_at_failure = process.returncode
+        try:
+            await _close_framed_server(process)
+        except Exception as cleanup_exc:
+            exc.add_note(f"MCP child cleanup failed: {cleanup_exc!r}")
+        if isinstance(exc, TimeoutError):
+            raise TimeoutError(
+                f"MCP framed server did not start after {startup_elapsed:.1f}s; "
+                f"returncode={returncode_at_failure}, stderr_tail={stderr_tail!r}"
+            ) from exc
+        raise
+    return process
+
+
+async def _stdio_content_length_initialize_roundtrip() -> None:
+    process = await _start_framed_server()
     assert process.stdin is not None
     try:
         initialize = {
@@ -153,7 +238,28 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         process.stdin.write(frame.encode("utf-8"))
         await process.stdin.drain()
 
-        response = await _read_jsonrpc_line(process)
+        response_started = time.monotonic()
+        try:
+            response = await _read_jsonrpc_line(process)
+        except TimeoutError as exc:
+            assert process.stdout is not None
+            assert process.stderr is not None
+            waited = time.monotonic() - response_started
+            stdout_buffered = len(process.stdout._buffer)
+            stderr_buffered = bytes(process.stderr._buffer)[-8000:]
+            returncode_at_timeout = process.returncode
+            process.stdin.close()
+            try:
+                raw_after_close = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
+            except TimeoutError:
+                raw_after_close = None
+            raise TimeoutError(
+                f"MCP framed initialize had no response after {waited:.1f}s; "
+                f"returncode={returncode_at_timeout}, stdout_buffered={stdout_buffered}, "
+                f"stderr_tail={stderr_buffered!r}, "
+                f"stdout_after_stdin_close={raw_after_close[:500] if raw_after_close is not None else None!r}, "
+                f"returncode_after_close={process.returncode}"
+            ) from exc
 
         assert response["id"] == 1
         result = response["result"]
@@ -170,14 +276,7 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
             server_info["version"] == _TG_MCP_SERVER_CONTRACT_VERSION
         )  # task 336: budget_remediable on the repo_map-backed wire
     finally:
-        if process.stdin is not None:
-            process.stdin.close()
-            await process.stdin.wait_closed()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except TimeoutError:
-            process.terminate()
-            await process.wait()
+        await _close_framed_server(process)
 
 
 def test_tg_mcp_stdio_accepts_content_length_initialize_frame() -> None:
@@ -194,18 +293,7 @@ async def _stdio_content_length_multibyte_utf8_does_not_desync_next_message() ->
     """Audit #49: a Content-Length-framed message with a multi-byte UTF-8 body must not desync the
     framed stream -- the FOLLOWING pipelined message must still parse and execute correctly. Uses a
     real subprocess and real OS pipes (not an in-memory buffer) for maximum fidelity."""
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "tensor_grep",
-        "mcp",
-        cwd=REPO_ROOT,
-        env=_mcp_env(),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=_SUBPROCESS_STDOUT_LIMIT_BYTES,
-    )
+    process = await _start_framed_server()
     assert process.stdin is not None
     try:
         # "e" with an acute accent (\u00e9) and "i" with a circumflex (\u00ee) are each 2 UTF-8
@@ -248,14 +336,7 @@ async def _stdio_content_length_multibyte_utf8_does_not_desync_next_message() ->
         tool_names = {tool["name"] for tool in tools}
         assert "tg_mcp_capabilities" in tool_names
     finally:
-        if process.stdin is not None:
-            process.stdin.close()
-            await process.stdin.wait_closed()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=5.0)
-        except TimeoutError:
-            process.terminate()
-            await process.wait()
+        await _close_framed_server(process)
 
 
 def test_tg_mcp_stdio_multibyte_utf8_body_does_not_desync_next_message() -> None:

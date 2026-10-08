@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
+
+import pytest
 
 from tensor_grep.cli import subprocess_policy
 
@@ -60,6 +63,83 @@ def test_run_subprocess_honors_timeout(monkeypatch) -> None:
         return
 
     raise AssertionError("expected subprocess timeout")
+
+
+def test_default_child_gets_eof_while_parent_stdin_stays_open() -> None:
+    code = (
+        "import sys; from tensor_grep.cli.subprocess_policy import run_subprocess; "
+        "p = run_subprocess([sys.executable, '-c', "
+        "'import sys; print(repr(sys.stdin.buffer.read()))'], "
+        "capture_output=True, timeout_seconds=2); "
+        "sys.stdout.buffer.write(p.stdout)"
+    )
+    # Leave this pipe open: inheriting it makes the inner child's read block, just
+    # as an MCP request stream does. communicate() would close it and hide the defect.
+    with subprocess.Popen(
+        [sys.executable, "-c", code],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ) as parent:
+        try:
+            parent.wait(timeout=8)
+        finally:
+            if parent.poll() is None:
+                parent.kill()
+                parent.wait(timeout=5)
+        stdout, stderr = parent.communicate()
+    assert parent.returncode == 0, stderr.decode("utf-8", errors="replace")
+    assert stdout.strip() == b"b''"
+
+
+@pytest.mark.parametrize("stdin", [None, subprocess.DEVNULL, subprocess.PIPE])
+def test_explicit_stdin_is_preserved(monkeypatch, stdin) -> None:
+    captured = {}
+
+    def run(args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess_policy.subprocess, "run", run)
+    subprocess_policy.run_subprocess(["child"], stdin=stdin)
+    assert captured["stdin"] is stdin
+
+
+@pytest.mark.parametrize("payload", [b"round trip", b"", "round trip", ""])
+def test_supplied_input_round_trips(payload) -> None:
+    result = subprocess_policy.run_subprocess(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+        input=payload,
+        text=isinstance(payload, str),
+        capture_output=True,
+        timeout_seconds=5,
+    )
+    assert result.stdout == payload
+
+
+def test_explicit_stdin_file_round_trips(tmp_path) -> None:
+    source = tmp_path / "stdin.bin"
+    source.write_bytes(b"explicit file input")
+    with source.open("rb") as stdin:
+        result = subprocess_policy.run_subprocess(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())"],
+            stdin=stdin,
+            capture_output=True,
+            timeout_seconds=5,
+        )
+    assert result.stdout == source.read_bytes()
+
+
+def test_input_none_still_gets_devnull(monkeypatch) -> None:
+    captured = {}
+
+    def run(args, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(subprocess_policy.subprocess, "run", run)
+    subprocess_policy.run_subprocess(["child"], input=None)
+    assert captured["stdin"] == subprocess.DEVNULL
 
 
 # ---------------------------------------------------------------------------

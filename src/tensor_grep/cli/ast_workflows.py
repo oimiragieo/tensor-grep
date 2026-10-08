@@ -31,8 +31,15 @@ from tensor_grep.cli.ast_workflow_rules import (
     _inject_run_json_fields,
     _rule_needs_ast_grep_wrapper,
     _safe_stdout_line,
+    _stamp_ast_scan_incompleteness,
     _suffix_for_language,
     _warn_windows_single_quote_pattern,
+)
+from tensor_grep.cli.ast_workflow_rules import (
+    _build_ast_run_search_payload as _build_ast_run_search_payload,
+)
+from tensor_grep.cli.ast_workflow_rules import (
+    _emit_ast_run_incomplete as _emit_ast_run_incomplete,
 )
 from tensor_grep.cli.ast_workflow_rules import (
     _extract_rule_member_patterns as _extract_rule_member_patterns,
@@ -104,6 +111,8 @@ _AST_GREP_REMEDIATION = (
     "`pip install tensor-grep` does not include it, so every built-in "
     "`tg scan --ruleset` fails until it is on PATH."
 )
+
+
 """Remediation appended to EVERY ast-grep-unavailable refusal.
 
 One constant, not a literal per site: a remediation present on one reachable path and absent
@@ -204,6 +213,35 @@ def _get_cache_dir(root_dir: Path) -> Path:
 _PROJECT_DATA_CACHE_SCHEMA_VERSION = 2
 
 
+def _ast_search_backend_error(
+    detail: str,
+    pattern: str,
+    path: str,
+    *,
+    json_mode: bool,
+    backend_name: str | None = None,
+) -> int:
+    if json_mode:
+        payload: dict[str, Any] = {
+            "version": 1,
+            "schema_version": 1,
+            "mode": "search",
+            "total_matches": 0,
+            "ok": False,
+            "error": "backend_error",
+            "detail": detail,
+        }
+        if backend_name is not None:
+            payload["routing_backend"] = backend_name
+            payload["routing_reason"] = "ast"
+        payload["query"] = pattern
+        payload["path"] = path
+        _safe_stdout_line(json.dumps(payload))
+    else:
+        print(f"Error: {detail}", file=sys.stderr)
+    return 2
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -248,7 +286,7 @@ def run_command(
     # That error originates in Rust; see cross-file FLAG below for the fix location.
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.pipeline import ConfigurationError
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
     if policy is not None and not apply and not interactive:
         print("--policy requires --apply or --interactive.", file=sys.stderr)
@@ -344,6 +382,10 @@ def run_command(
         return exit_code
 
     search_path = path or "."
+    if path is not None and not stdin and not Path(search_path).exists():
+        return _ast_search_backend_error(
+            f"AST input path not found: {search_path}", pattern, search_path, json_mode=json_mode
+        )
     stdin_input = sys.stdin.read() if stdin else None
     cfg = SearchConfig(
         ast=True,
@@ -378,8 +420,6 @@ def run_command(
             "to use tg's native fallback."
         )
         if json_mode:
-            import json
-
             _safe_stdout_line(
                 json.dumps({
                     "version": 1,
@@ -418,6 +458,7 @@ def run_command(
             all_results.matched_file_paths.extend(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             all_results.total_files = max(all_results.total_files, result.total_files)
+            merge_runtime_routing(all_results, result)
         else:
             from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -430,30 +471,20 @@ def run_command(
                 all_results.total_matches += result.total_matches
                 if result.total_files > 0 or result.total_matches > 0:
                     all_results.total_files += 1
+                merge_runtime_routing(all_results, result)
+        if (
+            backend_name == "AstGrepWrapperBackend"
+            and all_results.total_matches == 0
+            and hasattr(backend, "pattern_warning")
+        ):
+            if warning := backend.pattern_warning(pattern, cfg):
+                raise BackendExecutionError(f"Malformed AST pattern: {warning}")
     except BackendExecutionError as exc:
         # audit M2: --selector/--strictness combinations ast-grep rejects must surface as a
         # structured error (or a clean stderr message), never a raw Python traceback.
-        if json_mode:
-            import json
-
-            _safe_stdout_line(
-                json.dumps({
-                    "version": 1,
-                    "schema_version": 1,
-                    "mode": "search",
-                    "total_matches": 0,
-                    "ok": False,
-                    "error": "backend_error",
-                    "detail": str(exc),
-                    "routing_backend": backend_name,
-                    "routing_reason": "ast",
-                    "query": pattern,
-                    "path": search_path,
-                })
-            )
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
-        return 2
+        return _ast_search_backend_error(
+            str(exc), pattern, search_path, json_mode=json_mode, backend_name=backend_name
+        )
 
     # Filter matches
     if filter_regex:
@@ -465,6 +496,9 @@ def run_command(
 
     if interactive and rewrite:
         # Perform interactive rewrites
+        if all_results.result_incomplete:
+            _emit_ast_run_incomplete(all_results.incomplete_reason)
+            return 2
         if not all_results.matches:
             print("No matches found to rewrite.", file=sys.stderr)
             return 0
@@ -534,36 +568,21 @@ def run_command(
         return 0
 
     if json_mode:
-        import json
-
-        payload = {
-            "version": 1,
-            "schema_version": 1,
-            "mode": "stdin" if stdin else "search",
-            "routing_backend": backend_name,
-            "routing_reason": "ast",
-            "sidecar_used": False,
-            "query": pattern,
-            "path": search_path,
-            "total_matches": all_results.total_matches,
-            "matches": [
-                {
-                    "file": m.file,
-                    "line": m.line_number,
-                    "text": m.text,
-                }
-                for m in all_results.matches
-            ],
-        }
-        if all_results.total_matches == 0:
-            # payload must be enriched BEFORE serialization so the additive
-            # "remediation" key ships in the same JSON line -- never a second write.
-            _emit_ast_run_remediation(pattern, lang, json_payload=payload)
+        payload = _build_ast_run_search_payload(
+            stdin=stdin,
+            backend_name=backend_name,
+            pattern=pattern,
+            path=search_path,
+            result=all_results,
+            lang=lang,
+        )
         _safe_stdout_line(json.dumps(payload))
         if all_results.total_matches == 0:
+            if all_results.result_incomplete:
+                return 2
             _warn_windows_single_quote_pattern(pattern)
             return 1
-        return 0
+        return 2 if all_results.result_incomplete else 0
 
     if files_with_matches:
         seen_paths: set[str] = set()
@@ -580,16 +599,25 @@ def run_command(
         for matched_path in ordered_paths:
             _safe_stdout_line(matched_path)
         if not ordered_paths:
+            if all_results.result_incomplete:
+                _emit_ast_run_incomplete(all_results.incomplete_reason)
+                return 2
             # remediation goes to STDERR here (like the Windows-quote hint just
             # above it) so `--files-with-matches`' stdout stays a clean, parseable path list.
             _warn_windows_single_quote_pattern(pattern)
             _emit_ast_run_remediation(pattern, lang)
             return 1
+        if all_results.result_incomplete:
+            _emit_ast_run_incomplete(all_results.incomplete_reason)
+            return 2
         return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
     _safe_stdout_line(RipgrepFormatter().format(all_results))
+    if all_results.result_incomplete:
+        _emit_ast_run_incomplete(all_results.incomplete_reason)
+        return 2
     if all_results.total_matches == 0:
         _warn_windows_single_quote_pattern(pattern)
         _emit_ast_run_remediation(pattern, lang)
@@ -759,7 +787,7 @@ def scan_command(
     from dataclasses import replace
 
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
     if inline_rules:
         yaml_mod, loader = _get_yaml()
@@ -880,6 +908,7 @@ def scan_command(
     )
     root_dir = cast(Path, project_cfg["root_dir"])
     backend_names_used: set[str] = set()
+    scan_result = SearchResult(matches=[], total_files=0, total_matches=0)
     backend_hints = hints.get("backend_hints", {})
 
     wrapper_rules: list[dict[str, Any]] = []
@@ -908,6 +937,9 @@ def scan_command(
             wrapper_project_results = wrapper_backend.search_project(
                 str(root_dir), str(project_cfg.get("config_path", config or ""))
             )
+            project_aggregate = getattr(wrapper_project_results, "aggregate", None)
+            if isinstance(project_aggregate, SearchResult):
+                merge_runtime_routing(scan_result, project_aggregate)
         except Exception:
             # Fallback to individual search_many if search_project fails
             for rule in wrapper_rules:
@@ -927,6 +959,7 @@ def scan_command(
             result = wrapper_project_results.get(
                 rule["id"], SearchResult(matches=[], total_files=0, total_matches=0)
             )
+            merge_runtime_routing(scan_result, result)
             rule_matches = result.total_matches
             total_matches += rule_matches
             if rule_matches > 0:
@@ -1022,6 +1055,7 @@ def scan_command(
                     result = cast(Any, backend).search_many(
                         [str(root_dir)], member_pattern, config=rule_cfg
                     )
+                    merge_runtime_routing(scan_result, result)
                 except RuntimeError as exc:
                     print(f"Error: {exc}", file=sys.stderr)
                     return 1
@@ -1038,6 +1072,7 @@ def scan_command(
                 for current_file in candidate_files:
                     try:
                         result = backend.search(current_file, member_pattern, config=rule_cfg)
+                        merge_runtime_routing(scan_result, result)
                     except RuntimeError as exc:
                         print(f"Error: {exc}", file=sys.stderr)
                         return 1
@@ -1142,10 +1177,15 @@ def scan_command(
         }
         if ruleset:
             payload["ruleset"] = ruleset
+        _stamp_ast_scan_incompleteness(payload, scan_result)
 
         _safe_stdout_line(json.dumps(payload))
         return 0
 
+    if scan_result.result_incomplete:
+        _stamp: dict[str, Any] = {}
+        _stamp_ast_scan_incompleteness(_stamp, scan_result)
+        print(f"warning: INCOMPLETE SCAN: {_stamp['remediation']}")
     print(
         "Scan completed. "
         f"rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches} "

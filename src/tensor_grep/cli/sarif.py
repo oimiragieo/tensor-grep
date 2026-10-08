@@ -30,10 +30,11 @@ learned the hard way:
     halves of this were found by running the real command, not by reading the spec; the unit tests
     used relative fixtures and were blind to it.
 
-SCOPE, stated so nobody infers more than is here: the completeness signal is only as good as the
-payload's, and ``_run_ast_scan_payload``'s disclosure covers the REGEX leg (#299). The AST leg
-reaches files through the backends and is not audited. ``executionSuccessful: true`` therefore
-means "the regex leg reported no skips", not "every byte was read".
+SCOPE, stated so nobody infers more than is here: ``executionSuccessful`` follows the scan
+payload's explicit partial-coverage signals. The producer now carries backend-reported AST
+incompleteness (including ast-grep project scans with zero findings) alongside the regex and
+filesystem-skip disclosures. A successful flag means no incompleteness was reported; backends
+that cannot detect or report skipped input remain outside that guarantee.
 """
 
 from __future__ import annotations

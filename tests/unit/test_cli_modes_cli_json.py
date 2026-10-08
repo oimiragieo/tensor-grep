@@ -547,6 +547,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -554,6 +555,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         if command[0] in {str(native_binary), str(bridge_tg), str(repaired_tg)}:
+            assert stdin == subprocess.DEVNULL
             version = (
                 "0.33.0"
                 if Path(command[0]).read_text(encoding="utf-8") == "new native"
@@ -738,6 +740,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -745,6 +748,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         if command[0] in {str(native_binary), str(bridge_tg)}:
+            assert stdin == subprocess.DEVNULL
             version = (
                 "0.33.0"
                 if Path(command[0]).read_text(encoding="utf-8") == "new native"
@@ -807,6 +811,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -814,11 +819,13 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         if command[0] == str(native_binary):
+            assert stdin == subprocess.DEVNULL
             version = (
                 "0.33.0" if native_binary.read_text(encoding="utf-8") == "new native" else "0.32.0"
             )
             return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
         if command[0].endswith(".tmp"):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
@@ -877,6 +884,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -884,10 +892,13 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
         if command[0] == str(native_binary):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
         if command[0] == str(bridge_tg):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
         if command[0].endswith(".tmp"):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 
@@ -1261,6 +1272,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
         env=None,
         encoding=None,
         errors=None,
+        stdin=None,
     ):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
@@ -1268,8 +1280,10 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
         if command[:3] == [str(python_executable), "-m", "pip"]:
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
         if command[0] == str(bridge_tg):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
         if command[0] == str(native_binary):
+            assert stdin == subprocess.DEVNULL
             return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
         raise AssertionError(f"unexpected command: {command}")
 

@@ -58,6 +58,7 @@ use tensor_grep_rs::routing::{
     plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
 };
+mod ast_run_remediation;
 mod search_flag_registry;
 use search_flag_registry::{
     raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
@@ -5439,6 +5440,7 @@ mod tests {
             matched_file_paths: Vec::new(),
             match_counts_by_file: std::collections::BTreeMap::new(),
             matches: Vec::new(),
+            remediation: None,
             result_incomplete,
             incomplete_reason_class,
             incomplete_paths_count,
@@ -10383,6 +10385,8 @@ struct SearchResultJson<'a> {
     path_was_defaulted: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     scope_note: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remediation: Option<serde_json::Value>,
 }
 
 /// The `--ndjson` TERMINAL SUMMARY record (task 276 slice B2b).
@@ -12589,6 +12593,11 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::ast());
     }
+    if match_count == 0 {
+        ast_run_remediation::emit_text_for_search(pattern, match_count);
+        warn_windows_single_quote_ast_pattern(pattern);
+        std::process::exit(1);
+    }
 
     let stdout = io::stdout();
     let mut stdout = io::BufWriter::new(stdout.lock());
@@ -12597,10 +12606,6 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
             if !file_matches.matches.is_empty() {
                 writeln!(stdout, "{}", file_matches.file.display())?;
             }
-        }
-        if match_count == 0 {
-            warn_windows_single_quote_ast_pattern(pattern);
-            std::process::exit(1);
         }
         return Ok(());
     }
@@ -12615,11 +12620,6 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
                 matched.matched_text
             )?;
         }
-    }
-
-    if match_count == 0 {
-        warn_windows_single_quote_ast_pattern(pattern);
-        std::process::exit(1);
     }
 
     Ok(())
@@ -14415,6 +14415,7 @@ fn emit_json_search_results(
         total_matches: matches.len(),
         matched_file_paths,
         match_counts_by_file,
+        remediation: ast_run_remediation::json_for_search(pattern, matches.len(), decision.reason),
         matches,
         result_incomplete,
         incomplete_reason_class,

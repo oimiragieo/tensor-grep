@@ -99,6 +99,11 @@ def run_subprocess(
             env_var=timeout_env_var,
             default=default_timeout_seconds,
         )
+    # Noninteractive work must not consume the caller's request stream (MCP
+    # stdio in particular). Explicit stdin=None still means inheritance, and
+    # actual input, including empty bytes/text, lets subprocess.run create PIPE.
+    if "stdin" not in kwargs and kwargs.get("input") is None:
+        kwargs["stdin"] = subprocess.DEVNULL
     return subprocess.run(
         args,
         shell=shell,

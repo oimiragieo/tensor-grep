@@ -1088,7 +1088,11 @@ def _streaming_passthrough_returncode(
     # back to the old subprocess.run path so those tests continue to pass.
     if run_subprocess is not _ORIG_RUN_SUBPROCESS:
         try:
-            shim_kwargs: dict[str, Any] = {} if env is None else {"env": env}
+            # This launcher deliberately preserves interactive/stdio input,
+            # matching the Popen path below (including `tg mcp serve`).
+            shim_kwargs: dict[str, Any] = {"stdin": None}
+            if env is not None:
+                shim_kwargs["env"] = env
             if timeout_env_var is not None:
                 result = run_subprocess(
                     argv, check=False, timeout_env_var=timeout_env_var, **shim_kwargs

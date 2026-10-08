@@ -123,6 +123,7 @@ def _native_tg_version(candidate: Path) -> str | None:
         result = subprocess.run(
             [str(candidate), "--version"],
             env=child_env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=False,
             timeout=2,
@@ -555,6 +556,7 @@ def translate_path_for_windows_binary(
             # sweep whose members each carry a private severity argument is a sweep nobody can
             # check, so it gets the same treatment as the rest.
             [wslpath_bin, "-w", "--", str(path)],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=False,
             timeout=timeout_s,

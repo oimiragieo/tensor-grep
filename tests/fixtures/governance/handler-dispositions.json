@@ -711,7 +711,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 180,
+    "lineno": 189,
     "enclosing_symbol": "_candidate_versions_from_pip_index",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -720,28 +720,18 @@
     "hardened_in": null
   },
   {
-    "module": "cli/native_frontdoor.py",
-    "lineno": 210,
-    "enclosing_symbol": "_latest_pypi_tensor_grep_version",
+    "module": "cli/pypi_probe.py",
+    "lineno": 55,
+    "enclosing_symbol": "probe_indices",
     "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception: pass -- the PyPI JSON-API leg of the three-source aggregation; a network/parse failure leaves `candidates` unextended by this source and execution falls through to the next `try`.",
-    "reason": "Explicitly documented in the enclosing function's own docstring as a best-effort multi-source probe; failure of one source is expected and handled by the remaining two plus the pip-index fallback.",
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: event[\"error\"] = type(exc).__name__ -- the worker emits a bounded event for the failed index surface, and the parent logs that event with its stage and error class before continuing to other version sources.",
+    "reason": "A failed PyPI index request or parse is visible as a stage-specific error event rather than silently becoming a valid empty result. The next index surface and pip-index fallback can still provide a version; if none succeeds, the latest-version probe returns None instead of claiming freshness.",
     "hardened_in": null
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 218,
-    "enclosing_symbol": "_latest_pypi_tensor_grep_version",
-    "handler_index_within_symbol": 1,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception: pass -- the PyPI simple-index leg of the same three-source aggregation as the record above.",
-    "reason": "Same documented best-effort-aggregation boundary as the JSON-API leg immediately above.",
-    "hardened_in": null
-  },
-  {
-    "module": "cli/native_frontdoor.py",
-    "lineno": 441,
+    "lineno": 498,
     "enclosing_symbol": "_fetch_native_frontdoor_checksums",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -751,7 +741,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 577,
+    "lineno": 634,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -811,7 +801,7 @@
   },
   {
     "module": "cli/ast_scan.py",
-    "lineno": 858,
+    "lineno": 991,
     "enclosing_symbol": "_run_ast_scan_payload",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -821,7 +811,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 555,
+    "lineno": 612,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -1481,7 +1471,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 474,
+    "lineno": 506,
     "enclosing_symbol": "search_project",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1491,7 +1481,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 521,
+    "lineno": 558,
     "enclosing_symbol": "search_many",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1501,7 +1491,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 556,
+    "lineno": 593,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2901,7 +2891,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 911,
+    "lineno": 943,
     "enclosing_symbol": "scan_command",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -2911,7 +2901,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1271,
+    "lineno": 1311,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2921,7 +2911,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1297,
+    "lineno": 1337,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",

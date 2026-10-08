@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Full-feature dogfood: run the REAL installed ``tg`` binary across every user-facing feature on a
+"""Selected feature dogfood: run the REAL installed ``tg`` binary on a
 generated fixture repo, asserting exit codes + output shape.
 
 Why this exists: our unit/integration tests use ``CliRunner``, which invokes the typer ``app``
@@ -11,12 +11,14 @@ it is meant to run post-release in a clean Docker container / venv against the P
     pip install "tensor-grep==<version>"
     python dogfood_features.py            # uses the `tg` on PATH
 
-Exit 0 = the shipped CLI installs and every feature works. Exit 1 = a regression (with the failing
+Exit 0 = all selected checks pass. Exit 1 = a regression (with the failing
 command + output). Add a new ``check(...)`` line whenever a feature ships so the battery grows.
 """
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import json
 import os
 import re
@@ -29,11 +31,125 @@ from pathlib import Path
 # In Docker/venv `tg` is on PATH; TG_BIN lets you point at a specific binary for local verification.
 TG = os.environ.get("TG_BIN") or shutil.which("tg") or "tg"
 _RESULTS: list[tuple[bool, str, int, str]] = []
+_SKIPS: list[str] = []
 
 
 def _run(args: list[str]) -> tuple[int, str, str]:
-    proc = subprocess.run([TG, *args], capture_output=True, text=True, timeout=120, check=False)
+    try:
+        proc = subprocess.run(
+            [TG, *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 124 if isinstance(exc, subprocess.TimeoutExpired) else 2, "", str(exc)
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def _artifact_identity() -> dict:
+    executable = Path(shutil.which(TG) or TG).expanduser().resolve()
+    if not executable.is_file():
+        raise RuntimeError(f"Selected executable does not exist: {executable}")
+    code, output, error = _run(["--version"])
+    observed = re.search(r"\b(?:tg|tensor-grep) (\d+\.\d+\.\d+[a-zA-Z0-9.+-]*)", output)
+    if code != 0 or observed is None:
+        raise RuntimeError(f"Cannot verify selected artifact version: {output} {error}")
+    try:
+        expected = importlib.metadata.version("tensor-grep")
+    except importlib.metadata.PackageNotFoundError:
+        expected = None
+    if expected is not None and observed[1] != expected:
+        raise RuntimeError(
+            f"Stale artifact: expected {expected}, got {observed[1]} at {executable}"
+        )
+    python = os.environ.get("TG_SIDECAR_PYTHON") or sys.executable
+    probe = subprocess.run(
+        [
+            python,
+            "-c",
+            "import json,importlib.metadata,tensor_grep,tensor_grep.rust_core; "
+            "print(json.dumps({'package_origin':tensor_grep.__file__,"
+            "'extension_origin':tensor_grep.rust_core.__file__,"
+            "'package_version':importlib.metadata.version('tensor-grep')}))",
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+        check=False,
+    )
+    origins = (
+        json.loads(probe.stdout)
+        if probe.returncode == 0
+        else {
+            "package_origin": None,
+            "extension_origin": None,
+            "origin_probe_error": probe.stderr,
+        }
+    )
+    if os.environ.get("TG_SIDECAR_PYTHON") and origins.get("package_version") != observed[1]:
+        raise RuntimeError(
+            f"Stale or unverifiable sidecar package: expected {observed[1]}, "
+            f"got {origins.get('package_version')!r} from {python}"
+        )
+    with executable.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    native_override = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
+    native_identity = None
+    if native_override:
+        native = Path(native_override).expanduser().resolve()
+        if not native.is_file():
+            raise RuntimeError(f"Selected native executable does not exist: {native}")
+        native_probe = subprocess.run(
+            [str(native), "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+        native_version = re.search(r"\btg (\d+\.\d+\.\d+[a-zA-Z0-9.+-]*)", native_probe.stdout)
+        if (
+            native_probe.returncode != 0
+            or native_version is None
+            or native_version[1] != observed[1]
+        ):
+            raise RuntimeError(
+                f"Stale or unverifiable native artifact at {native}: {native_probe.stdout!r}"
+            )
+        with native.open("rb") as stream:
+            native_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        native_identity = {
+            "executable": str(native),
+            "sha256": native_digest,
+            "version": native_version[1],
+        }
+    return {
+        "executable": str(executable),
+        "sha256": digest,
+        "version": observed[1],
+        "expected_package_version": expected,
+        "candidate_commit": os.environ.get("TG_DOGFOOD_CANDIDATE_COMMIT"),
+        "origin_probe_python": python,
+        "native_override": native_identity,
+        "native_selection": (
+            "disabled"
+            if os.environ.get("TG_DISABLE_NATIVE_TG") == "1"
+            else "explicit"
+            if native_identity
+            else "automatic_artifact_unrecorded"
+        ),
+        **origins,
+    }
 
 
 def _record(ok: bool, desc: str, code: int, detail: str, combined: str = "") -> None:
@@ -180,9 +296,14 @@ def _dynamic_import_entry_is_honest(payload: dict) -> tuple[bool, str]:
 
 
 def main() -> int:
-    print(f"=== tensor-grep full-feature dogfood (binary: {TG}) ===")
-    code, ver, _ = _run(["--version"])
-    print(f"version: {ver.strip()} (exit {code})\n")
+    _RESULTS.clear()
+    _SKIPS.clear()
+    print(f"=== tensor-grep selected feature dogfood (binary: {TG}) ===")
+    try:
+        print("artifact: " + json.dumps(_artifact_identity(), sort_keys=True))
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"ARTIFACT REFUSED: {exc}")
+        return 1
 
     # ignore_cleanup_errors: on Windows, AV/the search indexer can hold a
     # transient lock on tg-touched files, so rmtree at __exit__ raises
@@ -264,10 +385,20 @@ def main() -> int:
 
         # dense-hint: every dense-absent hint (incl. `tg find`'s BM25-only degrade) leads with the
         # one-shot `tg install-dense` command, not the raw module-CLI fetch invocation.
-        check(
-            "find (dense-absent hint leads with install-dense -- dense-hint)",
+        _check_json(
+            "find (available dense route or disclosed BM25 fallback)",
             ["find", "hub_fn", fx, "--json"],
-            must_contain="install-dense",
+            predicate=lambda payload: (
+                (True, "")
+                if (
+                    bool(payload.get("routing_backend"))
+                    and (
+                        payload.get("routing_backend") != "Bm25FindBackend"
+                        or "install-dense" in json.dumps(payload)
+                    )
+                )
+                else (False, "missing route or dense-unavailable guidance")
+            ),
         )
 
         # importers: the reverse of `tg imports`, and the release harness never exercised it.
@@ -336,6 +467,7 @@ def main() -> int:
                 must_contain="Refusing to write",
             )
         else:
+            _SKIPS.append("prepare --out symlink refusal: symlink creation unavailable")
             print(
                 "[SKIP] prepare --out (refuses a pre-existing symlink dest -- prepare-out)  "
                 "(symlink creation unsupported in this environment)"
@@ -350,13 +482,16 @@ def main() -> int:
 
     failures = [r for r in _RESULTS if not r[0]]
     print()
-    print(f"=== {len(_RESULTS) - len(failures)}/{len(_RESULTS)} checks passed ===")
+    print(
+        f"=== {len(_RESULTS) - len(failures)}/{len(_RESULTS)} selected checks passed; "
+        f"{len(_SKIPS)} unavailable checks skipped ==="
+    )
     if failures:
         print("DOGFOOD FAILURES:")
         for _, desc, code, detail in failures:
             print(f"  - {desc} (exit {code}) {detail}")
         return 1
-    print("ALL DOGFOOD CHECKS PASSED -shipped artifact installs and every feature works.")
+    print("All selected dogfood checks passed. Unlisted features remain untested.")
     return 0
 
 

@@ -828,6 +828,7 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflow_rules import _stamp_ast_scan_incompleteness
     from tensor_grep.cli.ast_workflows import (
         _match_node_identity,
         _rule_member_patterns,
@@ -835,7 +836,7 @@ def _run_ast_scan_payload(
     )
     from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     project_language = normalize_ast_language(project_cfg.get("language"))
@@ -879,6 +880,7 @@ def _run_ast_scan_payload(
     )
     backend_cache: dict[tuple[str | None, str, bool, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
+    scan_result = SearchResult(matches=[], total_files=0, total_matches=0)
 
     total_matches = 0
     matched_rules = 0
@@ -983,6 +985,9 @@ def _run_ast_scan_payload(
             wrapper_project_results = cast(Any, wrapper_backend).search_project(
                 str(root_dir), str(project_cfg["config_path"])
             )
+            project_aggregate = getattr(wrapper_project_results, "aggregate", None)
+            if isinstance(project_aggregate, SearchResult):
+                merge_runtime_routing(scan_result, project_aggregate)
         except Exception:
             for rule, rule_cfg in wrapper_rules:
                 other_resolved.append((rule, rule_cfg, cast("ComputeBackend", wrapper_backend)))
@@ -997,6 +1002,7 @@ def _run_ast_scan_payload(
             if wrapper_project_results is not None
             else SearchResult(matches=[], total_files=0, total_matches=0)
         )
+        merge_runtime_routing(scan_result, result)
         matched_files = set(result.matched_file_paths)
         match_counts_by_file = dict(result.match_counts_by_file)
         snippets_by_file: dict[str, list[dict[str, object]]] = {}
@@ -1052,6 +1058,7 @@ def _run_ast_scan_payload(
                     result = backend.search_many(
                         backend_scan_paths, member_pattern, config=rule_cfg
                     )
+                    merge_runtime_routing(scan_result, result)
                     if composite:
                         resolved_identities.update(
                             _match_node_identity(match) for match in result.matches if match.file
@@ -1099,6 +1106,7 @@ def _run_ast_scan_payload(
             for member_pattern in member_patterns:
                 for current_file in resolved_candidate_files:
                     result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    merge_runtime_routing(scan_result, result)
                     if composite:
                         resolved_identities.update(
                             _match_node_identity(match, fallback_file=current_file)
@@ -1289,6 +1297,7 @@ def _run_ast_scan_payload(
                 " AST rules skip files that are not valid UTF-8; re-encode them or cover them "
                 "with a regex rule."
             )
+    _stamp_ast_scan_incompleteness(payload, scan_result)
     _apply_ruleset_baseline(
         payload,
         baseline_path=baseline_path,

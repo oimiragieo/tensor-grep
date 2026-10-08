@@ -85,6 +85,18 @@ def test_guard_resolves_module_and_imported_sink_aliases() -> None:
     assert len(violations(rows)) == 2
 
 
+def test_freshness_capture_wrapper_is_in_the_output_census() -> None:
+    source = (
+        "from tensor_grep.cli.freshness_process import capture_probe as capture\n"
+        "def freshness():\n"
+        "    return capture(['worker'], timeout_seconds=1)\n"
+    )
+    rows = scan_source(source, "fixture.py")
+    assert len(rows) == 1
+    assert rows[0].target == "capture_probe"
+    assert rows[0].output_captured is True
+
+
 @pytest.mark.parametrize(
     "options",
     [
@@ -358,7 +370,7 @@ def test_guard_fails_closed_on_dynamic_generated_python() -> None:
 
 def test_production_census_and_all_embedded_helpers_are_guarded() -> None:
     rows = scan_tree(PRODUCTION)
-    assert len(rows) == 72
+    assert len(rows) == 73
     assert not check_repository(rows)
     generated = [row for row in rows if row.generated_from is not None]
     assert len(generated) == 12
