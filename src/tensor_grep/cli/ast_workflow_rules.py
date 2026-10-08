@@ -52,10 +52,6 @@ def _stamp_ast_scan_incompleteness(payload: dict[str, Any], result: SearchResult
     """Project backend partial-result metadata into scan's existing disclosure fields."""
     if not result.result_incomplete:
         return
-    payload["result_incomplete"] = True
-    payload["incomplete_reason"] = result.incomplete_reason
-    if result.incomplete_reason_class is not None:
-        payload["incomplete_reason_class"] = result.incomplete_reason_class
     reason_class = result.incomplete_reason_class or "incomplete_results"
     reason = result.incomplete_reason or "some requested files or rules were not fully scanned"
     remediation = (

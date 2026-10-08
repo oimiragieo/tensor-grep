@@ -12,6 +12,15 @@ from tensor_grep.core.result import MatchLine, SearchResult
 _RULE = {"id": "sample-rule", "language": "python", "pattern": "print($X)"}
 
 
+def _assert_partial_contract(payload: dict[str, Any]) -> None:
+    assert payload["partial"] is True
+    assert payload["partial_reason"] == "unreadable_path"
+    assert "incomplete" in payload["remediation"].lower()
+    assert (
+        not {"result_incomplete", "incomplete_reason", "incomplete_reason_class"} & payload.keys()
+    )
+
+
 class _ProjectResults(dict[str, SearchResult]):
     def __init__(self, aggregate: SearchResult) -> None:
         super().__init__()
@@ -78,11 +87,7 @@ def test_project_fast_path_partial_zero_and_positive_are_disclosed(
     positive = _payload(tmp_path, monkeypatch, matched=True, incomplete=True)
     for payload, count in ((zero, 0), (positive, 1)):
         assert payload["total_matches"] == count
-        assert payload["result_incomplete"] is True
-        assert payload["incomplete_reason_class"] == "unreadable_path"
-        assert payload["partial"] is True
-        assert payload["partial_reason"] == "unreadable_path"
-        assert "incomplete" in payload["remediation"].lower()
+        _assert_partial_contract(payload)
         assert all(finding["rule_id"] == "sample-rule" for finding in payload["findings"])
 
 
@@ -108,7 +113,7 @@ def test_project_rules_merge_partial_metadata_monotonically(tmp_path: Path, monk
         routing_reason="project-scan",
         project_scan_fast_path=True,
     )
-    assert payload["result_incomplete"] is True
+    _assert_partial_contract(payload)
     assert payload["total_matches"] == 1
 
 
@@ -153,7 +158,7 @@ def test_backend_partial_keeps_existing_unreadable_scan_disclosure(
     assert payload["unreadable_paths"]["sample"]
     assert "failed" in payload["remediation"]
     assert "AST backend reported incomplete scan coverage" in payload["remediation"]
-    assert payload["result_incomplete"] is True
+    _assert_partial_contract(payload)
 
 
 class _PerFileAstBackend:
@@ -178,8 +183,7 @@ def test_per_file_aggregate_keeps_earlier_partial_result(tmp_path: Path, monkeyp
         routing_reason="project-scan",
         candidate_files=[str(first), str(second)],
     )
-    assert payload.get("result_incomplete") is True
-    assert payload.get("partial") is True
+    _assert_partial_contract(payload)
     assert payload["total_matches"] == 1
 
 
@@ -203,8 +207,7 @@ def test_legacy_scan_command_discloses_project_partial_without_changing_exit(
     exit_code = workflows.scan_command(str(tmp_path / "sgconfig.yml"), json_mode=True)
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0  # legacy scan_command's public contract remains unchanged
-    assert payload["partial"] is True
-    assert payload["result_incomplete"] is True
+    _assert_partial_contract(payload)
 
     exit_code = workflows.scan_command(str(tmp_path / "sgconfig.yml"), json_mode=False)
     text_output = capsys.readouterr().out
