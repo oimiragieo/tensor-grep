@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from importlib.metadata import version
 from pathlib import Path
 
@@ -153,7 +154,28 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         process.stdin.write(frame.encode("utf-8"))
         await process.stdin.drain()
 
-        response = await _read_jsonrpc_line(process)
+        response_started = time.monotonic()
+        try:
+            response = await _read_jsonrpc_line(process)
+        except TimeoutError as exc:
+            assert process.stdout is not None
+            assert process.stderr is not None
+            waited = time.monotonic() - response_started
+            stdout_buffered = len(process.stdout._buffer)
+            stderr_buffered = bytes(process.stderr._buffer)[-8000:]
+            returncode_at_timeout = process.returncode
+            process.stdin.close()
+            try:
+                raw_after_close = await asyncio.wait_for(process.stdout.readline(), timeout=5.0)
+            except TimeoutError:
+                raw_after_close = None
+            raise TimeoutError(
+                f"MCP framed initialize had no response after {waited:.1f}s; "
+                f"returncode={returncode_at_timeout}, stdout_buffered={stdout_buffered}, "
+                f"stderr_tail={stderr_buffered!r}, "
+                f"stdout_after_stdin_close={raw_after_close[:500] if raw_after_close is not None else None!r}, "
+                f"returncode_after_close={process.returncode}"
+            ) from exc
 
         assert response["id"] == 1
         result = response["result"]
