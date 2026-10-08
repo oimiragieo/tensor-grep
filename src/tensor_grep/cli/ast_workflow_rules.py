@@ -695,3 +695,35 @@ def _emit_ast_run_remediation(
         json_payload["remediation"] = {"hints": lines}
         return
     print("\n".join(lines), file=sys.stderr)
+
+
+def _build_ast_run_search_payload(
+    *, stdin: bool, backend_name: str, pattern: str, path: str, result: Any, lang: str | None
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "version": 1,
+        "schema_version": 1,
+        "mode": "stdin" if stdin else "search",
+        "routing_backend": backend_name,
+        "routing_reason": "ast",
+        "sidecar_used": False,
+        "query": pattern,
+        "path": path,
+        "total_matches": result.total_matches,
+        "matches": [
+            {"file": match.file, "line": match.line_number, "text": match.text}
+            for match in result.matches
+        ],
+    }
+    if result.result_incomplete:
+        payload.update(result_incomplete=True, incomplete_reason=result.incomplete_reason)
+        if result.incomplete_reason_class is not None:
+            payload["incomplete_reason_class"] = result.incomplete_reason_class
+    if result.total_matches == 0 and not result.result_incomplete:
+        _emit_ast_run_remediation(pattern, lang, json_payload=payload)
+    return payload
+
+
+def _emit_ast_run_incomplete(reason: str | None) -> None:
+    detail = reason or "AST scan could not cover all requested paths"
+    print(f"tg: AST run incomplete: {detail}", file=sys.stderr)

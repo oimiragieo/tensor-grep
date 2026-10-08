@@ -264,14 +264,10 @@ class AstGrepWrapperBackend(ComputeBackend):
         )
 
     def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> bool:
-        """Return True when the nonzero exit was a NON-FATAL partial scan (ast-grep skipped
-        unreadable paths but still emitted findings); False on exit 0 / clean JSON waive. A
-        genuine failure raises BackendExecutionError. See M10 audit."""
+        """Return True when valid output accompanies an unreadable-path warning; False on a
+        clean result. A genuine failure raises BackendExecutionError. See M10 audit."""
         raw_returncode = getattr(result, "returncode", 0)
         returncode = raw_returncode if isinstance(raw_returncode, int) else 0
-        if returncode == 0:
-            return False
-
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         # Audit HIGH: `stdout.startswith("[")` waived ANY nonzero exit whose stdout merely
@@ -282,9 +278,9 @@ class AstGrepWrapperBackend(ComputeBackend):
         if not stderr and _stdout_is_json_payload(stdout):
             return False
 
-        # ast-grep exits nonzero when it cannot read an individual path (a
-        # permission-denied directory, a locked/vanished file) even though it
-        # successfully scanned everything else and emitted findings on stdout.
+        # ast-grep can report an unreadable individual path (a permission-denied directory, a
+        # locked/vanished file) while still emitting valid findings on stdout. Some versions exit
+        # nonzero for this and others exit 0, but both results cover only part of the requested tree.
         # Treat that as a non-fatal partial scan: keep the results and forward
         # the warning to stderr instead of aborting. A genuine failure (bad
         # config/rule, invalid language) does not match the access-warning
@@ -295,6 +291,12 @@ class AstGrepWrapperBackend(ComputeBackend):
                 file=sys.stderr,
             )
             return True
+
+        # Some ast-grep versions report skipped paths on stderr while still exiting 0. The
+        # structured output is valid, but it does not cover the requested tree, so preserve it
+        # as partial evidence just as we do for the same warning with a nonzero exit.
+        if returncode == 0:
+            return False
 
         detail = stderr or stdout or "no error output"
         detail = detail.splitlines()[0]

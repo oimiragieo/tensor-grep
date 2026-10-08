@@ -7,6 +7,7 @@ import pytest
 from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.result import SearchResult
 
 
 def test_raise_for_nonzero_raises_on_truncated_json_from_killed_subprocess():
@@ -880,6 +881,49 @@ def test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings(ca
     # (ripgrep_backend.py: result_incomplete=True + class "unreadable_path").
     assert result.result_incomplete is True
     assert result.incomplete_reason_class == "unreadable_path"
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "[]",
+        json.dumps([
+            {"file": "nested/example.py", "text": "print(x)", "range": {"start": {"line": 0}}}
+        ]),
+    ],
+    ids=["zero-matches", "positive-match"],
+)
+def test_ast_wrapper_should_propagate_unreadable_warning_through_aggregate(
+    returncode, stdout, capsys
+):
+    """Valid output can still omit a nested subtree when ast-grep warns on stderr, even when
+    that binary exits 0. The CLI/MCP aggregate merge must retain this incomplete evidence."""
+    from tensor_grep.core.result import merge_runtime_routing
+
+    backend = AstGrepWrapperBackend()
+    completed = subprocess.CompletedProcess(
+        args=["sg", "scan"],
+        returncode=returncode,
+        stdout=stdout,
+        stderr="ERROR: C:\\fixtures\\nested\\private: Access is denied. (os error 5)",
+    )
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch.object(backend, "_run_ast_grep_command", return_value=completed),
+    ):
+        result = backend.search_many(
+            ["nested"], "print($A)", config=SearchConfig(ast=True, lang="python")
+        )
+
+    aggregate = SearchResult()
+    aggregate.matches.extend(result.matches)
+    merge_runtime_routing(aggregate, result)
+    assert aggregate.result_incomplete is True
+    assert aggregate.incomplete_reason_class == "unreadable_path"
+    assert "skipped unreadable paths" in capsys.readouterr().err
+    assert bool(aggregate.matches) is (stdout != "[]")
 
 
 # --- Backend Fail-Closed Contract: exit-0 malformed/wrong-shape JSON must raise,

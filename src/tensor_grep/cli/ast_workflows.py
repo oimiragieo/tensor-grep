@@ -35,6 +35,12 @@ from tensor_grep.cli.ast_workflow_rules import (
     _warn_windows_single_quote_pattern,
 )
 from tensor_grep.cli.ast_workflow_rules import (
+    _build_ast_run_search_payload as _build_ast_run_search_payload,
+)
+from tensor_grep.cli.ast_workflow_rules import (
+    _emit_ast_run_incomplete as _emit_ast_run_incomplete,
+)
+from tensor_grep.cli.ast_workflow_rules import (
     _extract_rule_member_patterns as _extract_rule_member_patterns,
 )
 from tensor_grep.cli.ast_workflow_rules import (
@@ -277,7 +283,7 @@ def run_command(
     # That error originates in Rust; see cross-file FLAG below for the fix location.
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.pipeline import ConfigurationError
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
     if policy is not None and not apply and not interactive:
         print("--policy requires --apply or --interactive.", file=sys.stderr)
@@ -411,8 +417,6 @@ def run_command(
             "to use tg's native fallback."
         )
         if json_mode:
-            import json
-
             _safe_stdout_line(
                 json.dumps({
                     "version": 1,
@@ -451,6 +455,7 @@ def run_command(
             all_results.matched_file_paths.extend(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             all_results.total_files = max(all_results.total_files, result.total_files)
+            merge_runtime_routing(all_results, result)
         else:
             from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -463,6 +468,7 @@ def run_command(
                 all_results.total_matches += result.total_matches
                 if result.total_files > 0 or result.total_matches > 0:
                     all_results.total_files += 1
+                merge_runtime_routing(all_results, result)
         if (
             backend_name == "AstGrepWrapperBackend"
             and all_results.total_matches == 0
@@ -487,6 +493,9 @@ def run_command(
 
     if interactive and rewrite:
         # Perform interactive rewrites
+        if all_results.result_incomplete:
+            _emit_ast_run_incomplete(all_results.incomplete_reason)
+            return 2
         if not all_results.matches:
             print("No matches found to rewrite.", file=sys.stderr)
             return 0
@@ -556,36 +565,21 @@ def run_command(
         return 0
 
     if json_mode:
-        import json
-
-        payload = {
-            "version": 1,
-            "schema_version": 1,
-            "mode": "stdin" if stdin else "search",
-            "routing_backend": backend_name,
-            "routing_reason": "ast",
-            "sidecar_used": False,
-            "query": pattern,
-            "path": search_path,
-            "total_matches": all_results.total_matches,
-            "matches": [
-                {
-                    "file": m.file,
-                    "line": m.line_number,
-                    "text": m.text,
-                }
-                for m in all_results.matches
-            ],
-        }
-        if all_results.total_matches == 0:
-            # payload must be enriched BEFORE serialization so the additive
-            # "remediation" key ships in the same JSON line -- never a second write.
-            _emit_ast_run_remediation(pattern, lang, json_payload=payload)
+        payload = _build_ast_run_search_payload(
+            stdin=stdin,
+            backend_name=backend_name,
+            pattern=pattern,
+            path=search_path,
+            result=all_results,
+            lang=lang,
+        )
         _safe_stdout_line(json.dumps(payload))
         if all_results.total_matches == 0:
+            if all_results.result_incomplete:
+                return 2
             _warn_windows_single_quote_pattern(pattern)
             return 1
-        return 0
+        return 2 if all_results.result_incomplete else 0
 
     if files_with_matches:
         seen_paths: set[str] = set()
@@ -602,16 +596,25 @@ def run_command(
         for matched_path in ordered_paths:
             _safe_stdout_line(matched_path)
         if not ordered_paths:
+            if all_results.result_incomplete:
+                _emit_ast_run_incomplete(all_results.incomplete_reason)
+                return 2
             # remediation goes to STDERR here (like the Windows-quote hint just
             # above it) so `--files-with-matches`' stdout stays a clean, parseable path list.
             _warn_windows_single_quote_pattern(pattern)
             _emit_ast_run_remediation(pattern, lang)
             return 1
+        if all_results.result_incomplete:
+            _emit_ast_run_incomplete(all_results.incomplete_reason)
+            return 2
         return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
     _safe_stdout_line(RipgrepFormatter().format(all_results))
+    if all_results.result_incomplete:
+        _emit_ast_run_incomplete(all_results.incomplete_reason)
+        return 2
     if all_results.total_matches == 0:
         _warn_windows_single_quote_pattern(pattern)
         _emit_ast_run_remediation(pattern, lang)
