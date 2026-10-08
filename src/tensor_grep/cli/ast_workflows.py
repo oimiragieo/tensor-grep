@@ -411,6 +411,8 @@ def run_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
     try:
+        if path is not None and not stdin and not Path(search_path).exists():
+            raise BackendExecutionError(f"AST input path not found: {search_path}")
         if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             search_paths = [] if stdin else [search_path]
             result = cast(Any, backend).search_many(search_paths, pattern, config=cfg)
@@ -430,6 +432,13 @@ def run_command(
                 all_results.total_matches += result.total_matches
                 if result.total_files > 0 or result.total_matches > 0:
                     all_results.total_files += 1
+        if (
+            backend_name == "AstGrepWrapperBackend"
+            and all_results.total_matches == 0
+            and hasattr(backend, "pattern_warning")
+        ):
+            if warning := backend.pattern_warning(pattern, cfg):
+                raise BackendExecutionError(f"Malformed AST pattern: {warning}")
     except BackendExecutionError as exc:
         # audit M2: --selector/--strictness combinations ast-grep rejects must surface as a
         # structured error (or a clean stderr message), never a raw Python traceback.

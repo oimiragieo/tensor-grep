@@ -3450,14 +3450,11 @@ def tg_ast_search(
         max_repo_files: Maximum files the directory walk parses before the scan is
             capped (protects against an unscoped full-monorepo AST parse).
     """
-    # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
-    # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- see
-    # tg_search's identical comment for the full rationale.
+    # Preserve whether the caller defaulted path before confinement makes it absolute.
     try:
         paths_defaulted = path == "."
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the primary path to the MCP root before any scan.
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
@@ -3480,6 +3477,10 @@ def tg_ast_search(
         if lang_error is not None:
             return _ast_error_result(
                 "invalid_input", lang_error, pattern, lang, path, structured_json
+            )
+        if not Path(path).exists():
+            return _ast_error_result(
+                "invalid_input", "AST input path not found.", pattern, lang, path, structured_json
             )
 
         normalized_max_repo_files = max(1, int(max_repo_files))
@@ -3518,10 +3519,7 @@ def tg_ast_search(
         )
         all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
         try:
-            # H3 : same PR #400 walk-deadline/fallback/broad-root-refusal
-            # port as `tg_search` -- the AST walk had the identical unbounded-hang and
-            # discard-partial-results-on-fault gaps (this backend is NEVER `RipgrepBackend`, so
-            # the large-root probe always applies).
+            # H3: apply tg_search's walk/deadline safeguards; AST always uses the large-root probe.
             refusal_message, _scanner, walker = _mcp_broad_root_scan_refusal(
                 path,
                 config,

@@ -739,7 +739,7 @@ def test_run_command_interactive_apply_should_return_error_when_apply_fails(
     assert "return 1" in test_file.read_text(encoding="utf-8")
 
 
-def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
+def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch, tmp_path):
     import tensor_grep.cli.ast_workflows as ast_workflows
     from tensor_grep.cli.ast_workflows import run_command
 
@@ -788,7 +788,9 @@ def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
     )
     monkeypatch.setattr(ast_workflows.sys, "stdout", stdout)
 
-    exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
+    sample = tmp_path / "sample.py"
+    sample.write_text("def sample(): pass\n", encoding="utf-8")
+    exit_code = run_command("def $FUNC():", path=str(sample), lang="python")
 
     assert exit_code == 0
     assert any(
@@ -797,7 +799,9 @@ def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
     assert stdout.buffer.payload.decode("utf-8") == "1:def 漢():\n"
 
 
-def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(monkeypatch):
+def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(
+    monkeypatch, tmp_path
+):
     import tensor_grep.cli.ast_workflows as ast_workflows
     from tensor_grep.cli.ast_workflows import run_command
     from tensor_grep.core.result import MatchLine
@@ -835,7 +839,9 @@ def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(
     )
     monkeypatch.setattr(ast_workflows.sys, "stdout", stdout)
 
-    exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
+    sample = tmp_path / "sample.py"
+    sample.write_text("def sample(): pass\n", encoding="utf-8")
+    exit_code = run_command("def $FUNC():", path=str(sample), lang="python")
 
     assert exit_code == 0
     assert any(
