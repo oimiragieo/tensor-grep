@@ -43,6 +43,11 @@ counts. Text output prints `OUTPUT LIMITED` on stdout for this condition.
 Increase the corresponding output limit when needed; do not treat an omitted
 entry as evidence of absence.
 
+For `tg scan`, inspect `partial` and `result_incomplete` even when the command
+exits `0`. Backend-reported skipped input is disclosed in JSON/MCP and text;
+SARIF marks the invocation unsuccessful. Partial findings do not prove the
+remaining scope is clean.
+
 Malformed regex output can suggest fixed-string search. If the query is literal,
 retry with `-F`; the hint does not automatically change regex semantics.
 

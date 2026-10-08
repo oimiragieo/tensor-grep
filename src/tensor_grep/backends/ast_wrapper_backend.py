@@ -30,6 +30,14 @@ _PATH_ACCESS_WARNING_PATTERN = re.compile(
 )
 
 
+class _AstProjectResults(dict[str, SearchResult]):
+    """Rule-keyed project results plus scan-wide metadata when no rule matched."""
+
+    def __init__(self, aggregate: SearchResult) -> None:
+        super().__init__()
+        self.aggregate = aggregate
+
+
 def _stderr_is_only_path_access_warnings(stderr: str) -> bool:
     lines = [line.strip() for line in stderr.splitlines() if line.strip()]
     if not lines:
@@ -506,7 +514,12 @@ class AstGrepWrapperBackend(ComputeBackend):
                 continue
             grouped_matches.setdefault(rule_id, []).append(item)
 
-        grouped_results: dict[str, SearchResult] = {}
+        aggregate = SearchResult(matches=[], total_files=0, total_matches=0)
+        if partial:
+            aggregate.result_incomplete = True
+            aggregate.incomplete_reason = "ast-grep skipped unreadable paths during the scan"
+            aggregate.incomplete_reason_class = "unreadable_path"
+        grouped_results = _AstProjectResults(aggregate)
         for rule_id, items in grouped_matches.items():
             grouped_results[rule_id] = self._parse_result(json.dumps(items), partial=partial)
         return grouped_results

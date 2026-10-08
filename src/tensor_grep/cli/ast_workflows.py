@@ -31,6 +31,7 @@ from tensor_grep.cli.ast_workflow_rules import (
     _inject_run_json_fields,
     _rule_needs_ast_grep_wrapper,
     _safe_stdout_line,
+    _stamp_ast_scan_incompleteness,
     _suffix_for_language,
     _warn_windows_single_quote_pattern,
 )
@@ -110,6 +111,8 @@ _AST_GREP_REMEDIATION = (
     "`pip install tensor-grep` does not include it, so every built-in "
     "`tg scan --ruleset` fails until it is on PATH."
 )
+
+
 """Remediation appended to EVERY ast-grep-unavailable refusal.
 
 One constant, not a literal per site: a remediation present on one reachable path and absent
@@ -784,7 +787,7 @@ def scan_command(
     from dataclasses import replace
 
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
     if inline_rules:
         yaml_mod, loader = _get_yaml()
@@ -905,6 +908,7 @@ def scan_command(
     )
     root_dir = cast(Path, project_cfg["root_dir"])
     backend_names_used: set[str] = set()
+    scan_result = SearchResult(matches=[], total_files=0, total_matches=0)
     backend_hints = hints.get("backend_hints", {})
 
     wrapper_rules: list[dict[str, Any]] = []
@@ -933,6 +937,9 @@ def scan_command(
             wrapper_project_results = wrapper_backend.search_project(
                 str(root_dir), str(project_cfg.get("config_path", config or ""))
             )
+            project_aggregate = getattr(wrapper_project_results, "aggregate", None)
+            if isinstance(project_aggregate, SearchResult):
+                merge_runtime_routing(scan_result, project_aggregate)
         except Exception:
             # Fallback to individual search_many if search_project fails
             for rule in wrapper_rules:
@@ -952,6 +959,7 @@ def scan_command(
             result = wrapper_project_results.get(
                 rule["id"], SearchResult(matches=[], total_files=0, total_matches=0)
             )
+            merge_runtime_routing(scan_result, result)
             rule_matches = result.total_matches
             total_matches += rule_matches
             if rule_matches > 0:
@@ -1047,6 +1055,7 @@ def scan_command(
                     result = cast(Any, backend).search_many(
                         [str(root_dir)], member_pattern, config=rule_cfg
                     )
+                    merge_runtime_routing(scan_result, result)
                 except RuntimeError as exc:
                     print(f"Error: {exc}", file=sys.stderr)
                     return 1
@@ -1063,6 +1072,7 @@ def scan_command(
                 for current_file in candidate_files:
                     try:
                         result = backend.search(current_file, member_pattern, config=rule_cfg)
+                        merge_runtime_routing(scan_result, result)
                     except RuntimeError as exc:
                         print(f"Error: {exc}", file=sys.stderr)
                         return 1
@@ -1167,10 +1177,15 @@ def scan_command(
         }
         if ruleset:
             payload["ruleset"] = ruleset
+        _stamp_ast_scan_incompleteness(payload, scan_result)
 
         _safe_stdout_line(json.dumps(payload))
         return 0
 
+    if scan_result.result_incomplete:
+        _stamp: dict[str, Any] = {}
+        _stamp_ast_scan_incompleteness(_stamp, scan_result)
+        print(f"warning: INCOMPLETE SCAN: {_stamp['remediation']}")
     print(
         "Scan completed. "
         f"rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches} "

@@ -44,8 +44,34 @@ from tensor_grep.cli._index_lock import atomic_write_bytes
 
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import MatchLine
+    from tensor_grep.core.result import MatchLine, SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
+
+
+def _stamp_ast_scan_incompleteness(payload: dict[str, Any], result: SearchResult) -> None:
+    """Project backend partial-result metadata into scan's existing disclosure fields."""
+    if not result.result_incomplete:
+        return
+    payload["result_incomplete"] = True
+    payload["incomplete_reason"] = result.incomplete_reason
+    if result.incomplete_reason_class is not None:
+        payload["incomplete_reason_class"] = result.incomplete_reason_class
+    reason_class = result.incomplete_reason_class or "incomplete_results"
+    reason = result.incomplete_reason or "some requested files or rules were not fully scanned"
+    remediation = (
+        "AST backend reported incomplete scan coverage: "
+        f"{reason}. Findings cover only the scanned portion and do NOT prove the remaining scope is clean."
+    )
+    if payload.get("partial"):
+        current = str(payload.get("remediation") or "").strip()
+        if remediation not in current:
+            payload["remediation"] = (
+                f"{current} Additionally, {remediation}" if current else remediation
+            )
+    else:
+        payload["partial"] = True
+        payload["partial_reason"] = reason_class
+        payload["remediation"] = remediation
 
 
 def _load_ast_project_data(

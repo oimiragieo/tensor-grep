@@ -801,7 +801,7 @@
   },
   {
     "module": "cli/ast_scan.py",
-    "lineno": 858,
+    "lineno": 991,
     "enclosing_symbol": "_run_ast_scan_payload",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1471,7 +1471,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 496,
+    "lineno": 506,
     "enclosing_symbol": "search_project",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1481,7 +1481,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 521,
+    "lineno": 558,
     "enclosing_symbol": "search_many",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1491,7 +1491,7 @@
   },
   {
     "module": "backends/ast_wrapper_backend.py",
-    "lineno": 556,
+    "lineno": 593,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2891,7 +2891,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 936,
+    "lineno": 943,
     "enclosing_symbol": "scan_command",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -2901,7 +2901,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1296,
+    "lineno": 1311,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2911,7 +2911,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1322,
+    "lineno": 1337,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
