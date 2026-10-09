@@ -916,19 +916,9 @@ def refresh_session(
         payload["refresh_fallback_reason"] = refresh_fallback_reason
     session_path = _session_payload_path(root, session_id)
 
-    # q10 RMW race: same load->mutate->write hazard as open_session; serialize against every
-    # other writer of this index.json before mutating the in-memory record list. Widened to also
-    # cover the session_path payload write itself (Codex Sol delta-verification audit HIGH
-    # finding: that write used to happen OUTSIDE any lock, racing session_prepare's own
-    # read-modify-write of the same file -- index_lock is not reentrant, so this must be ONE
-    # acquisition covering both critical sections, not two separate `with` blocks on the same key).
+    # Serialize payload and index publication with every other session writer under one lock.
     with index_lock(_index_path(root)):
-        # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): `existing`
-        # above was read BEFORE this lock was acquired. `session_prepare` takes this SAME lock
-        # to publish a new `last_prepare`, so a prepare that races in between our initial read
-        # and this acquisition would be clobbered if we carried forward the stale `existing`
-        # snapshot. Re-read the on-disk payload now, inside the lock, and carry forward
-        # whichever `last_prepare` is actually current -- never the pre-lock snapshot.
+        # Preserve a concurrent prepare only from a still-authenticated session payload.
         current_on_disk = existing
         if session_path.exists():
             try:
@@ -937,7 +927,14 @@ def refresh_session(
                 # Payload unreadable at this instant (e.g. mid-write elsewhere); fall back to
                 # the pre-lock snapshot rather than failing the refresh outright.
                 current_on_disk = existing
-        if (carried := current_on_disk.get("last_prepare")) is not None:
+        carried = current_on_disk.get("last_prepare")
+        if (
+            verified_existing
+            and isinstance(carried, dict)
+            and current_on_disk.get("session_id") == session_id
+            and current_on_disk.get("root") == existing.get("root")
+            and verified_session(current_on_disk, root)
+        ):
             payload["last_prepare"] = _carry_last_prepare(carried, _snapshot_generation(snapshot))
         seal_session(payload, root)
         _write_json_atomic(session_path, payload)

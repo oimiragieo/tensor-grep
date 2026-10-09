@@ -9,6 +9,7 @@ import typer
 
 from tensor_grep.cli._index_lock import index_lock
 from tensor_grep.cli.prepare_service import build_prepare_snapshot
+from tensor_grep.cli.session_provenance import seal_session
 from tensor_grep.cli.session_root import (
     _index_path,
     _session_payload_path,
@@ -73,6 +74,7 @@ def session_prepare(
         snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"
 
         payload["last_prepare"] = snap_dict
+        seal_session(payload, root)
         _write_json_atomic(session_path, payload)
 
     res = dict(snap_dict)

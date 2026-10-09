@@ -211,6 +211,7 @@ dependencies = [
     # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
     "mcp>=1.29.0,<2",
     "pathspec>=1.0.4",
+    "packaging>=24.1",
     "pyyaml>=6.0",
     # opentelemetry-api only: the 6 `trace.get_tracer` call sites (cudf_backend.py,
     # cybert_backend.py, pipeline.py, cli/main.py) are all ImportError-guarded no-ops and no

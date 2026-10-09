@@ -62,22 +62,23 @@ def run_regressions(
 
     path = str(fixture)
     defs = ["defs", path, "calculate_total", "--json"]
+    raw_map = ["map", path, "--json"]
 
-    def has_target(payload: dict[str, Any]) -> bool:
-        return any(row.get("name") == "calculate_total" for row in payload.get("definitions", []))
+    def map_has_target(payload: dict[str, Any]) -> bool:
+        return any(row.get("name") == "calculate_total" for row in payload.get("symbols", []))
 
     probe(
         "AST cache cold declaration",
-        defs,
+        raw_map,
         lambda payload: (
-            has_target(payload) and int(payload.get("symbol_cache", {}).get("misses", 0)) > 0
+            map_has_target(payload) and int(payload.get("symbol_cache", {}).get("misses", 0)) > 0
         ),
     )
     probe(
         "AST cache warm declaration",
-        defs,
+        raw_map,
         lambda payload: (
-            has_target(payload) and int(payload.get("symbol_cache", {}).get("hits", 0)) > 0
+            map_has_target(payload) and int(payload.get("symbol_cache", {}).get("hits", 0)) > 0
         ),
     )
 

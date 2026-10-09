@@ -367,3 +367,111 @@ def test_signed_session_payload_cannot_be_reused_under_another_session_identity(
     assert session_store.get_session(session_id, str(tmp_path))["session_id"] == session_id
     with pytest.raises(session_store.SessionStaleError, match="authentication"):
         session_store.get_session(alias, str(tmp_path))
+
+
+@pytest.mark.parametrize("last_prepare", [1, ["forged"], {"query": "forged decision"}])
+def test_untrusted_session_recovery_discards_all_preparation_metadata(
+    tmp_path: Path, last_prepare: object
+) -> None:
+    _, session_id, payload = _session(tmp_path)
+    payload["repo_map"]["symbols"][0]["name"] = "forged_target"
+    payload["last_prepare"] = last_prepare
+    session_store._session_payload_path(tmp_path, session_id).write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    refreshed = session_store.refresh_session(session_id, str(tmp_path))
+    assert refreshed.refresh_fallback_reason == "unverified_session_provenance"
+    trusted = session_store.get_session(session_id, str(tmp_path))
+    assert "last_prepare" not in trusted
+    assert trusted["repo_map"]["symbols"][0]["name"] == "alpha"
+
+
+def test_trusted_session_refresh_preserves_dictionary_preparation_metadata(tmp_path: Path) -> None:
+    from tensor_grep.cli.session_provenance import seal_session
+
+    _, session_id, payload = _session(tmp_path)
+    payload["last_prepare"] = {"query": "verified session decision"}
+    seal_session(payload, tmp_path)
+    session_store._session_payload_path(tmp_path, session_id).write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    assert session_store.get_session(session_id, str(tmp_path))["last_prepare"]
+    session_store.refresh_session(session_id, str(tmp_path))
+    trusted = session_store.get_session(session_id, str(tmp_path))
+    assert trusted["last_prepare"]["query"] == "verified session decision"
+    assert trusted["last_prepare"]["current_generation"] == trusted["current_generation"]
+
+
+@pytest.mark.parametrize("last_prepare", [1, ["invalid"]])
+def test_trusted_session_refresh_discards_malformed_preparation_metadata(
+    tmp_path: Path, last_prepare: object
+) -> None:
+    from tensor_grep.cli.session_provenance import seal_session
+
+    _, session_id, payload = _session(tmp_path)
+    payload["last_prepare"] = last_prepare
+    seal_session(payload, tmp_path)
+    session_store._session_payload_path(tmp_path, session_id).write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    session_store.refresh_session(session_id, str(tmp_path))
+    assert "last_prepare" not in session_store.get_session(session_id, str(tmp_path))
+
+
+def test_prepared_decision_receipt_refuses_tampering_before_resume(tmp_path: Path) -> None:
+    from tensor_grep.cli.session_resume_service import session_prepare, session_resume
+
+    _, session_id, _ = _session(tmp_path)
+    prepared = session_prepare(session_id, "alpha", str(tmp_path))
+    resumed = session_resume(session_id, str(tmp_path))
+    assert prepared["session_id"] == session_id
+    assert resumed["last_prepare"]["query"] == "alpha"
+    assert resumed["last_prepare"]["decision_freshness"] == "current"
+    payload = session_store.get_session(session_id, str(tmp_path))
+    payload["last_prepare"]["query"] = "forged current decision"
+    session_store._session_payload_path(tmp_path, session_id).write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    with pytest.raises(session_store.SessionStaleError, match="authentication"):
+        session_resume(session_id, str(tmp_path))
+    session_store.refresh_session(session_id, str(tmp_path))
+    assert session_resume(session_id, str(tmp_path))["last_prepare"] is None
+
+
+@pytest.mark.parametrize("foreign_root", [False, True])
+def test_refresh_does_not_carry_decision_from_another_authenticated_scope(
+    tmp_path: Path, monkeypatch, foreign_root: bool
+) -> None:
+    from tensor_grep.cli.session_provenance import seal_session
+
+    _, session_id, payload = _session(tmp_path)
+    other_root = tmp_path / "other" if foreign_root else tmp_path
+    other_root.mkdir(exist_ok=True)
+    _, other_id, other = _session(other_root)
+    if foreign_root:
+        other["session_id"] = session_id
+    else:
+        assert other_id != session_id
+    other["last_prepare"] = {"query": "other authenticated scope"}
+    seal_session(other, other_root)
+    target = session_store._session_payload_path(tmp_path, session_id)
+    read = session_store.read_session_payload
+    reads = 0
+
+    def substituted(root, path):
+        nonlocal reads
+        actual = read(root, path)
+        if path == target:
+            reads += 1
+            if reads == 2:
+                return other
+        return actual
+
+    monkeypatch.setattr(session_store, "read_session_payload", substituted)
+    session_store.refresh_session(session_id, str(tmp_path))
+    assert reads == 2
+    monkeypatch.setattr(session_store, "read_session_payload", read)
+    refreshed = session_store.get_session(session_id, str(tmp_path))
+    assert "last_prepare" not in refreshed
+    assert refreshed["root"] == payload["root"]
+    assert refreshed["session_id"] == session_id

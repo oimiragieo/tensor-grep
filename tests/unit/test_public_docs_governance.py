@@ -411,7 +411,7 @@ def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags
 
 
 def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
-    # The warm-path/session-discovery contract (snapshot size/mtime, `tg session refresh`,
+    # The warm-path/session-discovery contract (snapshot content receipts, `tg session refresh`,
     # `--refresh-on-stale`, nearby-scope discovery) is governed against the dedicated docs SKILL.md
     # and docs/CONTRACTS.md below. The README is now a marketing doc and is not pinned to this prose.
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
@@ -419,14 +419,14 @@ def test_session_docs_should_lock_warm_path_and_discovery_contracts() -> None:
 
     for doc in (skill, contracts):
         assert "snapshot" in doc
-        assert "size/mtime" in doc
+        assert "content SHA-256" in doc
         assert "`tg session refresh" in doc
         assert "`--refresh-on-stale`" in doc
         assert "discover nearby" in doc
 
     assert "must not walk the full repository" in contracts
     assert "response_cache_stale_detection" in contracts
-    assert "snapshot_mtime_only" in contracts
+    assert "snapshot_content_sha256" in contracts
     assert "should not walk the full repo" in skill
 
 

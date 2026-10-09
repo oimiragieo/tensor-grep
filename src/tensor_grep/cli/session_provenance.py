@@ -21,6 +21,7 @@ _CORE_FIELDS = (
     "scan_limit",
     "snapshot_unreadable_paths",
     "current_generation",
+    "last_prepare",
 )
 _PAYLOAD_LIMIT = 64 * 1024 * 1024
 

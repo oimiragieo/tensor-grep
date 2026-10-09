@@ -24,8 +24,13 @@ works without Git and includes untracked source files. Additions, deletions, ren
 same-size edits with preserved mtimes are reconciled on the next build. Runtime
 `.tg_cache` directories are excluded from repository scan counts and file budgets.
 
-`symbol_cache` receipts identify the content-reconciliation route, cache hits/misses,
-source bytes read, and generation Merkle root. Existing session changesets lack a trusted
+Raw repository-map output (`tg map PATH --json`) includes `symbol_cache` receipts for the
+content-reconciliation route, cache hits/misses, source bytes read, and generation Merkle
+root. Derived symbol and capsule responses retain stable cache provenance and coverage
+fields while omitting per-request `hits`, `misses`, and `bytes_reconciled` counters. Use
+the raw map receipts to verify cold misses and warm hits or measure reconciliation;
+do not infer cache inactivity from counters absent in `tg defs` or capsule output.
+Existing session changesets lack a trusted
 watcher sequence or overflow receipt, so they do not authorize skipping reconciliation.
 The cache records verified per-file observations; it does not provide a filesystem-wide
 snapshot. Files detected changing during extraction or final verification are omitted,
@@ -52,7 +57,7 @@ or fresh. Default context-cache requests still validate the captured scope; dete
 new files requires explicit refresh or `refresh_on_stale`, and stats disclose this
 with `response_cache_added_file_detection = false`.
 
-Persisted session maps, captured snapshots, and their root/scope metadata carry a
+Persisted session maps, captured snapshots, prepared decisions, and their root/scope metadata carry a
 separate machine HMAC. Modified or unsigned legacy session products are refused
 before disk-loaded parser evidence is reused. Run `tg session refresh ID ROOT` to
 derive and sign a fresh bounded map; an unauthenticated session cannot select a
