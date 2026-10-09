@@ -370,7 +370,7 @@ def test_guard_fails_closed_on_dynamic_generated_python() -> None:
 
 def test_production_census_and_all_embedded_helpers_are_guarded() -> None:
     rows = scan_tree(PRODUCTION)
-    assert len(rows) == 73
+    assert len(rows) == 79
     assert not check_repository(rows)
     generated = [row for row in rows if row.generated_from is not None]
     assert len(generated) == 12

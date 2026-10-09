@@ -962,6 +962,10 @@ MACHINE_PROTOCOL_SITES = {
     ("cli/agent_capsule.py", "_run_agent_gpu_json_command"),
     ("cli/audit_manifest.py", "_resolve_git_ref_commit_sha"),
     ("cli/dogfood.py", "_derive_readiness_timeout_s"),
+    ("cli/dogfood_features.py", "_artifact_identity"),
+    ("cli/dogfood_features.py", "main"),
+    ("cli/dogfood_unified.py", "run_unified_dogfood"),
+    ("core/registry_grounding.py", "registry_receipts"),
     ("cli/doctor_report.py", "_doctor_rust_binary_version"),
     ("cli/doctor_report.py", "_doctor_tg_candidate_version"),
     ("cli/doctor_report.py", "_doctor_gpu_search_runtime_probe"),
@@ -1157,9 +1161,9 @@ def check_repository(rows: list[Sink]) -> list[str]:
         problems.append(
             f"production callsite identity/fingerprint manifest changed; missing={missing}; added={added}; changed={changed}"
         )
-    if len(rows) != 73:
+    if len(rows) != 79:
         problems.append(
-            f"production output-capable sink population changed: expected 73, found {len(rows)}"
+            f"production output-capable sink population changed: expected 79, found {len(rows)}"
         )
     generated = [row for row in rows if row.generated_from is not None]
     if len(generated) != 12:

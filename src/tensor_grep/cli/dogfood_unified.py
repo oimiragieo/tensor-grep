@@ -67,13 +67,10 @@ def run_unified_dogfood(
             env=env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
             timeout=timeout + 15,
             check=False,
         )
-        feature_report = _json_from_stdout(completed.stdout)
+        feature_report = _json_from_stdout(completed.stdout.decode("utf-8", errors="strict"))
         code = completed.returncode
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         feature_report = {

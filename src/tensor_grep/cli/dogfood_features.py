@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli.dogfood import _terminate_process_tree
+from tensor_grep.cli.frontdoor_hops import probe_env
 
 # In Docker/venv `tg` is on PATH; TG_BIN lets you point at a specific binary for local verification.
 TG = os.environ.get("TG_BIN") or shutil.which("tg") or "tg"
@@ -48,11 +49,6 @@ def _run(args: list[str], *, extra_env: dict[str, str] | None = None) -> tuple[i
     if remaining <= 0:
         return 124, "", "shared dogfood deadline exceeded"
     try:
-        kwargs: dict[str, Any] = {}
-        if os.name == "nt":
-            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        else:
-            kwargs["start_new_session"] = True
         proc = subprocess.Popen(
             [TG, *args],
             env={**os.environ, "TG_SESSION_DAEMON_AUTOSTART": "0", **(extra_env or {})},
@@ -62,7 +58,10 @@ def _run(args: list[str], *, extra_env: dict[str, str] | None = None) -> tuple[i
             text=True,
             encoding="utf-8",
             errors="replace",
-            **kwargs,
+            creationflags=(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if os.name == "nt" else 0
+            ),
+            start_new_session=os.name != "nt",
         )
         try:
             out, err = proc.communicate(timeout=min(120, remaining))
@@ -110,21 +109,19 @@ def _artifact_identity() -> dict[str, Any]:
             "'extension_origin':tensor_grep.rust_core.__file__,"
             "'package_version':importlib.metadata.version('tensor-grep')}))",
         ],
+        env=dict(os.environ),
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=15,
         check=False,
     )
     origins = (
-        json.loads(probe.stdout)
+        json.loads(probe.stdout.decode("utf-8", errors="strict"))
         if probe.returncode == 0
         else {
             "package_origin": None,
             "extension_origin": None,
-            "origin_probe_error": probe.stderr,
+            "origin_probe_error": probe.stderr.decode("utf-8", errors="replace"),
         }
     )
     if os.environ.get("TG_SIDECAR_PYTHON") and origins.get("package_version") != observed[1]:
@@ -140,17 +137,21 @@ def _artifact_identity() -> dict[str, Any]:
         native = Path(native_override).expanduser().resolve()
         if not native.is_file():
             raise RuntimeError(f"Selected native executable does not exist: {native}")
+        native_env = probe_env()
+        if native_env is None:
+            raise RuntimeError("Native artifact version unverified: TG_FRONTDOOR_HOPS limit")
         native_probe = subprocess.run(
             [str(native), "--version"],
+            env=native_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=15,
             check=False,
         )
-        native_version = re.search(r"\btg (\d+\.\d+\.\d+[a-zA-Z0-9.+-]*)", native_probe.stdout)
+        native_version = re.search(
+            r"\btg (\d+\.\d+\.\d+[a-zA-Z0-9.+-]*)",
+            native_probe.stdout.decode("utf-8", errors="strict"),
+        )
         if (
             native_probe.returncode != 0
             or native_version is None
@@ -367,17 +368,19 @@ def main() -> int:
                 ],
                 cwd=fixture,
                 capture_output=True,
-                encoding="utf-8",
-                errors="strict",
                 timeout=min(30, max(0.1, _DEADLINE - time.monotonic())),
                 check=False,
             )
-            _INVENTORY = json.loads(discovered.stdout) if discovered.returncode == 0 else {}
+            _INVENTORY = (
+                json.loads(discovered.stdout.decode("utf-8", errors="strict"))
+                if discovered.returncode == 0
+                else {}
+            )
             _record(
                 bool(_INVENTORY.get("mcp_tools")) and bool(_INVENTORY.get("mcp_actions")),
                 "CLI/subcommand and MCP/action inventories",
                 discovered.returncode,
-                discovered.stderr[:400],
+                discovered.stderr.decode("utf-8", errors="replace")[:400],
             )
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             _record(False, "CLI/subcommand and MCP/action inventories", 2, str(exc))

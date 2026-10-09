@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -139,10 +140,12 @@ def test_session_refresh_changed_content_retains_history_but_marks_historical(
     )
 
 
-def test_session_resume_legacy_payload_without_generation_is_unknown(tmp_path: Path) -> None:
-    """AGT-02 Task 02: identity must never be inferred from wall-clock timestamps alone. A
-    pre-existing (legacy) `last_prepare` snapshot carrying no `decision_generation` must be
-    reported `unknown`, never silently upgraded to `current`."""
+@pytest.mark.parametrize("authenticated", [True, False])
+def test_session_resume_payload_without_generation_requires_authentication(
+    tmp_path: Path, authenticated: bool
+) -> None:
+    """Missing decision identity stays unknown when authenticated. Unsigned legacy state
+    requires refresh and cannot preserve its prepared decision."""
     from tensor_grep.cli import session_store
 
     f1 = tmp_path / "calc.py"
@@ -168,9 +171,24 @@ def test_session_resume_legacy_payload_without_generation_is_unknown(tmp_path: P
     session_path = session_store._session_payload_path(
         session_store._resolve_root(Path(str(tmp_path))), session_id
     )
+    if authenticated:
+        from tensor_grep.cli.session_provenance import seal_session
+
+        seal_session(payload, tmp_path.resolve())
+    else:
+        payload.pop("session_provenance", None)
     session_store._write_json_atomic(session_path, payload)
 
     resume_res = runner.invoke(app, ["session", "resume", session_id, str(tmp_path), "--json"])
+    if not authenticated:
+        assert resume_res.exit_code != 0
+        assert "refresh" in resume_res.output
+        refreshed = runner.invoke(app, ["session", "refresh", session_id, str(tmp_path), "--json"])
+        assert refreshed.exit_code == 0
+        recovered = runner.invoke(app, ["session", "resume", session_id, str(tmp_path), "--json"])
+        assert recovered.exit_code == 0
+        assert json.loads(recovered.stdout)["last_prepare"] is None
+        return
     assert resume_res.exit_code == 0
     resume_data = json.loads(resume_res.stdout)
     assert resume_data["last_prepare"].get("decision_freshness") == "unknown", (

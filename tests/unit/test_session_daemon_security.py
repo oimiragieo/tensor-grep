@@ -414,6 +414,7 @@ def test_daemon_request_path_field_cannot_escape_root(tmp_path: Path, monkeypatc
         path: str,
         *,
         payload: dict[str, Any],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         seen_paths.append(path)
         return {"ok": True, "session_id": session_id, "path": path}
@@ -747,13 +748,8 @@ def test_get_session_rejects_root_mismatch(tmp_path: Path) -> None:
 
 def test_get_session_accepts_matching_root(tmp_path: Path) -> None:
     root = (tmp_path / "project").resolve()
-    sessions_dir = session_store._sessions_dir(root)
-    sessions_dir.mkdir(parents=True)
-    session_id = "session-ok"
-    session_store._session_payload_path(root, session_id).write_text(
-        json.dumps({"root": str(root), "repo_map": {"files": [], "symbols": []}}),
-        encoding="utf-8",
-    )
+    root.mkdir()
+    session_id = session_store.open_session(str(root)).session_id
     payload = session_store.get_session(session_id, str(root))
     assert payload["root"] == str(root)
 

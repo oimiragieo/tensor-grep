@@ -411,9 +411,10 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
     assert refreshed.refresh_fallback_reason == "incremental_failed"
     assert full_calls["count"] == 1
     assert any(
-        "falling back to full rebuild" in record.message and "boom" in record.message
+        "Incremental session refresh failed; performing a full rebuild" in record.message
         for record in caplog.records
     )
+    assert "boom" not in caplog.text
 
     payload = _session_payload(paths["project"], session_id)
     assert payload["refresh_type"] == "full"
