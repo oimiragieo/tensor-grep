@@ -53,6 +53,12 @@ modules, so its extraction cannot hide writers from this census.
 
 Known gaps (stated plainly, not papered over):
 
+- The Windows confined publisher uses CreateFileW and SetFileInformationByHandle rather
+  than Python filename writers. Its module is scanned for future Python writers, but this
+  detector does not model native pointer calls. Actual Windows controls in test_confined_io.py
+  prove source replacement/write denial, handle-bound cleanup, absent-target no-clobber, and
+  the explicitly documented existing-destination residual race.
+
 - The detector does NOT do full Hindley-Milner-grade type inference. ``Path.write_text`` /
   ``Path.write_bytes`` are always treated as write-shaped (no stdlib type other than
   ``pathlib.Path`` exposes those names, so the collision risk is effectively zero). But
@@ -102,7 +108,10 @@ _CLI_SRC = _REPO_ROOT / "src" / "tensor_grep" / "cli"
 
 
 # The shared confined writer is also inventoried: moving it below CLI must not evade this gate.
-_SHARED_WRITER_FILES = {"io/confined.py": _CLI_SRC.parent / "io" / "confined.py"}
+_SHARED_WRITER_FILES = {
+    "io/confined.py": _CLI_SRC.parent / "io" / "confined.py",
+    "io/windows_publication.py": _CLI_SRC.parent / "io" / "windows_publication.py",
+}
 
 
 def _source_path(name: str) -> Path:
@@ -724,16 +733,6 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "Shared POSIX publication primitive, using held parent dir_fd for both names; "
         "verified parents and the authorized original leaf identity are checked before replace. "
         "Absent destinations use atomic no-clobber link instead. Refusals have positive controls."
-    ),
-    ("io/confined.py", "_publish_windows", "os.open"): (
-        "Windows counterpart runs only while CreateFile directory handles deny parent rename/"
-        "deletion. Claims a unique same-directory temporary with O_CREAT|O_EXCL, writes/fsyncs "
-        "through that descriptor, and always removes its owned temporary."
-    ),
-    ("io/confined.py", "_publish_windows", "os.replace"): (
-        "Shared Windows publication primitive runs under pinned nonlinked directory handles; "
-        "rechecks original leaf identity before replacement, while absent destinations use "
-        "atomic no-clobber os.link. Destination links are refused before entering this helper."
     ),
     ("dogfood_features.py", "_build_fixture", "Path.write_text"): (
         "Private fixture builder's sole production caller is main, passing repo under its "
@@ -1653,8 +1652,6 @@ _EXPECTED_SANCTIONED = {
     ("symbols_cache_io.py", "_try_cache_lock", "os.open"),
     ("io/confined.py", "publish_confined", "os.open"),
     ("io/confined.py", "publish_confined", "os.replace"),
-    ("io/confined.py", "_publish_windows", "os.open"),
-    ("io/confined.py", "_publish_windows", "os.replace"),
     ("dogfood_features.py", "_build_fixture", "Path.write_text"),
     ("dogfood_features.py", "main", "Path.write_text"),
     ("dogfood_regressions.py", "run_regressions", "Path.write_text"),

@@ -46,6 +46,25 @@ remain active. Corrupt entries/databases are rebuilt and recovery is disclosed; 
 cache writes or lock contention retain freshly parsed results and disclose that the
 generation was not persisted. No fixed latency is promised.
 
+Cache publication replaces a directory entry atomically for readers; it is not a
+conditional compare-and-swap of an existing file object. Cooperative symbol-cache
+writers serialize through the bounded cache lock. Pinned/verified parents, linked-file
+refusals, and atomic no-clobber publication protect path confinement and absent targets.
+A concurrent process running as the same OS user can still swap an existing destination
+between its final identity check and replacement; that raced entry may be replaced.
+Replacement does not write through an existing inode or hardlink.
+
+On Windows, the temporary stays open with external write/delete access denied and is
+published and cleaned up through that same object handle. POSIX keeps the temporary
+descriptor open and verifies the published inode and SHA-256 bytes before reporting
+success. This detects source substitution after possible publication, rather than
+preventing all same-user source races: raced bytes may briefly be visible before the
+write is refused. Detected substituted temporaries are left untouched and the ownership
+mismatch is reported. POSIX cleanup still has a same-user mutation window between its
+identity check and unlink; Windows cleanup acts on the held object. These guarantees
+apply to optional rebuildable caches, not to arbitrary concurrent same-user cache
+mutators or authenticated parser provenance.
+
 Cached symbol products carry a machine-private HMAC over the entry key and payload;
 checkout-provided checksums cannot establish parser-backed evidence. The signing key
 uses the OS account's private state location and is never stored in the checkout.

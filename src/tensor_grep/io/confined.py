@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 import sys
@@ -18,21 +19,60 @@ def _file_identity(path: Path) -> tuple[int, int, int, int]:
 
 def _publish_windows(path: Path, data: bytes, identity: tuple[int, int, int, int] | None) -> None:
     """Publish under pinned directory handles, refusing new-destination races atomically."""
+    from tensor_grep.io.windows_publication import discard_open, open_temporary, rename_open
+
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_BINARY, 0o600)
+    descriptor = open_temporary(temporary)
+    published = False
     try:
-        with os.fdopen(descriptor, "wb") as stream:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        if identity is None:
-            os.link(temporary, path, follow_symlinks=False)
-        else:
-            if _file_identity(path) != identity:
-                raise OSError("confined file changed before publication")
-            os.replace(temporary, path)
+        if identity is not None and _file_identity(path) != identity:
+            raise OSError("confined file changed before publication")
+        rename_open(descriptor, path, replace=identity is not None)
+        published = True
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            if not published:
+                discard_open(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _verify_published(parent_fd: int, name: str, descriptor: int, data: bytes) -> None:
+    """POSIX has no portable source-handle rename; never report raced publication as success."""
+    opened = os.fstat(descriptor)
+    current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if not stat.S_ISREG(current.st_mode) or (opened.st_dev, opened.st_ino) != (
+        current.st_dev,
+        current.st_ino,
+    ):
+        raise OSError("confined publication source identity changed; cache is untrusted")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    digest = hashlib.sha256()
+    remaining = len(data)
+    while remaining:
+        block = os.read(descriptor, min(65536, remaining))
+        if not block:
+            raise OSError("confined publication bytes changed; cache is untrusted")
+        digest.update(block)
+        remaining -= len(block)
+    if os.read(descriptor, 1) or digest.digest() != hashlib.sha256(data).digest():
+        raise OSError("confined publication bytes changed; cache is untrusted")
+
+
+def _cleanup_owned_temp(parent_fd: int, name: str, descriptor: int) -> None:
+    """Leave detected unknown inodes; a same-user swap can still race the check and unlink."""
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    opened = os.fstat(descriptor)
+    if (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino):
+        raise OSError(f"confined temporary was substituted; left unknown object untouched: {name}")
+    os.unlink(name, dir_fd=parent_fd)
 
 
 def _real_components(root: Path, path: Path) -> list[tuple[Path, tuple[int, int]]]:
@@ -59,6 +99,12 @@ def _verify_parents(parents: list[tuple[Path, tuple[int, int]]]) -> None:
             or (info.st_dev, info.st_ino) != identity
         ):
             raise OSError(f"symbol cache parent changed: {path}")
+
+
+def _verify_open_directory(descriptor: int, parents: list[tuple[Path, tuple[int, int]]]) -> None:
+    opened = os.fstat(descriptor)
+    if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino) != parents[-1][1]:
+        raise OSError("confined opened parent identity differs from verified directory")
 
 
 @contextmanager
@@ -135,6 +181,15 @@ def read_confined(root: Path, path: Path, limit: int) -> bytes:
 
 
 def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bool = False) -> None:
+    """Publish rebuildable advisory bytes; this is not a same-user filesystem CAS boundary.
+
+    Absent targets use atomic no-clobber publication. Existing-target identity is checked,
+    but a same-user mutator can swap it between that check and rename; the raced directory
+    entry may be replaced. Replacement never writes through an existing inode/hardlink.
+    Windows binds the source through its held rename handle. POSIX detects source substitution
+    after publication and refuses success, but cannot guarantee arbitrary same-user mutation
+    was never briefly visible. Cooperative cache writers must use cache_lock.
+    """
     parents = _real_components(root, path)
     identity = _file_identity(path) if os.path.lexists(path) else None
     if identity is not None:
@@ -153,15 +208,17 @@ def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bo
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
             )
             temporary = f".{path.name}.{uuid4().hex}.tmp"
+            descriptor = None
             try:
+                _verify_open_directory(parent_fd, parents)
                 _verify_parents(parents)
                 descriptor = os.open(
                     temporary,
-                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                     0o600,
                     dir_fd=parent_fd,
                 )
-                with os.fdopen(descriptor, "wb") as stream:
+                with os.fdopen(descriptor, "wb", closefd=False) as stream:
                     stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
@@ -178,13 +235,16 @@ def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bo
                     if _file_identity(path) != identity:
                         raise OSError("symbol cache changed before publication")
                     os.replace(temporary, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                _verify_published(parent_fd, path.name, descriptor, data)
                 os.fsync(parent_fd)
             finally:
                 try:
-                    os.unlink(temporary, dir_fd=parent_fd)
-                except FileNotFoundError:
-                    pass
-                os.close(parent_fd)
+                    if descriptor is not None:
+                        _cleanup_owned_temp(parent_fd, temporary, descriptor)
+                finally:
+                    if descriptor is not None:
+                        os.close(descriptor)
+                    os.close(parent_fd)
     _verify_parents(parents)
 
 
@@ -203,6 +263,7 @@ def prepare_directory(root: Path, directory: Path) -> None:
                     os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
                 )
                 try:
+                    _verify_open_directory(parent_fd, parents)
                     _verify_parents(parents)
                     try:
                         os.mkdir(current.name, dir_fd=parent_fd)

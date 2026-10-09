@@ -75,6 +75,7 @@ def _ensure_cache_directory(root: Path) -> None:
     from tensor_grep.io.confined import (
         _pin_windows_parents,
         _real_components,
+        _verify_open_directory,
         _verify_parents,
     )
 
@@ -93,6 +94,7 @@ def _ensure_cache_directory(root: Path) -> None:
                         os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
                     )
                     try:
+                        _verify_open_directory(descriptor, parents)
                         _verify_parents(parents)
                         os.mkdir(component, mode=0o700, dir_fd=descriptor)
                     finally:
