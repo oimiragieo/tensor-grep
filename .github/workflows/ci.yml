@@ -658,21 +658,19 @@ jobs:
       - name: Run Pytest
         # `eval` (tests/eval/) is the agent-accuracy golden-set gate: 15 real `tg prepare`
         # subprocess calls against this repo's own ranking pipeline. Deliberately excluded from
-        # this blanket run -- collection sorts tests/eval/ ahead of tests/unit/, and pyproject's
-        # `-x` fail-fast means a single failure here would abort before any unit test runs,
-        # exactly the flaky-e2e-masks-unit-tests trap already hit once on tests/e2e/. Run it
+        # this blanket run; accuracy failures are reported by the dedicated gate below. Run it
         # explicitly via `pytest tests/eval -m eval -v -s`.
         #
         # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
         # `pyo3/extension-module` cdylib) -- IN DISPUTE as of the task 22 investigation: see the
         # diagnostic step immediately above, which measures whether that is still true on THIS
         # job rather than repeating the claim as settled.
-        run: uv run pytest tests -v --tb=short -m "not eval"
+        # Override the local fail-fast default so one matrix run reports all regressions.
+        run: uv run pytest tests -v --tb=short -m "not eval" --maxfail=0
 
       # The other half of the `-m "not eval"` exclusion above (audit finding TEST-005).
       # Excluding tests/eval/ from the BLANKET run is correct and stays: collection sorts
-      # tests/eval/ ahead of tests/unit/, and `-x` fail-fast means one failure there would
-      # abort before a single unit test ran. But having correctly excluded it, nobody added
+      # tests/eval/ ahead of tests/unit/. But having correctly excluded it, nobody added
       # the step that runs it -- the comment above tells a HUMAN to run it, and no
       # automation follows an instruction. Measured: zero `run:` lines in any workflow
       # invoked tests/eval. A gate nobody runs is worse than no gate, because it is believed.
@@ -1116,7 +1114,7 @@ jobs:
       # we run pytest but rely on our test suites dynamic `@pytest.mark.skipif`
       # to successfully parse the fallback architecture cleanly without crashing.
       - name: Run Pytest with GPU Hooks
-        run: uv run pytest tests -v -m "not slow"
+        run: uv run pytest tests -v -m "not slow" --maxfail=0
 
   benchmark-regression:
     name: benchmark-regression (ubuntu-latest)
