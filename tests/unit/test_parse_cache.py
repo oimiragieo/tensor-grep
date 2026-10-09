@@ -21,6 +21,7 @@ This test suite exercises the 4 guards from the fix spec:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from tensor_grep.cli import repo_map, session_store
@@ -88,15 +89,14 @@ def test_repeated_build_symbol_callers_returns_identical_results(tmp_path: Path)
     assert not any(name.endswith("src/unrelated.py") for name in caller_files)
 
 
-def test_caller_scan_reads_each_unchanged_candidate_file_at_most_once(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """Before the fix: _file_may_contain_literal_symbol + _file_may_import_symbol_definition
-    each called path.read_bytes() independently -- 2 reads per candidate PER call. With the
-    shared _read_source_cached helper, an unchanged file is read once total, no matter how many
-    helpers ask for its bytes or how many times build_symbol_callers is called."""
+def test_caller_scans_share_reads_within_one_reconciled_map(tmp_path: Path, monkeypatch) -> None:
+    """Caller guards share one physical read across scans of the same reconciled map.
+
+    Public requests reconcile content and invalidate metadata-only caches, so read reuse
+    spans helper calls within a verified generation rather than unrelated public requests.
+    """
     paths = _build_repo(tmp_path)
-    root = paths["root"]
+    reconciled = repo_map.build_repo_map(paths["root"])
 
     original_read_bytes = Path.read_bytes
     read_counts: dict[str, int] = {}
@@ -108,12 +108,14 @@ def test_caller_scan_reads_each_unchanged_candidate_file_at_most_once(
 
     monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
 
-    repo_map.build_symbol_callers("create_invoice", str(root))
-    repo_map.build_symbol_callers("create_invoice", str(root))
+    first = repo_map.build_symbol_callers_from_map(reconciled, "create_invoice")
+    second = repo_map.build_symbol_callers_from_map(reconciled, "create_invoice")
+    assert first["callers"] == second["callers"]
+    assert any(name.endswith("src/caller_a.py") for name in _caller_files(first))
 
     caller_a_reads = sum(v for k, v in read_counts.items() if k.endswith("src/caller_a.py"))
     caller_b_reads = sum(v for k, v in read_counts.items() if k.endswith("src/caller_b.py"))
-    # Exactly one physical read_bytes() across BOTH candidate helpers and BOTH top-level calls.
+    # At most one physical read across candidate helpers and both scans of this generation.
     assert caller_a_reads <= 1, f"expected <=1 read_bytes() for caller_a.py, saw {caller_a_reads}"
     assert caller_b_reads <= 1, f"expected <=1 read_bytes() for caller_b.py, saw {caller_b_reads}"
 
@@ -290,3 +292,22 @@ def test_read_source_cached_under_byte_cap_is_cached(tmp_path: Path, monkeypatch
     assert first == content
     assert second == content
     assert calls["n"] == 1, "an unchanged, under-cap file must be read once and served from cache"
+
+
+def test_public_caller_requests_reconcile_same_size_same_mtime_edits(tmp_path: Path) -> None:
+    paths = _build_repo(tmp_path)
+    root = paths["root"]
+    before = repo_map.build_symbol_callers("create_invoice", str(root))
+    unchanged = repo_map.build_symbol_callers("create_invoice", str(root))
+    assert before["callers"] == unchanged["callers"]
+    assert any(name.endswith("src/caller_b.py") for name in _caller_files(before))
+
+    changed = paths["caller_b"]
+    original = changed.stat()
+    changed.write_bytes(changed.read_bytes().replace(b"create_invoice", b"create_receipt"))
+    os.utime(changed, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert changed.stat().st_size == original.st_size
+    assert changed.stat().st_mtime_ns == original.st_mtime_ns
+    after = repo_map.build_symbol_callers("create_invoice", str(root))
+    assert not any(name.endswith("src/caller_b.py") for name in _caller_files(after))
+    assert any(name.endswith("src/caller_a.py") for name in _caller_files(after))
