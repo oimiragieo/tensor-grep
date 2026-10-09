@@ -25,6 +25,8 @@ from functools import lru_cache, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from tensor_grep.cli.lang_registry import source_snapshot_digest
+
 # Route A late binding, as in repo_map.py -- but pointed at `repo_map` rather than at this
 # module, because that is where the test suite patches. A plain import would be circular
 # (repo_map imports this module), so the runtime branch resolves through sys.modules on every
@@ -60,6 +62,13 @@ _SOURCE_READ_CACHE_MAXSIZE = 4096
 # stale. Without this, a same-(mtime_ns,size) edit landing between two daemon calls could keep
 # serving a stale cached parse/read forever (the mtime key alone can't tell them apart).
 _MTIME_CACHE_CLEAR_REGISTRY: list[Callable[[], None]] = []
+_SNAPSHOT_PROMOTE_REGISTRY: list[Callable[[str, str], None]] = []
+
+
+def promote_verified_snapshot(path: str, digest: str) -> None:
+    """Reuse in-memory parse trees only after generation reconciliation verifies their bytes."""
+    for promote in _SNAPSHOT_PROMOTE_REGISTRY:
+        promote(path, digest)
 
 
 # Fix B: the JS/TS import-resolution path (_js_ts_module_candidates / _js_ts_candidate_files /
@@ -102,7 +111,13 @@ def _mtime_aware_cache(
         @wraps(fn)
         def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
             mtime_key = _self._mtime_key(path_str)
-            cache_key = (path_str, mtime_key, args, tuple(sorted(kwargs.items())))
+            cache_key = (
+                path_str,
+                mtime_key,
+                source_snapshot_digest(path_str),
+                args,
+                tuple(sorted(kwargs.items())),
+            )
             with lock:
                 if cache_key in cache:
                     return cache[cache_key]
@@ -122,8 +137,21 @@ def _mtime_aware_cache(
             with lock:
                 cache.clear()
 
+        def promote(path: str, digest: str) -> None:
+            with lock:
+                verified = [
+                    (key, value)
+                    for key, value in cache.items()
+                    if key[0] == path and key[2] == digest
+                ]
+                for key, value in verified:
+                    cache[(key[0], key[1], None, key[3], key[4])] = value
+                while len(cache) > maxsize:
+                    del cache[next(iter(cache))]
+
         wrapper.cache_clear = cache_clear  # type: ignore[attr-defined]
         _MTIME_CACHE_CLEAR_REGISTRY.append(cache_clear)
+        _SNAPSHOT_PROMOTE_REGISTRY.append(promote)
         return cast("Callable[..., _CacheR]", wrapper)
 
     return decorator

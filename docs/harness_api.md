@@ -1537,7 +1537,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.15.0`), which is distinct from the installed CLI/package version and
+`1.16.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1597,7 +1597,7 @@ understand.
 - `tg_session_file_importers(session_id, file, path=".", refresh_on_stale=False, auto_refresh=None)`
 - `tg_search(pattern=None, path=".", case_sensitive=False, ignore_case=False, fixed_strings=False, word_regexp=False, context=None, max_count=None, max_results=None, max_files=None, count_matches=False, glob=None, type_filter=None, query=None, structured_json=True, max_repo_files=2000, rank=False, semantic=False)`
 - `tg_ast_search(pattern, lang, path=".", structured_json=True, max_repo_files=2000)`
-- `tg_find(query, path=".", limit=10, max_repo_files=2000, max_tokens=4000, deadline=None)` -- whole-repo hybrid semantic search (BM25 [+ local CPU dense embedding]), the agent-callable form of `tg find`; walks and ranks the WHOLE repo (no pattern pre-filter). `path` is confined to the project root as the first operation. Returns the same `matches[]`/`rank_fallback_reason`/`result_incomplete`/`incomplete_reason` envelope shape as [`examples/search.json`](examples/search.json) (serialized via the same `JsonFormatter` the CLI's `tg find --json` uses), plus top-level `query`/`path`. A hard backend fault (e.g. a corrupt dense model) comes back as `error.code = "find_backend_error"`, never a raw traceback. MaxSim late rerank is not exposed by this MCP tool.
+- `tg_find(query, path=".", limit=10, max_repo_files=2000, max_tokens=4000, deadline=None, grounding="local", rerank="off")` -- whole-repo hybrid semantic search (BM25 [+ local CPU dense embedding]), the agent-callable form of `tg find`; walks and ranks the WHOLE repo (no pattern pre-filter). `path` is confined to the project root as the first operation. Returns the same `matches[]`/`rank_fallback_reason`/`result_incomplete`/`incomplete_reason` envelope shape as [`examples/search.json`](examples/search.json) (serialized via the same `JsonFormatter` the CLI's `tg find --json` uses), plus top-level `query`/`path`. A hard backend fault (e.g. a corrupt dense model) comes back as `error.code = "find_backend_error"`, never a raw traceback. MCP contract 1.16.0 adds dependency grounding and opt-in native candidate reranking; see [investigation evidence](investigation.md).
 - `tg_index_search(pattern, path=".")`
 - `tg_classify_logs(file_path, structured_json=True)`
 - `tg_devices(json_output=True)`

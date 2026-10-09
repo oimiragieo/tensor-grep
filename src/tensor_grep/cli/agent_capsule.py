@@ -858,6 +858,9 @@ def build_agent_capsule(
     ignore: tuple[str, ...] = (),
     deadline_seconds: float | None = None,
     deadline_monotonic: float | None = None,
+    plan_hops: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> dict[str, Any]:
     """Thin cold-path wrapper (task #108): build the repo map (the outer of the two scans this
     capsule used to run independently -- see ``build_agent_capsule_from_map``'s docstring) and
@@ -890,6 +893,15 @@ def build_agent_capsule(
         DEFAULT_AGENT_REPO_MAP_LIMIT,
         _deadline_monotonic_from_seconds,
     )
+    from tensor_grep.core.dependency_grounding import validate_grounding
+
+    validate_grounding(grounding)
+    if not isinstance(plan_hops, bool):
+        raise ValueError("plan_hops must be a Boolean")
+    if rerank not in {"off", "auto", "cross-encoder"}:
+        from tensor_grep.core.pipeline import ConfigurationError
+
+        raise ConfigurationError("rerank must be off, auto, or cross-encoder")
 
     effective_max_repo_files = (
         max_repo_files if max_repo_files is not None else DEFAULT_AGENT_REPO_MAP_LIMIT
@@ -913,6 +925,9 @@ def build_agent_capsule(
         gpu_timeout_s=gpu_timeout_s,
         ignore=ignore,
         deadline_monotonic=deadline_monotonic,
+        plan_hops=plan_hops,
+        grounding=grounding,
+        rerank=rerank,
         _rescue_call_site_evidence=True,
     )
 

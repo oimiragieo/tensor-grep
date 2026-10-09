@@ -108,6 +108,8 @@ def test_warm_daemon_default_deadline_overrun_marks_partial(
     # Deterministic: force the default budget to already be exhausted BEFORE the builder ever
     # checks time.monotonic() against it -- no sleep, no timing race (same technique
     # test_repo_map_deadline.py uses via a raw `deadline_monotonic=time.monotonic() - 1.0`).
+    session_store._ensure_session_not_stale(payload)
+    monkeypatch.setattr(session_store, "_ensure_session_not_stale", lambda *a, **k: None)
     monkeypatch.setattr(session_store, "WARM_DAEMON_DEFAULT_DEADLINE_SECONDS", -1000.0)
 
     request = {"command": command, **extra_request}
@@ -131,7 +133,14 @@ def test_agent_warm_daemon_deadline_overrun_exits_2_end_to_end(
     proven harness), monkeypatch applies in-process so the daemon thread sees the same patched
     constant."""
     project = _project(tmp_path)
-    monkeypatch.setattr(session_store, "WARM_DAEMON_DEFAULT_DEADLINE_SECONDS", -1000.0)
+    original_builder = session_store.build_agent_capsule_from_map
+
+    def overrunning_builder(*args, **kwargs):
+        assert kwargs.get("deadline_monotonic") is not None
+        kwargs["deadline_monotonic"] = time.monotonic() - 1
+        return original_builder(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "build_agent_capsule_from_map", overrunning_builder)
 
     server = _real_daemon(project)
     _serve(server)
@@ -188,7 +197,12 @@ def test_partial_response_is_not_cached_and_recomputes(tmp_path: Path, monkeypat
     calls = {"count": 0}
 
     def _fake_serve(
-        _session_id: str, _request: dict[str, Any], _path: str, *, payload: dict[str, Any]
+        _session_id: str,
+        _request: dict[str, Any],
+        _path: str,
+        *,
+        payload: dict[str, Any],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         calls["count"] += 1
         return {
@@ -234,7 +248,12 @@ def test_non_partial_response_is_still_cached(tmp_path: Path, monkeypatch: Any) 
     calls = {"count": 0}
 
     def _fake_serve(
-        _session_id: str, _request: dict[str, Any], _path: str, *, payload: dict[str, Any]
+        _session_id: str,
+        _request: dict[str, Any],
+        _path: str,
+        *,
+        payload: dict[str, Any],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         calls["count"] += 1
         return {"session_id": "session-x", "routing_reason": "session-agent"}
@@ -432,6 +451,8 @@ def test_warm_daemon_default_deadline_overrun_marks_partial_203(
 
     # Deterministic: force the default budget to already be exhausted BEFORE the builder ever
     # checks time.monotonic() against it -- same technique as (a) above, no sleep/timing race.
+    session_store._ensure_session_not_stale(payload)
+    monkeypatch.setattr(session_store, "_ensure_session_not_stale", lambda *a, **k: None)
     monkeypatch.setattr(session_store, "WARM_DAEMON_DEFAULT_DEADLINE_SECONDS", -1000.0)
 
     request = {"command": command, **extra_request}

@@ -20,8 +20,10 @@ from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
 from tensor_grep.cli.repo_map import (
     DEFAULT_AGENT_REPO_MAP_LIMIT,
     _clear_all_source_caches,
+    _DeadlineBreakFlag,
     _is_repo_context_file,
     _iter_repo_files,
+    _max_parse_bytes,
     _UnreadablePathFlag,
     apply_repo_map_output_limits,
     build_context_edit_plan_from_map,
@@ -37,6 +39,13 @@ from tensor_grep.cli.repo_map import (
     build_symbol_defs_from_map,
     build_symbol_impact_from_map,
     build_symbol_refs_from_map,
+)
+from tensor_grep.cli.session_content_reconciliation import capture_snapshot, content_digest
+from tensor_grep.cli.session_provenance import (
+    SessionPayloadError,
+    read_session_payload,
+    seal_session,
+    verified_session,
 )
 
 # Project-root resolution lives in `session_root` (split out when the file-size ratchet
@@ -85,6 +94,7 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_root import (
     _shared_territory_roots as _shared_territory_roots,
 )
+from tensor_grep.cli.symbols_cache import collect_content_receipts
 
 logger = logging.getLogger(__name__)
 
@@ -447,36 +457,22 @@ def _prune_session_records(
 
 
 def _capture_snapshot(
-    file_paths: list[str], *, unreadable_hit: _UnreadablePathFlag | None = None
+    file_paths: list[str],
+    *,
+    unreadable_hit: _UnreadablePathFlag | None = None,
+    root: Path | None = None,
+    deadline_monotonic: float | None = None,
+    expected: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Stat each path into a {path, size, mtime_ns} snapshot, skipping what cannot be stat'd.
-
-    Task #288 -- the SNAPSHOT-side sibling of #286. Skipping is still correct: one unreadable file
-    must never fail session-open. But the skip used to be TOTALLY silent, and a path absent from
-    the snapshot is never compared against anything afterwards, so it stops being staleness-tracked
-    until some later full rebuild happens to re-see it. A transient permission blip at capture time
-    therefore degraded staleness detection DURABLY, blunting the #286 fix on the comparison side.
-
-    `unreadable_hit` is an OPTIONAL mutable out-signal, the same `_UnreadablePathFlag` idiom
-    `_iter_repo_files` uses: passing `None` is a complete no-op, byte-identical to the previous
-    behaviour, so neither existing call site changes until it opts in.
-    """
-    snapshot: list[dict[str, Any]] = []
-    for current in file_paths:
-        path = Path(current)
-        try:
-            stat = path.stat()
-        except OSError as exc:
-            if unreadable_hit is not None:
-                unreadable_hit.record(exc)
-            continue
-        snapshot.append({
-            "path": str(path),
-            "size": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
-        })
-    snapshot.sort(key=lambda item: str(item["path"]))
-    return snapshot
+    """Capture bounded content receipts; disclose unreadable or generation-racing files."""
+    return capture_snapshot(
+        file_paths,
+        limit=_max_parse_bytes(),
+        root=root,
+        deadline=deadline_monotonic,
+        expected=expected,
+        unreadable_hit=unreadable_hit,
+    )
 
 
 def _snapshot_path_key(raw_path: object) -> str:
@@ -491,12 +487,15 @@ def _empty_changeset() -> dict[str, list[str]]:
 
 
 def _changeset_has_entries(changeset: dict[str, list[str]] | None) -> bool:
-    return bool(changeset and any(changeset[key] for key in ("added", "modified", "removed")))
+    return bool(
+        changeset
+        and any(changeset.get(key) for key in ("added", "modified", "removed", "unverified"))
+    )
 
 
 def _changeset_message(changeset: dict[str, list[str]]) -> str:
     details: list[str] = []
-    for key in ("modified", "added", "removed"):
+    for key in ("modified", "added", "removed", "unverified"):
         paths = changeset.get(key, [])
         if not paths:
             continue
@@ -507,16 +506,25 @@ def _changeset_message(changeset: dict[str, list[str]]) -> str:
 
 
 def _stale_changeset(
-    payload: dict[str, Any], *, detect_added_files: bool = True
+    payload: dict[str, Any],
+    *,
+    detect_added_files: bool = True,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, list[str]] | None:
     snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
     if not snapshot and not detect_added_files:
         return None
 
     root = _resolve_root(Path(str(payload.get("root", payload.get("path", ".")))))
+    reconciliation_deadline = (
+        deadline_monotonic
+        if deadline_monotonic is not None
+        else monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+    )
     snapshot_by_path = {_snapshot_path_key(entry["path"]): entry for entry in snapshot}
 
     added: list[str] = []
+    walk_unverified: list[str] = []
     current_paths: dict[str, Path] = {}
     if detect_added_files:
         context_root = root if root.is_dir() else root.parent
@@ -525,13 +533,22 @@ def _stale_changeset(
         # recursive enumeration -- this is reachable from MCP on every tg_session_* call
         # with refresh_on_stale=True (_load_session_payload / refresh_session).
         probe_max_files = _effective_session_max_repo_files(None, payload)
+        walk_deadline, walk_unreadable = _DeadlineBreakFlag(), _UnreadablePathFlag()
         current_files = [
             current
-            for current in _iter_repo_files(root, max_files=probe_max_files)
+            for current in _iter_repo_files(
+                root,
+                max_files=probe_max_files,
+                deadline_monotonic=reconciliation_deadline,
+                deadline_hit=walk_deadline,
+                unreadable_hit=walk_unreadable,
+            )
             if _is_repo_context_file(current, context_root)
         ]
         current_paths = {str(current): current for current in current_files}
         added = sorted(path for path in current_paths if path not in snapshot_by_path)
+        if walk_deadline.hit or walk_unreadable.hit:
+            walk_unverified.append(str(root))
 
     removed: list[str] = []
     modified: list[str] = []
@@ -540,13 +557,17 @@ def _stale_changeset(
     # `_load_session_payload` and `_session_health_payload`), the snapshot is capped only by
     # DEFAULT_AGENT_REPO_MAP_LIMIT (2000), and no handler is configured in this package -- so
     # Python's lastResort would put up to ~2000 lines on stderr per request.
-    indeterminate: list[str] = []
-    indeterminate_kinds: set[str] = set()
+    indeterminate: list[str] = walk_unverified
+    indeterminate_kinds: set[str] = {"WalkIncomplete"} if walk_unverified else set()
     # Task #287. Entries whose stat failed with ERROR_PATH_NOT_FOUND: a path COMPONENT did not
     # resolve. Held back from `removed` until the loop ends, because one root probe decides the
     # whole batch (see the classification block after the loop).
     path_unresolved: list[str] = []
-    for current_path, snapshot_entry in snapshot_by_path.items():
+    for position, (current_path, snapshot_entry) in enumerate(snapshot_by_path.items()):
+        if monotonic() >= reconciliation_deadline:
+            indeterminate.extend(list(snapshot_by_path)[position:])
+            indeterminate_kinds.add("ReconciliationDeadline")
+            break
         try:
             stat = os.stat(current_paths.get(current_path) or current_path)
         except (FileNotFoundError, NotADirectoryError) as exc:
@@ -575,39 +596,7 @@ def _stale_changeset(
                 removed.append(current_path)
             continue
         except OSError as exc:
-            # Task #286: a bare `except OSError` here previously reported ANY stat failure as a
-            # deletion -- including PermissionError. Measured: denying read on one subdirectory
-            # reported every file under it as removed.
-            #
-            # What that actually breaks (verified by execution -- an earlier version of this
-            # comment claimed repo-map EVICTION and was WRONG; `build_repo_map_incremental`
-            # ignores `removed` entirely today, see repo_map.py's `normalized_changeset["removed"]`
-            # D2 comment, and a probe passing a false `removed` evicted nothing):
-            #   1. `_changeset_has_entries` -> `_ensure_session_not_stale` raises SessionStaleError
-            #      whose message names files nobody touched.
-            #   2. `_session_health_payload` RECOMPUTES this same changeset and serves it with
-            #      `stale: true`, so the `health` request on the session serve/daemon protocol
-            #      (the `command == "health"` arms in this module and in `session_daemon.py`)
-            #      reports live files as deleted. NOTE there is no `tg session health` CLI command
-            #      and no `tg_session_health` MCP tool -- two earlier drafts of this comment named
-            #      one. It also does NOT re-serve the copy persisted under the payload's
-            #      `"changeset"` key; that copy has no reader in `src/` at all.
-            #      Three drafts of this comment each named a consumer without checking it
-            #      (`build_repo_map_incremental`, then the persisted key, then a CLI command that
-            #      does not exist). If you edit this comment, GREP FOR THE NAME FIRST.
-            #   3. On MCP `refresh_on_stale=True` that false-stale forces a needless rebuild,
-            #      which also flushes the process-global source caches via `_clear_all_source_caches`.
-            # So: false reporting + wasted work, not data loss.
-            #
-            # Fail SAFE anyway: an indeterminate file is left OUT of all three buckets and treated
-            # as unchanged. A real deletion we failed to notice leaves a stale entry that the next
-            # successful scan corrects; a false deletion is unrecoverable from here.
-            #
-            # Log it rather than degrade in total silence. A structured signal in the changeset
-            # itself would be better -- `build_repo_map` already ships the right shape
-            # (`payload["unreadable_paths"] = {count, sample}`, the #276 pattern) -- but that is a
-            # consumer-contract change, tracked separately. Do NOT conflate it into `removed` to
-            # make it visible; that is exactly the bug above.
+            # Refuse uncertain freshness; unreadable sources are never classified as deletions.
             indeterminate.append(current_path)
             indeterminate_kinds.add(type(exc).__name__)
             continue
@@ -615,6 +604,20 @@ def _stale_changeset(
             snapshot_entry["mtime_ns"]
         ):
             modified.append(current_path)
+            continue
+        if not snapshot_entry.get("content_sha256"):
+            modified.append(current_path)  # legacy metadata-only snapshots need one refresh
+            continue
+        try:
+            digest = content_digest(
+                root, Path(current_path), _max_parse_bytes(), reconciliation_deadline
+            )
+        except OSError as exc:
+            indeterminate.append(current_path)
+            indeterminate_kinds.add(type(exc).__name__)
+        else:
+            if digest != snapshot_entry["content_sha256"]:
+                modified.append(current_path)
 
     if path_unresolved:
         # Task #287, the TREE-LEVEL discriminator. Each of these failed with ERROR_PATH_NOT_FOUND,
@@ -641,8 +644,8 @@ def _stale_changeset(
 
     if indeterminate:
         logger.warning(
-            "session staleness check could not stat %d file(s) (%s); they are treated as "
-            "unchanged rather than removed, so this changeset may be incomplete. Sample: %s",
+            "session staleness check could not verify %d file(s) (%s); freshness is "
+            "unverified rather than removed. Sample: %s",
             len(indeterminate),
             ", ".join(sorted(indeterminate_kinds)),
             ", ".join(indeterminate[:3]),
@@ -652,11 +655,23 @@ def _stale_changeset(
         "added": added,
         "modified": sorted(dict.fromkeys(modified)),
         "removed": removed,
+        **({"unverified": indeterminate} if indeterminate else {}),
     }
 
 
-def _ensure_session_not_stale(payload: dict[str, Any], *, detect_added_files: bool = False) -> None:
-    changeset = _stale_changeset(payload, detect_added_files=detect_added_files)
+def _ensure_session_not_stale(
+    payload: dict[str, Any],
+    *,
+    detect_added_files: bool = False,
+    deadline_monotonic: float | None = None,
+) -> None:
+    if payload.get("snapshot_unreadable_paths", {}).get("count"):
+        raise SessionStaleError("session content snapshot is incomplete; refresh before reuse")
+    changeset = _stale_changeset(
+        payload,
+        detect_added_files=detect_added_files,
+        deadline_monotonic=deadline_monotonic,
+    )
     if _changeset_has_entries(changeset):
         raise SessionStaleError(_changeset_message(cast(dict[str, list[str]], changeset)))
 
@@ -719,20 +734,25 @@ def open_session(
         scan_target = scan_target.parent
     started_at = monotonic()
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files)
-    repo_map = build_repo_map(
-        scan_target,
-        max_repo_files=effective_max_repo_files,
-        deadline_monotonic=deadline_monotonic,
-    )
-    built_at = monotonic()
+    with collect_content_receipts() as content_receipts:
+        repo_map = build_repo_map(
+            scan_target,
+            max_repo_files=effective_max_repo_files,
+            deadline_monotonic=deadline_monotonic,
+        )
+        built_at = monotonic()
     created_at = datetime.now(UTC).isoformat()
     session_id = _new_session_id(root)
     changeset = _empty_changeset()
     scan_limit = cast(dict[str, Any] | None, repo_map.get("scan_limit"))
-    # Task #288: capture the snapshot through a flag so files we could not stat are COUNTED
-    # rather than silently absent. Emitted below only when it actually fired.
     snapshot_unreadable = _UnreadablePathFlag()
-    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
+    snapshot = _capture_snapshot(
+        repo_map["related_paths"],
+        unreadable_hit=snapshot_unreadable,
+        root=root,
+        deadline_monotonic=deadline_monotonic,
+        expected=content_receipts,
+    )
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -759,6 +779,7 @@ def open_session(
     # can transiently mis-resolve and trip the containment guard on a VALID session id (Windows).
     _sessions_dir(root).mkdir(parents=True, exist_ok=True)
     session_path = _session_payload_path(root, session_id)
+    seal_session(payload, root)
     _write_json_atomic(session_path, payload)
 
     record = SessionRecord(
@@ -801,54 +822,75 @@ def refresh_session(
     payload_cache: _SessionServeCache | None = None,
     deadline_monotonic: float | None = None,
 ) -> SessionRefreshResult:
-    # Fix A / Guard 3: this is the single choke point every refresh path funnels through -- the
-    # explicit `tg session refresh` CLI/MCP command, and the daemon's refresh_on_stale recovery
-    # (session_daemon._handle: except Exception -> refresh_session(...) when
-    # _ensure_session_not_stale raised SessionStaleError). Sweep the process-global mtime-aware
-    # source/parse caches (repo_map._read_source_cached / _file_imports_symbol_from_definition
-    # and friends) here, BEFORE rebuilding, so a warm daemon can never serve a parse/read from
-    # before this refresh -- even in the pathological same-(mtime_ns,size) edit case the mtime
-    # key alone cannot detect.
+    # Invalidate process-local products before rederiving a session from current sources.
     _clear_all_source_caches()
     root = _resolve_root(Path(path))
-    existing = get_session(session_id, path)
-    effective_max_repo_files = _effective_session_max_repo_files(max_repo_files, existing)
-    changeset = _stale_changeset(existing, detect_added_files=True)
-    refresh_type = "full"
-    refresh_fallback_reason: str | None = None
-    if changeset is not None:
+    verified_existing = True
+    try:
+        existing = get_session(session_id, path)
+    except SessionStaleError:
         try:
-            repo_map = build_repo_map_incremental(
-                cast(dict[str, Any], existing["repo_map"]),
-                changeset,
-                max_repo_files=effective_max_repo_files,
-                deadline_monotonic=deadline_monotonic,
-            )
-            refresh_type = "incremental"
-        except Exception as exc:
-            logger.warning(
-                "Incremental session refresh failed for %s, falling back to full rebuild: %s",
-                session_id,
-                exc,
-            )
+            existing = _get_session_unverified(session_id, path)
+        except SessionStaleError:
+            existing = {"root": str(root)}
+        verified_existing = False
+    effective_max_repo_files = _effective_session_max_repo_files(
+        max_repo_files,
+        existing if verified_existing else None,
+    )
+    changeset = (
+        _stale_changeset(
+            existing,
+            detect_added_files=True,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if verified_existing
+        else None
+    )
+    refresh_type = "full"
+    refresh_fallback_reason: str | None = (
+        None if verified_existing else "unverified_session_provenance"
+    )
+    with collect_content_receipts() as content_receipts:
+        if changeset is not None:
+            try:
+                repo_map = build_repo_map_incremental(
+                    cast(dict[str, Any], existing["repo_map"]),
+                    changeset,
+                    max_repo_files=effective_max_repo_files,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                refresh_type = "incremental"
+            except Exception as exc:
+                logger.warning(
+                    "Incremental session refresh failed for %s, falling back to full rebuild: %s",
+                    session_id,
+                    exc,
+                )
+                repo_map = build_repo_map(
+                    root,
+                    max_repo_files=effective_max_repo_files,
+                    deadline_monotonic=deadline_monotonic,
+                )
+                refresh_type = "full"
+                refresh_fallback_reason = "incremental_failed"
+        else:
             repo_map = build_repo_map(
                 root,
                 max_repo_files=effective_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
             )
-            refresh_type = "full"
-            refresh_fallback_reason = "incremental_failed"
-    else:
-        repo_map = build_repo_map(
-            root,
-            max_repo_files=effective_max_repo_files,
-            deadline_monotonic=deadline_monotonic,
-        )
-        changeset = _empty_changeset()
+            changeset = _empty_changeset()
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
     snapshot_unreadable = _UnreadablePathFlag()  # task #288, see open_session
-    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
+    snapshot = _capture_snapshot(
+        repo_map["related_paths"],
+        unreadable_hit=snapshot_unreadable,
+        root=root,
+        deadline_monotonic=deadline_monotonic,
+        expected=content_receipts,
+    )
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -890,15 +932,14 @@ def refresh_session(
         current_on_disk = existing
         if session_path.exists():
             try:
-                current_on_disk = cast(
-                    dict[str, Any], json.loads(session_path.read_text(encoding="utf-8"))
-                )
-            except (OSError, json.JSONDecodeError):
+                current_on_disk = read_session_payload(root, session_path)
+            except (OSError, SessionPayloadError):
                 # Payload unreadable at this instant (e.g. mid-write elsewhere); fall back to
                 # the pre-lock snapshot rather than failing the refresh outright.
                 current_on_disk = existing
         if (carried := current_on_disk.get("last_prepare")) is not None:
             payload["last_prepare"] = _carry_last_prepare(carried, _snapshot_generation(snapshot))
+        seal_session(payload, root)
         _write_json_atomic(session_path, payload)
         if payload_cache is not None:
             payload_cache.put(session_id, str(root), payload)
@@ -969,12 +1010,15 @@ def list_sessions_with_discovery(path: str = ".") -> tuple[list[SessionRecord], 
     )
 
 
-def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
+def _get_session_unverified(session_id: str, path: str = ".") -> dict[str, Any]:
     root = _session_root_for_payload(session_id, path)
     session_path = _session_payload_path(root, session_id)
     if not session_path.exists():
         raise FileNotFoundError(f"Session not found: {session_id}")
-    payload = cast(dict[str, Any], json.loads(session_path.read_text(encoding="utf-8")))
+    try:
+        payload = read_session_payload(root, session_path)
+    except SessionPayloadError as exc:
+        raise SessionStaleError(str(exc)) from exc
     # audit S9: verify the payload was written for the directory we loaded it from, so a
     # payload that escaped (or was planted) under a mismatched root is not silently served.
     recorded_root = payload.get("root")
@@ -993,6 +1037,17 @@ def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
     return payload
 
 
+def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
+    payload = _get_session_unverified(session_id, path)
+    root = _session_root_for_payload(session_id, path)
+    if payload.get("session_id") != session_id or not verified_session(payload, root):
+        raise SessionStaleError(
+            "session snapshot authentication failed or is unavailable; "
+            "run tg session refresh before reuse (unsigned legacy sessions require refresh)"
+        )
+    return payload
+
+
 def _load_session_payload(
     session_id: str,
     path: str = ".",
@@ -1000,8 +1055,8 @@ def _load_session_payload(
     refresh_on_stale: bool = False,
     payload_cache: _SessionServeCache | None = None,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
     try:
+        payload = get_session(session_id, path)
         _ensure_session_not_stale(payload, detect_added_files=refresh_on_stale)
     except SessionStaleError:
         if not refresh_on_stale:
@@ -1294,6 +1349,8 @@ def _serve_session_request_from_payload(
     session_id: str,
     request: dict[str, Any],
     payload: dict[str, Any],
+    *,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     repo_map = cast(dict[str, Any], payload["repo_map"])
     command = str(request.get("command", "")).strip().lower()
@@ -1306,9 +1363,12 @@ def _serve_session_request_from_payload(
         response["session_id"] = session_id
         return response
 
+    if deadline_monotonic is None:
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
     _ensure_session_not_stale(
         payload,
         detect_added_files=bool(request.get("refresh_on_stale", False)),
+        deadline_monotonic=deadline_monotonic,
     )
 
     if command == "repo_map":
@@ -1321,10 +1381,6 @@ def _serve_session_request_from_payload(
         query = str(request.get("query", "")).strip()
         if not query:
             raise ValueError("context requests require a non-empty query")
-        # #203: same warm-daemon default deadline bound as context_render/context_edit_plan below --
-        # build_context_pack_from_map already accepts deadline_monotonic (capability P0-6), but this
-        # branch never threaded one through, so a plain `context` request ran fully unbounded.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_pack_from_map(
             repo_map, query, deadline_monotonic=deadline_monotonic
         )
@@ -1340,13 +1396,6 @@ def _serve_session_request_from_payload(
             "max_repo_files",
             _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
         )
-        # #200: give this warm-daemon post-map computation the SAME default wall-clock honesty
-        # bound the cold CLI path defaults to (WARM_DAEMON_DEFAULT_DEADLINE_SECONDS, module
-        # docstring above) -- build_repo_map's own --deadline never reaches here because the
-        # daemon serves an ALREADY-CACHED map. A response that finishes inside the 60s budget
-        # (the overwhelming common case) is byte-identical to before; only a genuine overrun now
-        # stamps partial=True instead of running forever.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_render_from_map(
             _limited_session_repo_map(
                 repo_map,
@@ -1387,8 +1436,6 @@ def _serve_session_request_from_payload(
                 None if max_repo_files in (None, "") else int(cast(int | str, max_repo_files))
             ),
         )
-        # #200: same warm-daemon default deadline bound as context_render above.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_context_edit_plan_from_map(
             scoped_repo_map,
             query,
@@ -1406,26 +1453,13 @@ def _serve_session_request_from_payload(
         response["routing_reason"] = "session-context-edit-plan"
         return response
 
-    # capability P0-4: thread the requested engine through EVERY daemon-served symbol command. Without
-    # this, all 7 branches dropped semantic_provider and silently pinned refs/callers/impact/
-    # blast-radius to native even when the client asked for lsp/hybrid. repo_map normalizes +
-    # fails closed to native for an unknown value, so no re-validation here.
     provider = str(request.get("provider", "native"))
-    # task #94 Part A: forward the caller's max_tests (the same optional-int coercion used for
-    # max_repo_files elsewhere in this function) into every symbol builder below so the daemon
-    # path applies the SAME tests-field cap as the cold `build_symbol_*` callers instead of
-    # silently falling back to each builder's own unbounded default -- required for true
-    # warm-vs-cold byte identity when a caller passes a non-default --max-tests.
     raw_max_tests = request.get("max_tests")
     max_tests = None if raw_max_tests in (None, "") else int(cast(int | str, raw_max_tests))
     if command == "defs":
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("defs requests require a non-empty symbol")
-        # #203: same warm-daemon default deadline bound as context above -- build_symbol_defs_from_
-        # map gained deadline_monotonic as part of this fix (it previously had none at all) to
-        # bound its own related-tests sibling scan.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_defs_from_map(
             repo_map,
             symbol,
@@ -1441,11 +1475,6 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("impact requests require a non-empty symbol")
-        # #203: same warm-daemon default deadline bound as context/defs above --
-        # build_symbol_impact_from_map already accepts deadline_monotonic (#52/#103 fixes) and
-        # folds three sibling-loop deadline signals into partial, but this branch never threaded
-        # one through, so a plain `impact` request ran fully unbounded.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_impact_from_map(
             repo_map,
             symbol,
@@ -1461,11 +1490,6 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("refs requests require a non-empty symbol")
-        # #203: same warm-daemon default deadline bound as context/defs/impact above --
-        # build_symbol_refs_from_map already accepts deadline_monotonic (capability P0-6 step 6) and
-        # bounds both its reference-scan and string-refs traversal loops, but this branch never
-        # threaded one through, so a plain `refs` request ran fully unbounded.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_refs_from_map(
             repo_map,
             symbol,
@@ -1481,12 +1505,6 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("callers requests require a non-empty symbol")
-        # #203: same warm-daemon default deadline bound as context/defs/impact/refs above --
-        # build_symbol_callers_from_map already accepts deadline_monotonic (capability P0-6 step 6,
-        # task #61) and folds five sibling-loop deadline signals into partial, but this branch
-        # never threaded one through, so a plain `callers` request ran fully unbounded -- the
-        # exact #390 daemon-path shape this task (#203) closes.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_callers_from_map(
             repo_map,
             symbol,
@@ -1502,10 +1520,6 @@ def _serve_session_request_from_payload(
         target_file = str(request.get("file", "")).strip()
         if not target_file:
             raise ValueError("file_importers requests require a non-empty file")
-        # #203: same warm-daemon default deadline bound as the symbol commands above --
-        # build_file_importers_from_map already accepts deadline_monotonic and bounds its
-        # per-candidate confirm-import-edges loop, but this branch never threaded one through.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_file_importers_from_map(
             repo_map, target_file, deadline_monotonic=deadline_monotonic
         )
@@ -1517,10 +1531,6 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("blast_radius requests require a non-empty symbol")
-        # #203: same warm-daemon default deadline bound as callers above -- build_symbol_blast_
-        # radius_from_map already accepts deadline_monotonic and threads it into its own callers/
-        # impact/preferred-definition-files sub-calls, but this branch never threaded one through.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_from_map(
             repo_map,
             symbol,
@@ -1536,12 +1546,6 @@ def _serve_session_request_from_payload(
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
             raise ValueError("blast_radius_render requests require a non-empty symbol")
-        # #203: build_symbol_blast_radius_render_from_map did NOT already accept deadline_monotonic
-        # (verified against the real code, unlike its blast_radius/blast_radius_plan siblings) --
-        # extended as part of this fix (its own per-candidate source-lookup loop, documented at the
-        # TG-4 comment in repo_map.py as "~3.5 min on a large repo" with only a count-based cap, is
-        # now wall-clock bounded too). Same warm-daemon default deadline as blast_radius above.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_render_from_map(
             repo_map,
             symbol,
@@ -1572,10 +1576,6 @@ def _serve_session_request_from_payload(
             "max_repo_files",
             _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT,
         )
-        # #203: same warm-daemon default deadline bound as blast_radius above -- build_symbol_
-        # blast_radius_plan_from_map already accepts deadline_monotonic and threads it into its
-        # build_symbol_blast_radius_from_map call, but this branch never threaded one through.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_symbol_blast_radius_plan_from_map(
             _limited_session_repo_map(
                 repo_map,
@@ -1595,15 +1595,6 @@ def _serve_session_request_from_payload(
         return response
 
     if command == "orient":
-        # Task #108 (Tier-2 daemon capability): no _limited_session_repo_map slicing, unlike
-        # context_render/context_edit_plan/blast_radius_plan above -- orient's centrality ranking
-        # is a whole-map graph computation (import in-degree/out-degree over ALL scanned files);
-        # slicing an already-cached bigger map down to N files post-hoc is not equivalent to
-        # having scanned only N files (importers of the dropped files would still count edges
-        # into files no longer present), so it must see the whole cached map, exactly like the 5
-        # symbol commands above (none of which slice either).
-        # #200: same warm-daemon default deadline bound as context_render above.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_orient_capsule_from_map(
             repo_map,
             max_tokens=int(request.get("max_tokens", 3000)),
@@ -1620,13 +1611,8 @@ def _serve_session_request_from_payload(
         query = str(request.get("query", "")).strip()
         if not query:
             raise ValueError("agent requests require a non-empty query")
-        # Same no-slicing reasoning as orient above: build_agent_capsule_from_map's OWN two
-        # sub-steps (context-render-equivalent ranking + blast-radius-equivalent call-site
-        # evidence) both need the whole cached map, not a per-call subset.
         raw_max_tokens = request.get("max_tokens", 1200)
         raw_max_repo_files = request.get("max_repo_files", _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT)
-        # #200: same warm-daemon default deadline bound as context_render/orient above.
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         response = build_agent_capsule_from_map(
             repo_map,
             query,
@@ -1644,11 +1630,6 @@ def _serve_session_request_from_payload(
             semantic_provider=provider,
             ignore=tuple(request.get("ignore") or ()),
             deadline_monotonic=deadline_monotonic,
-            # include_blast_radius/gpu_device_ids/gpu_timeout_s deliberately NOT threaded from
-            # `request` -- the CLI has no flag reaching the first, and the client wrapper
-            # (main._maybe_agent_via_running_daemon) refuses to route a --gpu-device-ids request
-            # to the daemon at all (see build_agent_capsule_from_map's own docstring), so both
-            # keep their build_agent_capsule_from_map defaults (True / None / 5.0).
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-agent"
@@ -1663,12 +1644,18 @@ def serve_session_request(
     path: str = ".",
     *,
     payload: dict[str, Any] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     resolved_session_id, resolved_path = _resolve_request_session_target(request, session_id, path)
     session_payload = (
         payload if payload is not None else get_session(resolved_session_id, resolved_path)
     )
-    return _serve_session_request_from_payload(resolved_session_id, request, session_payload)
+    return _serve_session_request_from_payload(
+        resolved_session_id,
+        request,
+        session_payload,
+        deadline_monotonic=deadline_monotonic,
+    )
 
 
 def serve_session_stream(
@@ -1691,6 +1678,7 @@ def serve_session_stream(
         if not line:
             continue
         request_count += 1
+        request_deadline = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         request_session_id = session_id
         request_path = path
         response: dict[str, Any]
@@ -1721,7 +1709,7 @@ def serve_session_stream(
                     "response_cache_size_bytes": response_cache.size_bytes,
                     "response_cache_max_size_bytes": response_cache.max_size_bytes,
                     "response_cache_oversized_skips": response_cache.oversized_skips,
-                    "response_cache_stale_detection": "snapshot_mtime_only",
+                    "response_cache_stale_detection": "snapshot_content_sha256",
                     "response_cache_added_file_detection": False,
                     "response_cache_refresh_hint": (
                         "Use tg session refresh or request refresh_on_stale when new files must "
@@ -1750,7 +1738,11 @@ def serve_session_stream(
                     "context_render",
                 } and not bool(request.get("refresh_on_stale", False))
                 if cacheable_response_command:
-                    _ensure_session_not_stale(payload, detect_added_files=False)
+                    _ensure_session_not_stale(
+                        payload,
+                        detect_added_files=False,
+                        deadline_monotonic=request_deadline,
+                    )
                     response_cache_key = _serve_response_cache_key(
                         session_id=request_session_id,
                         path=request_path,
@@ -1767,6 +1759,7 @@ def serve_session_stream(
                             request,
                             request_path,
                             payload=payload,
+                            deadline_monotonic=request_deadline,
                         )
                         response_cache.put(response_cache_key, response)
                         response_cache_status = "miss"
@@ -1776,6 +1769,7 @@ def serve_session_stream(
                         request,
                         request_path,
                         payload=payload,
+                        deadline_monotonic=request_deadline,
                     )
                 response["serve_cache"] = {
                     "status": cache_status,
@@ -1794,7 +1788,12 @@ def serve_session_stream(
                     }
         except SessionStaleError as exc:
             if refresh_on_stale:
-                refresh_session(request_session_id, request_path, payload_cache=payload_cache)
+                refresh_session(
+                    request_session_id,
+                    request_path,
+                    payload_cache=payload_cache,
+                    deadline_monotonic=request_deadline,
+                )
                 payload_cache.record_refresh()
                 payload, cache_status = payload_cache.load_with_status(
                     request_session_id, request_path
@@ -1804,6 +1803,7 @@ def serve_session_stream(
                     request,
                     request_path,
                     payload=payload,
+                    deadline_monotonic=request_deadline,
                 )
                 response["serve_cache"] = {
                     "status": cache_status,

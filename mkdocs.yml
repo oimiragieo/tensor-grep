@@ -59,6 +59,7 @@ exclude_docs: |
   !/harness_cookbook.md
   !/index.md
   !/installation.md
+  !/investigation.md
   !/multi_agent_context_plane.md
   !/package_manager_publish.md
   !/rebuild-guides/README.md
@@ -122,6 +123,7 @@ nav:
     - Tool Comparison: tool_comparison.md
   - Technical Reference:
     - Contracts: CONTRACTS.md
+    - Investigation Evidence: investigation.md
     - CLI and MCP API: harness_api.md
     - Session Daemon Protocol: session_daemon_protocol.md
     - Multi-Agent Context Plane: multi_agent_context_plane.md

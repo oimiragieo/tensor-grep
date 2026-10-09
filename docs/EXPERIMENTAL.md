@@ -16,6 +16,32 @@ This installs the `semantic` Python extra and fetches a checksum-pinned model of
 
 Treat ranked results as suggestions to inspect. The ranking may vary with the chosen backend, model, and corpus. `rg` remains a useful baseline for exact text search, and `tg search` has a separate, documented search contract.
 
+### Native cross-encoder (opt-in)
+
+`tg install-dense --reranker` additionally installs the revision-pinned
+`cross-encoder/ms-marco-MiniLM-L6-v2` ONNX model, tokenizer, and checksummed ONNX
+Runtime 1.24.4 CPU libraries. Supported runtime assets cover Windows x64/ARM64,
+Linux x64/ARM64 (glibc 2.27+), and macOS ARM64 (macOS 14+). This is an explicit
+download of approximately 110 MB in addition to the dense model; queries never
+download assets. `TG_CROSS_ENCODER_DIR` selects the local asset directory.
+
+`tg find PATH QUERY --rerank cross-encoder` reorders the existing first twenty
+results using bounded pair tokenization (256 tokens) and a serialized reusable
+Rust ONNX session over the already-collected full chunk context. Reciprocal rank
+fusion retains retrieval evidence alongside model scores: equal weights for lexical
+retrieval, and a 16:1 retrieval prior when dense retrieval is active. The latter
+allows only adjacent disagreements within the twenty-candidate bound.
+It keeps candidate membership and stable ties. Python
+orchestrates retrieval; `rank_fusion.cross_encoder.scoring: Rust-ONNX-CPU`
+identifies native model scoring. `tg agent --rerank cross-encoder` orders existing
+context snippets as advisory evidence and preserves target selection and line maps.
+
+The default is `--rerank off`. `auto` discloses missing assets and keeps the
+existing order; `cross-encoder` refuses missing assets. Corrupt assets and
+inference failures are execution errors in both modes. A generic relevance model
+does not establish code correctness or API compatibility; latency and retrieval
+quality depend on the candidate texts and corpus.
+
 ## Focused context excerpts
 
 Use `tg context-render src --query "invoice validation" --render-profile focused --json`

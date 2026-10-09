@@ -37,6 +37,8 @@ full candidate lists.
 
 - `.tg_index` is the native trigram index file.
 - `.tg_cache/ast/` holds rebuildable AST project data.
+- `.tg_cache/symbols_v1/` holds content-addressed symbol products and SQLite generation metadata;
+  repository-map builds reconcile bounded content, including same-mtime edits.
 - `.tensor-grep/sessions/` holds reusable context snapshots.
 - `.tensor-grep/checkpoints/` holds recovery data and must not be cleared as cache.
 

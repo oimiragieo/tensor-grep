@@ -108,7 +108,7 @@ _DAEMON_RESPONSE_CACHE_SCOPE = (
     "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
     "blast-radius/orient/agent requests"
 )
-_DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_mtime_only"
+_DAEMON_RESPONSE_CACHE_STALE_DETECTION = "snapshot_content_sha256"
 _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION = False
 _DAEMON_START_LOCK_STALE_SECONDS = _DAEMON_START_TIMEOUT_SECONDS * 2
 # audit S3: per-daemon shared secret guarding the loopback IPC socket. The token is generated
@@ -1338,8 +1338,11 @@ def _serve_daemon_response_with_cache(
     path: str,
     request: dict[str, Any],
     payload: dict[str, Any],
+    deadline_monotonic: float | None = None,
 ) -> tuple[dict[str, Any], str]:
     session_request = dict(request)
+    if deadline_monotonic is None:
+        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
     if bool(session_request.get("refresh_on_stale")) and _session_payload_is_possibly_truncated(
         payload
     ):
@@ -1350,7 +1353,13 @@ def _serve_daemon_response_with_cache(
         command, session_id, path, session_request, payload
     )
     if response_cache_key is None:
-        return serve_session_request(session_id, session_request, path, payload=payload), "bypass"
+        return serve_session_request(
+            session_id,
+            session_request,
+            path,
+            payload=payload,
+            deadline_monotonic=deadline_monotonic,
+        ), "bypass"
 
     # audit #113 trap #1: context_render/context_edit_plan intentionally use
     # detect_added_files=False here (see docs/CONTRACTS.md) so a cache HIT never pays for a
@@ -1368,7 +1377,11 @@ def _serve_daemon_response_with_cache(
         if command in _ADDED_FILE_SENSITIVE_COMMANDS
         else False
     )
-    _ensure_session_not_stale(payload, detect_added_files=detect_added_files)
+    _ensure_session_not_stale(
+        payload,
+        detect_added_files=detect_added_files,
+        deadline_monotonic=deadline_monotonic,
+    )
     with server._response_cache_lock:
         cached_response = server.response_cache.get(response_cache_key)
     if cached_response is not None:
@@ -1387,7 +1400,9 @@ def _serve_daemon_response_with_cache(
         # that discovery (regression caught by
         # test_session_daemon_refresh_on_added_file_response_is_cached).
         session_request["refresh_on_stale"] = False
-    response = serve_session_request(session_id, session_request, path, payload=payload)
+    response = serve_session_request(
+        session_id, session_request, path, payload=payload, deadline_monotonic=deadline_monotonic
+    )
     # #200: a deadline-truncated (`partial=True`) response must NEVER be cached and replayed to a
     # later request that would have had a full budget to finish -- the response cache has no TTL
     # tied to "how much of the original deadline is left", so a cached partial answer would be
@@ -1893,6 +1908,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 }
             else:
                 overall_started_at = monotonic()
+                request_deadline = overall_started_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
                 response_cache_status = "bypass"
                 refresh_trigger = ""
                 try:
@@ -1910,6 +1926,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         path=request_path,
                         request=request,
                         payload=payload,
+                        deadline_monotonic=request_deadline,
                     )
                     served_at = monotonic()
                 except Exception as exc:
@@ -1919,20 +1936,13 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     refresh_trigger = type(exc).__name__  # ANY error rebuilds; name it (disclosed)
                     original_error = str(exc)
                     load_started_at = monotonic()
-                    # Task #304: bound the staleness-triggered rebuild with the SAME budget the
-                    # warm daemon already applies to `agent`/`orient`/context-render
-                    # (session_store.py:1327, :1349). It was the last unbounded `build_repo_map`
-                    # reachable from a client request: no time limit, the client gave up at its
-                    # own 60s, and the cold path anchored a FRESH 60s -- so one stated deadline
-                    # could be exceeded roughly twofold, the truncation disclosed nowhere. Reusing
-                    # the existing constant (not a second one) keeps the daemon budgets from
-                    # drifting, so a reader can tell which one applied to a request.
+                    # Freshness, rebuilding, and inference share this request deadline.
                     try:
                         refresh_session(
                             request_session_id,
                             request_path,
                             payload_cache=server.payload_cache,
-                            deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
+                            deadline_monotonic=request_deadline,
                         )
                         server.payload_cache.record_refresh()
                         payload, cache_status = _load_payload_with_status_retry(
@@ -1948,6 +1958,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                             path=request_path,
                             request=request,
                             payload=payload,
+                            deadline_monotonic=request_deadline,
                         )
                         served_at = monotonic()
                     except Exception as rebuild_exc:

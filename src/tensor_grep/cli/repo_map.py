@@ -15,7 +15,7 @@ import tomllib
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from urllib.parse import unquote, urlparse
@@ -426,6 +426,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
+from tensor_grep.cli.symbols_cache import SymbolGeneration
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -540,7 +541,8 @@ _DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
     ".tensor-grep",
-    # tg-owned index/reference trees — never product source, and can be large enough to
+    ".tg_cache",
+    # tg-owned index/reference trees â€” never product source, and can be large enough to
     # hang an unscoped walk (critical unscoped-search-hang audit). Kept in sync with
     # docs_coverage.py's _EXCLUDED_DIR_PARTS, which already excludes these.
     "_tg_refs",
@@ -602,7 +604,7 @@ _VENDOR_CACHE_DIR_COMPONENTS: frozenset[str] = frozenset(
     | {
         # extra names that appear as sub-directory components but may not be
         # top-level walk roots (so _should_skip_repo_dir never sees them directly).
-        # NB: do NOT add bare "lib" here — it is a common SOURCE directory; the
+        # NB: do NOT add bare "lib" here â€” it is a common SOURCE directory; the
         # vendored case is lib/.../site-packages, already covered by "site-packages".
         # Misclassifying lib/ project files as vendor makes possibly_truncated False,
         # which silently disables blast-radius literal-symbol seeding.
@@ -1059,6 +1061,28 @@ def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
         payload["result_incomplete"] = True
 
 
+def _stamp_partial_status(
+    payload: dict[str, Any],
+    *,
+    deadline_exceeded: bool = False,
+    emit_reason: bool = True,
+) -> None:
+    if not payload.get("partial") and not deadline_exceeded:
+        return
+    payload["partial"] = True
+    limit = dict(payload.get("deadline_limit") or {})
+    source_coverage = bool(payload.get("symbol_cache_coverage"))
+    actual_deadline = (
+        deadline_exceeded
+        or bool(limit.get("deadline_exceeded"))
+        or (not source_coverage and "deadline_exceeded" not in limit)
+    )
+    limit["deadline_exceeded"] = actual_deadline
+    payload["deadline_limit"] = limit
+    if emit_reason or "partial_reason" in payload:
+        payload["partial_reason"] = "deadline" if actual_deadline else "source_coverage"
+
+
 def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> None:
     """capability P0-6 step 2: carry the deadline PARTIAL signal forward when a symbol builder repackages a
     build_repo_map / build_symbol_defs result into its own payload. Without this, a deadline-truncated
@@ -1070,7 +1094,19 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
         payload["partial"] = True
         deadline_limit = source.get("deadline_limit")
         if isinstance(deadline_limit, dict):
+            prior_deadline = bool(payload.get("deadline_limit", {}).get("deadline_exceeded"))
             payload["deadline_limit"] = dict(deadline_limit)
+            if prior_deadline:
+                payload["deadline_limit"]["deadline_exceeded"] = True
+    if isinstance(source.get("symbol_cache"), dict):
+        payload["symbol_cache"] = {
+            key: value
+            for key, value in source["symbol_cache"].items()
+            if key not in {"hits", "misses", "bytes_reconciled"}
+        }
+    if isinstance(source.get("symbol_cache_coverage"), dict):
+        payload["symbol_cache_coverage"] = dict(source["symbol_cache_coverage"])
+        _stamp_partial_status(payload)
 
 
 def _scan_did_not_finish(payload: dict[str, Any]) -> bool:
@@ -1280,11 +1316,11 @@ class _GitignoreMatcher:
     def check(self, path: Path, *, is_dir: bool) -> bool | None:
         # Tri-state result so nested .gitignore specs can be stacked with correct git
         # precedence: True = matched an ignore, False = matched a negated re-include, None =
-        # no rule matched (this spec has no opinion). Match the path AS WALKED — never
+        # no rule matched (this spec has no opinion). Match the path AS WALKED â€” never
         # ``resolve()`` here. ``self._root`` is resolved once in __init__ and the walk descends
         # from it, so every entry is already absolute and under the root. Calling
         # ``path.resolve()`` per entry would add a stat/symlink syscall for every file in the
-        # tree — an O(files) regression on large roots (~384k files) and would follow symlinks,
+        # tree â€” an O(files) regression on large roots (~384k files) and would follow symlinks,
         # which is not how gitignore matches paths.
         candidate = path if path.is_absolute() else (self._root / path)
         try:
@@ -1428,12 +1464,12 @@ def _scan_limit_cause(
     every file at or over the cap boundary belongs to a vendor/cache subtree.
 
     The heuristic: if ALL files in the returned list are vendor-path files,
-    the entire quota was consumed by vendor dirs — a real truncation warning
+    the entire quota was consumed by vendor dirs â€” a real truncation warning
     would be misleading.  If any file is a project file, we conservatively
     report ``'project-files'``.
     """
     if capped_file_count < max_files:
-        # Cap was not actually reached — caller shouldn't be calling this, but
+        # Cap was not actually reached â€” caller shouldn't be calling this, but
         # return a safe value anyway.
         return "project-files"
     project_file_found = any(not _path_has_vendor_component(f, root) for f in files)
@@ -4270,7 +4306,16 @@ def build_repo_map(
 
     with _profiling_phase(_profiling_collector, "repo_map_build"):
         context_root = root if root.is_dir() else root.parent
+        _clear_all_source_caches()
+        _load_gitignore_matcher.cache_clear()
         _prime_all_language_repo_contexts(context_root)
+        generation = SymbolGeneration(
+            _infer_project_root(root) if root.is_file() else context_root,
+            scope=root,
+            max_bytes=_max_parse_bytes(),
+            ignore_policy=sorted(_SKIP_DIR_NAMES),
+            deadline=deadline_monotonic,
+        )
         payload = _envelope(root)
         # #52 fix (loop A): the file WALK itself had no time bound (only max_repo_files COUNT),
         # so a huge/slow tree could burn the whole --deadline budget before the parse loop below
@@ -4335,11 +4380,17 @@ def build_repo_map(
                 deadline_hit = True
                 break
             if _profiling_collector is None:
-                current_imports, current_symbols = _self._imports_and_symbols_for_path(current)
+                current_imports, current_symbols = generation.product(
+                    current, partial(_self._imports_and_symbols_for_path, current)
+                )
             else:
-                current_imports, current_symbols = _self._imports_and_symbols_for_path(
+                current_imports, current_symbols = generation.product(
                     current,
-                    _profiling_collector=_profiling_collector,
+                    partial(
+                        _self._imports_and_symbols_for_path,
+                        current,
+                        _profiling_collector=_profiling_collector,
+                    ),
                 )
             if current_imports:
                 imports.append({
@@ -4407,6 +4458,14 @@ def build_repo_map(
                 "count": repo_walk_unreadable_hit.count,
                 "sample": list(repo_walk_unreadable_hit.sample),
             }
+        generation.finish(
+            payload,
+            complete=not (
+                deadline_hit
+                or repo_walk_unreadable_hit.hit
+                or payload.get("scan_limit", {}).get("possibly_truncated")
+            ),
+        )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -4417,156 +4476,17 @@ def build_repo_map_incremental(
     max_repo_files: int | None = None,
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
-    root = Path(str(previous_map.get("path", "."))).expanduser().resolve()
-    if not root.exists():
-        raise FileNotFoundError(f"Path not found: {root}")
+    """Reconcile contents when notifications lack a trustworthy freshness receipt.
 
-    context_root = root if root.is_dir() else root.parent
-    _prime_all_language_repo_contexts(context_root)
-    normalized_changeset = _normalized_changeset_paths(root, changeset)
-    changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
-    # D2: normalized_changeset["removed"] is computed by _normalized_changeset_paths
-    # but currently unused — explicit pruning of removed paths is handled
-    # implicitly because _iter_repo_files only returns files that still exist.
-    # Future work: use normalized_changeset["removed"] to proactively clean
-    # previous_paths/previous_symbols/previous_imports rather than waiting for
-    # the next full build_repo_map() call.
-    previous_paths = {
-        str(Path(str(current)).expanduser().resolve())
-        for current in (
-            list(previous_map.get("related_paths", []))
-            or [*previous_map.get("files", []), *previous_map.get("tests", [])]
-        )
-    }
-    previous_imports_by_file = {
-        str(Path(str(entry["file"])).expanduser().resolve()): [
-            str(item) for item in entry["imports"]
-        ]
-        for entry in previous_map.get("imports", [])
-    }
-    previous_symbols_by_file = _group_symbols_by_file([
-        dict(symbol) for symbol in previous_map.get("symbols", [])
-    ])
-
-    normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
-    # Task #284: the INCREMENTAL builder returns a payload of the same shape as `build_repo_map`,
-    # so a consumer cannot tell which one produced it -- but it never passed `unreadable_hit=`,
-    # meaning it could never emit `unreadable_paths` AT ALL. Every consumer reached through this
-    # path (and `tg orient` already reads that key, orient_capsule.py:1159) therefore got the
-    # silent lie the full builder stopped telling in #276 slice 1. Same flag, same emission
-    # convention below -- the two builders must not disagree about whether a scan was complete.
-    repo_walk_unreadable_hit = _UnreadablePathFlag()
-    all_files = [
-        current
-        for current in _self._iter_repo_files(
-            root,
-            max_files=normalized_max_repo_files,
-            unreadable_hit=repo_walk_unreadable_hit,
-        )
-        if _is_repo_context_file(current, context_root)
-    ]
-    capped_file_count = len(all_files)
-    current_files_by_path = {str(current): current for current in all_files}
-    parsed_imports_by_file: dict[str, list[str]] = {}
-    parsed_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
-
-    # Task #304: PARSING is bounded here, exactly as `build_repo_map` bounds its own loop -- break
-    # and keep what we have, never raise, never zero the results.
-    #
-    # This builder previously had no `deadline_monotonic` parameter AT ALL while `build_repo_map`
-    # did, so threading a deadline through the session layer would have bounded only the
-    # full-rebuild branch and left THIS one -- the common case for a warm session, and the branch
-    # a refresh takes whenever a changeset exists -- unbounded, while the change looked complete
-    # and the tests looked green. The #284 comment above says the two builders "must not disagree
-    # about whether a scan was complete"; this is that same rule applied to the deadline.
-    #
-    # Unparsed files are NOT dropped from the payload: the assembly loop below falls back to the
-    # PREVIOUS map's imports/symbols for any file this loop did not reach, so a deadline yields a
-    # staler-but-complete map rather than a map with holes in it.
-    deadline_hit = False
-    files_parsed = 0
-    changed_to_parse = sorted(changed_files | (set(current_files_by_path) - previous_paths))
-    for current_path in changed_to_parse:
-        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-            deadline_hit = True
-            break
-        path_obj = current_files_by_path.get(current_path)
-        if path_obj is None:
-            continue
-        current_imports, current_symbols = _self._imports_and_symbols_for_path(path_obj)
-        parsed_imports_by_file[current_path] = current_imports
-        parsed_symbols_by_file[current_path] = current_symbols
-        files_parsed += 1
-
-    payload = _envelope(root)
-    tests = [str(current) for current in all_files if _is_test_file(current)]
-    source_files = [str(current) for current in all_files if not _is_test_file(current)]
-    imports: list[dict[str, Any]] = []
-    symbols: list[dict[str, Any]] = []
-    for current in all_files:
-        current_path = str(current)
-        current_imports = (
-            parsed_imports_by_file[current_path]
-            if current_path in parsed_imports_by_file
-            else previous_imports_by_file.get(current_path, [])
-        )
-        current_symbols = (
-            parsed_symbols_by_file[current_path]
-            if current_path in parsed_symbols_by_file
-            else previous_symbols_by_file.get(current_path, [])
-        )
-        if current_imports:
-            imports.append({
-                "file": current_path,
-                "imports": current_imports,
-                "provenance": _symbol_navigation_provenance_for_path(current_path),
-            })
-        symbols.extend(current_symbols)
-
-    payload["files"] = source_files
-    payload["symbols"] = symbols
-    payload["imports"] = imports
-    payload["tests"] = tests
-    payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
-    if normalized_max_repo_files is not None:
-        _capped = capped_file_count >= normalized_max_repo_files
-        _cause = (
-            _scan_limit_cause(all_files, context_root, capped_file_count, normalized_max_repo_files)
-            if _capped
-            else "project-files"
-        )
-        _truncated = _capped and _cause == "project-files"
-        payload["scan_limit"] = {
-            "max_repo_files": normalized_max_repo_files,
-            "scanned_files": capped_file_count,
-            "possibly_truncated": _truncated,
-            "truncation_cause": _cause if _capped else None,
-            # Same `_capped` gate as its twin above, for the same reason. A fix applied to one arm
-            # and not its twin is the recurring defect of this whole campaign.
-            **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
-        }
-        payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
-    # Task #304: same `partial` + `deadline_limit` pair `build_repo_map` emits, and deliberately
-    # the SAME field names -- a consumer cannot tell which builder produced a payload, so a
-    # deadline must look identical from either. Omitted entirely when the parse completed, so a
-    # non-truncated incremental map stays byte-identical to before this parameter existed.
-    if deadline_hit:
-        payload["partial"] = True
-        payload["deadline_limit"] = {
-            "deadline_exceeded": True,
-            "files_scanned": files_parsed,
-            "files_total": len(changed_to_parse),
-        }
-    # Task #284: emitted OUTSIDE the `scan_limit` block on purpose, exactly as `build_repo_map`
-    # does -- an unreadable path is not a budget cap, and folding it in would give the reader
-    # wrong-knob advice ("raise --max-repo-files") for a cause no budget can fix. Omitted
-    # entirely on a clean walk, so a complete incremental map stays byte-identical.
-    if repo_walk_unreadable_hit.hit:
-        payload["unreadable_paths"] = {
-            "count": repo_walk_unreadable_hit.count,
-            "sample": list(repo_walk_unreadable_hit.sample),
-        }
-    return payload
+    Session changesets currently derive from metadata, without watcher sequence or
+    overflow guarantees. Treat them as hints, never as authority to skip content
+    checks. Whole-file products still reuse unchanged content across refreshes.
+    """
+    return _self.build_repo_map(
+        str(previous_map.get("path", ".")),
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+    )
 
 
 def build_repo_map_json(
@@ -5418,7 +5338,7 @@ _DIRECTORY_INDEX_STEMS = frozenset({"index", "__init__"})
 
 @lru_cache(maxsize=16384)
 def _module_aliases_for_path(path: str) -> frozenset[str]:
-    # Pure function of the path STRING (no file I/O) — safe to cache unconditionally, no mtime
+    # Pure function of the path STRING (no file I/O) â€” safe to cache unconditionally, no mtime
     # key needed. The reverse-import graph / PageRank calls this in tight loops (~1.4M calls for
     # ~unique-file inputs on a depth-2 blast-radius), so memoization collapses it to one build
     # per distinct path. frozenset return keeps the cached value immutable (all callers iterate
@@ -6248,7 +6168,7 @@ def _build_context_pack_from_map(
 
 
 # Default output-token budget for the `tg context` CLI (dogfood v1.19.9: an UNBOUNDED pack ballooned
-# to >1MB — "blows any context window"). The pack is for prompt injection, so bound it by default at
+# to >1MB â€” "blows any context window"). The pack is for prompt injection, so bound it by default at
 # the CLI layer only; build_context_pack itself defaults to unbounded so library callers
 # (session/edit-plan/mcp) are unchanged unless they opt in.
 _DEFAULT_CONTEXT_MAX_TOKENS = 16000
@@ -6307,15 +6227,7 @@ def build_context_pack(
     deadline_exceeded_at_return = (
         deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
     )
-    if result.get("partial") or deadline_exceeded_at_return:
-        result["partial"] = True
-        result["partial_reason"] = "deadline"
-        existing_deadline_limit = result.get("deadline_limit")
-        result["deadline_limit"] = (
-            dict(existing_deadline_limit)
-            if isinstance(existing_deadline_limit, dict)
-            else {"deadline_exceeded": True}
-        )
+    _stamp_partial_status(result, deadline_exceeded=deadline_exceeded_at_return)
     return result
 
 
@@ -7329,7 +7241,7 @@ def _suggested_validation_command_candidates(
     *,
     repo_root: Path | None = None,
 ) -> list[Path]:
-    """Pure-filename test-neighbor CANDIDATES for one source file — no execution, no repo
+    """Pure-filename test-neighbor CANDIDATES for one source file â€” no execution, no repo
     scan, no manifest lookup. Distinct from `_has_python_validation_fallback_evidence` (the
     strict runner-evidence gate); this only feeds the additive, unverified suggestion field.
 
@@ -7337,7 +7249,7 @@ def _suggested_validation_command_candidates(
     fixed set of repo-root test-tree paths (`<root>/tests/test_<stem>.py`,
     `<root>/test|tests|__tests__/<stem>.test<suffix>`) so a test living in a root-level test
     tree (not next to the source file) is still discoverable. Every probe is a single
-    `is_file()` check on a fully-determined path — never a directory walk/glob (dogfood F3: a
+    `is_file()` check on a fully-determined path â€” never a directory walk/glob (dogfood F3: a
     root-tree GLOB scan here would violate the no-repo-wide-scan promise)."""
     suffix = source_path.suffix.lower()
     stem = source_path.stem
@@ -7373,7 +7285,7 @@ def _suggested_validation_command_for_primary_file(
 ) -> dict[str, Any] | None:
     """Build the ADDITIVE `suggested_validation_commands` entry (verified: false) from a pure
     filename probe of the primary target's directory. NEVER feeds the strict, evidence-gated
-    `validation_commands` list — no subprocess, no manifest read, no repo-wide scan."""
+    `validation_commands` list â€” no subprocess, no manifest read, no repo-wide scan."""
     if not primary_file:
         return None
     try:
@@ -9436,7 +9348,7 @@ def _build_edit_plan_seed(
         deadline_hit=deadline_hit,
     )
     validation_commands = [str(step["command"]) for step in validation_plan]
-    # Additive, unverified suggestion (test-neighbor filename probe) — NEVER merged into the
+    # Additive, unverified suggestion (test-neighbor filename probe) â€” NEVER merged into the
     # strict, evidence-gated `validation_commands`/`validation_plan` above. See
     # `_suggested_validation_command_for_primary_file`.
     suggested_validation_command = (
@@ -9649,7 +9561,7 @@ def _attach_edit_plan_metadata(
                 payload["partial"] = True
                 # setdefault, not overwrite: never clobber a richer deadline_limit already present
                 # from the SCAN stage or build_context_pack_from_map's own self-stamp.
-                payload.setdefault("deadline_limit", {"deadline_exceeded": True})
+                _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
         payload["graph_trust_summary"] = (
             dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
             if resolved_blast_radius_payload is not None
@@ -9844,7 +9756,7 @@ def _attach_lightweight_navigation_metadata(
             limit=max_files,
         ),
         # Widen the candidate-edit symbol pool beyond the render cap (Task #4 / agent-capsule
-        # capability) — same rationale as build_context_render: don't let a large file's same-tier
+        # capability) â€” same rationale as build_context_render: don't let a large file's same-tier
         # symbols crowd a query-relevant implementation out of the candidate pool.
         "symbols": ranked_symbols[: max(max_symbols, 8)],
         "tests": list(payload.get("tests", []))[:max_files],
@@ -10026,15 +9938,7 @@ def build_context_edit_plan_from_map(
     deadline_exceeded_at_return = (
         deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
     )
-    if payload.get("partial") or deadline_exceeded_at_return:
-        payload["partial"] = True
-        payload["partial_reason"] = "deadline"
-        existing_deadline_limit = payload.get("deadline_limit")
-        payload["deadline_limit"] = (
-            dict(existing_deadline_limit)
-            if isinstance(existing_deadline_limit, dict)
-            else {"deadline_exceeded": True}
-        )
+    _stamp_partial_status(payload, deadline_exceeded=deadline_exceeded_at_return)
     return _attach_profiling(payload, collector)
 
 
@@ -10383,7 +10287,7 @@ def _top_level_validation_commands(payload: dict[str, Any]) -> list[str]:
 
 
 def _top_level_suggested_validation_commands(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Additive counterpart to `_top_level_validation_commands` — surfaces the unverified
+    """Additive counterpart to `_top_level_validation_commands` â€” surfaces the unverified
     test-neighbor-heuristic suggestion. NEVER read by trust/confidence/tie logic."""
     navigation_pack = payload.get("navigation_pack")
     navigation_suggested = (
@@ -11078,15 +10982,7 @@ def build_context_render_from_map(
     deadline_exceeded_at_return = (
         deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
     )
-    if payload.get("partial") or deadline_exceeded_at_return:
-        payload["partial"] = True
-        payload["partial_reason"] = "deadline"
-        existing_deadline_limit = payload.get("deadline_limit")
-        payload["deadline_limit"] = (
-            dict(existing_deadline_limit)
-            if isinstance(existing_deadline_limit, dict)
-            else {"deadline_exceeded": True}
-        )
+    _stamp_partial_status(payload, deadline_exceeded=deadline_exceeded_at_return)
     return _attach_profiling(payload, collector)
 
 
@@ -11140,6 +11036,7 @@ def build_context_pack_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
+    _copy_partial_signal(payload, repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(symbol) for symbol in repo_map.get("symbols", [])]
     payload["imports"] = [dict(entry) for entry in repo_map.get("imports", [])]
@@ -11171,7 +11068,7 @@ def build_context_pack_from_map(
         # map's own --deadline cutoff, copied onto `payload` via `dict(repo_map)` above) carries a
         # richer deadline_limit (files_scanned/files_total) -- never clobber that with the generic
         # shape below just because a post-map sibling loop also happened to cross the same budget.
-        payload.setdefault("deadline_limit", {"deadline_exceeded": True})
+        _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -11334,7 +11231,7 @@ def _wait_for_lsp_readiness(
     no_progress_grace_seconds: float = 1.0,
 ) -> None:
     """Best-effort P0-2 readiness gate. Tolerates clients without wait_until_ready (duck-typed
-    fakes/third-party stubs) — the gate is a pre-step that improves first-query completeness;
+    fakes/third-party stubs) â€” the gate is a pre-step that improves first-query completeness;
     it must never be a new failure mode for the query itself."""
     waiter = getattr(client, "wait_until_ready", None)
     if waiter is None:
@@ -11839,7 +11736,7 @@ def _external_references(
             )
 
             # P0-2 readiness gate: wait for the server's workspace index to settle before the
-            # references query — firing immediately answers from a half-built index (the 2-of-14
+            # references query â€” firing immediately answers from a half-built index (the 2-of-14
             # under-return). Probe = workspace/symbol hit-count stability for servers that never
             # emit workDoneProgress. A timeout here is honest-partial territory (the P0-1 union +
             # diverged stamps make the result truthful); it must NOT read as a provider failure.
@@ -11967,10 +11864,10 @@ def _definition_confidence_score(definition: dict[str, Any], symbol: str) -> flo
     exact-name filter, so this function starts at 1.0 and applies small
     downward adjustments for signals that indicate lower fidelity:
 
-    * LSP-proof entries get a slight boost (capped at 1.0) — they have
+    * LSP-proof entries get a slight boost (capped at 1.0) â€” they have
       cross-validated provenance.
     * Heuristic / regex-backed provenance gets a small penalty.
-    * The definition is in a test file (path contains "test") — mild penalty,
+    * The definition is in a test file (path contains "test") â€” mild penalty,
       as a matching symbol in test code is less likely to be the canonical def.
     """
     score = 1.0
@@ -12028,14 +11925,7 @@ def build_symbol_defs(
     deadline_exceeded_at_return = (
         deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
     )
-    if result.get("partial") or deadline_exceeded_at_return:
-        result["partial"] = True
-        existing_deadline_limit = result.get("deadline_limit")
-        result["deadline_limit"] = (
-            dict(existing_deadline_limit)
-            if isinstance(existing_deadline_limit, dict)
-            else {"deadline_exceeded": True}
-        )
+    _stamp_partial_status(result, emit_reason=False, deadline_exceeded=deadline_exceeded_at_return)
     return result
 
 
@@ -12048,6 +11938,7 @@ def build_symbol_defs_from_map(
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
+    _copy_partial_signal(payload, repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(current) for current in repo_map.get("symbols", [])]
     payload["imports"] = [dict(current) for current in repo_map.get("imports", [])]
@@ -12089,7 +11980,7 @@ def build_symbol_defs_from_map(
             definitions = _dedupe_definition_rows([*external_definitions, *definitions])
 
     # L3: Enrich each definition with `class` (enclosing class name or null)
-    # and `score` (confidence signal).  These are additive fields — existing
+    # and `score` (confidence signal).  These are additive fields â€” existing
     # keys are not renamed or removed.
     all_symbols_for_class_lookup = list(repo_map.get("symbols", []))
     for definition in definitions:
@@ -12122,7 +12013,7 @@ def build_symbol_defs_from_map(
     _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
     if defs_related_tests_deadline_hit.hit:
         payload["partial"] = True
-        payload.setdefault("deadline_limit", {"deadline_exceeded": True})
+        _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
     related_paths = []
     for current in [*definition_files, *payload["tests"]]:
         if current not in related_paths:
@@ -12452,7 +12343,7 @@ def build_symbol_impact_from_map(
         payload["preferred_command_reason"] = (
             "impact is a fast file-level planning signal; "
             "blast-radius adds caller_tree, blast_radius_score, and call-graph depth "
-            "for precise change-impact analysis — use blast-radius when you need "
+            "for precise change-impact analysis â€” use blast-radius when you need "
             "caller attribution or a scored propagation graph"
         )
         payload["trust_level"] = "planning-signal"
@@ -12617,7 +12508,7 @@ def build_symbol_impact_from_map(
     payload["preferred_command_reason"] = (
         "impact is a fast file-level planning signal; "
         "blast-radius adds caller_tree, blast_radius_score, and call-graph depth "
-        "for precise change-impact analysis — use blast-radius when you need "
+        "for precise change-impact analysis â€” use blast-radius when you need "
         "caller attribution or a scored propagation graph"
     )
     payload["trust_level"] = "planning-signal"
@@ -14844,17 +14735,16 @@ def build_symbol_blast_radius_from_map(
     ):
         payload["partial"] = True
         payload["graph_completeness"] = "partial"
-        caller_deadline_limit = callers_payload.get("deadline_limit")
-        if isinstance(caller_deadline_limit, dict):
-            payload["deadline_limit"] = dict(caller_deadline_limit)
-        elif preferred_definition_deadline_hit_blast.hit:
-            payload["deadline_limit"] = {"deadline_exceeded": True}
-        elif isinstance(impact_payload.get("deadline_limit"), dict):
-            payload["deadline_limit"] = dict(impact_payload["deadline_limit"])
-        elif isinstance(defs_payload.get("deadline_limit"), dict):
-            payload["deadline_limit"] = dict(defs_payload["deadline_limit"])
-        elif reverse_import_graph_deadline_hit_blast.hit:
-            payload["deadline_limit"] = {"deadline_exceeded": True}
+        for source_partial in (callers_payload, impact_payload, defs_payload):
+            _copy_partial_signal(payload, source_partial)
+        _stamp_partial_status(
+            payload,
+            emit_reason=False,
+            deadline_exceeded=(
+                preferred_definition_deadline_hit_blast.hit
+                or reverse_import_graph_deadline_hit_blast.hit
+            ),
+        )
     if callers_payload.get("result_incomplete") and not inherit_coverage_gap(
         payload, callers_payload
     ):
@@ -15101,7 +14991,7 @@ def build_symbol_blast_radius_render_from_map(
     # Perf guard (TG-4): a high-fan-in symbol yields thousands of candidate symbols in the top
     # files, and each candidate triggers an expensive build_symbol_source_from_map lookup. With
     # only the max_sources accumulation as a bound, a symbol whose candidates rarely yield a
-    # matching source scanned them ALL — ~3.5 min on a large repo vs ~3s for the JSON graph.
+    # matching source scanned them ALL â€” ~3.5 min on a large repo vs ~3s for the JSON graph.
     # Cap the expensive per-candidate lookups. ranked_symbols is relevance-sorted, so the best
     # sources are examined first and we degrade gracefully to fewer rendered blocks.
     max_source_candidates = max(max_sources * 8, 24)
@@ -15213,21 +15103,14 @@ def build_symbol_blast_radius_render_from_map(
     # build_symbol_blast_radius_from_map (or _attach_edit_plan_metadata's own edit_plan_seed fold-in
     # just above) already stamped, so `setdefault` here never clobbers a richer upstream signal;
     # this only adds the flag when THIS loop was the one that broke early.
-    if payload.get("partial"):  # a deadline from ANY upstream stage must say why too
-        payload.setdefault("partial_reason", "deadline")
+    _stamp_partial_status(payload)
     if source_loop_deadline_hit:
         payload["partial"] = True
         # REQUIRED by the render-family contract: the other three members all stamp it and
         # test_render_family_tail_overrun_..._still_reports_partial asserts it for every member.
         # This command was absent from that parametrize list, so it shipped without the stamp.
         # setdefault, never assignment -- do not clobber a richer upstream reason.
-        payload.setdefault("partial_reason", "deadline")
-        payload.setdefault(
-            "deadline_limit",
-            {
-                "deadline_exceeded": True,
-                "source_candidates_examined": examined_candidates,
-                "source_candidates_total": len(ranked_symbols),
-            },
-        )
+        _stamp_partial_status(payload, deadline_exceeded=True)
+        payload["deadline_limit"].setdefault("source_candidates_examined", examined_candidates)
+        payload["deadline_limit"].setdefault("source_candidates_total", len(ranked_symbols))
     return _attach_profiling(payload, collector)

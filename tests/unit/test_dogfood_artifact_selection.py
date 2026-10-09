@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -66,11 +65,8 @@ def test_missing_explicit_native_selection_does_not_fall_back(monkeypatch, tmp_p
 def test_harness_checks_explicit_sidecar_version(
     monkeypatch, tmp_path, version, sidecar_version, accepted
 ):
-    script = TESTS_DIR.parent / "scripts" / "dogfood" / "dogfood_features.py"
-    spec = importlib.util.spec_from_file_location("dogfood_features", script)
-    assert spec and spec.loader
-    harness = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(harness)
+    from tensor_grep.cli import dogfood_features as harness
+
     binary = tmp_path / "tg.exe"
     binary.write_bytes(b"native")
     monkeypatch.setattr(harness, "TG", str(binary))

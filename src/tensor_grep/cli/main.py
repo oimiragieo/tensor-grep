@@ -1463,6 +1463,8 @@ def _execute_find(
     max_tokens: int,
     deadline: float | None,
     why_ranked: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> "SearchResult":
     """The `tg find` pipeline: whole-repo walk -> chunk -> BM25 [+ dense] [+ late MaxSim] rank via
     the shared `rank_chunks` core (`core/reranker.py`) -> `--limit` -> token-budget fit -> a
@@ -1516,6 +1518,9 @@ def _execute_find(
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
+    from tensor_grep.cli.investigation_options import finish_find, validate_investigation_options
+
+    validate_investigation_options(grounding, rerank)
     result = SearchResult()
     incomplete_reasons: list[str] = []
     # Task #276 slice 1 (+ #284): `tg find` can accumulate MULTIPLE heterogeneous incomplete
@@ -1632,7 +1637,15 @@ def _execute_find(
         result.incomplete_reason_class = incomplete_reason_class
 
     if not chunks:
-        return result
+        return finish_find(
+            result,
+            query,
+            path,
+            grounding,
+            rerank,
+            deadline_monotonic=deadline_monotonic,
+            max_tokens=max_tokens,
+        )
 
     bm25_index = Bm25Index(chunks)
 
@@ -1744,6 +1757,8 @@ def _execute_find(
         matches = budgeted or matches[:1]
 
     result.matches = matches
+    if rerank != "off":
+        result.rerank_texts = [chunks[index].text for index in selected[: len(matches)]]
     result.total_matches = len(matches)
     matched_paths = sorted({match.file for match in matches})
     result.matched_file_paths = matched_paths
@@ -1751,7 +1766,15 @@ def _execute_find(
     for match in matches:
         result.match_counts_by_file[match.file] = result.match_counts_by_file.get(match.file, 0) + 1
 
-    return result
+    return finish_find(
+        result,
+        query,
+        path,
+        grounding,
+        rerank,
+        deadline_monotonic=deadline_monotonic,
+        max_tokens=max_tokens,
+    )
 
 
 def _deadline_option(help_text: str) -> Any:
@@ -1799,6 +1822,12 @@ def find(
         "Stop the repo walk/chunk phase after N seconds and return ranked results over the partial corpus scanned so far (result_incomplete=true, exit 2) instead of running unbounded."
     ),
     why_ranked: bool = typer.Option(False, "--why-ranked", help="Explain why matches were ranked."),
+    grounding: str = typer.Option(
+        "local", "--grounding", help="Dependency evidence: off, local, registry (explicit network)."
+    ),
+    rerank: str = typer.Option(
+        "off", "--rerank", help="Native reranking: off, auto, cross-encoder."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     ndjson: bool = typer.Option(
         False, "--ndjson", help="Emit newline-delimited JSON, one object per match."
@@ -1807,20 +1836,9 @@ def find(
     """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
     relevance, RRF-fused), ranked file:line results.
 
-    MAXSIM LATE RERANK IS NOT REACHABLE BY A DOCUMENTED PATH, and this docstring used to advertise
-    it as though it were ("[+ optional MaxSim late rerank]"). Stating the honest version instead,
-    because a capability the artifact claims and no install path reaches is the same class of
-    dishonesty as a stamped-but-unpublished version:
-
-      * it needs the `rerank` extra, NOT the `semantic` extra that `tg install-dense` installs;
-      * its model is fetched by `python -m tensor_grep.core.retrieval_late --fetch`, which no `tg`
-        command invokes;
-      * its only control is the undocumented env var `TG_LATE_RERANK=1` -- there is no flag;
-      * and the stage is deliberately HELD as measurably regressing on the retrieval-quality
-        evaluation; an install path alone is not sufficient to advertise it.
-
-    Do not re-add it to the advertised feature list without an install path a user can follow and
-    a benchmark result that justifies the stage. See task #15.
+    Opt-in `--rerank` scores the existing candidate head using installed native CPU assets.
+    `--grounding local` reads dependency metadata; `registry` explicitly requests bounded network
+    metadata. Neither registry versions nor static API evidence prove API compatibility.
 
     Unlike `tg search --rank`/`--semantic` (which re-rank an EXISTING regex match set), `tg find`
     walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
@@ -1832,6 +1850,7 @@ def find(
     complete. Does not offer `--format rg` -- this is not a grep-parity surface.
     """
     from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.core.pipeline import ConfigurationError
 
     try:
         result = _execute_find(
@@ -1842,8 +1861,10 @@ def find(
             max_tokens=max_tokens,
             deadline=deadline,
             why_ranked=why_ranked,
+            grounding=grounding,
+            rerank=rerank,
         )
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ConfigurationError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     except BackendExecutionError as exc:
@@ -5850,29 +5871,33 @@ def agent(
         help="Disable the cold path's default 60s --deadline bound; let the scan run unbounded "
         "(a warm session daemon is unaffected either way).",
     ),
+    plan_hops: bool = typer.Option(
+        False, "--plan-hops", help="Plan at most three evidence-backed investigation stages."
+    ),
+    grounding: str = typer.Option(
+        "local", "--grounding", help="Dependency evidence: off, local, registry (explicit network)."
+    ),
+    rerank: str = typer.Option(
+        "off", "--rerank", help="Native advisory snippet reranking: off, auto, cross-encoder."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
-    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
-    # computed here, BEFORE the lazy agent_capsule import, path resolution, GPU-id parsing, and the
-    # daemon gate below, so front-door time counts against an EXPLICIT --deadline the same way the
-    # underlying scan already does. Deliberately based on `effective_deadline` (needs only the raw
-    # deadline/no_deadline params, no import) rather than the F4 `cold_deadline_seconds` default
-    # further down: that generous 60s cold-path-only fallback needs DEFAULT_AGENT_CLI_DEADLINE_SECONDS
-    # from the lazy import and only ever applies once we already know the daemon path was not taken,
-    # so it keeps its own existing (later) anchor point there -- this fix's scope is the EXPLICIT
-    # --deadline case, where anchoring here already closes the entire front-door gap. The
-    # irreducible interpreter-boot + Typer/Click dispatch prefix before Python even reaches this
-    # line remains undocumented here (~100-200ms, see the --deadline help text below).
+    # Anchor explicit deadlines before lazy imports and daemon lookup; the cold default starts
+    # only after a daemon miss. Interpreter startup precedes this command entry point.
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
+    from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.cli.agent_capsule import (
         DEFAULT_AGENT_CLI_DEADLINE_SECONDS,
         build_agent_capsule,
     )
+    from tensor_grep.cli.investigation_options import validate_investigation_options
+    from tensor_grep.core.pipeline import ConfigurationError
 
     try:
+        validate_investigation_options(grounding, rerank)
         resolved_path, resolved_query = _resolve_path_and_query(
             path=path,
             query_arg=query_arg,
@@ -5881,13 +5906,8 @@ def agent(
         )
         parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
-        # Task #108 (Tier-2 daemon capability): mirrors edit-plan's daemon-payload gate (:8452-8478
-        # below) -- print the full daemon payload through the SAME json/text branches and the SAME
-        # exit-2-on-scan-truncation contract as the cold path, then return early. A miss/error/
-        # mismatch (including the TRAP A `daemon_evidence_unreliable` sentinel) falls open to the
-        # unchanged cold build below. Skipped entirely when a --deadline was requested (a warm
-        # session's cached repo_map cannot honor a fresh per-request scan deadline), mirroring
-        # refs/callers/impact/blast-radius's own daemon gate.
+        # Daemon misses or unreliable evidence fall through to the cold build. Requests requiring
+        # fresh deadlines or new option contracts use the cold path until daemon schema support.
         daemon_payload = (
             _self._maybe_agent_via_running_daemon(
                 path=resolved_path,
@@ -5902,9 +5922,19 @@ def agent(
                 ignore=tuple(ignore),
             )
             if effective_deadline is None
+            and not plan_hops
+            and rerank == "off"
+            and grounding != "registry"
             else None
         )
         if daemon_payload is not None:
+            from tensor_grep.core.dependency_grounding import dependency_grounding
+
+            daemon_grounding = dependency_grounding(resolved_path, grounding, max_tokens=256)
+            if daemon_grounding is not None:
+                daemon_payload["dependency_grounding"] = daemon_grounding
+            else:
+                daemon_payload.pop("dependency_grounding", None)
             if json_output:
                 typer.echo(json.dumps(daemon_payload, ensure_ascii=False, indent=2))
             else:
@@ -5942,26 +5972,10 @@ def agent(
                 raise typer.Exit(2)
             return
 
-        # dogfood finding 1 (F4): default the COLD path's --deadline to 60s (mirrors codemap's
-        # #153) so a whole-repo `tg agent` call with no explicit --deadline still terminates in
-        # bounded time. Deliberately computed HERE, AFTER the warm-daemon gate above -- and from
-        # the RAW `deadline`/`no_deadline` params, never by reusing `effective_deadline` -- because
-        # `effective_deadline` intentionally conflates "no --deadline was given" with "--no-deadline
-        # was given" so the gate above treats them identically (a warm session's cached repo_map
-        # cannot honor a fresh per-request deadline either way). Collapsing this 60s default into
-        # THAT variable, or defaulting it on the typer.Option itself, would make effective_deadline
-        # never None on a default call, silently skipping the daemon probe on every single one of
-        # them -- the #108 capability.
+        # Apply the default 60-second bound after daemon lookup, preserving warm reuse.
         cold_deadline_seconds = effective_deadline
         if cold_deadline_seconds is None and not no_deadline:
             cold_deadline_seconds = DEFAULT_AGENT_CLI_DEADLINE_SECONDS
-            # The early anchor above only fires for an EXPLICIT --deadline (effective_deadline was
-            # non-None); this F4 default is a separate cold-path-only fallback that only exists once
-            # we already know the daemon path was not taken, so it gets its own anchor here (mirrors
-            # this same variable's pre-fix anchor point, just hoisted from inside build_agent_capsule
-            # to right after the daemon-miss decision -- not a regression for this implicit case,
-            # and not #197/#200's target: that residual is about a small EXPLICIT --deadline, not
-            # this generous default).
             deadline_monotonic = _cli_deadline_monotonic(cold_deadline_seconds)
 
         payload = build_agent_capsule(
@@ -5978,17 +5992,15 @@ def agent(
             ignore=tuple(ignore),
             deadline_seconds=cold_deadline_seconds,
             deadline_monotonic=deadline_monotonic,
+            plan_hops=plan_hops,
+            grounding=grounding,
+            rerank=rerank,
         )
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, ConfigurationError, BackendExecutionError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    # Cold path (PR-1 1D, mirrors the context-render cold path :7486-7499): build the payload once
-    # and dump it here for both the json and text branches -- BYTE-IDENTICAL to the old
-    # `build_agent_capsule_json` serialization (`ensure_ascii=False, indent=2`) -- so they share
-    # ONE scan-truncation gate below. Output the full payload FIRST, then exit 2 if the SCAN itself
-    # (not just the capsule's own render/token output budget) was capped -- `tg agent` was
-    # previously the only command in this family that never gated on `_scan_incomplete`.
+    # Emit the full capsule before applying the scan-truncation exit contract.
     if json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
@@ -10447,82 +10459,9 @@ def new(
     typer.echo(f"Created {scaffold_kind} scaffold in {target_path}.")
 
 
-@app.command(name="dogfood")
-def dogfood(
-    root: Path = typer.Option(Path("."), "--root", help="Repository root to validate."),
-    output: Path | None = typer.Option(None, "--output", help="Optional JSON report path."),
-    expected_version: str | None = typer.Option(
-        None, "--expected-version", help="Expected tensor-grep version. Defaults to pyproject."
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
-    progress: str = typer.Option(
-        "auto",
-        "--progress",
-        help="Progress reporting mode: auto, always, or never. Emits to stderr only.",
-    ),
-    progress_interval_s: float = typer.Option(
-        30.0,
-        "--progress-interval-s",
-        help="Seconds between progress heartbeats for the active phase.",
-    ),
-    timeout_s: float | None = typer.Option(
-        None,
-        "--timeout-s",
-        help="Maximum seconds for the nested readiness process; defaults to a derived budget.",
-    ),
-    no_shell_probes: bool = typer.Option(
-        False, "--no-shell-probes", help="Skip public shell version probes."
-    ),
-    no_wsl_probe: bool = typer.Option(False, "--no-wsl-probe", help="Skip the optional WSL probe."),
-) -> None:
-    """Run the agent-readiness dogfood gate; writes only explicit --output and a sibling readiness report."""
-    from tensor_grep.cli.dogfood import run_dogfood_readiness
-    from tensor_grep.cli.progress import normalize_progress_mode
+from tensor_grep.cli.dogfood_command import dogfood  # noqa: E402
 
-    try:
-        progress_mode = normalize_progress_mode(progress)
-        if progress_interval_s <= 0:
-            raise ValueError("progress interval must be greater than 0")
-        if timeout_s is not None and timeout_s <= 0:
-            raise ValueError("dogfood timeout must be greater than 0")
-    except ValueError as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=2) from exc
-    exit_code, report = run_dogfood_readiness(
-        root=root,
-        output=output,
-        expected_version=expected_version,
-        include_shell_probes=not no_shell_probes,
-        include_wsl_probe=not no_wsl_probe,
-        progress_mode=progress_mode,
-        progress_interval_s=progress_interval_s,
-        json_output=json_output,
-        timeout_s=timeout_s,
-    )
-    if json_output:
-        typer.echo(json.dumps(report, indent=2, sort_keys=True))
-    else:
-        summary = cast(dict[str, object], report["agent_readiness"]).get("summary")
-        if not isinstance(summary, dict):
-            summary = {}
-        verdict = cast(dict[str, object], report["verdict"])
-        typer.echo(f"Dogfood verdict: {verdict['status']}")
-        typer.echo(
-            "agent-readiness: "
-            f"passed={summary.get('passed', 0)} "
-            f"failed={summary.get('failed', 0)} "
-            f"skipped={summary.get('skipped', 0)}"
-        )
-        world_class_readiness = report.get("world_class_readiness")
-        if isinstance(world_class_readiness, dict):
-            typer.echo(f"world-class claim: {world_class_readiness.get('status', 'unknown')}")
-        if output is not None:
-            typer.echo(f"report: {output}")
-        failed_checks = verdict.get("failed_checks")
-        if isinstance(failed_checks, list) and failed_checks:
-            typer.echo("failed checks: " + ", ".join(str(check) for check in failed_checks))
-    if exit_code != 0:
-        raise typer.Exit(code=exit_code)
+app.command(name="dogfood")(dogfood)
 
 
 @app.command()
@@ -11671,6 +11610,9 @@ def _run_install_dense() -> dict[str, Any]:
 @app.command(name="install-dense")
 def install_dense(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    reranker: bool = typer.Option(
+        False, "--reranker", help="Also install the pinned native CPU cross-encoder assets."
+    ),
 ) -> None:
     """One-shot install of the `tg find` / `tg search --semantic` dense-embedding leg.
 
@@ -11684,6 +11626,19 @@ def install_dense(
     no partial model directory behind.
     """
     payload = _run_install_dense()
+    if reranker and payload["ok"]:
+        from tensor_grep.backends.base import BackendExecutionError
+        from tensor_grep.core.cross_encoder_assets import fetch_cross_encoder_assets
+
+        try:
+            destination = fetch_cross_encoder_assets()
+            payload["steps"]["fetch_reranker"] = {"status": "ok", "dir": str(destination)}
+            payload["reranker_dir"] = str(destination)
+            payload["message"] += f" Native cross-encoder assets ready at {destination}."
+        except BackendExecutionError as exc:
+            payload["steps"]["fetch_reranker"] = {"status": "failed", "detail": str(exc)}
+            payload["ok"] = False
+            payload["message"] = f"tg install-dense failed: cross-encoder install failed ({exc})"
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
     else:

@@ -11,7 +11,7 @@ affect available features.
 
 This guidance was checked against v1.125.0. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package
-origins separately. MCP's `serverInfo.version` is its contract version (1.15.0),
+origins separately. MCP's `serverInfo.version` is its contract version (1.16.0),
 not the installed CLI version; call `tg_mcp_capabilities` for both values.
 
 ## Choose a command
@@ -24,6 +24,10 @@ tg callers REPO_PATH SYMBOL --json
 tg prepare REPO_PATH 'task description' --json
 tg file-api REPO_PATH/src/example.py --json
 tg freshness REPO_PATH --json
+tg sql REPO_PATH --query-file query.sql --json
+tg dogfood --all --json
+tg agent REPO_PATH 'investigate symbol' --plan-hops --grounding local --json
+tg find 'task description' REPO_PATH --grounding off --rerank auto --json
 ```
 
 Symbol commands use path-first order. Search takes the pattern before the path.
@@ -64,6 +68,17 @@ data-flow completeness; `tg agent` does not accept `--render-profile`.
 
 A command deadline may stop new work without imposing a hard process timeout.
 Automation should impose its own external timeout.
+
+`tg find` and `tg agent` accept `--grounding off|local|registry` (default local).
+Inspect dependency constraints, lockfile provenance, omissions, and API evidence;
+registry mode explicitly requests bounded network metadata and never proves API compatibility.
+Use `--grounding registry` only when registry requests and receipt cache writes are intended.
+`tg agent --plan-hops` reuses existing evidence for up to three investigation stages.
+Preserve its ambiguity and partial status before choosing a target. See
+[investigation evidence](../../../docs/investigation.md) for the supported metadata slice.
+Native cross-encoder ordering is optional: explicitly install its assets using
+`tg install-dense --reranker`, then select `--rerank cross-encoder` to require scoring.
+`--rerank auto` discloses unavailable assets and retains the prior ordering.
 
 ## Prepare and verify changes
 

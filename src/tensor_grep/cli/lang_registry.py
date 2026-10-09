@@ -22,10 +22,32 @@ registered ``LanguageSpec`` becomes a labeled gap instead of a silent, unexplain
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_SOURCE_SNAPSHOT: ContextVar[tuple[str, bytes, str] | None] = ContextVar(
+    "tg_source_snapshot", default=None
+)
+
+
+@contextmanager
+def source_snapshot(path: Path, content: bytes, digest: str) -> Iterator[None]:
+    """Bind one verified whole-file read to the extractor, without changing its path."""
+    token = _SOURCE_SNAPSHOT.set((str(path), content, digest))
+    try:
+        yield
+    finally:
+        _SOURCE_SNAPSHOT.reset(token)
+
+
+def source_snapshot_digest(path: str) -> str | None:
+    snapshot = _SOURCE_SNAPSHOT.get()
+    return snapshot[2] if snapshot is not None and snapshot[0] == path else None
+
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers (see module docstring: this module imports nothing from repo_map.py
@@ -167,6 +189,14 @@ def read_source_text(path: Path) -> str:
 
     One read with utf-8-sig + errors="replace" (a two-step fallback to plain utf-8 kept the BOM
     as U+FEFF when the file also had an invalid byte)."""
+    snapshot = _SOURCE_SNAPSHOT.get()
+    if snapshot is not None and snapshot[0] == str(path):
+        return (
+            snapshot[1]
+            .decode("utf-8-sig", errors="replace")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
     return Path(path).read_text(encoding="utf-8-sig", errors="replace")
 
 

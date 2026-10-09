@@ -127,6 +127,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/harness_cookbook.md",
     "docs/index.md",
     "docs/installation.md",
+    "docs/investigation.md",
     "docs/multi_agent_context_plane.md",
     "docs/package_manager_publish.md",
     "docs/rebuild-guides/README.md",

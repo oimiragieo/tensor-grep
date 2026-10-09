@@ -6,6 +6,9 @@ pub mod backend_ast_workflow;
 pub mod backend_cpu;
 pub mod broken_pipe;
 pub mod cli;
+pub mod cross_encoder;
+mod cross_encoder_pins;
+mod cross_encoder_runtime;
 pub mod crossover;
 pub mod editor_plane;
 pub mod exit_codes;
@@ -364,7 +367,32 @@ fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ast_rewrite_plan_json, m)?)?;
     m.add_function(wrap_pyfunction!(ast_rewrite_apply_json, m)?)?;
     m.add_function(wrap_pyfunction!(_literal_pattern_hint, m)?)?;
+    m.add_function(wrap_pyfunction!(cross_encoder_scores, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+#[pyo3(signature = (model, tokenizer, runtime, query, documents, budget_seconds=10.0))]
+fn cross_encoder_scores(
+    py: Python<'_>,
+    model: String,
+    tokenizer: String,
+    runtime: String,
+    query: String,
+    documents: Vec<String>,
+    budget_seconds: f64,
+) -> PyResult<Vec<f32>> {
+    py.detach(|| {
+        cross_encoder::scores(
+            &model,
+            &tokenizer,
+            &runtime,
+            &query,
+            &documents,
+            budget_seconds,
+        )
+    })
+    .map_err(|err| pyo3::exceptions::PyRuntimeError::new_err(err.to_string()))
 }
 
 #[pyfunction]

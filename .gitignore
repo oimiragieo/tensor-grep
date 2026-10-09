@@ -52,6 +52,7 @@ npm/node_modules/
 /.tmp*/
 # Repository-scoped runtime state at any directory depth.
 .tensor-grep/
+.tg_cache/
 # Generated code maps contain timestamps and local paths; regenerate as needed.
 docs/code-map/
 # Machine-local Factory tooling state.

@@ -103,9 +103,7 @@ from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import (
     collect_device_inventory as collect_device_inventory,
 )
-from tensor_grep.core.pipeline import (
-    ConfigurationError,
-)
+from tensor_grep.core.pipeline import ConfigurationError
 from tensor_grep.core.pipeline import (
     Pipeline as Pipeline,
 )
@@ -158,24 +156,12 @@ def _mcp_server_version() -> str:
 # tg_scan/tg_audit/tg_checkpoint/tg_rewrite), always registered, compose the 46 legacy tools by
 # an `action` selector (plus 2 always-on singletons). All 48 legacy names stay registered with
 # identical signatures (`TG_MCP_LEGACY_TOOLS` defaults ON); OFF is operator-controlled.
-# 1.4.0 -> 1.5.0 (task #283): additive FIELDS on `tg_search`'s `scan_limit` payload --
-# `truncation_cause` ("scan_limit" | "unreadable_path" | "unknown"), `budget_remediable` (bool)
-# and, when non-zero, `unreadable_path_count`. Needed because #276 slice 1 widened
-# `DirectoryScanner.scan_truncated` to ALSO mean "the walk hit an unreadable path", a cause no
-# budget increase can fix, while this payload is `max_repo_files`-shaped -- so a client had no
-# way to tell "raise the limit" from "the limit is irrelevant". Every field is additive and
-# emitted ONLY when the scan was actually truncated, so a complete scan stays byte-identical
-# and no existing caller breaks; bumped so a version-pinning client can discover them.
-# 1.6.0 -> 1.7.0 (task 336, retroactive): `budget_remediable` reached the wire on a SECOND tool
-# family without a bump: #826 added it in `repo_map.py`, and `tg_repo_map` returns
-# `json.dumps(build_repo_map(...))` VERBATIM, so every `scan_limit` field the CLI gains, MCP
-# gains in the same commit (served at 1.6.0, which promised only `tg_search`'s copy).
-# Lesson: a pass-through handler makes any producer it wraps an MCP wire surface; grep for a
-# handler returning a builder's payload verbatim before calling a change CLI-only.
-# 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
-# + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
-# 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.15.0"  # 1.15.0: opt-in rank_fusion evidence
+# 1.5.0 added scan_limit cause/remediation fields to tg_search. Budget increases cannot fix
+# unreadable paths; complete results omit these additive fields.
+# 1.7.0 extended remediation metadata to repository tools. Pass-through producers are also
+# public MCP wire surfaces; review their payloads before calling a change CLI-only.
+# Later contracts added truncation metadata, input refusals, symbol coverage, and checkpoints.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.16.0"  # investigation, grounding, native reranking
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -2069,6 +2055,9 @@ def tg_agent_capsule(
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
     deadline: float | None = None,
+    plan_hops: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> str:
     """
     Return an Actionable Context Capsule for agent edit planning.
@@ -2084,6 +2073,9 @@ def tg_agent_capsule(
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         gpu_device_ids: Optional selected GPU IDs for native route evidence.
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
+        plan_hops: Build at most three stages from existing declaration/caller/test evidence.
+        grounding: Dependency metadata mode: off, local (default), or explicit registry requests.
+        rerank: Advisory native snippet ordering: off (default), auto, or cross-encoder.
         deadline: Optional wall-clock budget in seconds for the underlying repo-map build
             and capsule render/ranking pass (mirrors `tg agent --deadline` /
             `tg codemap --deadline`). When exceeded, the scan stops and returns a flagged
@@ -2124,6 +2116,9 @@ def tg_agent_capsule(
                         gpu_device_ids=gpu_device_ids,
                         gpu_timeout_s=gpu_timeout_s,
                         deadline_seconds=deadline,
+                        plan_hops=plan_hops,
+                        grounding=grounding,
+                        rerank=rerank,
                     ),
                     indent=2,
                 )
@@ -2136,7 +2131,7 @@ def tg_agent_capsule(
                 query=query,
                 path=path,
             )
-        except ValueError as exc:
+        except (ValueError, ConfigurationError) as exc:
             _log_tool_exception("tg_agent_capsule", exc)
             return _agent_capsule_error(
                 "Invalid input parameter for tg_agent_capsule",
@@ -2816,10 +2811,11 @@ def tg_find(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_tokens: int = _DEFAULT_MCP_FIND_MAX_TOKENS,
     deadline: float | None = None,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> str:
     """
-    Whole-repo hybrid semantic search (BM25 + local CPU dense-embedding relevance, RRF-fused
-    [+ optional MaxSim late rerank]) -- the agent-callable form of `tg find`.
+    Whole-repo hybrid semantic search with optional installed native cross-encoder ordering.
 
     Unlike `tg_search`/`tg_ast_search` (which re-rank an EXISTING pattern match set), `tg_find`
     walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
@@ -2843,15 +2839,10 @@ def tg_find(
         deadline: Optional wall-clock budget in seconds for the repo walk/chunk phase. When
             exceeded, ranking covers only the partial corpus scanned so far and the response
             is marked `result_incomplete=true` instead of running unbounded.
+        grounding: off, local (default), or registry (explicit bounded network requests).
+        rerank: off (default), auto (disclosed unavailable fallback), or cross-encoder (refusal).
     """
-    # S1 (fix-approach council must-fix, Wave 2d): confine the scan-root to the MCP root as the
-    # VERY FIRST operation, before any walk root is derived from it -- mirrors tg_file_importers's
-    # `path` confinement (round-8, audit #95) rather than tg_file_imports's `file` confinement,
-    # because `path` here IS the primary scan root `_execute_find` walks from (there is no
-    # separate `file` param to confine first). The round-8 live vuln was a secondary root derived
-    # from an UNconfined primary path (tg_session_file_importers's session_root) -- this call must
-    # run, and its RESOLVED result must be forwarded, before `_execute_find` (which derives its
-    # whole-repo walk root from `path`) is ever invoked.
+    # Confine the scan root before deriving or walking secondary paths.
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -2870,7 +2861,11 @@ def tg_find(
                 max_repo_files=max_repo_files,
                 max_tokens=max_tokens,
                 deadline=deadline,
+                grounding=grounding,
+                rerank=rerank,
             )
+        except ConfigurationError as exc:
+            return _find_invalid_input(query, path, str(exc))
         except FileNotFoundError as exc:
             _log_tool_exception("tg_find", exc)
             payload = _envelope_base(
@@ -2883,10 +2878,7 @@ def tg_find(
             payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
             return json.dumps(payload, indent=2)
         except BackendExecutionError as exc:
-            # C1 mirror (main.py's find command boundary): a genuine backend fault (corrupt dense
-            # model directory, encode-time crash) propagates out of `_execute_find` by design -- it is
-            # never silently degraded. SEC-007 sanitization strips raw model paths and third-party
-            # messages on the wire while preserving the distinct code and logging full trace to stderr.
+            # Preserve execution failures and sanitize private diagnostic paths on the wire.
             payload = _envelope_base(
                 routing_backend=_FIND_ROUTING_BACKEND,
                 routing_reason=_FIND_ROUTING_REASON,
@@ -2911,21 +2903,11 @@ def tg_find(
             payload["error"] = _sanitized_tool_error("tg_find", exc)
             return json.dumps(payload, indent=2)
 
-        # Stamp the MCP routing metadata on the success path so it matches the error envelopes above
-        # (which set _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON) -- `_execute_find` returns a bare
-        # SearchResult (routing_backend/reason=None), so without this the success response would carry
-        # `"routing_backend": null` while its own error responses carry "HybridRank", an odd
-        # within-tool inconsistency. Set on the handler's local SearchResult only, NOT inside
-        # `_execute_find`: the CLI's `tg find --json` output stays unchanged (the CLI has its own
-        # `_execute_find` call and its own SearchResult).
+        # Stamp routing on this MCP result without changing the CLI's shared pipeline output.
         result.routing_backend = _FIND_ROUTING_BACKEND
         result.routing_reason = _FIND_ROUTING_REASON
 
-        # D2 (reuse, not duplicate): `_execute_find` already returns a `SearchResult`; serialize it
-        # with the SAME `JsonFormatter` the CLI's `tg find --json` uses instead of hand-rolling a
-        # second match-payload builder, so `rank_fallback_reason` / `result_incomplete` /
-        # `incomplete_reason` / `matches[].file,line,line_number,text` land at the top level for free
-        # and cannot drift from the CLI's own envelope shape.
+        # Share the CLI serializer for ranking, partial results, and grounding evidence.
         from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
         envelope = json.loads(JsonFormatter().format(result))
@@ -4495,6 +4477,8 @@ def _tg_query_dispatch(
     max_tokens: int | None,
     deadline: float | None,
     paths_defaulted: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> str:
     """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
@@ -4546,6 +4530,8 @@ def _tg_query_dispatch(
             max_repo_files=max_repo_files,
             max_tokens=effective_max_tokens,
             deadline=deadline,
+            grounding=grounding,
+            rerank=rerank,
         )
     if action == "index":
         if pattern is None:
@@ -4580,6 +4566,8 @@ def tg_query(
     max_tokens: int | None = None,
     deadline: float | None = None,
     workspace_roots: list[str] | None = None,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> str:
     """
     Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
@@ -4607,6 +4595,7 @@ def tg_query(
         structured_json: Return bounded structured JSON (default true). text/ast only.
         max_repo_files: Maximum repository files to scan/walk before the scan is capped.
         limit: Maximum ranked chunks to return (action="find").
+        grounding, rerank: Dependency metadata and native candidate ordering for action="find".
         max_tokens: Bound the result set to ~N tokens (action="find"). None uses tg_find's
             own default (mirrors the CLI's `tg find --max-tokens` default); pass 0 for
             explicitly unbounded.
@@ -4675,6 +4664,8 @@ def tg_query(
                     limit=limit,
                     max_tokens=max_tokens,
                     deadline=deadline,
+                    grounding=grounding,
+                    rerank=rerank,
                 )
 
             results_by_root: dict[str, Any] = {}
@@ -4721,6 +4712,8 @@ def tg_query(
                     limit=limit,
                     max_tokens=max_tokens,
                     deadline=root_deadline,
+                    grounding=grounding,
+                    rerank=rerank,
                 )
                 try:
                     results_by_root[root] = json.loads(single_text)
@@ -4776,6 +4769,9 @@ def tg_context(
     gpu_device_ids: list[int] | None = None,
     gpu_timeout_s: float = 5.0,
     deadline: float | None = None,
+    plan_hops: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> str:
     """
     Task-shaped meta-tool: repository context for edit planning. Composes 4 legacy tools:
@@ -4812,6 +4808,8 @@ def tg_context(
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command (capsule).
         deadline: Optional wall-clock budget in seconds (capsule only; mirrors
             `tg agent --deadline` / `tg codemap --deadline`).
+        plan_hops, grounding, rerank: Investigation graph, dependency metadata, and advisory
+            native snippet ordering for action="capsule". Defaults false, local, and off.
     """
     try:
         try:
@@ -4867,6 +4865,9 @@ def tg_context(
                     gpu_device_ids=gpu_device_ids,
                     gpu_timeout_s=gpu_timeout_s,
                     deadline=deadline,
+                    plan_hops=plan_hops,
+                    grounding=grounding,
+                    rerank=rerank,
                     **max_tokens_kwargs,
                 )
             return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
