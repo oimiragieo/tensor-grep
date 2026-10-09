@@ -18,6 +18,8 @@ struct Scorer {
     _runtime_handles: Vec<std::fs::File>,
     session: Session,
     tokenizer: Tokenizer,
+    #[cfg(windows)]
+    _runtime_modules: crate::cross_encoder_runtime::LoadedLibraries,
 }
 
 static SCORER: OnceLock<Mutex<Option<Scorer>>> = OnceLock::new();
@@ -143,6 +145,8 @@ pub fn scores(
         let load_path = runtime_path.clone();
         #[cfg(not(windows))]
         let load_path = runtime_copy.path().join(name);
+        #[cfg(windows)]
+        let runtime_modules = crate::cross_encoder_runtime::preload(&runtime_path)?;
         ort::init_from(load_path)?
             .with_name("tensor-grep-cross-encoder")
             .with_telemetry(false)
@@ -169,6 +173,8 @@ pub fn scores(
             _runtime_handles: runtime_handles,
             session,
             tokenizer,
+            #[cfg(windows)]
+            _runtime_modules: runtime_modules,
         });
     }
     let scorer = guard.as_mut().context("missing cross-encoder session")?;

@@ -361,6 +361,11 @@ class SymbolGeneration:
     def _persist(self, merkle: str, complete: bool) -> None:
         try:
             prepare_directory(self.root, self.path.parent)
+            ignore_path = self.path.parent / ".gitignore"
+            try:
+                publish_confined(self.root, ignore_path, b"*\n", only_if_missing=True)
+            except FileExistsError:
+                read_confined(self.root, ignore_path, 65536)
             with cache_lock(self.root, self.path, self.deadline):
                 try:
                     connection = _database(self.root, self.path, deadline=self.deadline)

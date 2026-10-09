@@ -7,6 +7,8 @@ pub mod backend_cpu;
 pub mod broken_pipe;
 pub mod cli;
 pub mod cross_encoder;
+#[cfg(all(test, windows))]
+mod cross_encoder_loader_tests;
 mod cross_encoder_pins;
 mod cross_encoder_runtime;
 pub mod crossover;

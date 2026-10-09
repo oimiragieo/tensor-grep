@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import time
 from contextlib import closing
 from pathlib import Path
@@ -329,3 +330,66 @@ def test_generated_symbol_cache_does_not_consume_repository_scan_quota(
     if limit is not None:
         assert cold["scan_limit"]["scanned_files"] == 2
         assert warm["scan_limit"]["scanned_files"] == 3
+
+
+def test_owned_symbol_cache_keeps_a_clean_git_repository_clean(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True, timeout=10
+        ).stdout
+
+    git("init", "--quiet")
+    git("add", "--", source.name)
+    git(
+        "-c",
+        "user.email=fixture@example.test",
+        "-c",
+        "user.name=Fixture",
+        "commit",
+        "--quiet",
+        "-m",
+        "source fixture",
+    )
+    exclude = (tmp_path / ".git" / "info" / "exclude").read_bytes()
+    assert git("status", "--porcelain=v1", "--untracked-files=all") == ""
+    for _ in range(2):
+        result = repo_map.build_repo_map(tmp_path)
+        assert result["symbol_cache"]["status"] == "ready"
+        assert git("status", "--porcelain=v1", "--untracked-files=all") == ""
+    assert (tmp_path / ".tg_cache" / "symbols_v1" / ".gitignore").read_bytes() == b"*\n"
+    assert not (tmp_path / ".gitignore").exists()
+    assert (tmp_path / ".git" / "info" / "exclude").read_bytes() == exclude
+    source.write_text(source.read_text().replace("alpha", "bravo"), encoding="utf-8")
+    assert git("status", "--porcelain=v1", "--untracked-files=all").strip() == "M a.py"
+
+
+def test_existing_symbol_cache_ignore_file_is_preserved(tmp_path: Path) -> None:
+    _source(tmp_path)
+    cache = tmp_path / ".tg_cache" / "symbols_v1"
+    cache.mkdir(parents=True)
+    ignore = cache / ".gitignore"
+    original = b"# caller-owned ignore configuration\n*\n"
+    ignore.write_bytes(original)
+    assert repo_map.build_repo_map(tmp_path)["symbol_cache"]["status"] == "ready"
+    assert ignore.read_bytes() == original
+
+
+def test_linked_symbol_cache_ignore_file_refuses_persistence(tmp_path: Path) -> None:
+    _source(tmp_path)
+    cache = tmp_path / ".tg_cache" / "symbols_v1"
+    cache.mkdir(parents=True)
+    outside = tmp_path / "outside-ignore"
+    outside.write_bytes(b"caller state")
+    try:
+        (cache / ".gitignore").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    result = repo_map.build_repo_map(tmp_path)
+    assert _names(result) == {"alpha"}
+    assert "not-persisted" in result["symbol_cache"]["status"]
+    assert "linked cache" in result["symbol_cache"]["status"]
+    assert outside.read_bytes() == b"caller state"
+    assert not (cache / "metadata.lock").exists()
+    assert not (cache / "metadata.sqlite3").exists()

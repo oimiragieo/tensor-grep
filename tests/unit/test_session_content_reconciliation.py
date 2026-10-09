@@ -475,3 +475,24 @@ def test_refresh_does_not_carry_decision_from_another_authenticated_scope(
     assert "last_prepare" not in refreshed
     assert refreshed["root"] == payload["root"]
     assert refreshed["session_id"] == session_id
+
+
+def test_incremental_refresh_fallback_does_not_log_exception_payload(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    source, session_id, _ = _session(tmp_path)
+    source.write_text(source.read_text().replace("alpha", "bravo"), encoding="utf-8")
+    calls = []
+
+    def failed_incremental(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError("secret-sentinel")
+
+    monkeypatch.setattr(session_store, "build_repo_map_incremental", failed_incremental)
+    refreshed = session_store.refresh_session(session_id, str(tmp_path))
+    assert calls == [True]
+    assert refreshed.refresh_fallback_reason == "incremental_failed"
+    assert "RuntimeError" in caplog.text
+    assert "secret-sentinel" not in caplog.text
+    trusted = session_store.get_session(session_id, str(tmp_path))
+    assert {symbol["name"] for symbol in trusted["repo_map"]["symbols"]} == {"bravo"}

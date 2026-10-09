@@ -50,7 +50,7 @@ def _verify_parents(parents: list[tuple[Path, tuple[int, int]]]) -> None:
 @contextmanager
 def _pin_windows_parents(parents: list[tuple[Path, tuple[int, int]]]) -> Iterator[None]:
     """Directory handles deny rename/delete while filename-based Windows I/O runs."""
-    if os.name != "nt":
+    if sys.platform != "win32":
         yield
         return
     import ctypes
@@ -120,13 +120,15 @@ def read_confined(root: Path, path: Path, limit: int) -> bytes:
     return data
 
 
-def publish_confined(root: Path, path: Path, data: bytes) -> None:
+def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bool = False) -> None:
     parents = _real_components(root, path)
     identity = file_identity(path) if os.path.lexists(path) else None
     if identity is not None:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise OSError(f"symbol cache refuses linked cache: {path}")
+        if only_if_missing:
+            raise FileExistsError(f"symbol cache metadata already exists: {path}")
     authorization = WriteAuthorization(
         str(path), identity, dir_identity(path.parent), "symbol cache"
     )

@@ -23,6 +23,10 @@ parser/schema versions, scope, parsing limits, and ancestor ignore configuration
 works without Git and includes untracked source files. Additions, deletions, renames, and
 same-size edits with preserved mtimes are reconciled on the next build. Runtime
 `.tg_cache` directories are excluded from repository scan counts and file budgets.
+Before publishing cache data, the owned `symbols_v1` directory receives a no-clobber
+`.gitignore` containing `*`, keeping generated cache files out of Git worktree status.
+Existing cache ignore files are preserved; links or unsafe metadata prevent persistence.
+Project `.gitignore` and `.git/info/exclude` files are not modified.
 
 Raw repository-map output (`tg map PATH --json`) includes `symbol_cache` receipts for the
 content-reconciliation route, cache hits/misses, source bytes read, and generation Merkle

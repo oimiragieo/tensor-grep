@@ -178,4 +178,6 @@ def test_uv_cache_keys_should_include_rust_native_inputs_without_forced_reinstal
     assert "rust_core/Cargo.toml" in file_entries
     assert "rust_core/Cargo.lock" in file_entries
     assert "rust_core/src/**/*.rs" in file_entries
+    assert "rust_core/paste-compat/Cargo.toml" in file_entries
+    assert "rust_core/paste-compat/src/**/*.rs" in file_entries
     assert "tensor-grep" not in uv_config.get("reinstall-package", [])

@@ -863,9 +863,9 @@ def refresh_session(
                 refresh_type = "incremental"
             except Exception as exc:
                 logger.warning(
-                    "Incremental session refresh failed for %s, falling back to full rebuild: %s",
+                    "Incremental session refresh failed for %s; full rebuild (error type: %s)",
                     session_id,
-                    exc,
+                    type(exc).__name__,
                 )
                 repo_map = build_repo_map(
                     root,

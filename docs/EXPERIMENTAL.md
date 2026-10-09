@@ -24,6 +24,9 @@ Runtime 1.24.4 CPU libraries. Supported runtime assets cover Windows x64/ARM64,
 Linux x64/ARM64 (glibc 2.27+), and macOS ARM64 (macOS 14+). This is an explicit
 download of approximately 110 MB in addition to the dense model; queries never
 download assets. `TG_CROSS_ENCODER_DIR` selects the local asset directory.
+Windows requires the system Visual C++ runtime. Native loading restricts runtime
+dependencies to System32 and refuses a missing system dependency rather than
+searching the repository or PATH for DLLs.
 
 `tg find QUERY PATH --rerank cross-encoder` reorders the existing first twenty
 results using bounded pair tokenization (256 tokens) and a serialized reusable

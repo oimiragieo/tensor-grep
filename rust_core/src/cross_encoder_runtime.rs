@@ -48,3 +48,54 @@ pub fn pin(runtime: &Path) -> Result<Vec<File>> {
 pub fn pin(_runtime: &Path) -> Result<Vec<File>> {
     Ok(Vec::new())
 }
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn LoadLibraryExW(
+        path: *const u16,
+        reserved: *mut std::ffi::c_void,
+        flags: u32,
+    ) -> *mut std::ffi::c_void;
+    fn FreeLibrary(module: *mut std::ffi::c_void) -> i32;
+}
+
+#[cfg(windows)]
+pub struct LoadedLibraries(Vec<usize>);
+
+#[cfg(windows)]
+impl Drop for LoadedLibraries {
+    fn drop(&mut self) {
+        for &handle in self.0.iter().rev() {
+            unsafe { FreeLibrary(handle as *mut std::ffi::c_void) };
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn preload(runtime: &Path) -> Result<LoadedLibraries> {
+    use std::os::windows::ffi::OsStrExt;
+    let parent = runtime
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("missing runtime parent"))?;
+    let mut libraries = LoadedLibraries(Vec::new());
+    // All these files have been pinned and checksummed by the caller. Preload the
+    // provider before the main library, restricting every dependency to System32.
+    // ORT's later same-path load reuses these images; cwd/PATH DLLs are never searched.
+    for &(name, _, _) in crate::cross_encoder_pins::LIBRARIES.iter().rev() {
+        let mut path: Vec<u16> = parent.join(name).as_os_str().encode_wide().collect();
+        if path.contains(&0) {
+            bail!("invalid runtime library path");
+        }
+        path.push(0);
+        let handle = unsafe { LoadLibraryExW(path.as_ptr(), std::ptr::null_mut(), 0x800) };
+        if handle.is_null() {
+            bail!(
+                "safe ONNX loader failed (requires system Visual C++ runtime): {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        libraries.0.push(handle as usize);
+    }
+    Ok(libraries)
+}
