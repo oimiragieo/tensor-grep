@@ -109,9 +109,9 @@ def test_ci_workflow_should_keep_dependency_install_retry_guards() -> None:
 def test_ci_python_matrix_should_be_timeout_bounded() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     python_section = workflow.split("  test-python:", 1)[1].split("  test-rust-core:", 1)[0]
-    # Bumped 30->45 (2026-09-08): Windows ran this job 27-30min twice with zero test
-    # failures, leaving almost no margin under 30 while ubuntu/macos finish in 14-16min.
-    assert "timeout-minutes: 45" in python_section
+    # The full Windows 3.11 suite exhausted 45 minutes with no failures. Give only
+    # Windows bounded headroom; retain the existing allowance on other platforms.
+    assert "timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 45 }}" in python_section
 
 
 def test_ci_gpu_workflow_should_keep_dependency_retry_guards() -> None:
