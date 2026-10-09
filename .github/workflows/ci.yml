@@ -1034,7 +1034,8 @@ jobs:
               print(dep)
           PYEOF
           python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
-          python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
+          # Exercise actual Linux/macOS/Windows no-clobber directory primitives without downloads.
+          python -m pytest tests/e2e/test_native_*.py tests/unit/test_directory_publication.py tests/unit/test_cross_encoder_assets.py -v --tb=short -p no:cacheprovider
 
       # DC-002: the ONLY job that can run this, for exactly the reason the comment above
       # gives -- `test-python` has the deps but never builds the release binary; this job

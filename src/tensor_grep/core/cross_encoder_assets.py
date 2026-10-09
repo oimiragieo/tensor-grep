@@ -15,6 +15,7 @@ from typing import Any
 
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.cross_encoder_manifest import RUNTIMES
+from tensor_grep.io.directory_publication import publish_directory_no_replace
 
 REVISION = "ce0834f22110de6d9222af7a7a03628121708969"
 MODEL_BASE = f"https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/{REVISION}"
@@ -106,6 +107,8 @@ def _download(url: str, digest: str, size: int, deadline: float) -> bytes:
 def fetch_cross_encoder_assets(dest_dir: Path | None = None) -> Path:
     """Install verified immutable files; reinstallation verifies an existing installation."""
     root = dest_dir if dest_dir is not None else default_asset_dir()
+    if "\x00" in os.fspath(root):
+        raise BackendExecutionError("cross-encoder installation refuses an embedded NUL path")
     manifest = runtime_manifest()
     if root.exists():
         verified_assets(root)
@@ -133,7 +136,7 @@ def fetch_cross_encoder_assets(dest_dir: Path | None = None) -> Path:
                     (stage / name).write_bytes(data)
             verified_assets(stage)
             # Refuse replacement of existing destinations, including a racing installation.
-            stage.rename(root)
+            publish_directory_no_replace(stage, root)
     except BackendExecutionError:
         raise
     except Exception as exc:

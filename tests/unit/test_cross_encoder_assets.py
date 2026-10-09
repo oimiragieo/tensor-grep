@@ -87,6 +87,51 @@ def test_fetch_failure_discards_partial_install(
     assert not list(tmp_path.iterdir())
 
 
+def test_racing_empty_destination_is_preserved_without_publishing_assets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_assets(monkeypatch)
+    dest = tmp_path / "assets"
+    publish = assets.publish_directory_no_replace
+    identities = []
+
+    def race(stage: Path, destination: Path) -> None:
+        destination.mkdir()
+        identities.append((destination.stat().st_dev, destination.stat().st_ino))
+        publish(stage, destination)
+
+    monkeypatch.setattr(assets, "publish_directory_no_replace", race)
+    with pytest.raises(BackendExecutionError, match="installation failed"):
+        assets.fetch_cross_encoder_assets(dest)
+    assert identities == [(dest.stat().st_dev, dest.stat().st_ino)]
+    assert not list(dest.iterdir())
+    assert not list(tmp_path.glob(".tg-cross-encoder-*"))
+
+
+def test_publication_unavailable_discards_verified_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_assets(monkeypatch)
+
+    def unavailable(*args: object) -> None:
+        raise OSError("atomic no-replace directory publication unavailable")
+
+    monkeypatch.setattr(assets, "publish_directory_no_replace", unavailable)
+    with pytest.raises(BackendExecutionError, match="publication unavailable"):
+        assets.fetch_cross_encoder_assets(tmp_path / "assets")
+    assert not list(tmp_path.iterdir())
+
+
+def test_nul_installation_path_refused_before_download_or_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_assets(monkeypatch)
+    monkeypatch.setattr(assets, "_download", lambda *args: pytest.fail("invalid path downloaded"))
+    with pytest.raises(BackendExecutionError, match="embedded NUL path"):
+        assets.fetch_cross_encoder_assets(tmp_path / "new-parent" / "bad\x00name")
+    assert not list(tmp_path.iterdir())
+
+
 def test_download_size_checksum_deadline_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
     import time
 

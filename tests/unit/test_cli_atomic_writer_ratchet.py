@@ -58,6 +58,8 @@ Known gaps (stated plainly, not papered over):
   detector does not model native pointer calls. Actual Windows controls in test_confined_io.py
   prove source replacement/write denial, handle-bound cleanup, absent-target no-clobber, and
   the explicitly documented existing-destination residual race.
+  Linux/macOS exclusive directory rename calls have the same native-pointer limitation;
+  their module is inventoried and actual platform no-clobber controls cover the primitive.
 
 - The detector does NOT do full Hindley-Milner-grade type inference. ``Path.write_text`` /
   ``Path.write_bytes`` are always treated as write-shaped (no stdlib type other than
@@ -110,6 +112,7 @@ _CLI_SRC = _REPO_ROOT / "src" / "tensor_grep" / "cli"
 # The shared confined writer is also inventoried: moving it below CLI must not evade this gate.
 _SHARED_WRITER_FILES = {
     "io/confined.py": _CLI_SRC.parent / "io" / "confined.py",
+    "io/directory_publication.py": _CLI_SRC.parent / "io" / "directory_publication.py",
     "io/windows_publication.py": _CLI_SRC.parent / "io" / "windows_publication.py",
 }
 
@@ -719,6 +722,12 @@ def scan_file(path: Path, module: str) -> list[Candidate]:
 # (module, outer_function, operation) identity so a pure line-number drift from an unrelated
 # edit fails loudly rather than silently reclassifying a moved line as a fresh violation.
 _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
+    ("io/directory_publication.py", "publish_directory_no_replace", "os.rename"): (
+        "Windows-only atomic directory rename primitive; Windows refuses any existing "
+        "destination entry. POSIX never calls this fallback: Linux/Darwin invoke exclusive "
+        "native rename flags and refuse unavailable symbols/filesystems. Actual empty-dir "
+        "races have positive and refusal controls, and NUL paths are rejected before native calls."
+    ),
     ("symbols_cache_io.py", "_try_cache_lock", "os.open"): (
         "Opens the existing verified regular lock with O_RDWR|O_NOFOLLOW, never creates or "
         "truncates it, validates opened and current identities against the caller's recorded "
@@ -1649,6 +1658,7 @@ _EXPECTED_HELPER_BACKED = {
 # The complete sanctioned population, by (module, outer_function, operation) identity -- see
 # `_SANCTIONED_SITES` above for the per-entry rationale.
 _EXPECTED_SANCTIONED = {
+    ("io/directory_publication.py", "publish_directory_no_replace", "os.rename"),
     ("symbols_cache_io.py", "_try_cache_lock", "os.open"),
     ("io/confined.py", "publish_confined", "os.open"),
     ("io/confined.py", "publish_confined", "os.replace"),
