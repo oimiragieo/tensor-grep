@@ -72,7 +72,7 @@ def _cache_root() -> Path:
 
 def _ensure_cache_directory(root: Path) -> None:
     """Create the named cache path while pinning verified nonlinked parents."""
-    from tensor_grep.cli.symbols_cache_io import (
+    from tensor_grep.io.confined import (
         _pin_windows_parents,
         _real_components,
         _verify_parents,
@@ -146,7 +146,7 @@ def registry_receipts(
             # Cache is advisory and caller-writable: validate shape and exact origin; never use
             # cached metadata as executable instructions or API compatibility evidence.
             try:
-                from tensor_grep.cli.symbols_cache_io import read_confined
+                from tensor_grep.io.confined import read_confined
 
                 cached = json.loads(read_confined(Path(root.anchor), cached_path, 8192))
                 fetched = datetime.fromisoformat(cached["fetched_at"])
@@ -192,7 +192,7 @@ def registry_receipts(
                 response_sha256=hashlib.sha256(completed.stdout).hexdigest(),
             )
             try:
-                from tensor_grep.cli.symbols_cache_io import publish_confined
+                from tensor_grep.io.confined import publish_confined
 
                 _ensure_cache_directory(root)
                 publish_confined(

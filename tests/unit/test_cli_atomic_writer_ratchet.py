@@ -48,6 +48,9 @@ what the module count has always meant in this task's own measurements; recursin
 a deliberate, undone follow-up, not a silent gap (nothing under ``formatters/`` writes files as of
 this task, confirmed by manual review, not by this detector).
 
+The shared lower-layer ``io/confined.py`` primitive is included alongside the discovered CLI
+modules, so its extraction cannot hide writers from this census.
+
 Known gaps (stated plainly, not papered over):
 
 - The detector does NOT do full Hindley-Milner-grade type inference. ``Path.write_text`` /
@@ -67,8 +70,11 @@ Known gaps (stated plainly, not papered over):
 - Generated-source execution roots (production code that spawns ``python -c <payload>``) ARE
   discovered and surfaced -- ``test_generated_source_c_sites_are_surfaced`` pins the exact,
   reviewed set of real subprocess ``-c`` call sites in the scanned files -- but their PAYLOAD
-  strings are NOT recursively parsed and classified by this first cut of the ratchet. Two of the
-  three surfaced sites in ``main.py`` (``_install_release_native_frontdoor``'s detached-upgrade
+  strings are NOT recursively parsed and classified by this first cut of the ratchet.
+  ``dogfood_features._artifact_identity`` adds a fixed isolated metadata/origin probe whose
+  literal payload imports the selected installed package and prints JSON, with no writer calls;
+  a focused payload test below pins that read-only source shape and plants an unsafe writer.
+  Two of the remaining three surfaced sites (``_install_release_native_frontdoor``'s detached-upgrade
   helper scripts in `_schedule_windows_native_frontdoor_refresh` and
   `_schedule_windows_self_upgrade`) embed their OWN ``os.replace`` /
   ``write_text`` / ``shutil.copy2`` calls for the SAME native-binary-install flow that produced
@@ -95,6 +101,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CLI_SRC = _REPO_ROOT / "src" / "tensor_grep" / "cli"
 
 
+# The shared confined writer is also inventoried: moving it below CLI must not evade this gate.
+_SHARED_WRITER_FILES = {"io/confined.py": _CLI_SRC.parent / "io" / "confined.py"}
+
+
+def _source_path(name: str) -> Path:
+    return _SHARED_WRITER_FILES.get(name, _CLI_SRC / name)
+
+
 def _discover_scanned_production_files() -> tuple[str, ...]:
     """The population the census scans -- DISCOVERED from ``_CLI_SRC``, not a hand-maintained
     list. Task #859's instance fix (commit a41c86f) closed three sites in ``main.py``; this
@@ -106,7 +120,7 @@ def _discover_scanned_production_files() -> tuple[str, ...]:
     construction: no second edit required to add it to the population. See
     ``test_scanned_population_floor`` for the guard against a truncated/empty walk silently
     reading as "no violations"."""
-    return tuple(sorted(p.name for p in _CLI_SRC.glob("*.py")))
+    return tuple(sorted([*(p.name for p in _CLI_SRC.glob("*.py")), *_SHARED_WRITER_FILES]))
 
 
 _SCANNED_PRODUCTION_FILES = _discover_scanned_production_files()
@@ -696,6 +710,45 @@ def scan_file(path: Path, module: str) -> list[Candidate]:
 # (module, outer_function, operation) identity so a pure line-number drift from an unrelated
 # edit fails loudly rather than silently reclassifying a moved line as a fresh violation.
 _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
+    ("symbols_cache_io.py", "_try_cache_lock", "os.open"): (
+        "Opens the existing verified regular lock with O_RDWR|O_NOFOLLOW, never creates or "
+        "truncates it, validates opened and current identities against the caller's recorded "
+        "identity, then acquires only the nonblocking OS advisory lock. No content is written."
+    ),
+    ("io/confined.py", "publish_confined", "os.open"): (
+        "Shared POSIX confined writer primitive: parent descriptor is O_DIRECTORY|O_NOFOLLOW; "
+        "the same-directory temporary is O_CREAT|O_EXCL|O_NOFOLLOW with mode 0600. "
+        "Bytes are flushed/fsynced before publication relative to the held descriptor."
+    ),
+    ("io/confined.py", "publish_confined", "os.replace"): (
+        "Shared POSIX publication primitive, using held parent dir_fd for both names; "
+        "verified parents and the authorized original leaf identity are checked before replace. "
+        "Absent destinations use atomic no-clobber link instead. Refusals have positive controls."
+    ),
+    ("io/confined.py", "_publish_windows", "os.open"): (
+        "Windows counterpart runs only while CreateFile directory handles deny parent rename/"
+        "deletion. Claims a unique same-directory temporary with O_CREAT|O_EXCL, writes/fsyncs "
+        "through that descriptor, and always removes its owned temporary."
+    ),
+    ("io/confined.py", "_publish_windows", "os.replace"): (
+        "Shared Windows publication primitive runs under pinned nonlinked directory handles; "
+        "rechecks original leaf identity before replacement, while absent destinations use "
+        "atomic no-clobber os.link. Destination links are refused before entering this helper."
+    ),
+    ("dogfood_features.py", "_build_fixture", "Path.write_text"): (
+        "Private fixture builder's sole production caller is main, passing repo under its "
+        "owned TemporaryDirectory. Fixed fixture leaf names and fixed bytes only; never a "
+        "caller-selected project or published artifact. This is an explicit call-chain sanction."
+    ),
+    ("dogfood_features.py", "main", "Path.write_text"): (
+        "Writes fixed SQL sentinel bytes to query.sql inside the TemporaryDirectory opened "
+        "in this same function, and passes it only to checks before owned fixture cleanup."
+    ),
+    ("dogfood_regressions.py", "run_regressions", "Path.write_text"): (
+        "Private regression builder's sole production caller passes main's owned "
+        "TemporaryDirectory; fixed fixture names and fixed same-mtime-edit sentinels only. "
+        "No path points at the selected checkout. Explicit call-chain sanction, not arbitrary temp paths."
+    ),
     ("native_frontdoor.py", "_download_native_frontdoor_asset", "os.open"): (
         "TOCTOU fix (H2 deferral closed): claims `destination` exclusively via "
         "O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW BEFORE the streamed download starts, then writes "
@@ -1424,8 +1477,9 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     # (module, function), so relocating a root is visible but not a loophole.
     sites: list[tuple[str, str]] = []
     for fname in _SCANNED_PRODUCTION_FILES:
-        sites.extend(_real_subprocess_dash_c_sites(_read(_CLI_SRC / fname), fname))
+        sites.extend(_real_subprocess_dash_c_sites(_read(_source_path(fname)), fname))
     assert sorted(sites) == [
+        ("dogfood_features.py", "_artifact_identity"),
         ("main.py", "_schedule_windows_self_upgrade"),
         ("native_frontdoor.py", "_verify_target_python_tensor_grep_version"),
         ("windows_launcher.py", "_schedule_windows_native_frontdoor_refresh"),
@@ -1435,6 +1489,35 @@ def test_generated_source_c_sites_are_surfaced() -> None:
         "(update the module docstring's Known-gaps section and, ideally, extend the detector to "
         "recurse into it rather than just re-pinning this list)."
     )
+
+
+def test_dogfood_origin_probe_payload_has_no_writers_and_mutation_is_detected() -> None:
+    tree = ast.parse(_read(_CLI_SRC / "dogfood_features.py"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_artifact_identity"
+    )
+    payloads = []
+    for call in ast.walk(function):
+        if (
+            not isinstance(call, ast.Call)
+            or not call.args
+            or not isinstance(call.args[0], ast.List)
+        ):
+            continue
+        argv = call.args[0].elts
+        for index, value in enumerate(argv):
+            if isinstance(value, ast.Constant) and value.value == "-c":
+                payload = argv[index + 1]
+                assert isinstance(payload, ast.Constant) and isinstance(payload.value, str)
+                payloads.append(payload.value)
+    assert len(payloads) == 1
+    assert "package_origin" in payloads[0] and "extension_origin" in payloads[0]
+    assert scan_source(payloads[0], "origin-probe") == []
+    unsafe = payloads[0] + "\nfrom pathlib import Path\nPath('artifact').write_bytes(b'bad')"
+    candidates = scan_source(unsafe, "origin-probe")
+    assert len(candidates) == 1 and candidates[0].classification == VIOLATING
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1448,7 +1531,7 @@ def test_generated_source_c_sites_are_surfaced() -> None:
 def _scan_all_scoped_files() -> list[Candidate]:
     all_candidates: list[Candidate] = []
     for fname in _SCANNED_PRODUCTION_FILES:
-        all_candidates.extend(scan_file(_CLI_SRC / fname, fname))
+        all_candidates.extend(scan_file(_source_path(fname), fname))
     return classify_with_sanctions(all_candidates)
 
 
@@ -1567,6 +1650,14 @@ _EXPECTED_HELPER_BACKED = {
 # The complete sanctioned population, by (module, outer_function, operation) identity -- see
 # `_SANCTIONED_SITES` above for the per-entry rationale.
 _EXPECTED_SANCTIONED = {
+    ("symbols_cache_io.py", "_try_cache_lock", "os.open"),
+    ("io/confined.py", "publish_confined", "os.open"),
+    ("io/confined.py", "publish_confined", "os.replace"),
+    ("io/confined.py", "_publish_windows", "os.open"),
+    ("io/confined.py", "_publish_windows", "os.replace"),
+    ("dogfood_features.py", "_build_fixture", "Path.write_text"),
+    ("dogfood_features.py", "main", "Path.write_text"),
+    ("dogfood_regressions.py", "run_regressions", "Path.write_text"),
     # O_EXCL exclusivity claim guarding urlretrieve's symlink-following 'wb'; writes zero bytes.
     ("native_frontdoor.py", "_download_native_frontdoor_asset", "os.open"),
     ("_index_lock.py", "replace_with_retry", "os.replace"),

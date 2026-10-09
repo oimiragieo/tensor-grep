@@ -25,7 +25,7 @@ def validate_grounding(mode: str) -> None:
 
 def bounded_metadata(path: Path, root: Path) -> bytes:
     """Reject links, nonregular inputs, and overlarge metadata before parsing."""
-    from tensor_grep.cli.symbols_cache_io import read_confined
+    from tensor_grep.io.confined import read_confined
 
     return read_confined(root, path, MAX_METADATA_BYTES)
 

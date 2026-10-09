@@ -203,7 +203,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # The other handler in `session_root.py` (`_shared_territory_roots`) is deliberately NOT a
     # silent-loss site: it degrades an unresolvable candidate to its unresolved path instead of
     # dropping it, because that set is a DENY set and a dropped entry fails OPEN.
-    "session_store.py": 1,
+    # Content reconciliation now propagates unreadable-source evidence; the final site is gone.
     "session_root.py": 1,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,

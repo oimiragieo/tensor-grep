@@ -49,7 +49,7 @@ def runtime_manifest() -> dict[str, Any]:
 
 
 def _read_verified(path: Path, sha256: str, size: int) -> bytes:
-    from tensor_grep.cli.symbols_cache_io import read_confined
+    from tensor_grep.io.confined import read_confined
 
     try:
         data = read_confined(path.parent, path, size)
