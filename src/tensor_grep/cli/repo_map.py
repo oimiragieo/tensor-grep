@@ -4409,7 +4409,7 @@ def build_repo_map(
         if normalized_max_repo_files is not None:
             _capped = capped_file_count >= normalized_max_repo_files
             _cause = (
-                _scan_limit_cause(
+                _self._scan_limit_cause(
                     all_files, context_root, capped_file_count, normalized_max_repo_files
                 )
                 if _capped
