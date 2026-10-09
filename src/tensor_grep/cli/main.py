@@ -11625,7 +11625,7 @@ def install_dense(
     against the pinned HuggingFace revision) this exits non-zero with a clear message and leaves
     no partial model directory behind.
     """
-    payload = _run_install_dense()
+    payload = _self._run_install_dense()
     if reranker and payload["ok"]:
         from tensor_grep.backends.base import BackendExecutionError
         from tensor_grep.core.cross_encoder_assets import fetch_cross_encoder_assets

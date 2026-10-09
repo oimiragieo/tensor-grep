@@ -2360,7 +2360,7 @@ def _cached_ast_parse(source: str) -> ast.Module:
     size = len(source.encode("utf-8"))
     budget = _ast_cache_byte_budget()
 
-    if size > _max_parse_bytes() or size > budget:
+    if size > _self._max_parse_bytes() or size > budget:
         # Per-entry ceiling: too large to cache (or larger than the whole budget). Bypass means
         # "parse, don't store" -- the caller still gets a real, correct ast.Module.
         with _ast_cache_lock:
@@ -4208,7 +4208,7 @@ def _imports_and_symbols_for_path(
         file_size = path.stat().st_size
     except OSError:
         file_size = 0
-    if file_size > _max_parse_bytes():
+    if file_size > _self._max_parse_bytes():
         return [], []
     with _profiling_phase(_profiling_collector, "file_parse"):
         spec = lang_registry.spec_for_path(path)
@@ -4248,7 +4248,7 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
             file_size = path.stat().st_size
         except OSError:
             file_size = 0
-        if file_size > _max_parse_bytes():
+        if file_size > _self._max_parse_bytes():
             return []
         if spec.language_id == "go":
             return lang_go.go_imports_with_lines(path)
@@ -4312,7 +4312,7 @@ def build_repo_map(
         generation = SymbolGeneration(
             _infer_project_root(root) if root.is_file() else context_root,
             scope=root,
-            max_bytes=_max_parse_bytes(),
+            max_bytes=_self._max_parse_bytes(),
             ignore_policy=sorted(_SKIP_DIR_NAMES),
             deadline=deadline_monotonic,
         )
@@ -13210,7 +13210,7 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
         file_size = resolved_file.stat().st_size
     except OSError:
         file_size = 0
-    max_parse_bytes = _max_parse_bytes()
+    max_parse_bytes = _self._max_parse_bytes()
     over_cap = file_size > max_parse_bytes
 
     imports: list[dict[str, Any]] = []
