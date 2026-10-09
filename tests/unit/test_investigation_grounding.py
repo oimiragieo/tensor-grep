@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -7,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from tensor_grep.cli import main, mcp_server
@@ -312,13 +314,19 @@ def test_cli_options_and_invalid_grounding_refused_before_walk(tmp_path: Path, m
     refused = runner.invoke(main.app, ["find", "invoice", str(tmp_path), "--grounding", "online"])
     assert refused.exit_code == 1
     assert "grounding must" in refused.output
+    registered = get_command(main.app)
     for command, options in [
         ("find", ["--grounding", "--rerank"]),
         ("agent", ["--grounding", "--rerank", "--plan-hops"]),
     ]:
         help_output = runner.invoke(main.app, [command, "--help"])
         assert help_output.exit_code == 0
-        assert all(option in help_output.output for option in options)
+        # Rich help can split or style flag spelling differently on different terminals.
+        # Check Click's actual registration and independently smoke-test rendering above.
+        command_options = {
+            option for param in registered.commands[command].params for option in param.opts
+        }
+        assert set(options) <= command_options
 
 
 def test_mcp_options_forward_and_contract_version(tmp_path: Path, monkeypatch) -> None:
@@ -338,4 +346,93 @@ def test_mcp_options_forward_and_contract_version(tmp_path: Path, monkeypatch) -
     assert captured["plan_hops"] is True
     assert captured["grounding"] == "off"
     assert captured["rerank"] == "auto"
-    assert payload["mcp_contract_version"] == "1.16.0"
+    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+
+
+_MCP_INVESTIGATION_TOOLS = ("tg_find", "tg_query", "tg_agent_capsule", "tg_context")
+_MCP_INVESTIGATION_MODES = {
+    "grounding": ("off", "local", "registry"),
+    "rerank": ("off", "auto", "cross-encoder"),
+}
+
+
+def _investigation_call(tool: str, **kwargs) -> str:
+    if tool == "tg_query":
+        kwargs["action"] = "find"
+    if tool == "tg_context":
+        kwargs["action"] = "capsule"
+    return getattr(mcp_server, tool)(query="invoice", **kwargs)
+
+
+@pytest.mark.parametrize("tool", _MCP_INVESTIGATION_TOOLS)
+@pytest.mark.parametrize("param", _MCP_INVESTIGATION_MODES)
+def test_mcp_investigation_mode_schema_is_a_closed_enum(tool: str, param: str) -> None:
+    schemas = {entry.name: entry.inputSchema for entry in asyncio.run(mcp_server.mcp.list_tools())}
+    field = schemas[tool]["properties"][param]
+    assert field["type"] == "string"
+    assert set(field["enum"]) == set(_MCP_INVESTIGATION_MODES[param])
+
+
+@pytest.mark.parametrize("tool", _MCP_INVESTIGATION_TOOLS)
+@pytest.mark.parametrize(
+    "param,mode",
+    [(param, mode) for param, modes in _MCP_INVESTIGATION_MODES.items() for mode in modes],
+)
+def test_mcp_investigation_modes_accept_and_forward_supported_values(
+    tool: str, param: str, mode: str, tmp_path: Path, monkeypatch
+) -> None:
+    from tensor_grep.core.result import SearchResult
+
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    def find(query, path, **kwargs):
+        captured.update(kwargs)
+        return SearchResult()
+
+    def build(query, path, **kwargs):
+        captured.update(kwargs)
+        return {"query": query, "path": path}
+
+    monkeypatch.setattr(mcp_server, "_execute_find", find)
+    monkeypatch.setattr("tensor_grep.cli.agent_capsule.build_agent_capsule", build)
+    payload = json.loads(_investigation_call(tool, **{param: mode}))
+    assert "error" not in payload
+    assert captured[param] == mode
+
+
+@pytest.mark.parametrize("tool", _MCP_INVESTIGATION_TOOLS)
+@pytest.mark.parametrize("param", _MCP_INVESTIGATION_MODES)
+@pytest.mark.parametrize("candidate", ("unsupported-mode", "/outside/private-enum-marker"))
+def test_mcp_investigation_modes_refuse_before_execution_without_echo(
+    tool: str, param: str, candidate: str, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        mcp_server,
+        "_execute_find",
+        lambda *args, **kwargs: pytest.fail("invalid mode reached execution"),
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.agent_capsule.build_agent_capsule",
+        lambda *args, **kwargs: pytest.fail("invalid mode reached capsule scan"),
+    )
+    payload = json.loads(_investigation_call(tool, **{param: candidate}))
+    assert payload["error"]["code"] == "invalid_input"
+    assert param in payload["error"]["message"]
+    assert candidate not in json.dumps(payload)
+
+
+def test_mcp_find_configuration_failure_is_sanitized(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def fail(*args, **kwargs):
+        raise ConfigurationError("secret-configuration-marker C:/private/model.onnx")
+
+    monkeypatch.setattr(mcp_server, "_execute_find", fail)
+    output = mcp_server.tg_find("invoice")
+    payload = json.loads(output)
+    assert payload["error"]["code"] == "invalid_input"
+    assert "secret-configuration-marker" not in output
+    assert "C:/private" not in output
+    assert "secret-configuration-marker" in capsys.readouterr().err

@@ -44,6 +44,15 @@ def search_arg_error(
     return None
 
 
+def investigation_options_refusal(grounding: str, rerank: str) -> str | None:
+    """Constant refusals for enum inputs; never echo untrusted input as a diagnostic."""
+    if grounding not in {"off", "local", "registry"}:
+        return "grounding must be off, local, or registry"
+    if rerank not in {"off", "auto", "cross-encoder"}:
+        return "rerank must be off, auto, or cross-encoder"
+    return None
+
+
 # Everything tg_search's backend arm maps through ``search_error_message`` (ValueError covers
 # InvalidRegexError and other parser rejections).
 SEARCH_ERRORS = (

@@ -581,6 +581,8 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
     "model": "a model name used for local token estimation, not a path",
     "provider": "a semantic-provider mode name (native/lsp/hybrid), not a path",
     "render_profile": "an enum-like render mode name (full/compact/llm), not a path",
+    "grounding": "a validated enum (off/local/registry), not a path; registry requests use fixed allowlisted authorities",
+    "rerank": "a validated enum (off/auto/cross-encoder), not a model path; assets use the managed installation directory",
     "inline_rules": (
         "a string of inline ast-grep rule YAML (tg_ruleset_scan, mirrors CLI --inline-rules), "
         "not a path -- parsed via _load_inline_rule_specs with zero file I/O; length-bounded "

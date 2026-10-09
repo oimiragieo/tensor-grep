@@ -17,7 +17,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import anyio
 from mcp import types
@@ -42,7 +42,6 @@ from tensor_grep.cli.incompleteness import (
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
-    _execute_find,
     _format_unbounded_large_root_scan_error,
     _format_unbounded_vendored_root_scan_error,
     _search_with_cpu_fallback,
@@ -52,6 +51,9 @@ from tensor_grep.cli.main import (
 )
 from tensor_grep.cli.main import (
     _build_doctor_payload as _build_doctor_payload,
+)
+from tensor_grep.cli.main import (
+    _execute_find as _execute_find,
 )
 from tensor_grep.cli.main import (
     _run_ast_scan_payload as _run_ast_scan_payload,
@@ -138,29 +140,11 @@ def _mcp_server_version() -> str:
         return "0+unknown"
 
 
-# Stable contract version for the tg MCP server surface.
-# Bump on intentional breaking changes to the MCP tool/resource shape, OR (round-9) on a
-# tool-SET shape change (new tools / new params) worth flagging to a version-pinning client.
+# Bump the stable MCP contract for intentional tool/resource or tool-set shape changes.
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
-# 1.0.0 -> 1.1.0 (round-8, audit #95 Part 1): every tool's PRIMARY path/root param is now
-# confined to _mcp_root() (default cwd, override via TG_MCP_ROOT); an out-of-root path gets a
-# structured invalid_input refusal. Breaking-behavior, not breaking-shape; bumped per the gate.
-# 1.1.0 -> 1.2.0 (round-9, audit #95 Part 2): additive tool-set shape change -- 2 new tools
-# (tg_orient, tg_doctor) and new optional params on existing tools; existing callers are
-# unchanged. Bumped because `tools[]` grew, which a version-pinning client may want to detect.
-# 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change -- 1 new tool (tg_find, the
-# agent-callable form of `tg find`); no existing signature moved. Bumped because `tools[]`
-# grew, which a version-pinning client may want to detect.
-# 1.3.0 -> 1.4.0 (MCP consolidation Phase-1, #98): additive tool-set shape change -- 10 new
-# task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/tg_session/
-# tg_scan/tg_audit/tg_checkpoint/tg_rewrite), always registered, compose the 46 legacy tools by
-# an `action` selector (plus 2 always-on singletons). All 48 legacy names stay registered with
-# identical signatures (`TG_MCP_LEGACY_TOOLS` defaults ON); OFF is operator-controlled.
-# 1.5.0 added scan_limit cause/remediation fields to tg_search. Budget increases cannot fix
-# unreadable paths; complete results omit these additive fields.
-# 1.7.0 extended remediation metadata to repository tools. Pass-through producers are also
-# public MCP wire surfaces; review their payloads before calling a change CLI-only.
-# Later contracts added truncation metadata, input refusals, symbol coverage, and checkpoints.
+# Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
+# TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
+# Pass-through producers are public MCP wire surfaces; review their payload changes too.
 _TG_MCP_SERVER_CONTRACT_VERSION = "1.16.0"  # investigation, grounding, native reranking
 
 
@@ -889,6 +873,12 @@ def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
         "code": "invalid_input",
         "message": f"{tool} action={action!r} requires '{param}'.",
     }
+    return json.dumps(payload, indent=2)
+
+
+def _meta_invalid_input_error(tool: str, action: str, message: str) -> str:
+    payload = _meta_envelope(tool=tool, action=action)
+    payload["error"] = {"code": "invalid_input", "message": message}
     return json.dumps(payload, indent=2)
 
 
@@ -2056,8 +2046,8 @@ def tg_agent_capsule(
     gpu_timeout_s: float = 5.0,
     deadline: float | None = None,
     plan_hops: bool = False,
-    grounding: str = "local",
-    rerank: str = "off",
+    grounding: Literal["off", "local", "registry"] = "local",
+    rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
     """
     Return an Actionable Context Capsule for agent edit planning.
@@ -2091,6 +2081,9 @@ def tg_agent_capsule(
                 str(exc), code="invalid_input", query=query, path="[refused]"
             )
 
+        refusal = _av.investigation_options_refusal(grounding, rerank)
+        if refusal is not None:
+            return _agent_capsule_error(refusal, code="invalid_input", query=query, path=path)
         if not Path(path).expanduser().exists():
             return _agent_capsule_error(
                 f"Path not found: {path}",
@@ -2811,20 +2804,15 @@ def tg_find(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     max_tokens: int = _DEFAULT_MCP_FIND_MAX_TOKENS,
     deadline: float | None = None,
-    grounding: str = "local",
-    rerank: str = "off",
+    grounding: Literal["off", "local", "registry"] = "local",
+    rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
     """
     Whole-repo hybrid semantic search with optional installed native cross-encoder ordering.
 
-    Unlike `tg_search`/`tg_ast_search` (which re-rank an EXISTING pattern match set), `tg_find`
-    walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
-    vocabulary-mismatched query would miss. No API key, no GPU. The dense leg requires the
-    `semantic` extra and a fetched model; falls back to BM25-only (visibly, via
-    `rank_fallback_reason`, never silently) when either is missing -- a BM25-only result is
-    still a fully supported response. Bounded by default (`max_repo_files`, `deadline`, an
-    internal corpus-wide chunk cap): a truncated scan is marked `result_incomplete` with an
-    `incomplete_reason` rather than silently reporting a partial repo as complete.
+    Walks and ranks the repository without a pattern pre-filter. Dense ranking requires the
+    `semantic` extra and fetched model; missing assets disclose BM25 fallback through
+    `rank_fallback_reason`. Scan/file/chunk bounds disclose `result_incomplete` and its cause.
 
     Args:
         query: Natural-language or keyword query to rank the corpus against.
@@ -2849,12 +2837,14 @@ def tg_find(
         except PathConfinementError as exc:
             return _find_invalid_input(query, "[refused]", str(exc))
 
-        refusal = _av.tg_find_refusal(query, limit)
+        refusal = _av.investigation_options_refusal(grounding, rerank) or _av.tg_find_refusal(
+            query, limit
+        )
         if refusal is not None:
             return _find_invalid_input(query, path, refusal)
 
         try:
-            result = _execute_find(
+            result = _self._execute_find(
                 query,
                 path,
                 limit=limit,
@@ -2865,7 +2855,9 @@ def tg_find(
                 rerank=rerank,
             )
         except ConfigurationError as exc:
-            return _find_invalid_input(query, path, str(exc))
+            return _find_invalid_input(
+                query, path, _sanitized_tool_error("tg_find", exc, code="invalid_input")["message"]
+            )
         except FileNotFoundError as exc:
             _log_tool_exception("tg_find", exc)
             payload = _envelope_base(
@@ -4566,8 +4558,8 @@ def tg_query(
     max_tokens: int | None = None,
     deadline: float | None = None,
     workspace_roots: list[str] | None = None,
-    grounding: str = "local",
-    rerank: str = "off",
+    grounding: Literal["off", "local", "registry"] = "local",
+    rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
     """
     Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
@@ -4620,6 +4612,9 @@ def tg_query(
         except PathConfinementError as exc:
             return _meta_confinement_error("tg_query", action, exc)
 
+        refusal = _av.investigation_options_refusal(grounding, rerank)
+        if refusal is not None:
+            return _meta_invalid_input_error("tg_query", action, refusal)
         confined_roots: list[tuple[str, bool]] | None = None
         if workspace_roots:
             if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
@@ -4770,8 +4765,8 @@ def tg_context(
     gpu_timeout_s: float = 5.0,
     deadline: float | None = None,
     plan_hops: bool = False,
-    grounding: str = "local",
-    rerank: str = "off",
+    grounding: Literal["off", "local", "registry"] = "local",
+    rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
     """
     Task-shaped meta-tool: repository context for edit planning. Composes 4 legacy tools:
@@ -4817,6 +4812,9 @@ def tg_context(
         except PathConfinementError as exc:
             return _meta_confinement_error("tg_context", action, exc)
 
+        refusal = _av.investigation_options_refusal(grounding, rerank)
+        if refusal is not None:
+            return _meta_invalid_input_error("tg_context", action, refusal)
         if query is None:
             return _meta_missing_param_error("tg_context", action, "query")
 
