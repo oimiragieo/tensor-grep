@@ -28,6 +28,17 @@ Windows requires the system Visual C++ runtime. Native loading restricts runtime
 dependencies to System32 and refuses a missing system dependency rather than
 searching the repository or PATH for DLLs.
 
+New asset installations publish a verified staging directory atomically and
+refuse to replace any destination entry created during installation, including
+an empty directory. Publication uses Linux `renameat2(RENAME_NOREPLACE)`, macOS
+`renamex_np(RENAME_EXCL)`, or Windows rename semantics. If the platform primitive
+or filesystem support is unavailable, installation fails and cleans up its
+private staging directory. Linux installation needs the libc `renameat2` symbol,
+[introduced in glibc 2.28](https://man7.org/linux/man-pages/man2/rename.2.html).
+An older libc can therefore refuse a new installation even though the CPU
+runtime supports glibc 2.27; already-installed verified assets can still be used
+when their runtime requirements are satisfied.
+
 `tg find QUERY PATH --rerank cross-encoder` reorders the existing first twenty
 results using bounded pair tokenization (256 tokens) and a serialized reusable
 Rust ONNX session over the already-collected full chunk context. Reciprocal rank
