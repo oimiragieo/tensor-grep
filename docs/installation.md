@@ -95,7 +95,16 @@ If more than one launcher appears, the first one on `PATH` wins. Follow the inst
 
 For a source checkout, `tg doctor PATH --json` inspects that checkout's `.venv` metadata without executing its interpreter. A `stale_editable` diagnosis includes the refresh command `uv run --refresh-package tensor-grep tg --version`; run it from that checkout, then use its environment interpreter for checkout scripts. Unrelated or ambiguous environments are reported separately.
 
-Run `tg dogfood --features --json` for packaged feature checks on disposable fixtures. `tg dogfood --all --json` combines these with readiness checks; the default remains readiness. Set `TG_BIN` to choose an executable explicitly, and `TG_SIDECAR_PYTHON` when testing a specific native sidecar. The report records tested artifact identity and refuses version mismatches before running feature checks.
+Run `tg dogfood --features --json` for packaged feature checks on disposable fixtures.
+`tg dogfood --all --json` combines these with readiness checks; the default remains readiness.
+`--features` and `--all` are mutually exclusive. Outside a tensor-grep source checkout,
+the readiness portion performs installed-package self-checks and marks the repository-only
+readiness checks as skipped. Use `--root PATH_TO_TENSOR_GREP_CHECKOUT` to run those checks;
+inspect the selected checks and skips before interpreting a passing verdict.
+
+Set `TG_BIN` to choose an executable explicitly, and `TG_SIDECAR_PYTHON` when testing a
+specific native sidecar. The report records tested artifact identity and refuses version
+mismatches before running feature checks.
 
 ## What the install provides
 

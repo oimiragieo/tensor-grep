@@ -24,8 +24,9 @@ responses, and a shared deadline of at most five seconds. Dated receipts are cac
 caller writable advisory evidence and is labeled accordingly. Unavailable requests are
 reported individually. This mode can create receipt cache files but never installs packages.
 
-`tg agent PATH QUERY --plan-hops --json` adds `investigation_hops` without making network
-requests or changing files. The graph has at most three stages: declarations, supported
+`tg agent PATH QUERY --plan-hops --json` adds `investigation_hops`. Graph construction
+adds no network requests or file writes; the ordinary repository-map build may persist
+its rebuildable symbol cache. The graph has at most three stages: declarations, supported
 caller/import evidence, and associated tests. It reuses the existing map and capsule
 evidence under the same deadline and scan budget; it does not perform a second hop scan.
 Only supported edges are included: a test may connect directly to a declaration when
