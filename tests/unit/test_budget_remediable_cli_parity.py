@@ -13,7 +13,10 @@ everything, or False for everything, is a brick, and a brick passes a one-sided 
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tensor_grep.cli.incompleteness import budget_remediable
 
@@ -85,13 +88,11 @@ def test_docs_coverage_emits_the_flag_at_both_scan_limit_sites() -> None:
     assert "from tensor_grep.cli.incompleteness import budget_remediable" in text
 
 
-def test_repo_map_emits_the_flag_at_all_three_cause_sites() -> None:
+def test_repo_map_emits_the_flag_at_both_unified_cause_sites() -> None:
     """repo_map was the LAST cause-emitting surface; without it the class was half fixed (#336).
 
-    Enumerated mechanically, not from recollection -- a campaign note claimed SEVEN residual
-    surfaces and `git grep '"truncation_cause":'` found THREE, all in this one file.
-    agent_capsule/codemap/orient_capsule/sarif emit no cause at all, so wiring them would have
-    been dead code.
+    File and directory inputs now share one collection/emission path. The other emitter
+    applies output limits; both must continue carrying the shared remediability signal.
     """
     from tensor_grep.cli import repo_map as repo_map_mod
 
@@ -106,9 +107,9 @@ def test_repo_map_emits_the_flag_at_all_three_cause_sites() -> None:
     assert len(_paths) > 1, f"census lost its subject: {[p.name for p in _paths]}"
     text = "\n".join(p.read_text(encoding="utf-8") for p in _paths)
 
-    # Two scan_limit blocks + one output_limit block. The COUNT is the assertion: this file has a
-    # documented history of a fix landing on one arm and not its twin.
-    assert text.count('"budget_remediable": budget_remediable(_cause)') == 2
+    # One unified scan_limit block plus one output_limit block. Behavioral controls below
+    # cover both input scopes and prevent a count-only edit from hiding a lost route.
+    assert text.count('"budget_remediable": budget_remediable(_cause)') == 1
     assert text.count('"budget_remediable": budget_remediable("project-files")') == 1
     assert "from tensor_grep.cli.incompleteness import budget_remediable" in text
 
@@ -140,8 +141,45 @@ def test_repo_map_scan_limit_gates_on_capped_not_on_possibly_truncated() -> None
 
     # CONTROL: never gated on the narrow flag.
     assert '{"budget_remediable": budget_remediable(_cause)} if _truncated' not in text
-    # TREATMENT: gated on the broad one, at both twins.
-    assert text.count('{"budget_remediable": budget_remediable(_cause)} if _capped else {}') == 2
+    # TREATMENT: gated on the broad one in the unified file/directory emitter.
+    assert text.count('{"budget_remediable": budget_remediable(_cause)} if _capped else {}') == 1
+
+
+@pytest.mark.parametrize("file_scope", [False, True], ids=["directory", "file"])
+def test_unified_repo_map_complete_scopes_omit_remediability(
+    tmp_path: Path, file_scope: bool
+) -> None:
+    from tensor_grep.cli.repo_map import build_repo_map
+
+    source = tmp_path / "sample.py"
+    source.write_text("def sample():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "neighbor.py").write_text("def neighbor():\n    return 2\n", encoding="utf-8")
+    payload = build_repo_map(source if file_scope else tmp_path, max_repo_files=3)
+    assert payload["symbols"], "positive control did not parse source"
+    scan = _scan_limit(payload)
+    assert scan["truncation_cause"] is None
+    assert "budget_remediable" not in scan
+
+
+@pytest.mark.parametrize("cause, remediable", [("project-files", True), ("unreadable-path", False)])
+def test_unified_repo_map_capped_emitter_preserves_cause_semantics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cause: str, remediable: bool
+) -> None:
+    from tensor_grep.cli import repo_map
+
+    for name in ("sample.py", "neighbor.py"):
+        (tmp_path / name).write_text("def sample():\n    return 1\n", encoding="utf-8")
+    if cause == "unreadable-path":
+        # Control classifier output without requiring platform-specific permission failures.
+        # The emitter must retain false even though this cause is not possibly_truncated.
+        monkeypatch.setattr(repo_map, "_scan_limit_cause", lambda *args: cause)
+    payload = repo_map.build_repo_map(tmp_path, max_repo_files=1)
+    assert payload["symbols"], "positive control did not parse the capped source"
+    scan = _scan_limit(payload)
+    assert scan["scanned_files"] == 1
+    assert scan["truncation_cause"] == cause
+    assert scan["budget_remediable"] is remediable
+    assert scan["possibly_truncated"] is (cause == "project-files")
 
 
 def test_the_ratchet_and_the_product_agree_on_which_causes_are_remediable() -> None:
