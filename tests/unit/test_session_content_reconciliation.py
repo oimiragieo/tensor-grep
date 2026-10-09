@@ -486,13 +486,14 @@ def test_incremental_refresh_fallback_does_not_log_exception_payload(
 
     def failed_incremental(*args, **kwargs):
         calls.append(True)
-        raise RuntimeError("secret-sentinel")
+        raise type("secret_exception_type_sentinel", (RuntimeError,), {})("secret-sentinel")
 
     monkeypatch.setattr(session_store, "build_repo_map_incremental", failed_incremental)
     refreshed = session_store.refresh_session(session_id, str(tmp_path))
     assert calls == [True]
     assert refreshed.refresh_fallback_reason == "incremental_failed"
-    assert "RuntimeError" in caplog.text
+    assert "Incremental session refresh failed; performing a full rebuild" in caplog.text
+    assert "secret_exception_type_sentinel" not in caplog.text
     assert "secret-sentinel" not in caplog.text
     trusted = session_store.get_session(session_id, str(tmp_path))
     assert {symbol["name"] for symbol in trusted["repo_map"]["symbols"]} == {"bravo"}

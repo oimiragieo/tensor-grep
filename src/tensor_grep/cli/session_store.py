@@ -861,12 +861,8 @@ def refresh_session(
                     deadline_monotonic=deadline_monotonic,
                 )
                 refresh_type = "incremental"
-            except Exception as exc:
-                logger.warning(
-                    "Incremental session refresh failed for %s; full rebuild (error type: %s)",
-                    session_id,
-                    type(exc).__name__,
-                )
+            except Exception:
+                logger.warning("Incremental session refresh failed; performing a full rebuild")
                 repo_map = build_repo_map(
                     root,
                     max_repo_files=effective_max_repo_files,
