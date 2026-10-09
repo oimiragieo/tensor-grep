@@ -97,6 +97,9 @@ def _build_doctor_payload(
     path: str, config: str | None = None, *, with_lsp: bool
 ) -> dict[str, Any]:
     root = Path(path).resolve()
+    from tensor_grep.cli.checkout_environment import diagnose_checkout_environment
+
+    checkout_environment = diagnose_checkout_environment(root)
     if config:
         config_p = Path(config)
         resolved_config = config_p if config_p.is_absolute() else (root / config_p).resolve()
@@ -335,6 +338,7 @@ def _build_doctor_payload(
             source_version=source_version,
         ),
         "python_package_version_status": python_package_version_status,
+        "checkout_environment": checkout_environment,
         "source_version": source_version,
         "skipped_native_tg_binaries": skipped_native_tg_binaries,
         "path_tg_candidates": path_tg_candidates,
@@ -544,6 +548,11 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(f"rust_binary_remediation: {rust_binary_remediation}")
     if (status := payload.get("python_package_version_status")) and status != "ok":
         lines.append(f"python_package_version_status: {status}")
+    checkout_environment = payload.get("checkout_environment")
+    if isinstance(checkout_environment, dict):
+        lines.append(f"checkout_environment: {checkout_environment.get('status')}")
+        if remediation := checkout_environment.get("remediation"):
+            lines.append(f"checkout_environment_remediation: {remediation}")
     skipped_native_tg_binaries = cast(
         list[dict[str, str | None]],
         payload.get("skipped_native_tg_binaries", []),

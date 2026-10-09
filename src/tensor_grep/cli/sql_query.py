@@ -97,12 +97,16 @@ _SAFE_SQL_FUNCTIONS = {
 
 
 def _has_multiple_sql_statements(query: str) -> bool:
-    """Return True if query contains multiple SQL statements separated by semicolons."""
-    in_single = False
-    in_double = False
-    in_backtick = False
+    """Detect code after a completed statement in one bounded, linear pass.
+
+    Empty statements and comments do not establish a second statement. Quoted
+    strings/identifiers retain their semicolons; SQLite still validates syntax.
+    """
+    quote: str | None = None
     in_line_comment = False
     in_block_comment = False
+    statement_started = False
+    statement_terminated = False
     i = 0
     n = len(query)
     while i < n:
@@ -115,63 +119,27 @@ def _has_multiple_sql_statements(query: str) -> bool:
             if c == "*" and next_c == "/":
                 in_block_comment = False
                 i += 1
-        elif in_single:
-            if c == "'":
-                if next_c == "'":
+        elif quote is not None:
+            if c == quote:
+                if quote != "]" and next_c == quote:
                     i += 1
                 else:
-                    in_single = False
-        elif in_double:
-            if c == '"':
-                if next_c == '"':
-                    i += 1
-                else:
-                    in_double = False
-        elif in_backtick:
-            if c == "`":
-                in_backtick = False
-        else:
-            if c == "-" and next_c == "-":
-                in_line_comment = True
-                i += 1
-            elif c == "/" and next_c == "*":
-                in_block_comment = True
-                i += 1
-            elif c == "'":
-                in_single = True
-            elif c == '"':
-                in_double = True
-            elif c == "`":
-                in_backtick = True
-            elif c == ";":
-                rem = query[i + 1 :]
-                rem_has_code = False
-                r_line = False
-                r_block = False
-                j = 0
-                while j < len(rem):
-                    rc = rem[j]
-                    r_next = rem[j + 1] if j + 1 < len(rem) else ""
-                    if r_line:
-                        if rc == "\n":
-                            r_line = False
-                    elif r_block:
-                        if rc == "*" and r_next == "/":
-                            r_block = False
-                            j += 1
-                    else:
-                        if rc == "-" and r_next == "-":
-                            r_line = True
-                            j += 1
-                        elif rc == "/" and r_next == "*":
-                            r_block = True
-                            j += 1
-                        elif not rc.isspace() and rc != ";":
-                            rem_has_code = True
-                            break
-                    j += 1
-                if rem_has_code:
-                    return True
+                    quote = None
+        elif c == "-" and next_c == "-":
+            in_line_comment = True
+            i += 1
+        elif c == "/" and next_c == "*":
+            in_block_comment = True
+            i += 1
+        elif c == ";":
+            if statement_started:
+                statement_terminated = True
+        elif not c.isspace():
+            if statement_terminated:
+                return True
+            statement_started = True
+            if c in ("'", '"', "`", "["):
+                quote = "]" if c == "[" else c
         i += 1
     return False
 
@@ -197,6 +165,30 @@ def _sql_read_only_authorizer(
 
 
 MAX_SQL_PAYLOAD_BYTES: int = 5 * 1024 * 1024
+MAX_SQL_QUERY_FILE_BYTES: int = 1024 * 1024
+
+
+def read_query_file(path: Path) -> str:
+    """Read one bounded UTF-8 SQL file without scanning the target repository."""
+    try:
+        from tensor_grep.cli.symbols_cache_io import read_confined
+
+        absolute = path.expanduser().absolute()
+        parent = absolute.parent.resolve()
+        data = read_confined(parent, parent / absolute.name, MAX_SQL_QUERY_FILE_BYTES)
+    except OSError as exc:
+        if f"file exceeds {MAX_SQL_QUERY_FILE_BYTES} bytes:" in str(exc):
+            raise ValueError("SQL query file exceeds maximum size of 1 MiB") from exc
+        raise ValueError(f"SQL query file unreadable: {path}: {exc}") from exc
+    if len(data) > MAX_SQL_QUERY_FILE_BYTES:
+        raise ValueError("SQL query file exceeds maximum size of 1 MiB")
+    try:
+        query = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("SQL query file must use UTF-8 encoding") from exc
+    if not query.strip():
+        raise ValueError("SQL query file is empty")
+    return query
 
 
 def _install_query_deadline_handler(
@@ -429,8 +421,11 @@ def _run_imports_pass(
 
 
 def sql_command(
-    arg1: str = typer.Argument(..., help="Path to search, or SQL query string."),
+    arg1: str | None = typer.Argument(None, help="Path to search, or SQL query string."),
     arg2: str | None = typer.Argument(None, help="SQL query string (if path was first argument)."),
+    query_file: Path | None = typer.Option(
+        None, "--query-file", help="UTF-8 SQL file, at most 1 MiB; path defaults to ."
+    ),
     limit: int = typer.Option(100, "--limit", "-n", min=1, help="Maximum rows to return."),
     max_repo_files: int = typer.Option(
         _DEFAULT_AGENT_REPO_SCAN_LIMIT,
@@ -485,7 +480,26 @@ def sql_command(
                 t = t.strip()
             else:
                 break
-        return t.upper().startswith(("SELECT", "WITH", "EXPLAIN", "PRAGMA", "VALUES"))
+        return t.upper().startswith((
+            "SELECT",
+            "WITH",
+            "EXPLAIN",
+            "PRAGMA",
+            "VALUES",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "CREATE",
+            "DROP",
+            "ALTER",
+            "REPLACE",
+            "ATTACH",
+            "DETACH",
+            "VACUUM",
+            "BEGIN",
+            "COMMIT",
+            "ROLLBACK",
+        ))
 
     def _safe_path_exists(candidate: str) -> bool:
         # ci-local (Linux, Python 3.12) finding: `Path.exists()` swallows ENOENT/ENOTDIR/EBADF
@@ -526,7 +540,32 @@ def sql_command(
         # bucket it belongs in.
         return "path_unreadable"
 
-    if arg2 is None:
+    if query_file is not None:
+        try:
+            if arg2 is not None or (
+                arg1 is not None and _looks_like_sql(arg1) and not _safe_path_exists(arg1)
+            ):
+                raise ValueError("--query-file cannot be combined with an inline SQL query")
+            query = read_query_file(query_file)
+        except ValueError as exc:
+            if json_output:
+                typer.echo(
+                    json.dumps({
+                        "error": str(exc),
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": False,
+                    })
+                )
+            else:
+                typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from exc
+        path = arg1 or "."
+    elif arg1 is None:
+        typer.echo("Provide an inline SQL query or --query-file", err=True)
+        raise typer.Exit(code=2)
+    elif arg2 is None:
         path, query = ".", arg1
     else:
         p1_exists = _safe_path_exists(arg1)
@@ -602,7 +641,7 @@ def sql_command(
             typer.echo(err_msg, err=True)
         raise typer.Exit(code=1)
 
-    if len(query) > 10_000:
+    if query_file is None and len(query) > 10_000:
         err_msg = f"SQL query exceeds maximum length of 10000 characters (length: {len(query)})"
         if json_output:
             typer.echo(
@@ -752,7 +791,10 @@ def sql_command(
         # limits (unbounded `SQLITE_LIMIT_SQL_LENGTH`, 2000-column `SQLITE_LIMIT_COLUMN`).
         conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
+        conn.setlimit(
+            sqlite3.SQLITE_LIMIT_SQL_LENGTH,
+            MAX_SQL_QUERY_FILE_BYTES + 16 if query_file is not None else 10_000,
+        )
 
         # Sol audit round 6: NO query-deadline progress handler is installed for the probe or the
         # imports pass. Round 5's approach (install a handler before the probe to bound it, then

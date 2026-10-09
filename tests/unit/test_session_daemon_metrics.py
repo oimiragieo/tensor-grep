@@ -75,6 +75,7 @@ def _stub_dispatch(monkeypatch: Any, root: Path) -> None:
         path: str,
         *,
         payload: dict[str, Any],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         return {"ok": True, "session_id": session_id, "command": request.get("command")}
 
@@ -513,6 +514,7 @@ def test_client_pid_does_not_fragment_response_cache(tmp_path: Path, monkeypatch
         path: str,
         *,
         payload: dict[str, Any],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         call_count["n"] += 1
         return {

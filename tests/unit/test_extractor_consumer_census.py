@@ -27,7 +27,6 @@ DISPOSITIONS: dict[tuple[str, str], str] = {
     # (_language_coverage_gaps_for_universe -> source_coverage_gaps).
     ("cli/repo_map.py", "_imports_and_symbols_for_path"): "wired: universe gaps (same files)",
     ("cli/repo_map.py", "build_repo_map"): "wired: universe gaps (same files)",
-    ("cli/repo_map.py", "build_repo_map_incremental"): "wired: universe gaps (same files)",
     ("cli/repo_map.py", "build_file_imports"): "wired: attach_target_gaps",
     ("cli/repo_map.py", "_confirm_import_edges"): "wired: importer universe gaps",
     ("cli/diff_impact.py", "_extract_symbols"): "wired: target_file_gaps -> unparsed_changed_files",
@@ -64,6 +63,15 @@ def census(root: Path) -> set[tuple[str, str]]:
                     if isinstance(func, ast.Attribute)
                     else None
                 )
+                if name == "partial" and node.args:
+                    callback = node.args[0]
+                    name = (
+                        callback.id
+                        if isinstance(callback, ast.Name)
+                        else callback.attr
+                        if isinstance(callback, ast.Attribute)
+                        else None
+                    )
                 if name in EXTRACTORS:
                     found.add((rel, _enclosing_function(parents)))
             for child in ast.iter_child_nodes(node):
@@ -91,5 +99,14 @@ def test_census_negative_control_flags_a_new_consumer(tmp_path: Path) -> None:
     (tmp_path / "cli").mkdir()
     (tmp_path / "cli" / "rogue.py").write_text(
         "def f(p):\n    return _imports_and_symbols_for_path(p)\n", encoding="utf-8"
+    )
+    assert census(tmp_path) == {("cli/rogue.py", "f")}
+
+
+def test_census_negative_control_flags_a_partial_extractor_callback(tmp_path: Path) -> None:
+    (tmp_path / "cli").mkdir()
+    (tmp_path / "cli" / "rogue.py").write_text(
+        "def f(p):\n    return generation.product(p, partial(registry.extract_imports_and_symbols, p))\n",
+        encoding="utf-8",
     )
     assert census(tmp_path) == {("cli/rogue.py", "f")}

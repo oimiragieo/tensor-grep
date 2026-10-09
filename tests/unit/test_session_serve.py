@@ -239,7 +239,7 @@ def test_session_serve_stats_reports_cache_size_uptime_and_request_count(tmp_pat
     assert stats["request_count"] == 2
     assert isinstance(stats["uptime_seconds"], float)
     assert stats["uptime_seconds"] >= 0
-    assert stats["response_cache_stale_detection"] == "snapshot_mtime_only"
+    assert stats["response_cache_stale_detection"] == "snapshot_content_sha256"
     assert stats["response_cache_added_file_detection"] is False
     assert "refresh_on_stale" in stats["response_cache_refresh_hint"]
 
@@ -415,7 +415,7 @@ def test_session_daemon_retries_initial_missing_session_payload(
     monkeypatch.setattr(
         session_daemon_module,
         "serve_session_request",
-        lambda session_id, request, path, payload=None: {
+        lambda session_id, request, path, payload=None, **kwargs: {
             "version": 1,
             "session_id": session_id,
             "routing_reason": "session-context",

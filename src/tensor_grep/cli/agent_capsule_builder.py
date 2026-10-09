@@ -153,6 +153,9 @@ def build_agent_capsule_from_map(
     ignore: tuple[str, ...] = (),
     deadline_monotonic: float | None = None,
     _rescue_call_site_evidence: bool = False,
+    plan_hops: bool = False,
+    grounding: str = "local",
+    rerank: str = "off",
 ) -> dict[str, Any]:
     """Task #108 (Tier-2 daemon capability): the map-based core of ``build_agent_capsule``, taking an
     already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
@@ -368,7 +371,9 @@ def build_agent_capsule_from_map(
         query=query,
         path=resolved_path,
         max_files=max_files,
-        max_tokens=max_tokens,
+        max_tokens=(max_tokens - min(256, max_tokens // 4))
+        if plan_hops and max_tokens is not None
+        else max_tokens,
     )
     # DAR budget isolation: upstream (snippets/callers) keeps 100% of `max_tokens` -- DAR records
     # are metadata OUTSIDE that budget. Only the optional preview `text` on a DAR record is
@@ -905,6 +910,9 @@ def build_agent_capsule_from_map(
     deadline_exceeded_at_return = (
         deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
     )
+    for key in ("symbol_cache", "symbol_cache_coverage"):
+        if key in payload:
+            result[key] = payload[key]
     if (
         payload.get("partial")
         or outbound_dependencies_deadline_hit.hit
@@ -917,12 +925,19 @@ def build_agent_capsule_from_map(
         or deadline_exceeded_at_return
     ):
         result["partial"] = True
-        result["partial_reason"] = "deadline"
+        source_coverage_partial = bool(payload.get("symbol_cache_coverage"))
+        result["partial_reason"] = "source_coverage" if source_coverage_partial else "deadline"
         deadline_limit = payload.get("deadline_limit") or call_site_evidence.get("deadline_limit")
         result["deadline_limit"] = (
             dict(deadline_limit)
             if isinstance(deadline_limit, dict)
-            else {"deadline_exceeded": True}
+            else {
+                "deadline_exceeded": not source_coverage_partial
+                or deadline_exceeded_at_return
+                or outbound_dependencies_deadline_hit.hit
+                or detect_vendored_deadline_hit.hit
+                or bool(call_site_evidence.get("partial"))
+            }
         )
         # Cold-path assembly-tail SLA fix (#220): additive observability for the post-deadline
         # ASSEMBLY stages this fix bounds (vendored_subtree_detection, suggested_scope,
@@ -991,4 +1006,36 @@ def build_agent_capsule_from_map(
     # as scan_limit/suggested_scope above, so a reliable capsule stays byte-identical.
     if call_site_evidence_daemon_unreliable:
         result["daemon_evidence_unreliable"] = True
+    from tensor_grep.core.dependency_grounding import dependency_grounding
+
+    remaining_tokens = None if max_tokens is None else max(0, max_tokens - used_tokens)
+    if plan_hops:
+        from tensor_grep.cli.investigation_hops import investigation_hops
+
+        result["investigation_hops"] = investigation_hops(
+            result,
+            rm,
+            deadline_monotonic=deadline_monotonic,
+            max_tokens=remaining_tokens,
+            test_matches=payload.get("test_matches", []),
+        )
+        if remaining_tokens is not None:
+            import json
+
+            remaining_tokens = max(
+                0, remaining_tokens - len(json.dumps(result["investigation_hops"])) // 4
+            )
+    grounding_evidence = dependency_grounding(
+        resolved_path,
+        grounding,
+        deadline_monotonic=deadline_monotonic,
+        imports=rm.get("imports", []),
+        max_tokens=remaining_tokens,
+    )
+    if grounding_evidence is not None:
+        result["dependency_grounding"] = grounding_evidence
+    if rerank != "off":
+        from tensor_grep.cli.investigation_hops import rerank_capsule_snippets
+
+        rerank_capsule_snippets(result, query, rerank, deadline_monotonic=deadline_monotonic)
     return result

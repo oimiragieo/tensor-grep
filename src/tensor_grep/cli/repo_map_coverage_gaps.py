@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_cache import _MTIME_CACHE_CLEAR_REGISTRY
 
 _SAMPLE_LIMIT = 5
 _REPLACEMENT_CHAR = chr(0xFFFD)
@@ -105,6 +106,14 @@ def _stat_key(path: Path) -> tuple[str, int | None, int | None]:
 
 
 _MEMO: tuple[Any, dict[tuple[str, str], dict[str, Any]]] | None = None
+
+
+def _clear_source_coverage_cache() -> None:
+    global _MEMO
+    _MEMO = None
+
+
+_MTIME_CACHE_CLEAR_REGISTRY.append(_clear_source_coverage_cache)
 
 
 def _classify(files: list[Path], root: Path | None) -> dict[tuple[str, str], dict[str, Any]]:

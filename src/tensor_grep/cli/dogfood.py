@@ -134,11 +134,14 @@ def _build_verdict(agent_readiness: dict[str, Any], returncode: int) -> dict[str
     failed = 1
     if isinstance(summary, dict):
         raw_failed = summary.get("failed", 0)
-        failed = int(raw_failed) if isinstance(raw_failed, int) else 1
+        raw_timeout = summary.get("timed_out", 0)
+        failed = (int(raw_failed) if isinstance(raw_failed, int) else 1) + (
+            int(raw_timeout) if isinstance(raw_timeout, int) else 1
+        )
     failed_checks = [
         str(result.get("name"))
         for result in agent_readiness.get("results", [])
-        if isinstance(result, dict) and result.get("status") == "failed"
+        if isinstance(result, dict) and result.get("status") in {"failed", "timed_out"}
     ]
     status = "PASS" if returncode == 0 and failed == 0 else "FAIL"
     return {

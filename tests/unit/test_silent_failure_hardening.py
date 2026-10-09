@@ -201,7 +201,11 @@ _EXCLUDED_MODULES = frozenset({
 # - 2026-10-04 (PR #1195): 341 -> 340 (-1). cli/rg_replacement.py was deleted: `-o`/`--replace`
 #   output now comes from rg itself, leaving its only broad handler (_resolve_token) unreachable.
 #     341 - 1 (deleted module)                                                         340
-TOTAL_BROAD_HANDLERS_CEILING = 340
+# 2026-10-09 investigation improvements: observed 339 -> 341 (+2 reviewed fail-closed
+# boundaries in core/cross_encoder.py and core/cross_encoder_assets.py). Both re-raise
+# BackendExecutionError with the original cause; ledger records cite injected-failure tests.
+# Pin the actual population, using the one spare slot in the historical ceiling of 340.
+TOTAL_BROAD_HANDLERS_CEILING = 341
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

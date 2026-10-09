@@ -154,7 +154,9 @@ def validate_repo_cli_warmup_version_output(
         raise ReadinessError(
             f"repo-local uv/tg entrypoint is stale or unsynchronized: {exc}. "
             "Run `uv sync` or `uv run --refresh-package tensor-grep tg --version` "
-            "before trusting repo-local dogfood."
+            "before trusting repo-local dogfood. Run checkout scripts with the selected "
+            "checkout's .venv interpreter after refreshing; the harness interpreter may "
+            "otherwise import unrelated or stale package metadata."
         ) from exc
 
 

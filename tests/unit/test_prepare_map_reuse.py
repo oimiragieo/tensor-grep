@@ -3,9 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import tensor_grep.cli.repo_map as repo_map_module
 from tensor_grep.cli.session_resume_service import session_prepare
-from tensor_grep.cli.session_store import _session_payload_path, open_session
+from tensor_grep.cli.session_store import (
+    SessionStaleError,
+    _session_payload_path,
+    get_session,
+    open_session,
+    refresh_session,
+)
 
 # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): "Extract a
 # prepare-from-map service. Keep the existing cold wrapper building a map once. Pass only a
@@ -81,14 +89,8 @@ def test_warm_prepare_makes_zero_full_build_repo_map_calls(tmp_path: Path, monke
 def test_prepare_never_serves_a_map_whose_freshness_stamp_has_drifted(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """The other half of the accept criterion: never silently serve a stale map. Simulate a
-    payload whose `current_generation` stamp no longer matches its own `snapshot` field (the
-    exact identity AGT-02's `_snapshot_generation` guards) by corrupting the persisted session
-    payload directly -- a real on-disk file modification to a TRACKED path is already caught
-    earlier, by the pre-existing unconditional `_ensure_session_not_stale` check inside
-    `_load_session_payload` (session_store.py), which raises `SessionStaleError` before this
-    task's new freshness-reuse logic ever runs. That guard is out of scope here; this test
-    isolates the new comparison this task adds."""
+    """Tampered generation metadata is refused before reuse; explicit refresh derives a
+    valid map from sources rather than trusting the persisted stamp."""
     f1 = tmp_path / "calc.py"
     f1.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
 
@@ -109,9 +111,12 @@ def test_prepare_never_serves_a_map_whose_freshness_stamp_has_drifted(
     session_path.write_text(json.dumps(payload), encoding="utf-8")
 
     spy.reset()
+    with pytest.raises(SessionStaleError, match="authentication"):
+        session_prepare(session_id, "add numbers", str(tmp_path))
+    assert spy.calls == 0, "unauthenticated persisted state must be refused before rebuilding"
+    refresh_session(session_id, str(tmp_path))
     second = session_prepare(session_id, "add numbers", str(tmp_path))
     assert second["session_id"] == session_id
-    assert spy.calls >= 1, (
-        "a drifted current_generation stamp must fall back to a cold rebuild, never serve the "
-        "stale-relative-to-its-own-stamp repo_map"
-    )
+    restored = get_session(session_id, str(tmp_path))
+    assert restored["current_generation"] != "0" * 32
+    assert {symbol["name"] for symbol in restored["repo_map"]["symbols"]} == {"add"}

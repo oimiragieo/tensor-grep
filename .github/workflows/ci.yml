@@ -577,12 +577,11 @@ jobs:
     needs: [smoke, changes, ci-cost-os-gate]
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    # Windows runners have run this job to 27-30min twice in one session (2026-09-07, all
-    # 7000+ tests passing both times) while ubuntu/macos finish in 14-16min -- 30 was cutting
-    # it too close on Windows specifically and canceling a fully-green run mid-cleanup reads
-    # as a CI failure with zero evidence of one. Bumped for real headroom rather than
-    # re-running the job and hoping for a faster runner.
-    timeout-minutes: 45
+    # The Windows 3.11 lane reached the 45-minute job limit with 11254 tests passing
+    # and no failures (run 37892501396, 2026-10-09), including dependency setup.
+    # Keep bounded headroom for the full Windows suite and its accuracy gate;
+    # other platforms retain their existing allowance. No matrix expansion.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 45 }}
     permissions:
       contents: read
     strategy:
@@ -658,21 +657,19 @@ jobs:
       - name: Run Pytest
         # `eval` (tests/eval/) is the agent-accuracy golden-set gate: 15 real `tg prepare`
         # subprocess calls against this repo's own ranking pipeline. Deliberately excluded from
-        # this blanket run -- collection sorts tests/eval/ ahead of tests/unit/, and pyproject's
-        # `-x` fail-fast means a single failure here would abort before any unit test runs,
-        # exactly the flaky-e2e-masks-unit-tests trap already hit once on tests/e2e/. Run it
+        # this blanket run; accuracy failures are reported by the dedicated gate below. Run it
         # explicitly via `pytest tests/eval -m eval -v -s`.
         #
         # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
         # `pyo3/extension-module` cdylib) -- IN DISPUTE as of the task 22 investigation: see the
         # diagnostic step immediately above, which measures whether that is still true on THIS
         # job rather than repeating the claim as settled.
-        run: uv run pytest tests -v --tb=short -m "not eval"
+        # Override the local fail-fast default so one matrix run reports all regressions.
+        run: uv run pytest tests -v --tb=short -m "not eval" --maxfail=0
 
       # The other half of the `-m "not eval"` exclusion above (audit finding TEST-005).
       # Excluding tests/eval/ from the BLANKET run is correct and stays: collection sorts
-      # tests/eval/ ahead of tests/unit/, and `-x` fail-fast means one failure there would
-      # abort before a single unit test ran. But having correctly excluded it, nobody added
+      # tests/eval/ ahead of tests/unit/. But having correctly excluded it, nobody added
       # the step that runs it -- the comment above tells a HUMAN to run it, and no
       # automation follows an instruction. Measured: zero `run:` lines in any workflow
       # invoked tests/eval. A gate nobody runs is worse than no gate, because it is believed.
@@ -1036,7 +1033,8 @@ jobs:
               print(dep)
           PYEOF
           python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
-          python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
+          # Exercise actual Linux/macOS/Windows no-clobber directory primitives without downloads.
+          python -m pytest tests/e2e/test_native_*.py tests/unit/test_directory_publication.py tests/unit/test_cross_encoder_assets.py -v --tb=short -p no:cacheprovider
 
       # DC-002: the ONLY job that can run this, for exactly the reason the comment above
       # gives -- `test-python` has the deps but never builds the release binary; this job
@@ -1116,7 +1114,7 @@ jobs:
       # we run pytest but rely on our test suites dynamic `@pytest.mark.skipif`
       # to successfully parse the fallback architecture cleanly without crashing.
       - name: Run Pytest with GPU Hooks
-        run: uv run pytest tests -v -m "not slow"
+        run: uv run pytest tests -v -m "not slow" --maxfail=0
 
   benchmark-regression:
     name: benchmark-regression (ubuntu-latest)

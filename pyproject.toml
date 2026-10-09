@@ -10,7 +10,12 @@ manifest-path = "rust_core/Cargo.toml"
 # Bundle the license files referenced by the auto-emitted `License-File:` metadata. Without this,
 # maturin writes `License-File: LICENSE`/`NOTICE` into PKG-INFO but omits the actual files, and PyPI
 # rejects the upload: "400 License-File LICENSE does not exist in distribution file" (blocked v1.13.44).
-include = ["LICENSE", "NOTICE"]
+include = [
+    "LICENSE", "NOTICE",
+    { path = "rust_core/paste-compat/Cargo.toml", format = "sdist" },
+    { path = "rust_core/paste-compat/src/lib.rs", format = "sdist" },
+    { path = "rust_core/paste-compat/README.md", format = "sdist" },
+]
 # Private local state must never enter source distributions or wheels.
 exclude = [
     "**/.env", "**/.env.*", "**/.claude/**", "**/.gemini/**", "**/.codex/**",
@@ -30,6 +35,8 @@ cache-keys = [
     { file = "rust_core/Cargo.toml" },
     { file = "rust_core/Cargo.lock" },
     { file = "rust_core/src/**/*.rs" },
+    { file = "rust_core/paste-compat/Cargo.toml" },
+    { file = "rust_core/paste-compat/src/**/*.rs" },
 ]
 constraint-dependencies = [
     "aiohttp>=3.14.3",
@@ -211,6 +218,7 @@ dependencies = [
     # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
     "mcp>=1.29.0,<2",
     "pathspec>=1.0.4",
+    "packaging>=24.1",
     "pyyaml>=6.0",
     # opentelemetry-api only: the 6 `trace.get_tracer` call sites (cudf_backend.py,
     # cybert_backend.py, pipeline.py, cli/main.py) are all ImportError-guarded no-ops and no

@@ -42,7 +42,7 @@ to hit the cache when those options or the snapshot change.
 
 - MCP `tg_session_*` tools use the on-disk session store in process; they do not
   use the daemon socket's response cache.
-- Context-render/edit-plan response-cache hits use `snapshot_mtime_only` checks
+- Context-render/edit-plan response-cache hits use `snapshot_content_sha256` checks
   and do not detect added files. Run `tg session refresh` or opt into
   `refresh_on_stale` to include new files. Symbol commands have their own
   added-file-sensitive cache policy; consult [Contracts](CONTRACTS.md).

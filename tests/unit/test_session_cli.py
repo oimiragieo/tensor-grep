@@ -117,9 +117,6 @@ def test_session_open_can_cap_initial_repo_map(tmp_path: Path) -> None:
         "scanned_files": 2,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
-        # ADDED #336: the whole point of an exact-dict assertion is that a new key has to be
-        # declared here deliberately. `project-files` is the budget cap, so True is correct --
-        # an `unreadable-path` cap would emit False, which is the distinction that matters.
         "budget_remediable": True,
     }
     assert opened["build_seconds"] >= 0
@@ -166,9 +163,6 @@ def test_session_open_defaults_to_agent_safe_repo_map_cap(tmp_path: Path) -> Non
         "scanned_files": 512,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
-        # ADDED #336: the whole point of an exact-dict assertion is that a new key has to be
-        # declared here deliberately. `project-files` is the budget cap, so True is correct --
-        # an `unreadable-path` cap would emit False, which is the distinction that matters.
         "budget_remediable": True,
     }
 
@@ -1752,7 +1746,7 @@ def test_session_daemon_lifecycle(tmp_path: Path) -> None:
         "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
         "blast-radius/orient/agent requests"
     )
-    assert status["response_cache_stale_detection"] == "snapshot_mtime_only"
+    assert status["response_cache_stale_detection"] == "snapshot_content_sha256"
     assert status["response_cache_added_file_detection"] is False
     assert "refresh_on_stale" in status["response_cache_refresh_hint"]
 
@@ -1883,7 +1877,6 @@ def test_top_level_context_render_uses_running_daemon_response_cache(
             "optimize_context": False,
             "render_profile": "llm",
             "profile": False,
-            # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
             "max_repo_files": 2000,
         }
     ]
@@ -1945,7 +1938,6 @@ def test_top_level_edit_plan_uses_running_daemon_response_cache(
             "max_tokens": None,
             "max_symbols": 5,
             "profile": False,
-            # backlog #1: --max-repo-files default raised 512 -> 2000 for routing accuracy.
             "max_repo_files": 2000,
         }
     ]
@@ -2444,6 +2436,7 @@ def test_session_daemon_edit_plan_reuses_identical_response_cache(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -2511,6 +2504,7 @@ def test_session_daemon_refresh_on_stale_response_is_cached(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -2690,6 +2684,7 @@ def test_session_daemon_context_render_reuses_identical_response_cache(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -2756,6 +2751,7 @@ def test_session_daemon_context_render_without_session_uses_implicit_cached_sess
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -2827,6 +2823,7 @@ def test_session_daemon_implicit_sessions_are_keyed_by_repo_scan_budget(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         repo_map = payload.get("repo_map") or {}
         files = repo_map.get("files") if isinstance(repo_map, dict) else []
@@ -2953,6 +2950,7 @@ def test_session_daemon_edit_plan_without_session_uses_implicit_cached_session(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -3023,6 +3021,7 @@ def test_session_daemon_edit_plan_cache_checks_stale_files_before_hit(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1
@@ -3093,6 +3092,7 @@ def test_session_daemon_capped_refresh_checks_modified_files_before_hit(
         path: str,
         *,
         payload: dict[str, object],
+        deadline_monotonic: float | None = None,
     ) -> dict[str, object]:
         nonlocal calls
         calls += 1

@@ -215,52 +215,111 @@ def test_agent_default_cli_deadline_constant_is_60_seconds() -> None:
 
 # ==================================================================================================
 # Item 2: cold-path exit-2 coverage under a REAL --deadline-truncated scan (not a mocked payload).
-# Target `src/tensor_grep` itself (~80 real files) rather than a tiny tmp_path fixture -- a 0.1s
-# deadline needs genuine scan work to truncate against; a 2-file fixture can complete a full repo
-# scan in well under 100ms, which would make the test assert nothing. Only grows more reliable as
-# this source tree grows, never less.
+# Disposable source files keep this independent of checkout size, generated artifacts, and
+# persistent cache warmth. Advance the shared application clock only after real Python parsing;
+# production deadline checks and CLI exit gates still decide the result.
 # ==================================================================================================
 
-_REAL_REPO_DIR = Path(__file__).resolve().parents[2] / "src" / "tensor_grep"
+_COLD_PATH_REAL_DEADLINE_CASES = (
+    "map",
+    "context",
+    "context-render",
+    "agent",
+    "edit-plan",
+    "defs",
+    "source",
+    "blast-radius-plan",
+)
 
-_COLD_PATH_REAL_DEADLINE_CASES = {
-    "map": ["map", str(_REAL_REPO_DIR), "--deadline", "0.1", "--json"],
-    "context": ["context", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    "context-render": ["context-render", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    "agent": ["agent", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    "edit-plan": ["edit-plan", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    "defs": ["defs", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    # v1.72.1 dogfood M1: source/blast-radius-plan both go through the same build_repo_map
-    # AST-parse loop as defs above (proven reliable at 0.1s against this ~80-file real tree), so
-    # they reuse the identical real-deadline-truncation pattern.
-    "source": ["source", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    "blast-radius-plan": [
-        "blast-radius-plan",
-        str(_REAL_REPO_DIR),
-        "q",
-        "--deadline",
-        "0.1",
-        "--json",
-    ],
-}
+
+def _real_parse_deadline_fixture(tmp_path: Path, monkeypatch, *, expire: bool = True):
+    from tensor_grep.cli import orient_capsule, symbols_cache, symbols_cache_io
+
+    for name, symbol in [("a.py", "q"), ("b.py", "later"), ("c.py", "tail")]:
+        (tmp_path / name).write_text(f"def {symbol}():\n    return 1\n", encoding="utf-8")
+    assert not (tmp_path / ".tg_cache").exists(), "first parser call must not be a persistent hit"
+    clock = SimpleNamespace(now=time.monotonic(), parsed=[])
+    shared_time = SimpleNamespace(**{
+        name: getattr(time, name) for name in dir(time) if not name.startswith("_")
+    })
+    shared_time.monotonic = lambda: clock.now
+    for module in (
+        main,
+        repo_map,
+        symbols_cache,
+        symbols_cache_io,
+        orient_capsule,
+        agent_capsule,
+        agent_capsule_builder,
+        agent_capsule_call_sites,
+    ):
+        monkeypatch.setattr(module, "time", shared_time)
+    original_parse = repo_map._imports_and_symbols_for_path
+
+    def parse_then_spend(path, *args, **kwargs):
+        result = original_parse(path, *args, **kwargs)
+        clock.parsed.append((path.name, [symbol["name"] for symbol in result[1]]))
+        if expire:
+            clock.now += 1000.0
+        return result
+
+    monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", parse_then_spend)
+    return clock
+
+
+def _real_deadline_args(command: str, root: Path) -> list[str]:
+    query = [] if command in {"map", "orient"} else ["q"]
+    return [command, str(root), *query, "--deadline", "30", "--json"]
+
+
+def _assert_real_deadline_result(command: str, result, clock) -> None:
+    assert clock.parsed and clock.parsed[0] == ("a.py", ["q"]), "real first-file AST work required"
+    assert result.exit_code == (0 if command == "orient" else 2), f"{command}: {result.output}"
+    payload = json.loads(result.output)
+    assert payload.get("partial") is True, f"{command}: {result.output}"
+    assert payload.get("deadline_limit", {}).get("deadline_exceeded") is True, result.output
 
 
 @pytest.mark.parametrize("command", sorted(_COLD_PATH_REAL_DEADLINE_CASES))
-def test_real_deadline_truncation_exits_2_with_partial(command: str) -> None:
-    result = CliRunner().invoke(app, _COLD_PATH_REAL_DEADLINE_CASES[command])
-    assert result.exit_code == 2, f"{command}: {result.output}"
-    payload = json.loads(result.output)
-    assert payload.get("partial") is True, f"{command}: {result.output}"
+def test_real_deadline_truncation_exits_2_with_partial(tmp_path, monkeypatch, command: str) -> None:
+    clock = _real_parse_deadline_fixture(tmp_path, monkeypatch)
+    result = CliRunner().invoke(app, _real_deadline_args(command, tmp_path))
+    _assert_real_deadline_result(command, result, clock)
 
 
-def test_orient_real_deadline_truncation_stays_exit_0() -> None:
-    # docs/CONTRACTS.md:110 -- tg orient is the documented exception: it never gates on
-    # _scan_incomplete, so a truncated scan still exits 0, surfacing partial/deadline_limit only
-    # as informational fields (never a retry signal).
-    result = CliRunner().invoke(app, ["orient", str(_REAL_REPO_DIR), "--deadline", "0.1", "--json"])
+def test_orient_real_deadline_truncation_stays_exit_0(tmp_path, monkeypatch) -> None:
+    # Orient keeps its documented informational partial/deadline contract and exit 0.
+    clock = _real_parse_deadline_fixture(tmp_path, monkeypatch)
+    result = CliRunner().invoke(app, _real_deadline_args("orient", tmp_path))
+    _assert_real_deadline_result("orient", result, clock)
+
+
+def test_real_deadline_control_without_expiry_completes_all_parser_work(
+    tmp_path, monkeypatch
+) -> None:
+    clock = _real_parse_deadline_fixture(tmp_path, monkeypatch, expire=False)
+    result = CliRunner().invoke(app, _real_deadline_args("map", tmp_path))
     assert result.exit_code == 0, result.output
+    assert clock.parsed == [("a.py", ["q"]), ("b.py", ["later"]), ("c.py", ["tail"])]
     payload = json.loads(result.output)
-    assert payload.get("partial") is True, result.output
+    assert not payload.get("partial")
+    assert not payload.get("deadline_limit", {}).get("deadline_exceeded")
+
+
+def test_real_deadline_control_detects_a_dropped_builder_deadline(tmp_path, monkeypatch) -> None:
+    clock = _real_parse_deadline_fixture(tmp_path, monkeypatch)
+    original_build = repo_map.build_repo_map
+
+    def drop_deadline(*args, **kwargs):
+        kwargs["deadline_monotonic"] = None
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "build_repo_map", drop_deadline)
+    result = CliRunner().invoke(app, _real_deadline_args("map", tmp_path))
+    assert result.exit_code == 0, result.output
+    assert len(clock.parsed) == 3, "the defect must ignore the budget and finish actual work"
+    with pytest.raises(AssertionError, match="map:"):
+        _assert_real_deadline_result("map", result, clock)
 
 
 # ==================================================================================================
@@ -415,7 +474,7 @@ def test_agent_tail_overrun_after_checkpointed_pack_stage_still_reports_partial(
     floor's proven technique above): force the shared deadline to have ALREADY elapsed by the
     time execution reaches the tail (validation-file discovery + call-site-evidence), while the
     CHECKPOINTED scan + build_context_pack_from_map stage itself finishes well within budget --
-    the exact "scan+render fit, tail overruns" shape the existing 0.1s integration tests (which
+    the exact "scan+render fit, tail overruns" shape the first-parser deadline controls (which
     cross the deadline in the scan itself) do not cover. On this small a fixture neither the
     validation-file-resolve tail nor the rescue blast-radius scan individually takes measurable
     time, so this specifically isolates the FINAL catch-all (fix item 1), not items 2/3's more

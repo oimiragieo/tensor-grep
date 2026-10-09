@@ -93,6 +93,19 @@ tg doctor --json
 
 If more than one launcher appears, the first one on `PATH` wins. Follow the install script's diagnostics before removing old launchers.
 
+For a source checkout, `tg doctor PATH --json` inspects that checkout's `.venv` metadata without executing its interpreter. A `stale_editable` diagnosis includes the refresh command `uv run --refresh-package tensor-grep tg --version`; run it from that checkout, then use its environment interpreter for checkout scripts. Unrelated or ambiguous environments are reported separately.
+
+Run `tg dogfood --features --json` for packaged feature checks on disposable fixtures.
+`tg dogfood --all --json` combines these with readiness checks; the default remains readiness.
+`--features` and `--all` are mutually exclusive. Outside a tensor-grep source checkout,
+the readiness portion performs installed-package self-checks and marks the repository-only
+readiness checks as skipped. Use `--root PATH_TO_TENSOR_GREP_CHECKOUT` to run those checks;
+inspect the selected checks and skips before interpreting a passing verdict.
+
+Set `TG_BIN` to choose an executable explicitly, and `TG_SIDECAR_PYTHON` when testing a
+specific native sidecar. The report records tested artifact identity and refuses version
+mismatches before running feature checks.
+
 ## What the install provides
 
 Managed native installs use the native binary as the command front door and may invoke a managed Python sidecar for Python-backed commands. PyPI installs begin through the Python command. These are different entry points; [architecture](architecture.md) describes the split and [routing policy](routing_policy.md) describes text-search engine selection.

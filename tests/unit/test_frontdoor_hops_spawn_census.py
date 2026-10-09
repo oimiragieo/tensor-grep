@@ -63,6 +63,16 @@ _SUBPROCESS_ATTRS = {"run", "Popen", "check_output", "check_call", "call"}
 #: (module path under src/tensor_grep, qualified function) -> why this native-capable spawn is
 #: allowed to be unstamped. Keep each reason specific; a vague one is a hole.
 _EXEMPT: dict[tuple[str, str], str] = {
+    ("cli/dogfood_features.py", "main"): (
+        "Spawns only isolated Python -m tensor_grep.cli.dogfood_inventory, which imports "
+        "schemas and emits their inventory without invoking either CLI door. Feature checks "
+        "delegate to the independently stamped _run funnel."
+    ),
+    ("cli/dogfood_unified.py", "run_unified_dogfood"): (
+        "Spawns only isolated Python -m tensor_grep.cli.dogfood_features, a packaged test "
+        "orchestrator rather than a front door. Its tg children are stamped at _run; counting "
+        "this orchestration process as a door would consume the legitimate routing budget."
+    ),
     ("backends/ast_wrapper_backend.py", "_is_ast_grep_sg_binary"): (
         "runs `<ast-grep candidate> --version` to recognise the ast-grep `sg` binary; the "
         "argv[0] is an ast-grep install, never tensor-grep, so it cannot re-enter either door."
@@ -72,6 +82,48 @@ _EXEMPT: dict[tuple[str, str], str] = {
         "tensor-grep, so the call cannot re-enter either door."
     ),
 }
+
+
+def _fixed_isolated_module_spawns(source: str, function_name: str, module_name: str) -> bool:
+    tree = ast.parse(source)
+    function = next(node for name, node in _functions(tree) if name == function_name)
+    assignments = {
+        target.id: node.value
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    calls = _own_spawn_calls(function)
+    if len(calls) != 1 or not calls[0].args:
+        return False
+    argv = calls[0].args[0]
+    if isinstance(argv, ast.Name):
+        argv = assignments.get(argv.id)
+    return (
+        isinstance(argv, ast.List)
+        and len(argv.elts) >= 4
+        and all(
+            isinstance(node, ast.Constant) and node.value == value
+            for node, value in zip(argv.elts[1:4], ["-I", "-m", module_name], strict=True)
+        )
+    )
+
+
+def test_dogfood_non_frontdoor_exemptions_pin_the_actual_isolated_module() -> None:
+    for file, function, module in [
+        ("cli/dogfood_features.py", "main", "tensor_grep.cli.dogfood_inventory"),
+        ("cli/dogfood_unified.py", "run_unified_dogfood", "tensor_grep.cli.dogfood_features"),
+    ]:
+        assert _fixed_isolated_module_spawns(
+            (SRC / file).read_text(encoding="utf-8"), function, module
+        )
+    safe = "def example():\n    subprocess.run([python, '-I', '-m', 'inventory'])\n"
+    assert _fixed_isolated_module_spawns(safe, "example", "inventory")
+    assert not _fixed_isolated_module_spawns(
+        safe.replace("'inventory'", "'tensor_grep'"), "example", "inventory"
+    )
+    assert not _fixed_isolated_module_spawns(safe.replace("'-I'", "'-c'"), "example", "inventory")
 
 
 def _tokens(node: ast.AST) -> set[str]:

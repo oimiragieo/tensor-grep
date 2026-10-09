@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -196,7 +195,9 @@ def test_build_repo_map_incremental_matches_full_build_for_mixed_changes(tmp_pat
     incremental_map = repo_map.build_repo_map_incremental(previous_map, changeset)
     full_map = repo_map.build_repo_map(paths["project"])
 
-    assert incremental_map == full_map
+    assert {k: v for k, v in incremental_map.items() if k != "symbol_cache"} == {
+        k: v for k, v in full_map.items() if k != "symbol_cache"
+    }
 
 
 def test_build_repo_map_incremental_only_reparses_changed_files(
@@ -410,9 +411,10 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
     assert refreshed.refresh_fallback_reason == "incremental_failed"
     assert full_calls["count"] == 1
     assert any(
-        "falling back to full rebuild" in record.message and "boom" in record.message
+        "Incremental session refresh failed; performing a full rebuild" in record.message
         for record in caplog.records
     )
+    assert "boom" not in caplog.text
 
     payload = _session_payload(paths["project"], session_id)
     assert payload["refresh_type"] == "full"
@@ -464,10 +466,13 @@ def test_refresh_session_incremental_repo_map_matches_full_rebuild(tmp_path: Pat
     payload = _session_payload(paths["project"], session_id)
 
     assert refreshed.refresh_type == "incremental"
-    assert payload["repo_map"] == repo_map.build_repo_map(
+    expected_map = repo_map.build_repo_map(
         paths["project"],
         max_repo_files=session_store.DEFAULT_AGENT_REPO_MAP_LIMIT,
     )
+    assert {k: v for k, v in payload["repo_map"].items() if k != "symbol_cache"} == {
+        k: v for k, v in expected_map.items() if k != "symbol_cache"
+    }
 
 
 def test_session_context_raises_stale_error_with_changeset_summary(tmp_path: Path) -> None:
@@ -515,55 +520,37 @@ def test_incremental_refresh_preserves_plan_seed_for_unchanged_symbol(tmp_path: 
     assert after["edit_plan_seed"] == before["edit_plan_seed"]
 
 
-def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
+def test_incremental_and_full_builds_reuse_whole_file_products_for_small_changes(
     tmp_path: Path, monkeypatch
 ) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     for index in range(80):
-        _write(
-            src_dir / f"module_{index}.py",
-            f"def value_{index}():\n    return {index}\n",
-        )
-
+        _write(src_dir / f"module_{index}.py", f"def value_{index}():\n    return {index}\n")
     previous_map = repo_map.build_repo_map(project)
     changed_path = src_dir / "module_0.py"
     changed_path.write_text("def value_0():\n    return 999\n", encoding="utf-8")
-
     original = repo_map._imports_and_symbols_for_path
+    parsed: list[Path] = []
 
-    # The per-file parse cost must DOMINATE the fixed graph/PageRank/assembly
-    # overhead that BOTH paths share (the ``all_files`` loop in
-    # build_repo_map_incremental + build_repo_map). With a small sleep that
-    # shared overhead was ~equal to the sleep-savings, pinning the ratio at
-    # ~0.5 and flaking on CI (assert 0.2126 < 0.2113, missed by 0.0013s). A
-    # larger per-file sleep makes the timing reflect the real file-count
-    # savings (incremental reparses 1 of 80 files, ratio -> ~0.13), so the
-    # threshold below has ~14x headroom against overhead noise.
-    per_file_parse_cost = 0.02
-
-    def slow_parser(path: Path) -> tuple[list[str], list[dict[str, object]]]:
-        time.sleep(per_file_parse_cost)
+    def counted_parser(path: Path) -> tuple[list[str], list[dict[str, object]]]:
+        parsed.append(path)
         return original(path)
 
-    monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", slow_parser)
-
-    start = time.perf_counter()
-    repo_map.build_repo_map_incremental(
+    monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", counted_parser)
+    incremental = repo_map.build_repo_map_incremental(
         previous_map,
         {"added": [], "modified": [str(changed_path.resolve())], "removed": []},
     )
-    incremental_duration = time.perf_counter() - start
-
-    start = time.perf_counter()
-    repo_map.build_repo_map(project)
-    full_duration = time.perf_counter() - start
-
-    # Incremental reparses 1 file; full reparses all 80. The real ratio is
-    # ~0.13; 0.65 catches the regression class (incremental accidentally
-    # reparsing every file -> ratio -> ~1.0) while tolerating CI overhead noise.
-    assert incremental_duration < (full_duration * 0.65)
+    assert parsed == [changed_path]
+    assert incremental["symbol_cache"]["hits"] == 79
+    assert incremental["symbol_cache"]["misses"] == 1
+    parsed.clear()
+    reconciled = repo_map.build_repo_map(project)
+    assert parsed == []
+    assert reconciled["symbol_cache"]["hits"] == 80
+    assert reconciled["symbols"] == incremental["symbols"]
 
 
 # ---------------------------------------------------------------------------
