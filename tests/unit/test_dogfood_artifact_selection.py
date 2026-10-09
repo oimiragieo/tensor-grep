@@ -78,6 +78,7 @@ def test_harness_checks_explicit_sidecar_version(
 
     def probe(command, **kwargs):
         assert command[0] == "selected-sidecar-python"
+        assert kwargs["capture_output"] is True and not kwargs.get("text", False)
         return subprocess.CompletedProcess(
             command,
             0,
@@ -85,8 +86,8 @@ def test_harness_checks_explicit_sidecar_version(
                 "package_origin": "sidecar/tensor_grep/__init__.py",
                 "extension_origin": "sidecar/tensor_grep/rust_core.pyd",
                 "package_version": sidecar_version,
-            }),
-            "",
+            }).encode("utf-8"),
+            b"",
         )
 
     monkeypatch.setattr(harness.subprocess, "run", probe)
