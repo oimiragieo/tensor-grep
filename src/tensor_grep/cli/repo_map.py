@@ -1090,7 +1090,25 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
     small result with no signal it was cut short. Only propagates when the source was actually
     partial (a complete result carries neither key -- parity). Kept separate from _copy_scan_limit:
     scan_limit is the file-cap fact, partial is the time-budget outcome."""
-    if source.get("partial"):
+    coverage = source.get("symbol_cache_coverage")
+    parse_cap_only = isinstance(coverage, dict) and coverage.get("parse_cap_only") is True
+    symbol_answer = str(payload.get("routing_reason", "")).startswith("symbol-")
+    actual_deadline = any(
+        isinstance(item.get("deadline_limit"), dict)
+        and item["deadline_limit"].get("deadline_exceeded")
+        for item in (payload, source)
+    )
+    scan_truncated = any(
+        isinstance(item.get("scan_limit"), dict) and item["scan_limit"].get("possibly_truncated")
+        for item in (payload, source)
+    )
+    if symbol_answer and parse_cap_only and not actual_deadline and not scan_truncated:
+        # Empty-answer coverage gates judge parse-cap gaps for symbol answers. Raw maps
+        # and context/capsule source coverage retain their partial signal.
+        payload.pop("partial", None)
+        payload.pop("partial_reason", None)
+        payload.pop("deadline_limit", None)
+    elif source.get("partial"):
         payload["partial"] = True
         deadline_limit = source.get("deadline_limit")
         if isinstance(deadline_limit, dict):
@@ -1102,7 +1120,14 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
         payload["symbol_cache"] = {
             key: value
             for key, value in source["symbol_cache"].items()
-            if key not in {"hits", "misses", "bytes_reconciled"}
+            if key
+            in {
+                "schema_version",
+                "freshness_route",
+                "trusted_notifications",
+                "entry_authentication",
+                "snapshot_consistency",
+            }
         }
     if isinstance(source.get("symbol_cache_coverage"), dict):
         payload["symbol_cache_coverage"] = dict(source["symbol_cache_coverage"])
@@ -11938,6 +11963,7 @@ def build_symbol_defs_from_map(
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
+    payload["routing_reason"] = "symbol-defs"
     _copy_partial_signal(payload, repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(current) for current in repo_map.get("symbols", [])]
@@ -14768,6 +14794,7 @@ def build_symbol_blast_radius_from_map(
                 else None
             ),
         )
+    _copy_partial_signal(payload, repo_map)
     return _attach_profiling(payload, _profiling_collector)
 
 

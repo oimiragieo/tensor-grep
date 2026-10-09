@@ -321,6 +321,11 @@ class SymbolGeneration:
                 payload["symbol_cache_coverage"] = {
                     "omitted_files": len(rejected),
                     "sample": self.failures[:20],
+                    "parse_cap_only": all(
+                        f["reason"]
+                        == f"symbol cache file exceeds {self.max_bytes} bytes: {f['path']}"
+                        for f in self.failures
+                    ),
                     "budget_remediable": all(
                         "deadline" in f["reason"]
                         or f["reason"]

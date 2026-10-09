@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -770,3 +771,28 @@ def test_deadline_partial_reason_is_not_overwritten_by_a_coverage_gap(tmp_path, 
     assert payload.get("incomplete_reason_class") != "coverage_gap"
     assert "coverage_gap_limit" not in payload
     assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]
+
+
+def test_public_coverage_memo_reconciles_preserved_mtime_syntax_edits(tmp_path: Path) -> None:
+    source = tmp_path / "changed.py"
+    valid = b"def known(): return 1\n"
+    invalid = b"def known(>: return 1\n"
+    assert len(valid) == len(invalid)
+    source.write_bytes(valid)
+    original = source.stat()
+    assert repo_map.build_symbol_defs("known", tmp_path)["definitions"]
+    for data, broken in [(invalid, True), (valid, False)]:
+        source.write_bytes(data)
+        os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
+        assert source.stat().st_size == original.st_size
+        assert source.stat().st_mtime_ns == original.st_mtime_ns
+        result = repo_map.build_symbol_defs("known", tmp_path)
+        if broken:
+            assert result["no_match"] is True
+            assert result["result_incomplete"] is True
+            assert result["incomplete_reason_class"] == "coverage_gap"
+            assert any("syntax errors" in gap["reason"] for gap in result["resolution_gaps"])
+        else:
+            assert result["definitions"]
+            assert not result.get("resolution_gaps")
+            assert not result.get("result_incomplete")

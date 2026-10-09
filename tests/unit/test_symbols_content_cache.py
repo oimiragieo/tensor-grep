@@ -393,3 +393,27 @@ def test_linked_symbol_cache_ignore_file_refuses_persistence(tmp_path: Path) -> 
     assert outside.read_bytes() == b"caller state"
     assert not (cache / "metadata.lock").exists()
     assert not (cache / "metadata.sqlite3").exists()
+
+
+def test_parse_cap_cause_is_complete_even_when_omission_sample_is_bounded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "128")
+    _source(tmp_path, "ok.py", "known")
+    for index in range(25):
+        (tmp_path / f"big{index}.py").write_text("#" + "x" * 256, encoding="utf-8")
+    raw = repo_map.build_repo_map(tmp_path)
+    assert raw["partial"] is True
+    assert raw["symbol_cache_coverage"]["omitted_files"] == 25
+    assert len(raw["symbol_cache_coverage"]["sample"]) == 20
+    assert raw["symbol_cache_coverage"]["parse_cap_only"] is True
+    found = repo_map.build_symbol_defs_from_map(raw, "known")
+    assert not found.get("partial")
+    assert not found.get("result_incomplete")
+    assert "merkle_root" not in found["symbol_cache"]
+    assert "entry_authentication" in found["symbol_cache"]
+    absent = repo_map.build_symbol_defs_from_map(raw, "missing")
+    assert absent["result_incomplete"] is True
+    assert absent["incomplete_reason_class"] == "coverage_gap"
+    assert "TENSOR_GREP_MAX_PARSE_BYTES" in absent["incomplete_reason"]
+    assert "merkle_root" in raw["symbol_cache"]

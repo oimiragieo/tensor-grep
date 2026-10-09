@@ -53,6 +53,12 @@ def _without_profiling(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
     cleaned.pop("profile", None)
+    if isinstance(cleaned.get("symbol_cache"), dict):
+        cleaned["symbol_cache"] = {
+            key: value
+            for key, value in cleaned["symbol_cache"].items()
+            if key not in {"hits", "misses", "bytes_reconciled"}
+        }
     return cleaned
 
 
@@ -293,7 +299,12 @@ def test_profiled_outputs_preserve_existing_fields(
     profiled = builder(project, repo_map._ProfileCollector())
 
     assert "_profiling" not in baseline
-    assert _without_profiling(profiled) == baseline
+    if builder is _build_repo_map_payload:
+        # Measured cold/warm work differs; schema/provenance/Merkle receipts remain comparable.
+        assert baseline["symbol_cache"]["misses"] > 0
+        assert profiled["symbol_cache"]["hits"] > 0
+        assert baseline["symbol_cache"]["merkle_root"] == profiled["symbol_cache"]["merkle_root"]
+    assert _without_profiling(profiled) == _without_profiling(baseline)
 
 
 def test_profiling_breakdown_percentages_sum_close_to_one_hundred(tmp_path: Path) -> None:

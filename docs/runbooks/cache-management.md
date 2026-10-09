@@ -30,8 +30,11 @@ Project `.gitignore` and `.git/info/exclude` files are not modified.
 
 Raw repository-map output (`tg map PATH --json`) includes `symbol_cache` receipts for the
 content-reconciliation route, cache hits/misses, source bytes read, and generation Merkle
-root. Derived symbol and capsule responses retain stable cache provenance and coverage
-fields while omitting per-request `hits`, `misses`, and `bytes_reconciled` counters. Use
+root. Derived symbol and capsule responses retain stable schema, freshness, authentication,
+and snapshot provenance plus coverage evidence. Runtime counters, cache paths, status, and
+Merkle observations stay on raw maps. Symbol answers use the existing coverage rule: parse-cap
+gaps block empty answers and remain disclosed alongside found answers. Context capsules still
+report partial source coverage. Use
 the raw map receipts to verify cold misses and warm hits or measure reconciliation;
 do not infer cache inactivity from counters absent in `tg defs` or capsule output.
 Existing session changesets lack a trusted
