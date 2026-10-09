@@ -1094,9 +1094,9 @@ def _copy_partial_signal(payload: dict[str, Any], source: dict[str, Any]) -> Non
         payload["partial"] = True
         deadline_limit = source.get("deadline_limit")
         if isinstance(deadline_limit, dict):
-            prior_deadline = bool(payload.get("deadline_limit", {}).get("deadline_exceeded"))
-            payload["deadline_limit"] = dict(deadline_limit)
-            if prior_deadline:
+            prior_limit = dict(payload.get("deadline_limit") or {})
+            payload["deadline_limit"] = {**prior_limit, **deadline_limit}
+            if prior_limit.get("deadline_exceeded"):
                 payload["deadline_limit"]["deadline_exceeded"] = True
     if isinstance(source.get("symbol_cache"), dict):
         payload["symbol_cache"] = {

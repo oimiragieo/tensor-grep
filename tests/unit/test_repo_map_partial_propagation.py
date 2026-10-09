@@ -54,3 +54,44 @@ def test_symbol_builder_propagates_partial_from_defs(tmp_path: Path, monkeypatch
 
     assert result.get("partial") is True, "builder dropped the deadline partial signal"
     assert result["deadline_limit"]["files_scanned"] == 2
+
+
+def test_copy_partial_signal_merges_stage_counts_and_preserves_actual_deadline() -> None:
+    caller_limit = {
+        "deadline_exceeded": True,
+        "caller_files_scanned": 2,
+        "caller_files_total": 8,
+        "files_total": 99,
+    }
+    payload = {"partial": True, "deadline_limit": dict(caller_limit)}
+    source_limit = {"deadline_exceeded": False, "files_scanned": 3, "files_total": 10}
+    source = {"partial": True, "deadline_limit": source_limit}
+    repo_map._copy_partial_signal(payload, source)
+    assert payload["deadline_limit"] == {
+        **caller_limit,
+        "files_scanned": 3,
+        "files_total": 10,
+    }
+    source_limit["files_scanned"] = 99
+    caller_limit["caller_files_scanned"] = 99
+    assert payload["deadline_limit"]["files_scanned"] == 3
+    assert payload["deadline_limit"]["caller_files_scanned"] == 2
+
+
+def test_copy_partial_signal_generic_upstream_limit_preserves_stage_counts() -> None:
+    payload = {
+        "partial": True,
+        "deadline_limit": {
+            "deadline_exceeded": True,
+            "caller_files_scanned": 0,
+            "caller_files_total": 5,
+        },
+    }
+    repo_map._copy_partial_signal(
+        payload, {"partial": True, "deadline_limit": {"deadline_exceeded": True}}
+    )
+    assert payload["deadline_limit"] == {
+        "deadline_exceeded": True,
+        "caller_files_scanned": 0,
+        "caller_files_total": 5,
+    }
