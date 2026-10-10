@@ -20,6 +20,7 @@ from typing import Any
 from tensor_grep.cli import diff_impact_git as _dig
 from tensor_grep.cli import diff_impact_risk as _risk
 from tensor_grep.cli import lang_registry, repo_map
+from tensor_grep.cli.diff_impact_refs import _test_reference_evidence
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
     _scan_did_not_finish,
@@ -1241,6 +1242,10 @@ def build_diff_blast_radius(
     per_symbol_scores: list[float] = []
     symbol_evidence_complete = bool(changed_symbols) and not not_analyzed_paths
     all_changed_symbols_uncalled = bool(changed_symbols)
+    test_reference_data_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
+
+    if partial or not_analyzed_paths:
+        test_reference_data_complete = False
 
     for sym in changed_symbols:
         symbol_name = str(sym.get("name", ""))
@@ -1292,6 +1297,14 @@ def build_diff_blast_radius(
                 downgrade_reasons.append("symbol_blast_radius_partial")
                 partial_reasons.append("symbol_blast_radius_partial")
 
+        refs_complete, has_test_reference = _test_reference_evidence(
+            repo_m, symbol_name, deadline_monotonic, _is_test_path
+        )
+        if not refs_complete:
+            test_reference_data_complete = False
+        elif has_test_reference:
+            all_changed_symbols_uncalled = False
+
         # Collect callers
         for c in sym_radius.get("callers", []):
             c_file = str(c.get("file", "")).replace("\\", "/")
@@ -1340,6 +1353,15 @@ def build_diff_blast_radius(
     if (
         symbol_evidence_complete
         and all_changed_symbols_uncalled
+        and test_reference_data_complete
+        and not partial
+        and not not_analyzed_paths
+        and not any(
+            entry.get("reason", "").startswith(("coverage_gap", "extraction_failed"))
+            for entry in not_analyzed_paths
+        )
+        and not _scan_did_not_finish(repo_m)
+        and not (deadline_monotonic is not None and time.monotonic() >= deadline_monotonic)
         and risk_tier in {"high", "critical"}
     ):
         risk_tier = "medium"

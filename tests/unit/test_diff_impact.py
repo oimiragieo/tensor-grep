@@ -314,12 +314,163 @@ def test_uncalled_symbol_risk_cap_requires_complete_symbol_data(
     payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
     if unparseable:
-        assert "capped_uncalled_symbols" not in payload.get("risk_reasons", [])
+        assert "risk_reasons" in payload
+        assert "capped_uncalled_symbols" not in payload["risk_reasons"]
         assert payload["unparsed_changed_files"] == ["pkg/core.py"]
+        assert (payload["risk_tier"], payload["blast_radius_score"]) == ("low", 0.05)
     else:
-        assert payload["risk_tier"] in {"low", "medium"}
+        assert (payload["risk_tier"], payload["blast_radius_score"]) == ("medium", 0.714)
         assert "capped_uncalled_symbols" in payload.get("risk_reasons", [])
         assert payload.get("risk_reasons")
+
+
+def test_uncalled_symbol_cap_counts_non_call_test_references(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    core = pkg / "core.py"
+    core.write_text("def dormant():\n    return 1\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_core.py").write_text(
+        "from pkg.core import dormant\n\ndef test_dormant():\n    assert dormant is not None\n",
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def dormant():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    reference_evidence: list[tuple[bool, bool]] = []
+    original_reference_evidence = di._test_reference_evidence
+
+    def record_reference_evidence(*args: Any) -> tuple[bool, bool]:
+        evidence = original_reference_evidence(*args)
+        reference_evidence.append(evidence)
+        return evidence
+
+    monkeypatch.setattr(di, "_test_reference_evidence", record_reference_evidence)
+    payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert reference_evidence == [(True, True)]
+    assert payload["partial"] is False
+    assert "risk_reasons" in payload
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_uncalled_symbol_cap_disabled_by_repo_file_limit(tmp_path: Path) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    core = pkg / "core.py"
+    core.write_text("def dormant():\n    return 1\n", encoding="utf-8")
+    for index in range(4):
+        (pkg / f"module_{index}.py").write_text(
+            f"def helper_{index}():\n    return {index}\n", encoding="utf-8"
+        )
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def dormant():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    payload = build_diff_blast_radius(root=tmp_path, diff_text=diff, max_repo_files=2)
+
+    assert payload["partial"] is True
+    assert payload["risk_tier"] == "critical"
+    assert "risk_reasons" in payload
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_diff_impact_scenario_risk_pins(tmp_path: Path) -> None:
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def dormant():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    def uncalled_payload(name: str, *, test_reference: bool, max_repo_files: int | None = None):
+        root = tmp_path / name
+        pkg = root / "pkg"
+        pkg.mkdir(parents=True)
+        (pkg / "core.py").write_text("def dormant():\n    return 1\n", encoding="utf-8")
+        if test_reference:
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_core.py").write_text(
+                "from pkg.core import dormant\n\n"
+                "def test_dormant():\n    assert dormant is not None\n",
+                encoding="utf-8",
+            )
+        else:
+            for index in range(4):
+                (pkg / f"module_{index}.py").write_text(
+                    f"def helper_{index}():\n    return {index}\n", encoding="utf-8"
+                )
+        return build_diff_blast_radius(root=root, diff_text=diff, max_repo_files=max_repo_files)
+
+    called_root = tmp_path / "called"
+    called_pkg = called_root / "pkg"
+    called_pkg.mkdir(parents=True)
+    (called_pkg / "core.py").write_text("def compute():\n    return 100\n", encoding="utf-8")
+    (called_pkg / "user.py").write_text(
+        "from pkg.core import compute\n\ndef call_compute():\n    return compute()\n",
+        encoding="utf-8",
+    )
+    called_tests = called_root / "tests"
+    called_tests.mkdir()
+    (called_tests / "test_core.py").write_text(
+        "from pkg.core import compute\n\ndef test_compute():\n    assert compute() == 100\n",
+        encoding="utf-8",
+    )
+    called_diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n def compute():\n"
+        "-    return 100\n+    return 200\n"
+    )
+
+    cases = [
+        ("clean", build_diff_blast_radius(root=tmp_path / "clean", diff_text=""), "low", 0.0),
+        (
+            "called_symbol",
+            build_diff_blast_radius(root=called_root, diff_text=called_diff),
+            "critical",
+            0.727,
+        ),
+        ("uncalled_symbol", uncalled_payload("uncalled", test_reference=False), "medium", 1.0),
+        (
+            "test_non_call_reference",
+            uncalled_payload("test_reference", test_reference=True),
+            "critical",
+            1.0,
+        ),
+        (
+            "repo_file_limit",
+            uncalled_payload("repo_limit", test_reference=False, max_repo_files=2),
+            "critical",
+            1.0,
+        ),
+    ]
+    for scenario, payload, expected_tier, expected_score in cases:
+        assert (payload["risk_tier"], payload["blast_radius_score"]) == (
+            expected_tier,
+            expected_score,
+        ), scenario
 
 
 def test_extract_diff_hunks_from_git_mocked(monkeypatch: Any) -> None:
