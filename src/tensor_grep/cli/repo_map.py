@@ -1519,6 +1519,9 @@ def _iter_repo_bucket_files(
     ancestor_stack: tuple[_GitignoreMatcher, ...] = (),
     *,
     unreadable_hit: _UnreadablePathFlag | None = None,
+    exclude_codemap_dirs: bool = False,
+    excluded_generated_dirs: list[str] | None = None,
+    scan_root: Path | None = None,
 ) -> Iterator[Path]:
     # Nested-.gitignore support (MED-5 part B): load THIS directory's own matcher and push it onto
     # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
@@ -1543,6 +1546,15 @@ def _iter_repo_bucket_files(
                 directory = Path(entry.path)
                 if _should_skip_repo_dir(directory):
                     continue
+                if exclude_codemap_dirs:
+                    from tensor_grep.cli.codemap_exclusions import is_codemap_generated_dir
+
+                    if is_codemap_generated_dir(directory):
+                        if excluded_generated_dirs is not None and scan_root is not None:
+                            excluded_generated_dirs.append(
+                                directory.relative_to(scan_root).as_posix()
+                            )
+                        continue
                 if _stack_ignored(directory, is_dir=True, stack=stack):
                     continue
                 dir_paths.append(directory)
@@ -1562,10 +1574,24 @@ def _iter_repo_bucket_files(
     other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
 
     for directory in source_dirs:
-        yield from _iter_repo_bucket_files(directory, stack, unreadable_hit=unreadable_hit)
+        yield from _iter_repo_bucket_files(
+            directory,
+            stack,
+            unreadable_hit=unreadable_hit,
+            exclude_codemap_dirs=exclude_codemap_dirs,
+            excluded_generated_dirs=excluded_generated_dirs,
+            scan_root=scan_root,
+        )
     yield from file_paths
     for directory in other_dirs:
-        yield from _iter_repo_bucket_files(directory, stack, unreadable_hit=unreadable_hit)
+        yield from _iter_repo_bucket_files(
+            directory,
+            stack,
+            unreadable_hit=unreadable_hit,
+            exclude_codemap_dirs=exclude_codemap_dirs,
+            excluded_generated_dirs=excluded_generated_dirs,
+            scan_root=scan_root,
+        )
 
 
 def _iter_repo_files(
@@ -1576,6 +1602,8 @@ def _iter_repo_files(
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
     unreadable_hit: _UnreadablePathFlag | None = None,
+    exclude_codemap_dirs: bool = False,
+    excluded_generated_dirs: list[str] | None = None,
 ) -> list[Path]:
     """Walk *root* for repo files, optionally bounded by a file-count cap AND/OR a wall-clock
     ``deadline_monotonic`` (task #52, loop A). ``deadline_hit`` is the mutable out-signal (mirrors
@@ -1609,12 +1637,26 @@ def _iter_repo_files(
                         path = Path(entry.path)
                         if _should_skip_repo_dir(path):
                             continue
+                        if exclude_codemap_dirs:
+                            from tensor_grep.cli.codemap_exclusions import is_codemap_generated_dir
+
+                            if is_codemap_generated_dir(path):
+                                if excluded_generated_dirs is not None:
+                                    excluded_generated_dirs.append(
+                                        path.relative_to(normalized_root).as_posix()
+                                    )
+                                continue
                         if gitignore.is_ignored(path, is_dir=True):
                             continue
                         buckets.append((
                             _repo_walk_bucket_sort_key(path, normalized_root),
                             _iter_repo_bucket_files(
-                                path, (gitignore,), unreadable_hit=unreadable_hit
+                                path,
+                                (gitignore,),
+                                unreadable_hit=unreadable_hit,
+                                exclude_codemap_dirs=exclude_codemap_dirs,
+                                excluded_generated_dirs=excluded_generated_dirs,
+                                scan_root=normalized_root,
                             ),
                         ))
                     elif entry.is_file(follow_symlinks=False):
@@ -1667,7 +1709,14 @@ def _iter_repo_files(
             return selected
 
         walk_deadline_exceeded = False
-        for current in _iter_repo_bucket_files(normalized_root, (), unreadable_hit=unreadable_hit):
+        for current in _iter_repo_bucket_files(
+            normalized_root,
+            (),
+            unreadable_hit=unreadable_hit,
+            exclude_codemap_dirs=exclude_codemap_dirs,
+            excluded_generated_dirs=excluded_generated_dirs,
+            scan_root=normalized_root,
+        ):
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
                 walk_deadline_exceeded = True
                 break
@@ -4323,6 +4372,7 @@ def build_repo_map(
     extra_files: list[Path] | None = None,
     deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    exclude_codemap_dirs: bool = False,
 ) -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -4353,6 +4403,7 @@ def build_repo_map(
         # `tg map`/`tg agent`/etc. actually use. Thread the same mutable-out-signal pattern as
         # `deadline_hit` above to make an unreadable subtree visible instead of invisible.
         repo_walk_unreadable_hit = _UnreadablePathFlag()
+        excluded_generated_dirs: list[str] = []
         if _profiling_collector is None:
             all_files = _self._iter_repo_files(
                 root,
@@ -4360,6 +4411,8 @@ def build_repo_map(
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=repo_walk_deadline_hit,
                 unreadable_hit=repo_walk_unreadable_hit,
+                exclude_codemap_dirs=exclude_codemap_dirs,
+                excluded_generated_dirs=excluded_generated_dirs,
             )
         else:
             all_files = _self._iter_repo_files(
@@ -4369,6 +4422,8 @@ def build_repo_map(
                 deadline_hit=repo_walk_deadline_hit,
                 _profiling_collector=_profiling_collector,
                 unreadable_hit=repo_walk_unreadable_hit,
+                exclude_codemap_dirs=exclude_codemap_dirs,
+                excluded_generated_dirs=excluded_generated_dirs,
             )
         capped_file_count = len(all_files)
         if extra_files:
@@ -4431,6 +4486,8 @@ def build_repo_map(
         payload["imports"] = imports
         payload["tests"] = tests
         payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+        if excluded_generated_dirs:
+            payload["excluded_generated_dirs"] = sorted(set(excluded_generated_dirs))
         if normalized_max_repo_files is not None:
             _capped = capped_file_count >= normalized_max_repo_files
             _cause = (
@@ -4500,6 +4557,7 @@ def build_repo_map_incremental(
     *,
     max_repo_files: int | None = None,
     deadline_monotonic: float | None = None,
+    exclude_codemap_dirs: bool = False,
 ) -> dict[str, Any]:
     """Reconcile contents when notifications lack a trustworthy freshness receipt.
 
@@ -4511,6 +4569,7 @@ def build_repo_map_incremental(
         str(previous_map.get("path", ".")),
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
+        exclude_codemap_dirs=exclude_codemap_dirs,
     )
 
 

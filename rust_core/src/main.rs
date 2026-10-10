@@ -59,7 +59,9 @@ use tensor_grep_rs::routing::{
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
 };
 mod ast_run_remediation;
+mod main_env;
 mod search_flag_registry;
+use main_env::env_flag_enabled;
 use search_flag_registry::{
     raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
     SEARCH_PYTHON_PASSTHROUGH_FLAGS,
@@ -111,6 +113,7 @@ const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
 ];
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
+#[command(bin_name = "tg")]
 #[command(version)]
 #[command(about = NATIVE_TOP_LEVEL_ABOUT)]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
@@ -702,8 +705,11 @@ pub enum Commands {
     /// Measure CPU vs GPU crossover thresholds and persist smart-routing calibration
     Calibrate(CalibrateArgs),
     /// Upgrade tensor-grep via the managed Python package path
-    #[command(visible_alias = "update")]
+    #[command(name = "upgrade", bin_name = "tg upgrade")]
     Upgrade,
+    /// Upgrade tensor-grep via the managed Python package path
+    #[command(name = "update", bin_name = "tg update")]
+    Update,
     /// Verify a rewrite audit manifest digest, chain, and optional signature
     #[command(name = "audit-verify")]
     AuditVerify(AuditVerifyArgs),
@@ -1310,17 +1316,6 @@ fn print_native_top_level_help() -> anyhow::Result<()> {
     let mut cmd = CommandCli::command();
     cmd.print_help()?;
     Ok(())
-}
-
-fn env_flag_enabled(name: &str) -> bool {
-    env::var(name)
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
 }
 
 /// Fail closed (exit 2, the "backend unavailable / incomplete" convention `handle_calibrate_command`
@@ -7289,6 +7284,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
+        Commands::Update => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Audit { args } => handle_python_passthrough("audit", args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),

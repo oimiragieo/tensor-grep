@@ -1542,13 +1542,17 @@ def _execute_find(
     deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
     walk_deadline_hit = _DeadlineBreakFlag()
     walk_unreadable_hit = _UnreadablePathFlag()
+    excluded_generated_dirs: list[str] = []
     all_files = _iter_repo_files(
         root,
         max_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=walk_deadline_hit,
         unreadable_hit=walk_unreadable_hit,
+        exclude_codemap_dirs=True,
+        excluded_generated_dirs=excluded_generated_dirs,
     )
+    result.excluded_generated_dirs = sorted(set(excluded_generated_dirs))
 
     if walk_deadline_hit.hit:
         reason = (
@@ -4030,6 +4034,7 @@ def search_command(
         tracer = None
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    all_results.excluded_generated_dirs = sorted(set(scanner.excluded_generated_dirs))
     all_results.routing_backend = selected_backend_name
     all_results.routing_reason = selected_backend_reason
     all_results.requested_gpu_device_ids = list(parsed_gpu_device_ids or [])
@@ -4076,6 +4081,8 @@ def search_command(
             if (guarded_broad_root or files_with_matches)
             else candidate_files_ordered
             if files_without_match
+            else candidate_files_ordered
+            if scanner.excluded_generated_dirs and (config.rank_bm25 or config.semantic_rank)
             else paths_to_search
         )
         span_ctx = (
@@ -4284,6 +4291,7 @@ def search_command(
         from tensor_grep.core.reranker import rerank_by_bm25
 
         all_results = rerank_by_bm25(all_results, pattern, all_results.matched_file_paths)
+    all_results.excluded_generated_dirs = sorted(set(scanner.excluded_generated_dirs))
     matched_file_count = len(matched_files) or all_results.total_files
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
     runtime_override_active = (
@@ -8640,7 +8648,10 @@ def session_open(
         raise typer.Exit(2) from exc
 
     if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
+        json_payload = dict(payload.__dict__)
+        if payload.excluded_generated_dirs is None:
+            json_payload.pop("excluded_generated_dirs", None)
+        typer.echo(json.dumps(_with_schema_version(json_payload, version=1), indent=2))
         return
 
     # LEADING (task #329): `files=`/`symbols=` are the numbers the cap qualifies, and a session is
@@ -8796,12 +8807,32 @@ def session_refresh(
 
     try:
         payload = refresh_session(session_id, path)
+    except FileNotFoundError as exc:
+        message = str(exc)
+        if not message.startswith("Session not found:"):
+            typer.echo(message, err=True)
+            raise typer.Exit(1) from exc
+        hint = "pass SESSION_ID (see tg session list PATH --json)"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"error": {"code": "session_not_found", "message": message, "hint": hint}},
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+            typer.echo(f"Hint: {hint}", err=True)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
     if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
+        json_payload = dict(payload.__dict__)
+        if payload.excluded_generated_dirs is None:
+            json_payload.pop("excluded_generated_dirs", None)
+        typer.echo(json.dumps(_with_schema_version(json_payload, version=1), indent=2))
         return
 
     typer.echo(

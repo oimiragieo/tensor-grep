@@ -95,6 +95,23 @@ def test_inline_positional_forms_preserved(tmp_path: Path, reverse: bool) -> Non
     assert json.loads(result.stdout)["rows"] == [{"answer": 7}]
 
 
+def test_sql_query_error_is_marked_incomplete(tmp_path: Path) -> None:
+    result = CliRunner().invoke(app, ["sql", str(tmp_path), "SELECT FROM", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason"] == "query_error"
+
+
+def test_sql_help_describes_positional_arguments() -> None:
+    result = CliRunner().invoke(app, ["sql", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "PATH" in result.output and "default: ." in result.output
+    assert "QUERY" in result.output and "QUERY string to execute" in result.output
+
+
 def test_query_file_directory_refused_before_scan(tmp_path: Path) -> None:
     result = CliRunner().invoke(
         app, ["sql", str(tmp_path / "missing-repo"), "--query-file", str(tmp_path)]

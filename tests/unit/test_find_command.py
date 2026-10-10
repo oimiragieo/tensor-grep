@@ -89,6 +89,35 @@ def test_find_bm25_only_when_extra_absent_sets_rank_fallback_reason(
     assert payload["total_matches"] >= 1
 
 
+def test_find_skips_codemap_and_keeps_normal_docs_ranked(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _stub_dense_unavailable(monkeypatch)
+    generated = tmp_path / "docs" / "code-map"
+    generated.mkdir(parents=True)
+    (generated / "_coverage.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "out": str(generated),
+            "tree_manifest_sha256": "a" * 64,
+            "files_total": 1,
+            "folders_total": 1,
+            "symbols_total": 0,
+        }),
+        encoding="utf-8",
+    )
+    (generated / "src_app.md").write_text("needle generated codemap", encoding="utf-8")
+    normal_docs = tmp_path / "docs" / "guide.md"
+    normal_docs.write_text("needle normal documentation", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["find", "needle", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    paths = [str(match["file"]).replace("\\", "/") for match in payload["matches"]]
+    assert not any("docs/code-map/" in path for path in paths)
+    assert any(path.endswith("docs/guide.md") for path in paths)
+    assert payload["excluded_generated_dirs"] == ["docs/code-map"]
+
+
 def test_find_dense_unavailable_at_query_degrades_to_bm25_exit_0(
     tmp_path: Path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]

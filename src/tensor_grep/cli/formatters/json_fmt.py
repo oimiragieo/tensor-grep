@@ -123,6 +123,8 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         "routing_worker_count": result.routing_worker_count,
     }
     envelope.update(_gpu_proof_payload(result))
+    if result.excluded_generated_dirs:
+        envelope["excluded_generated_dirs"] = result.excluded_generated_dirs
     # GPU execution telemetry — only emitted when the backend measured them; omit
     # entirely (not null) when not applicable so consumers can detect presence via key
     # existence rather than null checks.
@@ -258,6 +260,7 @@ class JsonFormatter(OutputFormatter):
             "incomplete_reason_class",
             "ast_enrichment_truncated",
             "install_state",
+            "excluded_generated_dirs",
         ):
             if key in envelope:
                 data[key] = envelope[key]
