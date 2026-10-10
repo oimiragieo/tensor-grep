@@ -997,7 +997,10 @@ Example: [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.
 | `valid` | `boolean` | `true` only when digest, chain, and signature checks all pass. |
 | `errors` | `array<string>` | Ordered list of verification failures. |
 
-`checks` currently contains `digest_valid`, `chain_valid`, and `signature_valid`.
+`checks` currently contains `digest_valid`, `chain_valid`, and `signature_valid`. Evidence receipt
+verification also returns `signature_status` with `unsigned`, `unsigned_trust_required`, `valid`,
+`invalid`, or `untrusted_key`; `signature_valid` and top-level `valid` retain their existing
+boolean behavior.
 
 ## GPU CPU Fallback JSON
 
