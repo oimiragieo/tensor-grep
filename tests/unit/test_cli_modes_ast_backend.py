@@ -1418,15 +1418,42 @@ def test_scan_secrets_basic_does_not_flag_non_credentials(
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     with CliRunner().isolated_filesystem():
-        Path("a.py").write_text(content + ("\n" if trailing_newline else ""), encoding="utf-8")
+        negative_content = content + ("\n" if trailing_newline else "")
+        positive_line = len(negative_content.splitlines()) + 1
+        Path("a.py").write_text(
+            negative_content
+            + ("" if negative_content.endswith("\n") else "\n")
+            + 'AWS_SECRET_ACCESS_KEY = "'
+            + "A" * 40
+            + '"\n',
+            encoding="utf-8",
+        )
+        Path("suppressions.json").write_text('{"entries": []}', encoding="utf-8")
         result = CliRunner().invoke(
             app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", ".", "--json"],
+            [
+                "scan",
+                "--ruleset",
+                "secrets-basic",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+                "--suppressions",
+                "suppressions.json",
+            ],
         )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
-    assert payload["total_matches"] == 0
+    secret_finding = next(
+        finding
+        for finding in payload["findings"]
+        if finding["rule_id"] == "python-aws-secret-access-key"
+    )
+    assert secret_finding["matches"] == 1
+    assert [occurrence["line"] for occurrence in secret_finding["occurrences"]] == [positive_line]
 
 
 def test_scan_executes_tls_ruleset(monkeypatch):
