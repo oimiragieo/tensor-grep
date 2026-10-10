@@ -761,9 +761,12 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
                 }
             time.sleep(0.05)
         secret_reason = diagnose_user_secret()
+        detail = "daemon startup timed out (another tg process held the start lock)"
+        if secret_reason:
+            detail = f"{detail} [{secret_reason}]"
         raise DaemonStartError(
             root,
-            "daemon startup timed out (another tg process held the start lock)",
+            detail,
             secret_reason or "daemon_start_failed",
         )
 

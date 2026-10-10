@@ -84,7 +84,8 @@ def spawn_daemon_subprocess(
 
 
 def read_daemon_start_capture(capture_fd: int) -> bytes:
-    os.lseek(capture_fd, 0, 0)
+    capture_size = os.fstat(capture_fd).st_size
+    os.lseek(capture_fd, max(0, capture_size - 4096), os.SEEK_SET)
     return os.read(capture_fd, 4096)
 
 
