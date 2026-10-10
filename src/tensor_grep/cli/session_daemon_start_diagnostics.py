@@ -15,7 +15,6 @@ DAEMON_SECRET_REASON_DETAILS = {
         "tg refuses to create the daemon secret there"
     ),
     "secret_ancestor_untrusted": "an ancestor of the per-user state directory is not trusted",
-    "secret_lock_timeout": "the per-user daemon secret lock timed out",
     "secret_io_error": "the per-user daemon secret could not be checked due to an I/O error",
 }
 
@@ -46,7 +45,6 @@ def daemon_start_failure(root: Path, captured: bytes) -> DaemonStartError:
                 "secret_dir_unavailable",
                 "secret_dir_untrusted_owner_or_acl",
                 "secret_ancestor_untrusted",
-                "secret_lock_timeout",
                 "secret_io_error",
             )
             if f"({code})" in detail

@@ -35,7 +35,6 @@ from uuid import uuid4
 
 from tensor_grep.cli import session_daemon_winsec as _winsec
 from tensor_grep.cli._index_lock import (
-    _STALE_AFTER_S,
     IndexLockTimeoutError,
     _publish_bytes_no_clobber,
     atomic_write_bytes_anchored,
@@ -1191,14 +1190,6 @@ def diagnose_user_secret() -> str | None:
             return "secret_dir_untrusted_owner_or_acl"
         if not _ancestors_trusted(path.parent):
             return "secret_ancestor_untrusted"
-        lock_path = path.with_name(f".{path.name}.lock")
-        try:
-            lock_stat = _lstat(lock_path)
-        except FileNotFoundError:
-            pass
-        else:
-            if time.time() - lock_stat.st_mtime <= _STALE_AFTER_S:
-                return "secret_lock_timeout"
         return None
     except OSError:
         return "secret_io_error"

@@ -126,7 +126,29 @@ be able to consume unbounded memory *or* unbounded time before proving who they 
 
 ---
 
-## 5. Rebuilding this component: verification checklist
+## 5. Startup diagnostics
+
+`tg session daemon start --json` exits 1 on failure and emits `ok: false` with
+`error.reason_code` and `error.detail`. The detail is a human-readable message;
+callers should use the reason code for decisions.
+
+| Reason code | Meaning |
+|---|---|
+| `secret_untrusted_present` | An existing per-user secret is not trusted. |
+| `secret_extra_links` | The secret has unexpected hard links. |
+| `secret_dir_unavailable` | The per-user state directory is unavailable. |
+| `secret_dir_untrusted_owner_or_acl` | The state directory grants another account write access. |
+| `secret_ancestor_untrusted` | An ancestor of the state directory is not trusted. |
+| `secret_io_error` | An I/O error prevented the secret check. |
+| `daemon_start_failed` | Startup failed without a more specific reason. |
+
+`tg doctor` reports `session_daemon.start_error` as `null` when the read-only secret
+check finds no problem, or as an object with `reason_code` and `detail` when it does.
+This check does not diagnose secret-lock contention.
+
+---
+
+## 6. Rebuilding this component: verification checklist
 
 A rebuild is correct only if all of these hold. Each is a property to test, not to read.
 

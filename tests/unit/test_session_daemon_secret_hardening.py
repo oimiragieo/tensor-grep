@@ -65,7 +65,7 @@ def test_diagnose_user_secret_trusted_directory_is_positive_control(
     assert trust.diagnose_user_secret() is None
 
 
-def test_diagnose_user_secret_reports_fresh_creation_lock_without_writing(
+def test_diagnose_user_secret_ignores_fresh_creation_lock_without_writing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     secret_dir = tmp_path / "secret"
@@ -78,7 +78,7 @@ def test_diagnose_user_secret_reports_fresh_creation_lock_without_writing(
     lock_path.write_text("held", encoding="utf-8")
     before = lock_path.read_bytes()
 
-    assert trust.diagnose_user_secret() == "secret_lock_timeout"
+    assert trust.diagnose_user_secret() is None
     assert lock_path.read_bytes() == before
 
 

@@ -1,12 +1,18 @@
 import json
-import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
 
-from tensor_grep.cli import session_daemon, session_daemon_start_capture
+from tensor_grep.cli import (
+    session_daemon,
+    session_daemon_start_capture,
+    session_daemon_start_diagnostics,
+    session_daemon_trust,
+)
 from tensor_grep.cli.main import app
 from tensor_grep.cli.session_daemon_start_diagnostics import DaemonStartError
 
@@ -17,26 +23,32 @@ def test_start_reports_child_stderr_reason(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(session_daemon, "_probe_daemon", lambda _root: None)
     monkeypatch.setattr(session_daemon, "_try_acquire_daemon_start_lock", lambda _root: True)
     monkeypatch.setattr(session_daemon, "_release_daemon_start_lock", lambda _root: None)
-    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1)
     session_daemon._sessions_dir(project).mkdir(parents=True)
+    real_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
 
-    def fake_popen(*_args: object, **kwargs: object) -> object:
-        stderr = kwargs["stderr"]
-        message = (
-            b"RuntimeError: cannot establish per-user daemon secret "
-            b"(secret_dir_untrusted_owner_or_acl); refusing to serve\n"
+    def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        child = real_popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('RuntimeError: cannot establish per-user daemon "
+                "secret (secret_dir_untrusted_owner_or_acl); refusing to serve\\n'); sys.exit(1)",
+            ],
+            **kwargs,
         )
-        if isinstance(stderr, int):
-            os.write(stderr, message)
-        else:
-            stderr.write(message)
-            stderr.flush()
-        return object()
+        children.append(child)
+        return child
 
-    monkeypatch.setattr(session_daemon.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(
-        session_daemon, "diagnose_user_secret", lambda: "secret_dir_untrusted_owner_or_acl"
-    )
+    def probe(_root: Path) -> None:
+        if children:
+            assert children[0].wait(timeout=5) == 1
+        return None
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", substituted_popen)
+    monkeypatch.setattr(session_daemon, "_probe_daemon", probe)
+    monkeypatch.setattr(session_daemon_start_diagnostics, "diagnose_user_secret", lambda: None)
 
     with pytest.raises(RuntimeError) as caught:
         session_daemon.start_session_daemon(str(project))
@@ -54,25 +66,96 @@ def test_start_reports_final_child_error_after_long_warnings(
     monkeypatch.setattr(session_daemon, "_probe_daemon", lambda _root: None)
     monkeypatch.setattr(session_daemon, "_try_acquire_daemon_start_lock", lambda _root: True)
     monkeypatch.setattr(session_daemon, "_release_daemon_start_lock", lambda _root: None)
-    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0)
-    monkeypatch.setattr(session_daemon, "diagnose_user_secret", lambda: None)
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(session_daemon_start_diagnostics, "diagnose_user_secret", lambda: None)
     final_line = (
         "RuntimeError: cannot establish per-user daemon secret "
         "(secret_dir_untrusted_owner_or_acl); refusing to serve"
     )
 
-    def fake_popen(*_args: object, **kwargs: object) -> object:
-        stderr_fd = kwargs["stderr"]
-        assert isinstance(stderr_fd, int)
-        os.write(stderr_fd, b"warning: retrying\n" * 600 + final_line.encode("utf-8") + b"\n")
-        return object()
+    real_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
 
-    monkeypatch.setattr(session_daemon.subprocess, "Popen", fake_popen)
+    def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        payload = "warning: retrying\n" * 600 + final_line + "\n"
+        child = real_popen(
+            [sys.executable, "-c", f"import sys; sys.stderr.write({payload!r}); sys.exit(1)"],
+            **kwargs,
+        )
+        children.append(child)
+        return child
 
-    with pytest.raises(DaemonStartError) as caught:
+    def probe(_root: Path) -> None:
+        if children:
+            assert children[0].wait(timeout=5) == 1
+        return None
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", substituted_popen)
+    monkeypatch.setattr(session_daemon, "_probe_daemon", probe)
+
+    with pytest.raises(RuntimeError) as caught:
         session_daemon.start_session_daemon(str(project))
 
-    assert final_line in caught.value.detail
+    assert final_line in str(caught.value)
+
+
+def test_start_capture_exists_during_child_and_is_removed_afterwards(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sessions = session_daemon._sessions_dir(project)
+    sessions.mkdir(parents=True)
+    result_path = tmp_path / "capture-count.txt"
+    monkeypatch.setattr(session_daemon, "_try_acquire_daemon_start_lock", lambda _root: True)
+    monkeypatch.setattr(session_daemon, "_release_daemon_start_lock", lambda _root: None)
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1)
+    real_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
+
+    def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        script = (
+            "import pathlib, sys; "
+            f"p = pathlib.Path({str(result_path)!r}); "
+            f"s = pathlib.Path({str(sessions)!r}); "
+            "p.write_text(str(len(list(s.glob('daemon-start.*.stderr')))), encoding='utf-8'); "
+            "sys.stderr.write('child startup failed\\n'); sys.exit(1)"
+        )
+        child = real_popen([sys.executable, "-c", script], **kwargs)
+        children.append(child)
+        return child
+
+    def probe(_root: Path) -> None:
+        if children:
+            assert children[0].wait(timeout=5) == 1
+        return None
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", substituted_popen)
+    monkeypatch.setattr(session_daemon, "_probe_daemon", probe)
+    monkeypatch.setattr(session_daemon_start_diagnostics, "diagnose_user_secret", lambda: None)
+
+    with pytest.raises(RuntimeError):
+        session_daemon.start_session_daemon(str(project))
+
+    assert result_path.read_text(encoding="utf-8") == "1"
+    assert list(sessions.glob("daemon-start.*.stderr")) == []
+
+
+def test_real_daemon_starts_with_trusted_secret_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
+    if session_daemon_trust.diagnose_user_secret() is not None:
+        pytest.skip("trusted secret dir unavailable on this host")
+    project = tmp_path / "project"
+    project.mkdir()
+
+    try:
+        assert session_daemon.start_session_daemon(str(project))["running"] is True
+    finally:
+        session_daemon.stop_session_daemon(str(project))
 
 
 def test_spawn_refuses_symlink_at_exact_capture_path(
@@ -94,13 +177,10 @@ def test_spawn_refuses_symlink_at_exact_capture_path(
         session_daemon_start_capture, "uuid4", lambda: SimpleNamespace(hex="deadbeef")
     )
 
-    def fake_popen(*_args: object, **kwargs: object) -> object:
-        stderr_fd = kwargs["stderr"]
-        assert isinstance(stderr_fd, int)
-        os.write(stderr_fd, b"unexpected child stderr")
-        return object()
+    def unexpected_popen(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("a planted capture path must be refused before spawning")
 
-    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", unexpected_popen)
 
     with pytest.raises(FileExistsError):
         capture_fd, opened_path = session_daemon_start_capture.spawn_daemon_subprocess(
@@ -122,18 +202,31 @@ def test_start_cleans_capture_after_child_writes_to_fd(
     sessions.mkdir(parents=True)
     monkeypatch.setattr(session_daemon, "_try_acquire_daemon_start_lock", lambda _root: True)
     monkeypatch.setattr(session_daemon, "_release_daemon_start_lock", lambda _root: None)
-    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1 if starts else 0)
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1)
     live = {"host": "127.0.0.1", "port": 4321, "pid": 7, "started_at": "now"}
-    probe_results = iter([None, live] if starts else [None])
-    monkeypatch.setattr(session_daemon, "_probe_daemon", lambda _root: next(probe_results))
+    real_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
 
-    def fake_popen(*_args: object, **kwargs: object) -> object:
-        stderr_fd = kwargs["stderr"]
-        assert isinstance(stderr_fd, int)
-        os.write(stderr_fd, b"child wrote to stderr\n")
-        return object()
+    def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        child = real_popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stderr.write('child wrote to stderr\\n'); sys.exit(1)",
+            ],
+            **kwargs,
+        )
+        children.append(child)
+        return child
 
-    monkeypatch.setattr(session_daemon.subprocess, "Popen", fake_popen)
+    def probe(_root: Path) -> dict[str, object] | None:
+        if not children:
+            return None
+        assert children[0].wait(timeout=5) == 1
+        return live if starts else None
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", substituted_popen)
+    monkeypatch.setattr(session_daemon, "_probe_daemon", probe)
 
     if starts:
         assert session_daemon.start_session_daemon(str(project))["running"] is True
@@ -160,21 +253,27 @@ def test_failed_start_does_not_follow_planted_stderr_symlinks(
     except OSError as exc:
         pytest.skip(f"cannot create symlinks on this host: {exc}")
 
-    monkeypatch.setattr(session_daemon, "_probe_daemon", lambda _root: None)
     monkeypatch.setattr(session_daemon, "_try_acquire_daemon_start_lock", lambda _root: True)
     monkeypatch.setattr(session_daemon, "_release_daemon_start_lock", lambda _root: None)
-    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1)
+    real_popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
 
-    def fake_popen(*_args: object, **kwargs: object) -> object:
-        stderr = kwargs["stderr"]
-        if isinstance(stderr, int):
-            os.write(stderr, b"child failed\n")
-        else:
-            stderr.write(b"child failed\n")
-            stderr.flush()
-        return object()
+    def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        child = real_popen(
+            [sys.executable, "-c", "import sys; sys.stderr.write('child failed\\n'); sys.exit(1)"],
+            **kwargs,
+        )
+        children.append(child)
+        return child
 
-    monkeypatch.setattr(session_daemon.subprocess, "Popen", fake_popen)
+    def probe(_root: Path) -> None:
+        if children:
+            assert children[0].wait(timeout=5) == 1
+        return None
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", substituted_popen)
+    monkeypatch.setattr(session_daemon, "_probe_daemon", probe)
 
     with pytest.raises(RuntimeError):
         session_daemon.start_session_daemon(str(project))
