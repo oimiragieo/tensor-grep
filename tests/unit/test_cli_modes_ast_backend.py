@@ -1168,7 +1168,7 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
     assert (
         "[scan] rule=python-hardcoded-named-api-key lang=python matches=0 files=0" in result.output
     )
-    assert "Scan completed. rules=6 matched_rules=1 total_matches=1" in result.output
+    assert "Scan completed. rules=8 matched_rules=1 total_matches=1" in result.output
 
 
 def test_scan_ruleset_respects_filter(monkeypatch):
@@ -1362,6 +1362,71 @@ def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch):
     assert (
         "[scan] rule=python-hardcoded-named-api-key lang=python matches=1 files=1" in result.output
     )
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_rule_id"),
+    [
+        ('key = "AKIAIOSFODNN7EXAMPLE"', "python-aws-access-key-id"),
+        ('key = "ASIA1234567890ABCDEF"', "python-aws-access-key-id"),
+        (
+            'AWS_SECRET_ACCESS_KEY = "' + "A" * 40 + '"',
+            "python-aws-secret-access-key",
+        ),
+        (
+            "aws_secret_access_key = " + "A" * 40,
+            "python-aws-secret-access-key",
+        ),
+        (
+            "aws_secret_access_key: '" + "A" * 40 + "'",
+            "python-aws-secret-access-key",
+        ),
+    ],
+)
+@pytest.mark.parametrize("trailing_newline", [False, True])
+def test_scan_secrets_basic_detects_aws_credentials(
+    monkeypatch, content: str, expected_rule_id: str, trailing_newline: bool
+):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    with CliRunner().isolated_filesystem():
+        Path("a.py").write_text(content + ("\n" if trailing_newline else ""), encoding="utf-8")
+        result = CliRunner().invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", ".", "--json"],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert expected_rule_id in {
+        finding["rule_id"] for finding in payload["findings"] if finding["matches"] > 0
+    }
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "key = 'AKIA1234'",
+        "# rotate the AKIA key monthly",
+        'aws_secret_access_key = os.environ["X"]',
+    ],
+)
+@pytest.mark.parametrize("trailing_newline", [False, True])
+def test_scan_secrets_basic_does_not_flag_non_credentials(
+    monkeypatch, content: str, trailing_newline: bool
+):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    with CliRunner().isolated_filesystem():
+        Path("a.py").write_text(content + ("\n" if trailing_newline else ""), encoding="utf-8")
+        result = CliRunner().invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", ".", "--json"],
+        )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["total_matches"] == 0
 
 
 def test_scan_executes_tls_ruleset(monkeypatch):

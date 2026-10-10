@@ -30,7 +30,7 @@
         "rust",
         "typescript"
       ],
-      "rule_count": 16
+      "rule_count": 29
     },
     {
       "name": "tls-safe",
