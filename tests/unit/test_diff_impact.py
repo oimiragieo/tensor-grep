@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 import tensor_grep.cli.diff_impact as di
 from tensor_grep.cli.diff_impact import (
     _calculate_risk_tier,
+    _calculate_risk_tier_with_reasons,
     _is_test_path,
     build_diff_blast_radius,
     extract_diff_hunks_from_git,
@@ -168,6 +169,64 @@ def test_calculate_risk_tier() -> None:
     assert _calculate_risk_tier(0.2, 5, 60) == "critical"
 
 
+def test_calculate_risk_tier_reasons_pin_existing_threshold_scenarios() -> None:
+    scenarios = [
+        (0.05, 1, 1, "low", []),
+        (0.2, 2, 2, "medium", ["score_ge_0_15"]),
+        (0.1, 4, 2, "medium", ["affected_files_ge_3"]),
+        (
+            0.5,
+            5,
+            5,
+            "high",
+            ["affected_files_ge_3", "callers_ge_5", "score_ge_0_15", "score_ge_0_4"],
+        ),
+        (
+            0.2,
+            12,
+            5,
+            "high",
+            ["affected_files_ge_10", "affected_files_ge_3", "callers_ge_5", "score_ge_0_15"],
+        ),
+        (
+            0.8,
+            1,
+            1,
+            "critical",
+            ["score_ge_0_15", "score_ge_0_4", "score_ge_0_7"],
+        ),
+        (
+            0.2,
+            30,
+            2,
+            "critical",
+            [
+                "affected_files_ge_10",
+                "affected_files_ge_25",
+                "affected_files_ge_3",
+                "score_ge_0_15",
+            ],
+        ),
+        (
+            0.2,
+            5,
+            60,
+            "critical",
+            [
+                "affected_files_ge_3",
+                "callers_ge_20",
+                "callers_ge_5",
+                "callers_ge_50",
+                "score_ge_0_15",
+            ],
+        ),
+    ]
+    for score, files, callers, expected_tier, expected_reasons in scenarios:
+        tier, reasons = _calculate_risk_tier_with_reasons(score, files, callers)
+        assert (tier, reasons) == (expected_tier, expected_reasons)
+        assert _calculate_risk_tier(score, files, callers) == expected_tier
+
+
 def test_build_diff_blast_radius_clean(tmp_path: Path) -> None:
     res = build_diff_blast_radius(root=tmp_path, diff_text="")
     assert res["changed_files"] == []
@@ -218,6 +277,49 @@ def test_build_diff_blast_radius_with_changes(tmp_path: Path, monkeypatch: Any) 
     # Downstream caller or affected files should include user.py or tests
     affected = [f.replace("\\", "/") for f in payload["affected_files"]]
     assert any("user.py" in f or "test_core.py" in f or "core.py" in f for f in affected)
+    assert payload["blast_radius_score"] == 0.727
+    assert payload["risk_tier"] == "critical"
+
+
+@pytest.mark.parametrize("unparseable", [False, True], ids=["parsed", "unparseable"])
+def test_uncalled_symbol_risk_cap_requires_complete_symbol_data(
+    tmp_path: Path, unparseable: bool
+) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    core = pkg / "core.py"
+    core.write_text(
+        "def dormant():\n    return 1\n\ndef unrelated():\n    return 3\n",
+        encoding="utf-8",
+    )
+    (pkg / "user.py").write_text("import pkg.core\n", encoding="utf-8")
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_core.py").write_text(
+        "from pkg import core\n\ndef test_core():\n    assert core.unrelated() == 3\n",
+        encoding="utf-8",
+    )
+    if unparseable:
+        core.write_bytes(b"def dormant():\n    return 2\n# bad byte \xff\n")
+
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def dormant():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    if unparseable:
+        assert "capped_uncalled_symbols" not in payload.get("risk_reasons", [])
+        assert payload["unparsed_changed_files"] == ["pkg/core.py"]
+    else:
+        assert payload["risk_tier"] in {"low", "medium"}
+        assert "capped_uncalled_symbols" in payload.get("risk_reasons", [])
+        assert payload.get("risk_reasons")
 
 
 def test_extract_diff_hunks_from_git_mocked(monkeypatch: Any) -> None:
@@ -283,6 +385,35 @@ def test_cli_diff_impact_success_with_matches(monkeypatch: Any, tmp_path: Path) 
     data = json.loads(result.stdout)
     assert data["blast_radius_score"] == 0.05
     assert data["risk_tier"] == "low"
+
+
+def test_cli_diff_impact_text_summary_includes_risk_reasons(monkeypatch: Any) -> None:
+    payload = {
+        "root": ".",
+        "ref": None,
+        "staged": False,
+        "changed_files": ["sample.py"],
+        "changed_symbols": [],
+        "callers": [],
+        "affected_files": ["sample.py"],
+        "affected_tests": [],
+        "blast_radius_score": 0.2,
+        "risk_tier": "medium",
+        "risk_reasons": ["score_ge_0_15"],
+        "partial": False,
+        "result_incomplete": False,
+        "downgrade_reasons": [],
+        "symbol_count": 0,
+        "caller_count": 0,
+        "file_count": 1,
+        "test_count": 0,
+    }
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.build_diff_blast_radius", lambda **kwargs: payload
+    )
+    result = runner.invoke(app, ["diff-impact"])
+    assert result.exit_code == 0
+    assert "risk=medium reasons=score_ge_0_15" in result.stdout
 
 
 def test_cli_diff_impact_fail_threshold_breached(monkeypatch: Any) -> None:
