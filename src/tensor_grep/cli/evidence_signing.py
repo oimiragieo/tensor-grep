@@ -569,11 +569,21 @@ def verify_receipt(
     if signed and require_trusted:
         valid = valid and bool(key_trusted)
 
+    if not signed:
+        signature_status = "unsigned_trust_required" if trust_requested else "unsigned"
+    elif not signature_valid:
+        signature_status = "invalid"
+    elif require_trusted and not key_trusted:
+        signature_status = "untrusted_key"
+    else:
+        signature_status = "valid"
+
     return {
         "valid": valid,
         "checks": {
             "digest_valid": digest_valid,
             "signature_valid": signature_valid,
+            "signature_status": signature_status,
             "key_trusted": key_trusted,
         },
         "signed": signed,

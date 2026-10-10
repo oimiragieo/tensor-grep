@@ -12528,7 +12528,7 @@ def evidence_verify(
         checks = cast(dict[str, object], payload["checks"])
         typer.echo(
             f"  digest_valid={checks['digest_valid']} signature_valid={checks['signature_valid']} "
-            f"key_trusted={checks['key_trusted']}"
+            f"signature_status={checks['signature_status']} key_trusted={checks['key_trusted']}"
         )
         if payload.get("key_id"):
             typer.echo(f"  key_id={payload['key_id']}")
