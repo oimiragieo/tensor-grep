@@ -5,6 +5,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
+from tests.unit.aws_secrets_assertions import assert_no_negative_secret_lines
 from tests.unit.test_cli_modes_shared import _FakeAstPipeline
 
 
@@ -156,6 +157,7 @@ def test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
     )
     assert secret_finding["matches"] == 1
     assert [occurrence["line"] for occurrence in secret_finding["occurrences"]] == [positive_line]
+    assert_no_negative_secret_lines(payload, positive_line)
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ from tensor_grep.cli.main import (
     app,
 )
 from tensor_grep.core.result import MatchLine, SearchResult
+from tests.unit.aws_secrets_assertions import assert_no_negative_secret_lines
 from tests.unit.test_cli_modes_shared import *  # noqa: F403
 
 # ruff: noqa: F405  -- names come from the shared wildcard import above (W4-d split)
@@ -1454,6 +1455,7 @@ def test_scan_secrets_basic_does_not_flag_non_credentials(
     )
     assert secret_finding["matches"] == 1
     assert [occurrence["line"] for occurrence in secret_finding["occurrences"]] == [positive_line]
+    assert_no_negative_secret_lines(payload, positive_line)
 
 
 def test_scan_executes_tls_ruleset(monkeypatch):
