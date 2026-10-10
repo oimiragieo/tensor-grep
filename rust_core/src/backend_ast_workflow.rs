@@ -9,6 +9,8 @@ use std::time::SystemTime;
 
 #[path = "backend_ast_workflow_scaffold.rs"]
 mod scaffold;
+#[path = "backend_ast_workflow_rules.rs"]
+mod workflow_rules;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AstProjectConfig {
@@ -385,6 +387,7 @@ pub fn execute_ast_test_core(
         .orchestration_hints
         .get("backend_hints")
         .and_then(|v| v.as_object());
+    let empty_rule_ids = workflow_rules::empty_rule_ids(data);
 
     let mut rule_case_groups: HashMap<(String, String), Vec<BatchTestSnippet>> = HashMap::new();
 
@@ -416,18 +419,13 @@ pub fn execute_ast_test_core(
                     }
                 }
 
-                if pattern
-                    .as_deref()
-                    .is_some_and(|value| value.trim().is_empty())
-                {
-                    if let Some(rid) = linked_rule_id {
-                        if data.rule_specs.iter().any(|rule| rule.id == rid) {
-                            failures.push(format!(
-                                "{}:{}: rule {} has an empty pattern",
-                                test_file_path, case_id, rid
-                            ));
-                            continue;
-                        }
+                if pattern.is_none() {
+                    if let Some(rid) = linked_rule_id.filter(|rid| empty_rule_ids.contains(*rid)) {
+                        failures.push(format!(
+                            "{}:{}: rule {} has an empty pattern",
+                            test_file_path, case_id, rid
+                        ));
+                        continue;
                     }
                 }
 
@@ -699,27 +697,27 @@ fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
 
 fn write_ast_project_scaffold(base_dir: &Path, lang: &str) -> Result<()> {
     let config_path = base_dir.join("sgconfig.yml");
-    if config_path.exists() {
-        anyhow::bail!("Config file {:?} already exists.", config_path);
-    }
     fs::create_dir_all(base_dir)?;
-    fs::write(
+    scaffold::write_new_file(
         &config_path,
-        format!("ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: {lang}\n"),
+        format!("ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: {lang}\n").as_bytes(),
+        "Config file",
     )?;
 
     let rules_dir = base_dir.join("rules");
     fs::create_dir_all(&rules_dir)?;
-    fs::write(
-        rules_dir.join("sample-rule.yml"),
-        format!("id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n"),
+    scaffold::write_new_file(
+        &rules_dir.join("sample-rule.yml"),
+        format!("id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n").as_bytes(),
+        "Rule file",
     )?;
 
     let tests_dir = base_dir.join("tests");
     fs::create_dir_all(&tests_dir)?;
-    fs::write(
-        tests_dir.join("sample-test.yml"),
-        "id: sample-test\nruleId: sample-rule\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
+    scaffold::write_new_file(
+        &tests_dir.join("sample-test.yml"),
+        b"id: sample-test\nruleId: sample-rule\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
+        "Test file",
     )?;
 
     println!(
@@ -754,17 +752,18 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
         }
         AstNewKind::Test => {
             let name = request.name.as_deref().expect("validated test name");
-            scaffold::write_test(&request.base_dir, name)
+            scaffold::write_test(&request.base_dir, name, &request.lang)
         }
         AstNewKind::Util => {
             let name = request.name.as_deref().expect("validated util name");
             let utils_dir = request.base_dir.join("utils");
             fs::create_dir_all(&utils_dir)?;
             let path = utils_dir.join(format!("{name}.yml"));
-            if path.exists() {
-                anyhow::bail!("Util file {:?} already exists.", path);
-            }
-            fs::write(&path, format!("id: {name}\npattern: ''\n"))?;
+            scaffold::write_new_file(
+                &path,
+                format!("id: {name}\npattern: ''\n").as_bytes(),
+                "Util file",
+            )?;
             println!("Created util scaffold in {:?}", path);
             Ok(())
         }
@@ -1182,7 +1181,6 @@ impl AstWorkflowOrchestrator {
                 if !trimmed.is_empty() {
                     return Some(vec![trimmed.to_string()]);
                 }
-                return Some(vec![String::new()]);
             } else if let Some(seq) = p.as_sequence() {
                 return collect_pattern_strings(seq);
             }
@@ -1191,12 +1189,10 @@ impl AstWorkflowOrchestrator {
             if let Some(s) = rule
                 .get(serde_yaml::Value::String("pattern".to_string()))
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
             {
                 let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(vec![trimmed.to_string()]);
-                }
-                return Some(vec![String::new()]);
+                return Some(vec![trimmed.to_string()]);
             }
             if let Some(any_seq) = rule
                 .get(serde_yaml::Value::String("any".to_string()))
@@ -1210,11 +1206,15 @@ impl AstWorkflowOrchestrator {
 
     pub fn extract_rule_pattern_json(&self, item: &serde_json::Value) -> Option<String> {
         if let Some(p) = item.get("pattern").and_then(|v| v.as_str()) {
-            return Some(p.trim().to_string());
+            if !p.trim().is_empty() {
+                return Some(p.trim().to_string());
+            }
         }
         if let Some(rule) = item.get("rule").and_then(|v| v.as_object()) {
             if let Some(p) = rule.get("pattern").and_then(|v| v.as_str()) {
-                return Some(p.trim().to_string());
+                if !p.trim().is_empty() {
+                    return Some(p.trim().to_string());
+                }
             }
         }
         None

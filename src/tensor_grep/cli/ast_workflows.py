@@ -21,6 +21,7 @@ from tensor_grep.cli.ast_workflow_rules import (
     _emit_ast_run_remediation,
     _extract_rule_pattern,
     _inject_run_json_fields,
+    _load_test_rule_index,
     _rule_needs_ast_grep_wrapper,
     _safe_stdout_line,
     _stamp_ast_scan_incompleteness,
@@ -1206,10 +1207,9 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    if not rules:
-        print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
+    rules_by_id = _load_test_rule_index(project_cfg, rules)
+    if rules_by_id is None:
         return 1
-    rules_by_id = {rule["id"]: rule for rule in rules}
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_names_used: set[str] = set()

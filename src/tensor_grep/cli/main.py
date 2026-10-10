@@ -10452,24 +10452,25 @@ def new(
             project_cfg = _load_sg_project_config(config)
 
         if scaffold_kind == "rule":
+            from tensor_grep.cli.ast_scaffold import _ast_rule_scaffold_contents
+
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["rule_dirs"])[0]
                 if project_cfg is not None
                 else base_dir / "rules"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: TODO_REPLACE_ME($$$ARGS)\n"
+            contents = _ast_rule_scaffold_contents(name, lang)
         elif scaffold_kind == "test":
+            from tensor_grep.cli.ast_scaffold import _ast_test_scaffold_contents
+
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["test_dirs"])[0]
                 if project_cfg is not None
                 else base_dir / "tests"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = (
-                f"id: {name}\nruleId: {name}\nvalid:\n  - other(1)\n"
-                "invalid:\n  - TODO_REPLACE_ME(1)\n"
-            )
+            contents = _ast_test_scaffold_contents(name, lang)
         else:
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(str, project_cfg["utils_dir"])
@@ -10479,7 +10480,7 @@ def new(
             target_path = target_dir / f"{name}.yml"
             contents = f"id: {name}\npattern: ''\n"
 
-        if target_path.exists():
+        if os.path.lexists(target_path):
             raise FileExistsError(f"Scaffold target already exists: {target_path}")
         target_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes_anchored(

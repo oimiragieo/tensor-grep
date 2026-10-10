@@ -223,6 +223,151 @@ def test_new_rule_and_test_scaffolds_match_and_pass_test_across_front_doors(tmp_
     assert generated["python-m"] == generated["native"]
 
 
+@pytest.mark.parametrize("launcher", ["python-m", "native"])
+@pytest.mark.parametrize("kind", ["rule", "test", "project"])
+def test_new_scaffold_refuses_dangling_symlink_across_front_doors(
+    tmp_path: Path, launcher: str, kind: str
+):
+    _skip_if_native_binary_missing(launcher)
+    project_dir = tmp_path / launcher
+    directory_name = {"rule": "rules", "test": "tests", "project": ""}[kind]
+    target_dir = project_dir / directory_name
+    target_dir.mkdir(parents=True)
+    target = tmp_path / f"outside-{launcher}.yml"
+    destination = target_dir / ("sgconfig.yml" if kind == "project" else "escape.yml")
+    try:
+        destination.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"cannot create symlink on this host: {exc}")
+
+    result = run_command(
+        launcher,
+        (
+            ["new", "rule", "escape", "--lang", "python", "--yes"]
+            if kind == "rule"
+            else ["new", "test", "escape", "--yes"]
+            if kind == "test"
+            else ["new", "project", "--yes"]
+        ),
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert destination.is_symlink()
+    assert not target.exists()
+
+
+def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_doors(
+    tmp_path: Path,
+):
+    _skip_if_native_binary_missing("native")
+    language_result = run_command("native", ["ast-info", "--json"])
+    assert language_result.returncode == 0, language_result.stdout + language_result.stderr
+    languages = json.loads(language_result.stdout)["languages"]
+    generated: dict[str, dict[str, tuple[bytes, bytes]]] = {"python-m": {}, "native": {}}
+    failures = []
+
+    for language in languages:
+        for launcher in ("python-m", "native"):
+            project_dir = tmp_path / launcher / language
+            project_dir.mkdir(parents=True)
+            result = run_command(launcher, ["new", "project", "--yes"], cwd=project_dir)
+            if result.returncode != 0:
+                failures.append(
+                    f"{launcher} {language} new project: {result.stdout}{result.stderr}"
+                )
+                continue
+            result = run_command(
+                launcher,
+                ["new", "rule", "scaffold-check", "--lang", language, "--yes"],
+                cwd=project_dir,
+            )
+            if result.returncode != 0:
+                if (
+                    "no validated pattern example is available for `tg test` on both front doors"
+                    not in (result.stdout + result.stderr)
+                ):
+                    failures.append(
+                        f"{launcher} {language} new rule refusal: {result.stdout}{result.stderr}"
+                    )
+                if (project_dir / "rules" / "scaffold-check.yml").exists():
+                    failures.append(f"{launcher} {language} wrote a refused rule scaffold")
+                continue
+            result = run_command(
+                launcher,
+                ["new", "test", "scaffold-check", "--lang", language, "--yes"],
+                cwd=project_dir,
+            )
+            if result.returncode != 0:
+                failures.append(f"{launcher} {language} new test: {result.stdout}{result.stderr}")
+                continue
+            result = run_command(launcher, ["test"], cwd=project_dir)
+            if result.returncode != 0:
+                failures.append(f"{launcher} {language} test: {result.stdout}{result.stderr}")
+                continue
+            generated[launcher][language] = (
+                (project_dir / "rules" / "scaffold-check.yml").read_bytes(),
+                (project_dir / "tests" / "scaffold-check.yml").read_bytes(),
+            )
+
+    assert generated["python-m"] == generated["native"]
+    assert not failures, "\n".join(failures)
+
+
+def test_scan_ignores_unused_empty_rule_with_identical_json_across_front_doors(
+    tmp_path: Path,
+):
+    _skip_if_native_binary_missing("native")
+    project_dir = tmp_path / "project"
+    rules_dir = project_dir / "rules"
+    rules_dir.mkdir(parents=True)
+    (project_dir / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\nlanguage: python\n", encoding="utf-8"
+    )
+    (rules_dir / "valid.yml").write_text(
+        "id: valid-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    )
+    (rules_dir / "unused-empty.yml").write_text(
+        "id: unused-empty\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+    )
+    (project_dir / "source.py").write_text("ERROR\n", encoding="utf-8")
+
+    outputs = []
+    for launcher in ("python-m", "native"):
+        result = run_command(launcher, ["scan", "--json"], cwd=project_dir)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        output = json.loads(result.stdout)
+        outputs.append(output)
+        assert output["rule_count"] == 1
+        assert [finding["rule_id"] for finding in output["findings"]] == ["valid-rule"]
+
+    assert outputs[0] == outputs[1]
+
+
+def test_test_empty_case_pattern_resolves_linked_rule_across_front_doors(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        (project_dir / "rules").mkdir(parents=True)
+        (project_dir / "tests").mkdir()
+        (project_dir / "sgconfig.yml").write_text(
+            "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+        )
+        rule_path = project_dir / "rules" / "linked.yml"
+        rule_path.write_text(
+            "id: linked-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+        )
+        test_path = project_dir / "tests" / "linked.yml"
+        test_path.write_text(
+            "id: linked-test\nruleId: linked-rule\npattern: ''\nvalid: [PASS]\ninvalid: [ERROR]\n",
+            encoding="utf-8",
+        )
+
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 LAUNCHERS = ["python-m", "native", "bootstrap"]
 
 
