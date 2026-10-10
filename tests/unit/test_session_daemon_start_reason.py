@@ -397,3 +397,16 @@ def test_child_secret_refusal_names_diagnostic_code(
         session_daemon.run_session_daemon_server(str(tmp_path))
 
     assert "(secret_dir_untrusted_owner_or_acl)" in str(caught.value)
+
+
+def test_child_unavailable_secret_reason_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(session_daemon_start_diagnostics, "diagnose_user_secret", lambda: None)
+    captured = (
+        b"RuntimeError: cannot establish per-user daemon secret (secret_unavailable); "
+        b"refusing to serve\n"
+    )
+
+    error = session_daemon_start_diagnostics.daemon_start_failure(Path("root"), captured)
+
+    assert error.reason_code == "secret_unavailable"
+    assert "secret_unavailable" in error.detail

@@ -140,6 +140,7 @@ callers should use the reason code for decisions.
 | `secret_dir_untrusted_owner_or_acl` | The state directory grants another account write access. |
 | `secret_ancestor_untrusted` | An ancestor of the state directory is not trusted. |
 | `secret_io_error` | An I/O error prevented the secret check. |
+| `secret_unavailable` | The secret could not be loaded or created and no specific trust failure was diagnosed, for example because another tg process held its lock. |
 | `daemon_start_failed` | Startup failed without a more specific reason. |
 
 `tg doctor` reports `session_daemon.start_error` as `null` when the read-only secret

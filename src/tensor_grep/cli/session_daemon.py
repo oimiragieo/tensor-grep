@@ -2056,7 +2056,7 @@ def run_session_daemon_server(path: str = ".") -> None:
     # read daemon.json may issue commands.
     token = secrets.token_urlsafe(32)
     if _load_or_create_user_secret() is None:
-        reason = diagnose_user_secret() or "secret_io_error"
+        reason = diagnose_user_secret() or "secret_unavailable"
         raise RuntimeError(f"cannot establish per-user daemon secret ({reason}); refusing to serve")
     with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
         # tg-ledger step-0: load any prior demand-metrics history for this root before serving,

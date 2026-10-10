@@ -16,6 +16,10 @@ DAEMON_SECRET_REASON_DETAILS = {
     ),
     "secret_ancestor_untrusted": "an ancestor of the per-user state directory is not trusted",
     "secret_io_error": "the per-user daemon secret could not be checked due to an I/O error",
+    "secret_unavailable": (
+        "the per-user daemon secret could not be loaded or created, for example because "
+        "another tg process held its lock"
+    ),
 }
 
 
@@ -37,18 +41,7 @@ def daemon_start_failure(root: Path, captured: bytes) -> DaemonStartError:
     detail = next((line.strip() for line in reversed(stderr.splitlines()) if line.strip()), "")
     secret_reason = diagnose_user_secret()
     child_reason = next(
-        (
-            code
-            for code in (
-                "secret_untrusted_present",
-                "secret_extra_links",
-                "secret_dir_unavailable",
-                "secret_dir_untrusted_owner_or_acl",
-                "secret_ancestor_untrusted",
-                "secret_io_error",
-            )
-            if f"({code})" in detail
-        ),
+        (code for code in DAEMON_SECRET_REASON_DETAILS if f"({code})" in detail),
         None,
     )
     if not detail:
