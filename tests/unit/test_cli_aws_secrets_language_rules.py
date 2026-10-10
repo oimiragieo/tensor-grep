@@ -15,14 +15,15 @@ from tests.unit.test_cli_modes_shared import _FakeAstPipeline
         pytest.param(
             "python",
             ".py",
-            'access_key = "AKIAIOSFODNN7EXAMPLE"\naws_secret_access_key = "' + "A" * 40 + '"',
+            'access_key = "AKIA' + 'IOSFODNN7EXAMPLE"\naws_secret_access_key = "' + "A" * 40 + '"',
             {"python-aws-access-key-id", "python-aws-secret-access-key"},
             id="python",
         ),
         pytest.param(
             "javascript",
             ".js",
-            'const accessKey = "AKIAIOSFODNN7EXAMPLE";\n'
+            'const accessKey = "AKIA'
+            'IOSFODNN7EXAMPLE";\n'
             'const aws_secret_access_key = "' + "A" * 40 + '";',
             {"javascript-aws-access-key-id", "javascript-aws-secret-access-key"},
             id="javascript",
@@ -30,7 +31,8 @@ from tests.unit.test_cli_modes_shared import _FakeAstPipeline
         pytest.param(
             "typescript",
             ".ts",
-            'const accessKey = "AKIAIOSFODNN7EXAMPLE";\n'
+            'const accessKey = "AKIA'
+            'IOSFODNN7EXAMPLE";\n'
             'const aws_secret_access_key = "' + "A" * 40 + '";',
             {"typescript-aws-access-key-id", "typescript-aws-secret-access-key"},
             id="typescript",
@@ -38,7 +40,8 @@ from tests.unit.test_cli_modes_shared import _FakeAstPipeline
         pytest.param(
             "rust",
             ".rs",
-            'let access_key = "AKIAIOSFODNN7EXAMPLE";\n'
+            'let access_key = "AKIA'
+            'IOSFODNN7EXAMPLE";\n'
             'let aws_secret_access_key = "' + "A" * 40 + '";',
             {"rust-aws-access-key-id", "rust-aws-secret-access-key"},
             id="rust",

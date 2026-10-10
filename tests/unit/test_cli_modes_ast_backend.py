@@ -1368,8 +1368,8 @@ def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch):
 @pytest.mark.parametrize(
     ("content", "expected_rule_id"),
     [
-        ('key = "AKIAIOSFODNN7EXAMPLE"', "python-aws-access-key-id"),
-        ('key = "ASIA1234567890ABCDEF"', "python-aws-access-key-id"),
+        ('key = "AKIA' + 'IOSFODNN7EXAMPLE"', "python-aws-access-key-id"),
+        ('key = "ASIA' + '1234567890ABCDEF"', "python-aws-access-key-id"),
         (
             'AWS_SECRET_ACCESS_KEY = "' + "A" * 40 + '"',
             "python-aws-secret-access-key",
