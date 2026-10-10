@@ -2,7 +2,7 @@
 
 `_write_ast_project_scaffold` hand-formats the sample rule as
 
-    f"id: sample-rule\\nlanguage: {lang}\\nrule:\\n  pattern: 'print($$$ARGS)'\\n"
+    f'id: "sample-rule"\\nlanguage: {lang}\\nrule:\\n  pattern: \'print($$$ARGS)\'\\n'
 
 so a newline in `lang` writes sibling YAML keys of the attacker's choosing into a file the
 user is then told is a valid scaffold. The sibling `name` parameter was already validated

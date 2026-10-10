@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
@@ -223,6 +224,58 @@ def test_new_rule_and_test_scaffolds_match_and_pass_test_across_front_doors(tmp_
     assert generated["python-m"] == generated["native"]
 
 
+@pytest.mark.parametrize("language", [" Python ", "PY", "c++"])
+def test_new_scaffold_normalizes_language_across_front_doors(tmp_path: Path, language: str):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        result = run_command(
+            launcher, ["new", "rule", "normalized", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        rule = yaml.safe_load(
+            (project_dir / "rules" / "normalized.yml").read_text(encoding="utf-8")
+        )
+        assert rule["language"] == {" Python ": "python", "PY": "python", "c++": "cpp"}[language]
+
+
+@pytest.mark.parametrize("name", ["null", "true", "1", "~", "a#b"])
+def test_new_scaffold_names_round_trip_across_front_doors(tmp_path: Path, name: str):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        for kind in ("rule", "test"):
+            result = run_command(
+                launcher, ["new", kind, name, "--lang", "python", "--yes"], cwd=project_dir
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+        rule = yaml.safe_load((project_dir / "rules" / f"{name}.yml").read_text(encoding="utf-8"))
+        case = yaml.safe_load((project_dir / "tests" / f"{name}.yml").read_text(encoding="utf-8"))
+        assert rule["id"] == case["id"] == case["ruleId"] == name
+        if name == "null":
+            (project_dir / "sgconfig.yml").write_text(
+                "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+            )
+            result = run_command(launcher, ["test"], cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("name", ["a:b", "a b", "a/b", "a\\b"])
+def test_new_scaffold_refuses_names_outside_allowed_set_across_front_doors(
+    tmp_path: Path, name: str
+):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        result = run_command(
+            launcher, ["new", "rule", name, "--lang", "python", "--yes"], cwd=tmp_path
+        )
+        assert result.returncode != 0
+        assert "Invalid item name" in (result.stdout + result.stderr)
+        assert not (tmp_path / "rules" / f"{name}.yml").exists()
+
+
 @pytest.mark.parametrize("launcher", ["python-m", "native"])
 @pytest.mark.parametrize("kind", ["rule", "test", "project"])
 def test_new_scaffold_refuses_dangling_symlink_across_front_doors(
@@ -264,6 +317,13 @@ def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_
     language_result = run_command("native", ["ast-info", "--json"])
     assert language_result.returncode == 0, language_result.stdout + language_result.stderr
     languages = json.loads(language_result.stdout)["languages"]
+    documented_refusals: dict[str, str] = {}
+    docs = (Path(__file__).parents[2] / "docs" / "CONTRACTS.md").read_text(encoding="utf-8")
+    assert set(documented_refusals) <= set(languages)
+    assert all(
+        reason and f"`{language}`" in docs and reason in docs
+        for language, reason in documented_refusals.items()
+    )
     generated: dict[str, dict[str, tuple[bytes, bytes]]] = {"python-m": {}, "native": {}}
     failures = []
 
@@ -283,7 +343,7 @@ def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_
                 cwd=project_dir,
             )
             if result.returncode != 0:
-                if (
+                if language not in documented_refusals or (
                     "no validated pattern example is available for `tg test` on both front doors"
                     not in (result.stdout + result.stderr)
                 ):
@@ -293,6 +353,10 @@ def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_
                 if (project_dir / "rules" / "scaffold-check.yml").exists():
                     failures.append(f"{launcher} {language} wrote a refused rule scaffold")
                 continue
+            if language in documented_refusals:
+                failures.append(
+                    f"{launcher} {language} unexpectedly scaffolded despite documented refusal"
+                )
             result = run_command(
                 launcher,
                 ["new", "test", "scaffold-check", "--lang", language, "--yes"],
@@ -310,8 +374,39 @@ def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_
                 (project_dir / "tests" / "scaffold-check.yml").read_bytes(),
             )
 
-    assert generated["python-m"] == generated["native"]
     assert not failures, "\n".join(failures)
+    assert generated["python-m"] == generated["native"]
+
+
+def test_native_run_matches_each_scaffold_invalid_snippet_only(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    result = run_command("native", ["ast-info", "--json"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    for language in json.loads(result.stdout)["languages"]:
+        project_dir = tmp_path / language
+        project_dir.mkdir()
+        result = run_command(
+            "native", ["new", "rule", "probe", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, f"{language}: {result.stdout}{result.stderr}"
+        result = run_command(
+            "native", ["new", "test", "probe", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, f"{language}: {result.stdout}{result.stderr}"
+        pattern = yaml.safe_load((project_dir / "rules" / "probe.yml").read_text(encoding="utf-8"))[
+            "rule"
+        ]["pattern"]
+        cases = yaml.safe_load((project_dir / "tests" / "probe.yml").read_text(encoding="utf-8"))
+        for snippet, expected in ((cases["invalid"][0], 1), (cases["valid"][0], 0)):
+            fixture = project_dir / "probe.txt"
+            fixture.write_text(snippet, encoding="utf-8")
+            result = run_command(
+                "native", ["run", "--lang", language, "-p", pattern, str(fixture), "--json"]
+            )
+            assert result.returncode == (0 if expected else 1), (
+                f"{language} {snippet!r}: {result.stdout}{result.stderr}"
+            )
+            assert json.loads(result.stdout)["total_matches"] == expected
 
 
 def test_scan_ignores_unused_empty_rule_with_identical_json_across_front_doors(

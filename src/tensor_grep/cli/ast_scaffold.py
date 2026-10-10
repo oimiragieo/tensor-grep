@@ -2,13 +2,41 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 
 _AST_RULE_SCAFFOLD_EXAMPLES = {
+    **dict.fromkeys(
+        (
+            "bash",
+            "c",
+            "cpp",
+            "css",
+            "elixir",
+            "go",
+            "haskell",
+            "hcl",
+            "html",
+            "java",
+            "kotlin",
+            "lua",
+            "nix",
+            "php",
+            "ruby",
+            "scala",
+            "solidity",
+            "swift",
+            "tsx",
+            "yaml",
+        ),
+        ("TODO_REPLACE_ME", "OTHER_IDENTIFIER", "TODO_REPLACE_ME"),
+    ),
+    "csharp": ("TODO_REPLACE_ME()", "OTHER_IDENTIFIER()", "TODO_REPLACE_ME()"),
     "javascript": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
+    "json": ('"TODO_REPLACE_ME"', '"OTHER_IDENTIFIER"', '"TODO_REPLACE_ME"'),
     "python": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
     "rust": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
     "typescript": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
@@ -16,13 +44,14 @@ _AST_RULE_SCAFFOLD_EXAMPLES = {
 
 
 def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:
-    language = lang.strip().lower()
-    from tensor_grep.backends.ast_backend import get_supported_languages
+    from tensor_grep.backends.ast_backend import normalize_ast_language
 
-    if language not in get_supported_languages():
+    try:
+        language = normalize_ast_language(lang)
+    except ValueError as exc:
         raise ValueError(
             f"Cannot scaffold AST rule for language {lang!r}; run `tg ast-info` for supported languages."
-        )
+        ) from exc
     if language not in _AST_RULE_SCAFFOLD_EXAMPLES:
         raise ValueError(
             f"Cannot scaffold AST rule for language {lang!r}: no validated pattern example is available for `tg test` on both front doors."
@@ -31,13 +60,17 @@ def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:
 
 
 def _ast_rule_scaffold_contents(name: str, lang: str) -> str:
+    from tensor_grep.backends.ast_backend import normalize_ast_language
+
     pattern, _valid, _invalid = _ast_rule_scaffold_examples(lang)
-    return f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: {pattern}\n"
+    language = normalize_ast_language(lang)
+    return f"id: {json.dumps(name, ensure_ascii=False)}\nlanguage: {language}\nrule:\n  pattern: {json.dumps(pattern, ensure_ascii=False)}\n"
 
 
 def _ast_test_scaffold_contents(name: str, lang: str) -> str:
     _pattern, valid, invalid = _ast_rule_scaffold_examples(lang)
-    return f"id: {name}\nruleId: {name}\nvalid:\n  - {valid}\ninvalid:\n  - {invalid}\n"
+    quoted_name = json.dumps(name, ensure_ascii=False)
+    return f"id: {quoted_name}\nruleId: {quoted_name}\nvalid:\n  - {json.dumps(valid, ensure_ascii=False)}\ninvalid:\n  - {json.dumps(invalid, ensure_ascii=False)}\n"
 
 
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
@@ -70,13 +103,13 @@ def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
     tests_dir.mkdir(exist_ok=True)
     atomic_write_bytes_anchored(
         rules_dir / "sample-rule.yml",
-        f"id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n".encode(),
+        f"id: \"sample-rule\"\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n".encode(),
         mode=0o644,
         replace=False,
     )
     atomic_write_bytes_anchored(
         tests_dir / "sample-test.yml",
-        b'id: sample-test\nruleId: sample-rule\nvalid:\n  - "pass"\ninvalid:\n'
+        b'id: "sample-test"\nruleId: "sample-rule"\nvalid:\n  - "pass"\ninvalid:\n'
         b'  - "print(\\"hello\\")"\n',
         mode=0o644,
         replace=False,

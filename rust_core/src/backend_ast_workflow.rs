@@ -603,18 +603,6 @@ struct AstNewRequest {
     base_dir: PathBuf,
 }
 
-fn validate_ast_new_name(name: &str) -> Result<()> {
-    if name.trim().is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name == "."
-        || name == ".."
-    {
-        anyhow::bail!("Invalid item name {name:?}; use a bare scaffold identifier.");
-    }
-    Ok(())
-}
-
 fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
     let mut kind = AstNewKind::Project;
     let mut kind_seen = false;
@@ -677,7 +665,7 @@ fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
                 if name.is_some() {
                     anyhow::bail!("Unexpected extra tg new argument {value:?}");
                 }
-                validate_ast_new_name(value)?;
+                scaffold::validate_new_name(value)?;
                 name = Some(value.to_string());
             }
         }
@@ -708,7 +696,8 @@ fn write_ast_project_scaffold(base_dir: &Path, lang: &str) -> Result<()> {
     fs::create_dir_all(&rules_dir)?;
     scaffold::write_new_file(
         &rules_dir.join("sample-rule.yml"),
-        format!("id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n").as_bytes(),
+        format!("id: \"sample-rule\"\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n")
+            .as_bytes(),
         "Rule file",
     )?;
 
@@ -716,7 +705,7 @@ fn write_ast_project_scaffold(base_dir: &Path, lang: &str) -> Result<()> {
     fs::create_dir_all(&tests_dir)?;
     scaffold::write_new_file(
         &tests_dir.join("sample-test.yml"),
-        b"id: sample-test\nruleId: sample-rule\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
+        b"id: \"sample-test\"\nruleId: \"sample-rule\"\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
         "Test file",
     )?;
 
@@ -761,7 +750,7 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
             let path = utils_dir.join(format!("{name}.yml"));
             scaffold::write_new_file(
                 &path,
-                format!("id: {name}\npattern: ''\n").as_bytes(),
+                format!("id: {}\npattern: ''\n", serde_json::to_string(name)?).as_bytes(),
                 "Util file",
             )?;
             println!("Created util scaffold in {:?}", path);

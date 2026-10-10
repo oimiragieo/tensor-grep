@@ -3,6 +3,19 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
+pub(super) fn validate_new_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_.~#-".contains(c))
+    {
+        anyhow::bail!("Invalid item name {name:?}; use letters, digits, _, ., ~, #, or -.");
+    }
+    Ok(())
+}
+
 pub(super) fn write_new_file(path: &Path, contents: &[u8], description: &str) -> Result<()> {
     if fs::symlink_metadata(path).is_ok() {
         anyhow::bail!("{description} {:?} already exists.", path);
@@ -23,18 +36,17 @@ pub(super) fn write_new_file(path: &Path, contents: &[u8], description: &str) ->
 }
 
 pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<()> {
+    let language = normalize_language(language)?;
     let (pattern, _, _) = rule_examples(language)?;
     let rules_dir = base_dir.join("rules");
     fs::create_dir_all(&rules_dir)?;
     let path = rules_dir.join(format!("{name}.yml"));
-    let yaml_pattern = if matches!(language.to_ascii_lowercase().as_str(), "css" | "json") {
-        format!("'{pattern}'")
-    } else {
-        pattern.to_string()
-    };
+    let yaml_pattern = serde_json::to_string(pattern)?;
+    let yaml_name = serde_json::to_string(name)?;
     write_new_file(
         &path,
-        format!("id: {name}\nlanguage: {language}\nrule:\n  pattern: {yaml_pattern}\n").as_bytes(),
+        format!("id: {yaml_name}\nlanguage: {language}\nrule:\n  pattern: {yaml_pattern}\n")
+            .as_bytes(),
         "Rule file",
     )?;
     println!("Created rule scaffold in {:?}", path);
@@ -42,20 +54,18 @@ pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<
 }
 
 pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<()> {
+    let language = normalize_language(language)?;
     let (_, valid, invalid) = rule_examples(language)?;
     let tests_dir = base_dir.join("tests");
     fs::create_dir_all(&tests_dir)?;
     let path = tests_dir.join(format!("{name}.yml"));
-    let (valid_line, invalid_line) =
-        if matches!(language.to_ascii_lowercase().as_str(), "css" | "html" | "json" | "yaml") {
-            (format!("'{valid}'"), format!("'{invalid}'"))
-        } else {
-            (valid.to_string(), invalid.to_string())
-        };
+    let valid_line = serde_json::to_string(valid)?;
+    let invalid_line = serde_json::to_string(invalid)?;
+    let yaml_name = serde_json::to_string(name)?;
     write_new_file(
         &path,
         format!(
-            "id: {name}\nruleId: {name}\nvalid:\n  - {valid_line}\ninvalid:\n  - {invalid_line}\n"
+            "id: {yaml_name}\nruleId: {yaml_name}\nvalid:\n  - {valid_line}\ninvalid:\n  - {invalid_line}\n"
         )
         .as_bytes(),
         "Test file",
@@ -64,8 +74,49 @@ pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<
     Ok(())
 }
 
+fn normalize_language(language: &str) -> Result<&'static str> {
+    let normalized = language.trim().to_lowercase();
+    let canonical = match normalized.as_str() {
+        "bash" | "sh" => "bash",
+        "c" => "c",
+        "cc" | "c++" | "cpp" | "cxx" => "cpp",
+        "c-sharp" | "c#" | "c_sharp" | "cs" | "csharp" => "csharp",
+        "css" => "css",
+        "elixir" | "ex" => "elixir",
+        "go" | "golang" => "go",
+        "haskell" | "hs" => "haskell",
+        "hcl" => "hcl",
+        "html" => "html",
+        "java" => "java",
+        "javascript" | "jsx" | "js" => "javascript",
+        "json" => "json",
+        "kotlin" | "kt" => "kotlin",
+        "lua" => "lua",
+        "nix" => "nix",
+        "php" => "php",
+        "python" | "py" => "python",
+        "ruby" | "rb" => "ruby",
+        "rust" | "rs" => "rust",
+        "scala" => "scala",
+        "sol" | "solidity" => "solidity",
+        "swift" => "swift",
+        "typescript" | "ts" => "typescript",
+        "tsx" => "tsx",
+        "yaml" | "yml" => "yaml",
+        _ => anyhow::bail!("Cannot scaffold AST rule for language {language:?}; run `tg ast-info` for supported languages."),
+    };
+    Ok(canonical)
+}
+
 fn rule_examples(language: &str) -> Result<(&'static str, &'static str, &'static str)> {
-    match language.to_ascii_lowercase().as_str() {
+    match language {
+        "bash" | "c" | "cpp" | "css" | "elixir" | "go" | "haskell" | "hcl"
+        | "html" | "java" | "kotlin" | "lua" | "nix" | "php" | "ruby"
+        | "scala" | "solidity" | "swift" | "tsx" | "yaml" => {
+            Ok(("TODO_REPLACE_ME", "OTHER_IDENTIFIER", "TODO_REPLACE_ME"))
+        }
+        "csharp" => Ok(("TODO_REPLACE_ME()", "OTHER_IDENTIFIER()", "TODO_REPLACE_ME()")),
+        "json" => Ok(("\"TODO_REPLACE_ME\"", "\"OTHER_IDENTIFIER\"", "\"TODO_REPLACE_ME\"")),
         "javascript" | "python" | "rust" | "typescript" => {
             Ok(("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"))
         }

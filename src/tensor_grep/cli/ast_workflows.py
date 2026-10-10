@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.cli.ast_language_suffixes import _SUFFIX_CACHE as _SUFFIX_CACHE
 from tensor_grep.cli.ast_workflow_rules import (
     _append_test_pattern_failure,
     _batch_search_snippets,
@@ -94,17 +95,6 @@ _BACKEND_AVAILABILITY: dict[tuple[str, type[Any], str], bool] = {}
 _SUPPORTED_NATIVE_PATTERN_RE = None
 _CACHED_BACKENDS: dict[tuple[str, type[Any]], Any] = {}
 _NORM_CACHE: dict[str, str] = {}
-
-_SUFFIX_CACHE = {
-    "python": ".py",
-    "py": ".py",
-    "javascript": ".js",
-    "js": ".js",
-    "typescript": ".ts",
-    "ts": ".ts",
-    "rust": ".rs",
-    "rs": ".rs",
-}
 
 
 _AST_GREP_REMEDIATION = (

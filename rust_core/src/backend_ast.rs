@@ -1901,17 +1901,8 @@ fn validate_batch_no_overlaps(
 }
 
 pub fn resolve_language(lang: &str) -> Result<SupportLang> {
-    let language = lang
-        .parse::<SupportLang>()
-        .map_err(|_| anyhow::anyhow!("Unsupported language: {lang}"))?;
-
-    match language {
-        SupportLang::Python
-        | SupportLang::JavaScript
-        | SupportLang::TypeScript
-        | SupportLang::Rust => Ok(language),
-        _ => anyhow::bail!("Unsupported language: {lang}"),
-    }
+    lang.parse::<SupportLang>()
+        .map_err(|_| anyhow::anyhow!("Unsupported language: {lang}"))
 }
 
 fn collect_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> {

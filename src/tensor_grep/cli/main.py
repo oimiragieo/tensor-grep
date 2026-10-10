@@ -10398,8 +10398,15 @@ def test(
 
 
 def _validate_ast_new_name(name: str) -> None:
-    if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"Invalid item name {name!r}; use a bare scaffold identifier.")
+    if (
+        name in {".", ".."}
+        or not name
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~#-"
+            for c in name
+        )
+    ):
+        raise ValueError(f"Invalid item name {name!r}; use letters, digits, _, ., ~, #, or -.")
 
 
 @app.command()
@@ -10478,7 +10485,7 @@ def new(
                 else base_dir / "utils"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\npattern: ''\n"
+            contents = f"id: {json.dumps(name, ensure_ascii=False)}\npattern: ''\n"
 
         if os.path.lexists(target_path):
             raise FileExistsError(f"Scaffold target already exists: {target_path}")

@@ -1499,10 +1499,10 @@ def test_new_rule_and_test_scaffolds_have_matching_placeholder_cases(tmp_path: P
     assert rule.exit_code == 0, rule.output
     assert test.exit_code == 0, test.output
     assert (tmp_path / "rules" / "no-eval2.yml").read_bytes() == (
-        b"id: no-eval2\nlanguage: python\nrule:\n  pattern: TODO_REPLACE_ME($$$ARGS)\n"
+        b'id: "no-eval2"\nlanguage: python\nrule:\n  pattern: "TODO_REPLACE_ME($$$ARGS)"\n'
     )
     assert (tmp_path / "tests" / "no-eval2.yml").read_bytes() == (
-        b"id: no-eval2\nruleId: no-eval2\nvalid:\n  - other(1)\ninvalid:\n  - TODO_REPLACE_ME(1)\n"
+        b'id: "no-eval2"\nruleId: "no-eval2"\nvalid:\n  - "other(1)"\ninvalid:\n  - "TODO_REPLACE_ME(1)"\n'
     )
 
 

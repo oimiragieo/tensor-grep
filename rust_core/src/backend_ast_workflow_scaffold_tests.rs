@@ -25,11 +25,11 @@ fn new_rule_and_test_scaffolds_match_python_front_door_contract() {
 
     assert_eq!(
         fs::read(dir.path().join("rules/no-eval2.yml")).unwrap(),
-        b"id: no-eval2\nlanguage: python\nrule:\n  pattern: TODO_REPLACE_ME($$$ARGS)\n"
+        b"id: \"no-eval2\"\nlanguage: python\nrule:\n  pattern: \"TODO_REPLACE_ME($$$ARGS)\"\n"
     );
     assert_eq!(
         fs::read(dir.path().join("tests/no-eval2.yml")).unwrap(),
-        b"id: no-eval2\nruleId: no-eval2\nvalid:\n  - other(1)\ninvalid:\n  - TODO_REPLACE_ME(1)\n"
+        b"id: \"no-eval2\"\nruleId: \"no-eval2\"\nvalid:\n  - \"other(1)\"\ninvalid:\n  - \"TODO_REPLACE_ME(1)\"\n"
     );
 }
 
