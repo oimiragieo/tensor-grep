@@ -173,13 +173,19 @@ def test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
     ],
 )
 @pytest.mark.parametrize(
-    "secret",
+    "candidate_value",
     ["A" * 39 + "=", "A" * 39 + "/", "A" * 19 + "+" + "A" * 20],
     ids=["trailing-equals", "trailing-slash", "contains-plus"],
 )
 @pytest.mark.parametrize("form", ["quoted", "unquoted", "quoted-eof", "unquoted-eof"])
 def test_scan_secrets_basic_detects_punctuated_aws_secret_keys_for_each_language(
-    monkeypatch, language: str, extension: str, prefix: str, suffix: str, secret: str, form: str
+    monkeypatch,
+    language: str,
+    extension: str,
+    prefix: str,
+    suffix: str,
+    candidate_value: str,
+    form: str,
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     fixture_path = f"fixture{extension}"
@@ -193,7 +199,7 @@ def test_scan_secrets_basic_detects_punctuated_aws_secret_keys_for_each_language
 
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", FixtureScanner)
     quoted = form.startswith("quoted")
-    line = prefix + ('"' + secret + '"' if quoted else secret) + suffix
+    line = prefix + ('"' + candidate_value + '"' if quoted else candidate_value) + suffix
     content = line + ("" if form.endswith("eof") else "\n")
     with CliRunner().isolated_filesystem():
         Path(fixture_path).write_text(content, encoding="utf-8")
