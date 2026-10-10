@@ -56,6 +56,7 @@ def test_sign_then_verify_roundtrip(tmp_path: Path) -> None:
     assert result["checks"] == {
         "digest_valid": True,
         "signature_valid": True,
+        "signature_status": "valid",
         "key_trusted": None,
     }
     assert result["signed"] is True
@@ -105,6 +106,64 @@ def test_tampered_field_is_rejected(tmp_path: Path) -> None:
     assert result["errors"]
 
 
+@pytest.mark.parametrize(
+    ("case", "expected_status", "expected_signature_valid", "expected_valid"),
+    [
+        ("unsigned", "unsigned", True, True),
+        ("unsigned_trust_required", "unsigned_trust_required", False, False),
+        ("signed_valid", "valid", True, True),
+        ("signed_invalid", "invalid", False, False),
+        ("signed_untrusted", "untrusted_key", True, False),
+    ],
+)
+def test_signature_status_and_compatibility_values(
+    tmp_path: Path,
+    case: str,
+    expected_status: str,
+    expected_signature_valid: bool,
+    expected_valid: bool,
+) -> None:
+    key_path = tmp_path / "key"
+    keypair = evidence_signing.generate_keypair(key_path)
+    receipt = _sample_receipt()
+    trusted_keys: list[str] | None = None
+    require_trusted = False
+
+    if case in {"signed_valid", "signed_invalid", "signed_untrusted"}:
+        receipt = evidence_signing.sign_receipt(receipt, private_key_path=key_path)
+    else:
+        receipt["receipt_sha256"] = evidence_signing.receipt_digest(receipt)
+    if case == "unsigned_trust_required":
+        trusted_keys = [keypair["public_key"]]
+    elif case == "signed_invalid":
+        receipt["signing"] = {**receipt["signing"], "algorithm": "unsupported"}
+    elif case == "signed_untrusted":
+        trusted_keys = [evidence_signing.generate_keypair(tmp_path / "other")["public_key"]]
+        require_trusted = True
+
+    result = evidence_signing.verify_receipt(
+        receipt, trusted_public_keys=trusted_keys, require_trusted=require_trusted
+    )
+
+    assert result["checks"]["signature_status"] == expected_status
+    assert result["checks"]["signature_valid"] is expected_signature_valid
+    assert result["valid"] is expected_valid
+
+
+def test_signed_receipt_with_changed_body_byte_has_invalid_signature_status(
+    tmp_path: Path,
+) -> None:
+    key_path = tmp_path / "key"
+    evidence_signing.generate_keypair(key_path)
+    receipt = evidence_signing.sign_receipt(_sample_receipt(), private_key_path=key_path)
+    receipt["revision"] = {**receipt["revision"], "commit_sha": "b" + "a" * 39}
+
+    result = evidence_signing.verify_receipt(receipt)
+
+    assert result["checks"]["signature_status"] == "invalid"
+    assert result["valid"] is False
+
+
 def test_tampered_receipt_exits_nonzero_via_cli(tmp_path: Path) -> None:
     key_path = tmp_path / "key"
     evidence_signing.generate_keypair(key_path)
@@ -117,6 +176,19 @@ def test_tampered_receipt_exits_nonzero_via_cli(tmp_path: Path) -> None:
     result = runner.invoke(app, ["evidence", "verify", str(receipt_path)])
 
     assert result.exit_code == 1
+
+
+def test_cli_text_verify_reports_signature_status(tmp_path: Path) -> None:
+    receipt = _sample_receipt()
+    receipt["receipt_sha256"] = evidence_signing.receipt_digest(receipt)
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    result = runner.invoke(app, ["evidence", "verify", str(receipt_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "signature_valid=True" in result.output
+    assert "signature_status=unsigned" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +486,7 @@ def test_unsigned_digest_only_receipt_is_verifiable(tmp_path: Path) -> None:
     assert result["checks"] == {
         "digest_valid": True,
         "signature_valid": True,
+        "signature_status": "unsigned",
         "key_trusted": None,
     }
     assert result["key_id"] is None
@@ -657,6 +730,7 @@ def test_real_binary_dogfood_keygen_emit_sign_verify_roundtrip(
     verify_payload = json.loads(verify_out)
     assert verify_payload["valid"] is True
     assert verify_payload["checks"]["signature_valid"] is True
+    assert verify_payload["checks"]["signature_status"] == "valid"
     assert verify_payload["checks"]["digest_valid"] is True
 
     # ASCII-only output across all three commands (Windows cp1252 crash guard, house style).

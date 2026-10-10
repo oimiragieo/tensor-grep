@@ -313,6 +313,7 @@ def test_verify_review_bundle_green_signed_fresh_trusted_receipt_against_head(
     assert payload["against"]["resolved_commit_sha"] == _head_sha(git_repo)
     assert payload["receipts"][0]["valid"] is True
     assert payload["receipts"][0]["signature"]["checks"]["key_trusted"] is True
+    assert payload["receipts"][0]["signature"]["checks"]["signature_status"] == "valid"
     assert payload["receipts"][0]["freshness"]["valid"] is True
 
 
