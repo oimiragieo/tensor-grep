@@ -53,7 +53,7 @@ def test_stdio_ast_missing_path_is_refused_and_session_recovers(tmp_path: Path) 
                         ),
                         30,
                     )
-                    assert result.isError is False
+                    assert result.isError is True
                     payload = json.loads(result.content[0].text)
                     assert payload["error"]["code"] == "invalid_input"
                     assert "not found" in payload["error"]["message"].lower()

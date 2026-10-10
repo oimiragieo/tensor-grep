@@ -60,7 +60,10 @@ def test_resolve_native_tg_binary_mcp_env_override(tmp_path):
     binary_path = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
     binary_path.touch()
 
-    with patch.dict(os.environ, {"TG_MCP_TG_BINARY": str(binary_path)}):
+    with patch.dict(
+        os.environ,
+        {"TG_NATIVE_TG_BINARY": "", "TG_MCP_TG_BINARY": str(binary_path)},
+    ):
         resolved = resolve_native_tg_binary()
         assert resolved == binary_path.resolve()
 

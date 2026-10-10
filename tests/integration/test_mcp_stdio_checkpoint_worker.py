@@ -42,10 +42,14 @@ mcp_server.run_mcp_server()
 
 
 async def _call(
-    session: ClientSession, name: str, arguments: dict[str, Any], timeout: float = 30
+    session: ClientSession,
+    name: str,
+    arguments: dict[str, Any],
+    timeout: float = 30,
+    expected_error: bool = False,
 ) -> dict[str, Any]:
     result = await asyncio.wait_for(session.call_tool(name, arguments), timeout)
-    assert result.isError is False
+    assert result.isError is expected_error
     return json.loads(result.content[0].text)
 
 
@@ -141,6 +145,7 @@ def test_checkpoint_stdio_create_list_undo_is_scoped_and_reusable(
                     create_name,
                     {"path": str(outside), "label": "outside"}
                     | ({"action": "create"} if consolidated else {}),
+                    expected_error=True,
                 )
                 assert refused["error"]["code"] == "invalid_input"
                 assert outside.read_bytes() == b"outside changed\n"

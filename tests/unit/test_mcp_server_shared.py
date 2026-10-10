@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mcp import types
 
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -248,7 +249,19 @@ def _mcp_tool_names() -> set[str]:
 def _call_mcp_tool_text(name: str, arguments: dict[str, object]) -> str:
     from tensor_grep.cli import mcp_server
 
-    content, data = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
+    result = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
+    if isinstance(result, types.CallToolResult):
+        content = result.content
+        data = result.structuredContent
+        payload = json.loads(content[0].text)
+        expected_error = (
+            isinstance(payload, dict)
+            and isinstance(payload.get("error"), dict)
+            and bool(payload["error"])
+        )
+        assert result.isError is expected_error
+    else:
+        content, data = result
     assert data["result"] == content[0].text
     return content[0].text
 

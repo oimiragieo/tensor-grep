@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
+from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
@@ -27,7 +28,12 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _call(tool: str, arguments: dict[str, object]) -> dict[str, Any]:
-    content, _metadata = asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
+    result = asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
+    if isinstance(result, types.CallToolResult):
+        payload = cast(dict[str, Any], json.loads(result.content[0].text))
+        assert result.isError is (isinstance(payload.get("error"), dict) and bool(payload["error"]))
+        return payload
+    content, _metadata = result
     return cast(dict[str, Any], json.loads(cast(Any, content)[0].text))
 
 
