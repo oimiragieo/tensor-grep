@@ -1,0 +1,98 @@
+"""Regression coverage for diff-impact's test-reference risk cap."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import tensor_grep.cli.diff_impact as di
+from tensor_grep.cli import repo_map
+
+
+def _dormant_diff(root: Path, test_name: str | None = None) -> str:
+    pkg = root / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "core.py").write_text("def dormant():\n    return 2\n", encoding="utf-8")
+    if test_name is not None:
+        test_file = root / test_name
+        source = (
+            "package pkg\nvar observed = dormant\n"
+            if test_file.suffix == ".go"
+            else "from pkg.core import dormant\nobserved = dormant\n"
+        )
+        test_file.write_text(source, encoding="utf-8")
+    return (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n def dormant():\n"
+        "-    return 1\n+    return 2\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "test_name",
+    ["core.test.js", "core.spec.ts", "test_core.py", "core_test.go", "core.test.jsx"],
+)
+def test_non_call_test_reference_disables_uncalled_cap(tmp_path: Path, test_name: str) -> None:
+    diff = _dormant_diff(tmp_path, test_name)
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+    if test_name == "core.test.jsx":
+        assert payload["partial"] is False
+        assert payload["affected_tests"] == []
+    assert "risk_reasons" in payload
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_refs_deadline_cutoff_marks_diff_impact_partial_and_uncapped(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    real = repo_map.build_symbol_refs_from_map
+    calls: list[tuple[float | None, str]] = []
+
+    def expire_during_refs(
+        repo_map_payload: dict[str, Any], symbol: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        calls.append((kwargs.get("deadline_monotonic"), symbol))
+        payload = real(repo_map_payload, symbol, **kwargs)
+        monkeypatch.setattr(di.time, "monotonic", lambda: kwargs["deadline_monotonic"] + 1)
+        return payload
+
+    monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", expire_during_refs)
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff, deadline_seconds=60)
+    assert calls and calls[0][0] is not None
+    assert payload["partial"] is True
+    assert "deadline_exceeded" in payload["downgrade_reasons"]
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_refs_lookup_reused_by_symbol_name_with_existing_limits(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    monkeypatch.setattr(
+        di,
+        "map_changed_lines_to_symbols",
+        lambda *args: [
+            {"name": "dormant", "file": "pkg/core.py"},
+            {"name": "dormant", "file": "pkg/other.py"},
+        ],
+    )
+    calls: list[tuple[float | None, int | None]] = []
+
+    def record_refs(*args: Any) -> tuple[bool, bool]:
+        calls.append((args[2], args[3]))
+        return True, True
+
+    monkeypatch.setattr(di, "_test_reference_evidence", record_refs)
+    payload = di.build_diff_blast_radius(
+        root=tmp_path, diff_text=diff, deadline_seconds=60, max_repo_files=3
+    )
+    assert [symbol["name"] for symbol in payload["changed_symbols"]] == ["dormant", "dormant"]
+    assert len(calls) == 1
+    assert calls[0][0] is not None
+    assert calls[0][1] == 3

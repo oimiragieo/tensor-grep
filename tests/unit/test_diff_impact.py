@@ -14,7 +14,6 @@ from typer.testing import CliRunner
 import tensor_grep.cli.diff_impact as di
 from tensor_grep.cli.diff_impact import (
     _calculate_risk_tier,
-    _calculate_risk_tier_with_reasons,
     _is_test_path,
     build_diff_blast_radius,
     extract_diff_hunks_from_git,
@@ -169,7 +168,9 @@ def test_calculate_risk_tier() -> None:
     assert _calculate_risk_tier(0.2, 5, 60) == "critical"
 
 
-def test_calculate_risk_tier_reasons_pin_existing_threshold_scenarios() -> None:
+def test_calculate_risk_tier_reasons_pin_existing_threshold_scenarios(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     scenarios = [
         (0.05, 1, 1, "low", []),
         (0.2, 2, 2, "medium", ["score_ge_0_15"]),
@@ -221,9 +222,43 @@ def test_calculate_risk_tier_reasons_pin_existing_threshold_scenarios() -> None:
             ],
         ),
     ]
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n+++ b/pkg/core.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n"
+        "-    return 1\n+    return 2\n"
+    )
+    monkeypatch.setattr(
+        di,
+        "map_changed_lines_to_symbols",
+        lambda *args, **kwargs: [{"name": "changed", "file": "pkg/core.py"}],
+    )
+    monkeypatch.setattr(
+        di,
+        "build_repo_map",
+        lambda *args, **kwargs: {"path": str(tmp_path), "files": [], "tests": [], "symbols": []},
+    )
+    monkeypatch.setattr(di, "_test_reference_evidence", lambda *args: (True, True))
+    radius: dict[str, Any] = {}
+    monkeypatch.setattr(di, "build_symbol_blast_radius_from_map", lambda *args, **kwargs: radius)
     for score, files, callers, expected_tier, expected_reasons in scenarios:
-        tier, reasons = _calculate_risk_tier_with_reasons(score, files, callers)
-        assert (tier, reasons) == (expected_tier, expected_reasons)
+        radius = {
+            "callers": [
+                {"file": f"pkg/caller_{index}.py", "caller": f"caller_{index}", "line": 1}
+                for index in range(callers)
+            ],
+            "affected_files": [
+                "pkg/core.py",
+                *[f"pkg/file_{index}.py" for index in range(files - 1)],
+            ],
+            "tests": [],
+            "blast_radius_score": score,
+        }
+        payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
+        assert (payload["risk_tier"], payload.get("risk_reasons")) == (
+            expected_tier,
+            expected_reasons,
+        )
         assert _calculate_risk_tier(score, files, callers) == expected_tier
 
 

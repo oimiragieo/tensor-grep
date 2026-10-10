@@ -28,6 +28,7 @@ from tensor_grep.cli.repo_map import (
     build_symbol_blast_radius_from_map,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
+from tensor_grep.cli.repo_map_test_paths import _is_test_file
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
@@ -1243,6 +1244,8 @@ def build_diff_blast_radius(
     symbol_evidence_complete = bool(changed_symbols) and not not_analyzed_paths
     all_changed_symbols_uncalled = bool(changed_symbols)
     test_reference_data_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
+    reference_evidence_by_name: dict[str, tuple[bool, bool]] = {}
+    incomplete_reference_lookups: list[str] = []
 
     if partial or not_analyzed_paths:
         test_reference_data_complete = False
@@ -1285,8 +1288,7 @@ def build_diff_blast_radius(
         test_file_references = [
             caller
             for caller in symbol_callers or []
-            if isinstance(caller, dict)
-            and _is_test_path(str(caller.get("file", "")).replace("\\", "/"))
+            if isinstance(caller, dict) and _is_test_file(Path(str(caller.get("file", ""))))
         ]
         if test_file_references:
             all_changed_symbols_uncalled = False
@@ -1297,11 +1299,22 @@ def build_diff_blast_radius(
                 downgrade_reasons.append("symbol_blast_radius_partial")
                 partial_reasons.append("symbol_blast_radius_partial")
 
-        refs_complete, has_test_reference = _test_reference_evidence(
-            repo_m, symbol_name, deadline_monotonic, _is_test_path
-        )
+        if symbol_name not in reference_evidence_by_name:
+            reference_evidence_by_name[symbol_name] = _test_reference_evidence(
+                repo_m,
+                symbol_name,
+                deadline_monotonic,
+                max_repo_files,
+                incomplete_reference_lookups,
+            )
+        refs_complete, has_test_reference = reference_evidence_by_name[symbol_name]
         if not refs_complete:
             test_reference_data_complete = False
+            for reason in incomplete_reference_lookups:
+                partial = True
+                if reason not in downgrade_reasons:
+                    downgrade_reasons.append(reason)
+                    partial_reasons.append(reason)
         elif has_test_reference:
             all_changed_symbols_uncalled = False
 
