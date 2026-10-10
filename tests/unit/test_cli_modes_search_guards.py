@@ -1487,6 +1487,25 @@ def test_new_rule_should_respect_base_dir_and_requested_name(tmp_path: Path) -> 
     assert not (base_dir / "rules" / "sample-rule.yml").exists()
 
 
+def test_new_rule_and_test_scaffolds_have_matching_placeholder_cases(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    rule = runner.invoke(
+        app,
+        ["new", "rule", "no-eval2", "--lang", "python", "--yes", "--base-dir", str(tmp_path)],
+    )
+    test = runner.invoke(app, ["new", "test", "no-eval2", "--yes", "--base-dir", str(tmp_path)])
+
+    assert rule.exit_code == 0, rule.output
+    assert test.exit_code == 0, test.output
+    assert (tmp_path / "rules" / "no-eval2.yml").read_bytes() == (
+        b"id: no-eval2\nlanguage: python\nrule:\n  pattern: TODO_REPLACE_ME($$$ARGS)\n"
+    )
+    assert (tmp_path / "tests" / "no-eval2.yml").read_bytes() == (
+        b"id: no-eval2\nruleId: no-eval2\nvalid:\n  - other(1)\ninvalid:\n  - TODO_REPLACE_ME(1)\n"
+    )
+
+
 def test_new_project_name_should_scaffold_named_directory() -> None:
     runner = CliRunner()
 

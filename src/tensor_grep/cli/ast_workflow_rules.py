@@ -361,6 +361,21 @@ def _load_rule_specs_and_meta(
     return specs, meta
 
 
+def _append_test_pattern_failure(
+    linked_rule: object,
+    rules_by_id: Mapping[str, Mapping[str, Any]],
+    test_file: str,
+    case_id: str,
+    failures: list[str],
+) -> bool:
+    if isinstance(linked_rule, str) and linked_rule in rules_by_id:
+        failure = f"{test_file}:{case_id}: rule {linked_rule} has an empty pattern"
+    else:
+        failure = f"{test_file}:{case_id}: missing pattern or ruleId"
+    failures.append(failure)
+    return True
+
+
 def _load_test_data_and_meta(
     project_cfg: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -437,6 +452,7 @@ def _extract_rule_member_patterns(rule_data: dict[str, object]) -> list[str] | N
         trimmed = direct.strip()
         if trimmed:
             return [trimmed]
+        return [""]
     elif isinstance(direct, list):
         members: list[str] = []
         for item in direct:
@@ -449,7 +465,7 @@ def _extract_rule_member_patterns(rule_data: dict[str, object]) -> list[str] | N
     rule_node = rule_data.get("rule")
     if isinstance(rule_node, dict):
         nested = rule_node.get("pattern")
-        if isinstance(nested, str) and nested.strip():
+        if isinstance(nested, str):
             return [nested.strip()]
         any_members = rule_node.get("any")
         if isinstance(any_members, list) and any_members:

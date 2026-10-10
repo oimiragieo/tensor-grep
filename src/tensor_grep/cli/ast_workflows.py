@@ -12,16 +12,8 @@ from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
-
-# NOTE: several names below are re-exported (used only via `ast_workflows.X` from
-# tests/other modules, not by any remaining code in this file) rather than
-# genuinely unused -- each is imported `as` itself so ruff's F401 recognizes the
-# re-export as intentional instead of flagging it for removal (removing it would
-# silently break every `ast_workflows._name` qualified test access).
 from tensor_grep.cli.ast_workflow_rules import (
-    _ast_run_remediation_lines as _ast_run_remediation_lines,
-)
-from tensor_grep.cli.ast_workflow_rules import (
+    _append_test_pattern_failure,
     _batch_search_snippets,
     _collect_candidate_files,
     _describe_ast_backend_mode,
@@ -34,6 +26,15 @@ from tensor_grep.cli.ast_workflow_rules import (
     _stamp_ast_scan_incompleteness,
     _suffix_for_language,
     _warn_windows_single_quote_pattern,
+)
+
+# NOTE: several names below are re-exported (used only via `ast_workflows.X` from
+# tests/other modules, not by any remaining code in this file) rather than
+# genuinely unused -- each is imported `as` itself so ruff's F401 recognizes the
+# re-export as intentional instead of flagging it for removal (removing it would
+# silently break every `ast_workflows._name` qualified test access).
+from tensor_grep.cli.ast_workflow_rules import (
+    _ast_run_remediation_lines as _ast_run_remediation_lines,
 )
 from tensor_grep.cli.ast_workflow_rules import (
     _build_ast_run_search_payload as _build_ast_run_search_payload,
@@ -1244,9 +1245,10 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                     failures.append(f"{test_file}:{case_id}: {exc}")
                     continue
                 if not pattern:
-                    failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
+                    _append_test_pattern_failure(
+                        linked_rule, rules_by_id, test_file, case_id, failures
+                    )
                     continue
-
                 valid_snippets = _normalize_string_list(case.get("valid"), [])
                 invalid_snippets = _normalize_string_list(case.get("invalid"), [])
                 if not valid_snippets and not invalid_snippets:
@@ -1255,7 +1257,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
 
                 total_cases += len(valid_snippets) + len(invalid_snippets)
                 case_cfg = cfg if language == cfg.lang else replace(cfg, lang=language)
-
                 # Use orchestration hint if available
                 backend = _select_ast_backend_for_pattern(
                     case_cfg, pattern, backend_cache=backend_cache

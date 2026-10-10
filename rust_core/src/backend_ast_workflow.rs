@@ -7,6 +7,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[path = "backend_ast_workflow_scaffold.rs"]
+mod scaffold;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AstProjectConfig {
     #[serde(rename = "ruleDirs", default = "default_rule_dirs")]
@@ -413,6 +416,21 @@ pub fn execute_ast_test_core(
                     }
                 }
 
+                if pattern
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    if let Some(rid) = linked_rule_id {
+                        if data.rule_specs.iter().any(|rule| rule.id == rid) {
+                            failures.push(format!(
+                                "{}:{}: rule {} has an empty pattern",
+                                test_file_path, case_id, rid
+                            ));
+                            continue;
+                        }
+                    }
+                }
+
                 let pattern = match pattern {
                     Some(p) => p,
                     None => {
@@ -466,7 +484,7 @@ pub fn execute_ast_test_core(
         }
     }
 
-    if total_cases == 0 {
+    if total_cases == 0 && failures.is_empty() {
         writeln!(writer, "Error: No test cases found.")?;
         return Ok(false);
     }
@@ -732,36 +750,11 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
         }
         AstNewKind::Rule => {
             let name = request.name.as_deref().expect("validated rule name");
-            let rules_dir = request.base_dir.join("rules");
-            fs::create_dir_all(&rules_dir)?;
-            let path = rules_dir.join(format!("{name}.yml"));
-            if path.exists() {
-                anyhow::bail!("Rule file {:?} already exists.", path);
-            }
-            fs::write(
-                &path,
-                format!(
-                    "id: {name}\nlanguage: {}\nrule:\n  pattern: ''\n",
-                    request.lang
-                ),
-            )?;
-            println!("Created rule scaffold in {:?}", path);
-            Ok(())
+            scaffold::write_rule(&request.base_dir, name, &request.lang)
         }
         AstNewKind::Test => {
             let name = request.name.as_deref().expect("validated test name");
-            let tests_dir = request.base_dir.join("tests");
-            fs::create_dir_all(&tests_dir)?;
-            let path = tests_dir.join(format!("{name}.yml"));
-            if path.exists() {
-                anyhow::bail!("Test file {:?} already exists.", path);
-            }
-            fs::write(
-                &path,
-                format!("id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"),
-            )?;
-            println!("Created test scaffold in {:?}", path);
-            Ok(())
+            scaffold::write_test(&request.base_dir, name)
         }
         AstNewKind::Util => {
             let name = request.name.as_deref().expect("validated util name");
@@ -1189,6 +1182,7 @@ impl AstWorkflowOrchestrator {
                 if !trimmed.is_empty() {
                     return Some(vec![trimmed.to_string()]);
                 }
+                return Some(vec![String::new()]);
             } else if let Some(seq) = p.as_sequence() {
                 return collect_pattern_strings(seq);
             }
@@ -1202,6 +1196,7 @@ impl AstWorkflowOrchestrator {
                 if !trimmed.is_empty() {
                     return Some(vec![trimmed.to_string()]);
                 }
+                return Some(vec![String::new()]);
             }
             if let Some(any_seq) = rule
                 .get(serde_yaml::Value::String("any".to_string()))
@@ -2107,3 +2102,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "backend_ast_workflow_scaffold_tests.rs"]
+mod scaffold_tests;

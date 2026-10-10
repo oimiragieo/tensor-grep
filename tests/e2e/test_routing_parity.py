@@ -191,6 +191,38 @@ def run_command(
     return _run_and_decode(cmd, cwd=cwd)
 
 
+def test_new_rule_and_test_scaffolds_match_and_pass_test_across_front_doors(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    generated: dict[str, tuple[bytes, bytes]] = {}
+
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        for args in (
+            ["new", "project", "--yes"],
+            ["new", "rule", "no-eval2", "--lang", "python", "--yes"],
+            ["new", "test", "no-eval2", "--yes"],
+        ):
+            result = run_command(launcher, args, cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+        generated[launcher] = (
+            (project_dir / "rules" / "no-eval2.yml").read_bytes(),
+            (project_dir / "tests" / "no-eval2.yml").read_bytes(),
+        )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        (project_dir / "rules" / "no-eval2.yml").write_text(
+            "id: no-eval2\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+        )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 1
+        assert "no-eval2: rule no-eval2 has an empty pattern" in (result.stdout + result.stderr)
+
+    assert generated["python-m"] == generated["native"]
+
+
 LAUNCHERS = ["python-m", "native", "bootstrap"]
 
 

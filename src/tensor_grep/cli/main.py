@@ -10458,7 +10458,7 @@ def new(
                 else base_dir / "rules"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: ''\n"
+            contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: TODO_REPLACE_ME($$$ARGS)\n"
         elif scaffold_kind == "test":
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["test_dirs"])[0]
@@ -10466,7 +10466,10 @@ def new(
                 else base_dir / "tests"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"
+            contents = (
+                f"id: {name}\nruleId: {name}\nvalid:\n  - other(1)\n"
+                "invalid:\n  - TODO_REPLACE_ME(1)\n"
+            )
         else:
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(str, project_cfg["utils_dir"])
