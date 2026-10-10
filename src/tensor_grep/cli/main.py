@@ -8667,6 +8667,19 @@ def session_daemon_start(
     try:
         payload = start_session_daemon(path)
     except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps({
+                    "version": 1,
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": {
+                        "reason_code": getattr(exc, "reason_code", "daemon_start_failed"),
+                        "detail": getattr(exc, "detail", str(exc)),
+                    },
+                })
+            )
+            raise typer.Exit(1) from exc
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 

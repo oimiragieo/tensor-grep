@@ -35,6 +35,7 @@ from uuid import uuid4
 
 from tensor_grep.cli import session_daemon_winsec as _winsec
 from tensor_grep.cli._index_lock import (
+    _STALE_AFTER_S,
     IndexLockTimeoutError,
     _publish_bytes_no_clobber,
     atomic_write_bytes_anchored,
@@ -1171,6 +1172,36 @@ def _load_or_create_user_secret() -> bytes | None:
         if pinned is not None:
             _winsec.close_handle(pinned)
     return _read_user_secret(path)
+
+
+def diagnose_user_secret() -> str | None:
+    """Return the first read-only reason the per-user secret cannot be used or created."""
+    path = _daemon_secret_path()
+    try:
+        if _read_user_secret(path) is not None:
+            return None
+        if os.path.lexists(path):
+            return "secret_extra_links" if _extra_links(path) else "secret_untrusted_present"
+        try:
+            if not path.parent.is_dir():
+                return "secret_dir_unavailable"
+        except OSError:
+            return "secret_dir_unavailable"
+        if not _parent_trusted(path.parent):
+            return "secret_dir_untrusted_owner_or_acl"
+        if not _ancestors_trusted(path.parent):
+            return "secret_ancestor_untrusted"
+        lock_path = path.with_name(f".{path.name}.lock")
+        try:
+            lock_stat = _lstat(lock_path)
+        except FileNotFoundError:
+            pass
+        else:
+            if time.time() - lock_stat.st_mtime <= _STALE_AFTER_S:
+                return "secret_lock_timeout"
+        return None
+    except OSError:
+        return "secret_io_error"
 
 
 def _daemon_ping_proof(secret: bytes, nonce: str, pid: int, root: str, port: int) -> str:

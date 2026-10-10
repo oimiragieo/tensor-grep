@@ -138,7 +138,8 @@ def test_an_unconfirmed_stop_exits_2_with_an_ascii_message_in_both_modes(
 def test_a_clean_stop_of_a_real_daemon_still_exits_0(tmp_path: Path, as_json: bool) -> None:
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    sd._spawn_daemon_subprocess(root)
+    capture_fd, capture_path = sd._spawn_daemon_subprocess(root)
+    sd.cleanup_daemon_start_capture(capture_fd, capture_path)
     live = None
     deadline = time.time() + 60
     while time.time() < deadline and live is None:
@@ -216,7 +217,8 @@ def test_cli_real_daemon_with_a_changed_token_and_a_dead_pid_exits_2(tmp_path: P
     done.wait(timeout=30)
     if psutil.pid_exists(done.pid):
         pytest.skip("the pid was recycled before the probe")
-    sd._spawn_daemon_subprocess(root)
+    capture_fd, capture_path = sd._spawn_daemon_subprocess(root)
+    sd.cleanup_daemon_start_capture(capture_fd, capture_path)
     live = None
     deadline = time.time() + 60
     while time.time() < deadline and live is None:

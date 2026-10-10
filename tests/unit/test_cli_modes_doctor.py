@@ -41,6 +41,30 @@ def test_doctor_json_reports_cold_daemon_autostart_hint(monkeypatch, tmp_path: P
     assert payload["doctor_schema_version"] == 3
 
 
+def test_doctor_json_reports_session_daemon_start_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.get_session_daemon_status",
+        lambda path: {"version": 1, "root": path, "discovered": False, "running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon_trust.diagnose_user_secret",
+        lambda: "secret_dir_untrusted_owner_or_acl",
+    )
+
+    result = CliRunner().invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_daemon"]["start_error"]["reason_code"] == (
+        "secret_dir_untrusted_owner_or_acl"
+    )
+    detail = payload["session_daemon"]["start_error"]["detail"]
+    assert "grants write access to another account" in detail
+    assert "directory:" in detail
+
+
 def test_doctor_text_reports_ast_grep_availability(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)

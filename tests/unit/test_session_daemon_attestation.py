@@ -363,7 +363,8 @@ def _start_real_daemon(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple
     monkeypatch.setattr(sd, "_DAEMON_START_TIMEOUT_SECONDS", 20.0)
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    sd._spawn_daemon_subprocess(root)
+    capture_fd, capture_path = sd._spawn_daemon_subprocess(root)
+    sd.cleanup_daemon_start_capture(capture_fd, capture_path)
     live = None
     deadline = time.time() + 60
     while time.time() < deadline and live is None:
