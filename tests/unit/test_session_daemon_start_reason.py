@@ -207,7 +207,11 @@ def test_start_cleans_capture_after_child_writes_to_fd(
     real_popen = subprocess.Popen
     children: list[subprocess.Popen[bytes]] = []
 
+    captures_at_spawn: list[list[Path]] = []
+
     def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        assert isinstance(kwargs["stderr"], int)
+        captures_at_spawn.append(list(sessions.glob("daemon-start.*.stderr")))
         child = real_popen(
             [
                 sys.executable,
@@ -234,6 +238,7 @@ def test_start_cleans_capture_after_child_writes_to_fd(
         with pytest.raises(DaemonStartError):
             session_daemon.start_session_daemon(str(project))
 
+    assert [len(paths) for paths in captures_at_spawn] == [1]
     assert list(sessions.glob("daemon-start.*.stderr")) == []
 
 
@@ -259,7 +264,12 @@ def test_failed_start_does_not_follow_planted_stderr_symlinks(
     real_popen = subprocess.Popen
     children: list[subprocess.Popen[bytes]] = []
 
+    planted = {sessions / "daemon-start.stderr", sessions / "daemon-start.deadbeef.stderr"}
+    captures_at_spawn: list[set[Path]] = []
+
     def substituted_popen(_argv: object, **kwargs: object) -> subprocess.Popen[bytes]:
+        assert isinstance(kwargs["stderr"], int)
+        captures_at_spawn.append(set(sessions.glob("daemon-start.*.stderr")) - planted)
         child = real_popen(
             [sys.executable, "-c", "import sys; sys.stderr.write('child failed\\n'); sys.exit(1)"],
             **kwargs,
@@ -278,6 +288,7 @@ def test_failed_start_does_not_follow_planted_stderr_symlinks(
     with pytest.raises(RuntimeError):
         session_daemon.start_session_daemon(str(project))
 
+    assert [len(paths) for paths in captures_at_spawn] == [1]
     assert sentinel.read_bytes() == original
     assert list(sessions.glob("daemon-start.*.stderr")) == [
         sessions / "daemon-start.deadbeef.stderr"
@@ -298,11 +309,19 @@ def test_successful_start_removes_capture_file(
         {"host": "127.0.0.1", "port": 4321, "pid": 7, "started_at": "now"},
     ])
     monkeypatch.setattr(session_daemon, "_probe_daemon", lambda _root: next(probe_results))
-    monkeypatch.setattr(session_daemon.subprocess, "Popen", lambda *_a, **_k: object())
+    captures_at_spawn: list[int] = []
+
+    def recording_popen(*_args: object, **kwargs: object) -> object:
+        assert isinstance(kwargs["stderr"], int)
+        captures_at_spawn.append(len(list(sessions.glob("daemon-start.*.stderr"))))
+        return object()
+
+    monkeypatch.setattr(session_daemon.subprocess, "Popen", recording_popen)
 
     result = session_daemon.start_session_daemon(str(project))
 
     assert result["running"] is True
+    assert captures_at_spawn == [1]
     assert list(sessions.glob("daemon-start.*.stderr")) == []
 
 
