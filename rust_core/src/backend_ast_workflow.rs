@@ -7,6 +7,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+#[path = "backend_ast_workflow_new_args.rs"]
+mod new_args;
 #[path = "backend_ast_workflow_scaffold.rs"]
 mod scaffold;
 #[path = "backend_ast_workflow_rules.rs"]
@@ -606,89 +608,8 @@ enum AstNewKind {
 struct AstNewRequest {
     kind: AstNewKind,
     name: Option<String>,
-    lang: String,
+    lang: Option<String>,
     base_dir: PathBuf,
-}
-
-fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
-    let mut kind = AstNewKind::Project;
-    let mut kind_seen = false;
-    let mut name: Option<String> = None;
-    let mut lang = "python".to_string();
-    let mut base_dir = PathBuf::from(".");
-    let mut index = 0usize;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "project" if !kind_seen => {
-                kind = AstNewKind::Project;
-                kind_seen = true;
-            }
-            "rule" if !kind_seen => {
-                kind = AstNewKind::Rule;
-                kind_seen = true;
-            }
-            "test" if !kind_seen => {
-                kind = AstNewKind::Test;
-                kind_seen = true;
-            }
-            "util" if !kind_seen => {
-                kind = AstNewKind::Util;
-                kind_seen = true;
-            }
-            "--lang" | "-l" => {
-                index += 1;
-                lang = args
-                    .get(index)
-                    .cloned()
-                    .context("--lang requires a language value")?;
-            }
-            value if value.starts_with("--lang=") => {
-                lang = value
-                    .split_once('=')
-                    .map(|(_, value)| value.to_string())
-                    .context("--lang requires a language value")?;
-            }
-            "--base-dir" | "-b" => {
-                index += 1;
-                base_dir = PathBuf::from(
-                    args.get(index)
-                        .context("--base-dir requires a directory value")?,
-                );
-            }
-            value if value.starts_with("--base-dir=") => {
-                base_dir = PathBuf::from(
-                    value
-                        .split_once('=')
-                        .map(|(_, value)| value)
-                        .context("--base-dir requires a directory value")?,
-                );
-            }
-            "--yes" | "-y" => {}
-            value if value.starts_with('-') => {
-                anyhow::bail!("Unsupported tg new option {value:?}");
-            }
-            value => {
-                if name.is_some() {
-                    anyhow::bail!("Unexpected extra tg new argument {value:?}");
-                }
-                scaffold::validate_new_name(value)?;
-                name = Some(value.to_string());
-            }
-        }
-        index += 1;
-    }
-
-    if kind != AstNewKind::Project && name.is_none() {
-        anyhow::bail!("tg new {:?} requires a name", kind);
-    }
-    scaffold::validate_language_arg(&lang)?;
-    Ok(AstNewRequest {
-        kind,
-        name,
-        lang,
-        base_dir,
-    })
 }
 
 fn write_ast_project_scaffold(base_dir: &Path, lang: &str) -> Result<()> {
@@ -734,22 +655,26 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    let request = parse_ast_new_args(&args)?;
+    let request = new_args::parse_ast_new_args(&args)?;
     match request.kind {
         AstNewKind::Project => {
             let project_dir = match request.name.as_deref() {
                 Some(name) => request.base_dir.join(name),
                 None => request.base_dir,
             };
-            write_ast_project_scaffold(&project_dir, &request.lang)
+            write_ast_project_scaffold(&project_dir, request.lang.as_deref().unwrap_or("python"))
         }
         AstNewKind::Rule => {
             let name = request.name.as_deref().expect("validated rule name");
-            scaffold::write_rule(&request.base_dir, name, &request.lang)
+            scaffold::write_rule(
+                &request.base_dir,
+                name,
+                request.lang.as_deref().unwrap_or("python"),
+            )
         }
         AstNewKind::Test => {
             let name = request.name.as_deref().expect("validated test name");
-            scaffold::write_test(&request.base_dir, name, &request.lang)
+            scaffold::write_test(&request.base_dir, name, request.lang.as_deref())
         }
         AstNewKind::Util => {
             let name = request.name.as_deref().expect("validated util name");

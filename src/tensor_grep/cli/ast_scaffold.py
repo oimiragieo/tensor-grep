@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
@@ -50,11 +51,11 @@ def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:
         language = normalize_ast_language(lang)
     except ValueError as exc:
         raise ValueError(
-            f"Cannot scaffold AST rule for language {lang!r}; run `tg ast-info` for supported languages."
+            f"Cannot scaffold AST rule for language {json.dumps(lang)}; run `tg ast-info` for supported languages."
         ) from exc
     if language not in _AST_RULE_SCAFFOLD_EXAMPLES:
         raise ValueError(
-            f"Cannot scaffold AST rule for language {lang!r}: no validated pattern example is available for `tg test` on both front doors."
+            f"Cannot scaffold AST rule for language {json.dumps(lang)}: no validated pattern example is available for `tg test` on both front doors."
         )
     return _AST_RULE_SCAFFOLD_EXAMPLES[language]
 
@@ -73,15 +74,43 @@ def _ast_test_scaffold_contents(name: str, lang: str) -> str:
     return f"id: {quoted_name}\nruleId: {quoted_name}\nvalid:\n  - {json.dumps(valid, ensure_ascii=False)}\ninvalid:\n  - {json.dumps(invalid, ensure_ascii=False)}\n"
 
 
-def _linked_ast_rule_language(rule_path: Path, default_language: str) -> str:
+def _linked_ast_rule_language(
+    rule_path: Path, default_language: str | Callable[[], str], explicit_language: str | None = None
+) -> str:
+    if explicit_language is not None:
+        return explicit_language.strip().lower()
     if not os.path.lexists(rule_path):
-        return default_language
+        return default_language() if callable(default_language) else default_language
+    label = f"{rule_path.parent.name}/{rule_path.name}"
+    if rule_path.is_symlink() or not rule_path.is_file():
+        raise ValueError(f"linked rule must be a regular file: {label}")
     import yaml
 
-    rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
-    if not isinstance(rule, dict) or not isinstance(rule.get("language"), str):
-        raise ValueError(f"Linked rule {rule_path} has no language.")
-    return str(rule["language"])
+    try:
+        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"cannot parse linked rule {label}: invalid YAML syntax") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"cannot parse linked rule {label}: invalid UTF-8") from exc
+    if not isinstance(rule, dict):
+        raise ValueError(f"cannot parse linked rule {label}: expected a YAML mapping")
+    language = rule.get("language")
+    if isinstance(language, str) and language.strip():
+        return language.strip().lower()
+    return default_language() if callable(default_language) else default_language
+
+
+def _ast_project_default_language(base_dir: Path) -> str:
+    import yaml
+
+    config_path = base_dir / "sgconfig.yml"
+    if not config_path.is_file():
+        return "python"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(config, dict):
+        return "python"
+    language = config.get("language")
+    return language.strip().lower() if isinstance(language, str) and language.strip() else "python"
 
 
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:

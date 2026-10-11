@@ -10416,7 +10416,7 @@ def new(
         help="Scaffold kind for tensor-grep's bounded AST workflow: project, rule, test, or util.",
     ),
     name: str | None = typer.Argument(None, help="Name for project/rule/test/util scaffolds."),
-    lang: str = typer.Option("python", "--lang", "-l", help="Language for generated items."),
+    lang: str | None = typer.Option(None, "--lang", "-l", help="Language for generated items."),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Accept default scaffold choices without prompting."
     ),
@@ -10434,7 +10434,7 @@ def new(
     _ = yes
     scaffold_kind = command or "project"
     try:
-        if not lang.strip():
+        if lang is not None and not lang.strip():
             raise ValueError(f"Error: Invalid --lang {json.dumps(lang)}; use a bare language name.")
         if scaffold_kind == "project":
             project_dir = base_dir
@@ -10443,7 +10443,7 @@ def new(
                 project_dir = base_dir / name
             from tensor_grep.cli.ast_scaffold import _write_ast_project_scaffold
 
-            config_path = _write_ast_project_scaffold(project_dir, lang)
+            config_path = _write_ast_project_scaffold(project_dir, lang or "python")
             typer.echo(f"Initialized new tensor-grep structural search project in {config_path}.")
             return
 
@@ -10469,9 +10469,10 @@ def new(
                 else base_dir / "rules"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = _ast_rule_scaffold_contents(name, lang)
+            contents = _ast_rule_scaffold_contents(name, lang or "python")
         elif scaffold_kind == "test":
             from tensor_grep.cli.ast_scaffold import (
+                _ast_project_default_language,
                 _ast_test_scaffold_contents,
                 _linked_ast_rule_language,
             )
@@ -10487,7 +10488,17 @@ def new(
                 if project_cfg is not None
                 else base_dir / "rules"
             )
-            rule_language = _linked_ast_rule_language(rule_dir / f"{name}.yml", lang)
+
+            def default_language() -> str:
+                return (
+                    cast(str, project_cfg["language"])
+                    if project_cfg is not None
+                    else _ast_project_default_language(base_dir)
+                )
+
+            rule_language = _linked_ast_rule_language(
+                rule_dir / f"{name}.yml", default_language, lang
+            )
             contents = _ast_test_scaffold_contents(name, rule_language)
         else:
             target_dir = (
@@ -10505,7 +10516,10 @@ def new(
             target_path, contents.encode("utf-8"), mode=0o644, replace=False
         )
     except (FileExistsError, ValueError, OSError) as exc:
-        typer.echo(str(exc), err=True)
+        message = str(exc)
+        if scaffold_kind == "test" and not message.startswith("Error:"):
+            message = f"Error: {message}"
+        typer.echo(message, err=True)
         raise typer.Exit(1) from exc
 
     typer.echo(f"Created {scaffold_kind} scaffold in {target_path}.")

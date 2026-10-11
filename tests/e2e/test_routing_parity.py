@@ -248,6 +248,135 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
     assert generated["python-m"] == generated["native"]
 
 
+@pytest.mark.parametrize(
+    ("case", "rule_yaml", "args", "expected_code", "expected_message", "expected_valid"),
+    [
+        ("project_default", None, [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
+        ("no_config", None, [], 0, "Created test scaffold", "other(1)"),
+        ("linked_language", "language:  RuSt  \n", [], 0, "Created test scaffold", "other(1)"),
+        ("missing_language", "id: probe\n", [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
+        (
+            "blank_language",
+            "language: '   '\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "explicit_over_linked",
+            "language: json\n",
+            ["--lang", " Python "],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+        (
+            "explicit_over_malformed",
+            "language: [\n",
+            ["--lang", "python"],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+        ("malformed", "language: [\n", [], 1, "cannot parse linked rule rules/probe.yml:", None),
+        (
+            "unsupported",
+            "language: unknown-language\n",
+            [],
+            1,
+            "Cannot scaffold AST rule for language",
+            None,
+        ),
+        ("blank_explicit", "language: rust\n", ["--lang", "   "], 1, "Invalid --lang", None),
+        ("symlink", "language: rust\n", [], 1, "linked rule must be a regular file", None),
+        ("dangling_symlink", None, [], 1, "linked rule must be a regular file", None),
+        (
+            "explicit_over_symlink",
+            "language: rust\n",
+            ["--lang", "json"],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "explicit_over_malformed_config",
+            "language: rust\n",
+            ["--lang", "python"],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+    ],
+    ids=[
+        "project_default",
+        "no_config",
+        "linked_language",
+        "missing_language",
+        "blank_language",
+        "explicit_over_linked",
+        "explicit_over_malformed",
+        "malformed",
+        "unsupported",
+        "blank_explicit",
+        "symlink",
+        "dangling_symlink",
+        "explicit_over_symlink",
+        "explicit_over_malformed_config",
+    ],
+)
+def test_new_test_language_resolution_parity(
+    tmp_path: Path,
+    case: str,
+    rule_yaml: str | None,
+    args: list[str],
+    expected_code: int,
+    expected_message: str,
+    expected_valid: str | None,
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes: dict[str, tuple[int, str, dict[str, bytes]]] = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if case != "no_config":
+            config_yaml = (
+                "language: [\n" if case == "explicit_over_malformed_config" else "language: json\n"
+            )
+            (project_dir / "sgconfig.yml").write_text(config_yaml, encoding="utf-8")
+        rule_path = rules_dir / "probe.yml"
+        if case in {"symlink", "dangling_symlink", "explicit_over_symlink"}:
+            target = project_dir / "target.yml"
+            if rule_yaml is not None:
+                target.write_text(rule_yaml, encoding="utf-8")
+            try:
+                rule_path.symlink_to(target)
+            except OSError as exc:
+                pytest.skip(f"cannot create symlink on this host: {exc}")
+        elif rule_yaml is not None:
+            rule_path.write_text(rule_yaml, encoding="utf-8")
+
+        result = run_command(launcher, ["new", "test", "probe", *args, "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip().replace("tg.exe", "tg")
+        written = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        outcomes[launcher] = (result.returncode, message, written)
+        assert result.returncode == expected_code, message
+        assert expected_message in message
+        assert (project_dir / "tests" / "probe.yml").exists() == (expected_code == 0)
+        if expected_valid is not None:
+            generated_test = yaml.safe_load(
+                (project_dir / "tests" / "probe.yml").read_text(encoding="utf-8")
+            )
+            assert generated_test["valid"] == [expected_valid]
+
+    assert outcomes["python-m"] == outcomes["native"]
+
+
 @pytest.mark.parametrize("kind", ["project", "rule", "test"])
 def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
     _skip_if_native_binary_missing("native")

@@ -65,20 +65,67 @@ pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<
     Ok(())
 }
 
-pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<()> {
-    let linked_rule = base_dir.join("rules").join(format!("{name}.yml"));
-    let linked_language = match fs::read_to_string(&linked_rule) {
+fn project_default_language(base_dir: &Path) -> Result<String> {
+    let config_path = base_dir.join("sgconfig.yml");
+    match fs::read_to_string(&config_path) {
         Ok(contents) => {
-            let rule: serde_yaml::Value = serde_yaml::from_str(&contents)?;
-            rule.get("language")
+            let config: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+            Ok(config
+                .get("language")
                 .and_then(serde_yaml::Value::as_str)
-                .ok_or_else(|| anyhow::anyhow!("Linked rule {:?} has no language.", linked_rule))?
-                .to_string()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("python")
+                .to_lowercase())
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => language.to_string(),
-        Err(error) => return Err(error.into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("python".to_string()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(super) fn write_test(
+    base_dir: &Path,
+    name: &str,
+    explicit_language: Option<&str>,
+) -> Result<()> {
+    let linked_rule = base_dir.join("rules").join(format!("{name}.yml"));
+    let language = if let Some(language) = explicit_language {
+        language.trim().to_lowercase()
+    } else {
+        let label = format!("rules/{name}.yml");
+        match fs::symlink_metadata(&linked_rule) {
+            Ok(metadata) if !metadata.file_type().is_file() => {
+                anyhow::bail!("linked rule must be a regular file: {label}")
+            }
+            Ok(_) => {
+                let contents = fs::read_to_string(&linked_rule).map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::InvalidData {
+                        anyhow::anyhow!("cannot parse linked rule {label}: invalid UTF-8")
+                    } else {
+                        error.into()
+                    }
+                })?;
+                let rule: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|_| {
+                    anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
+                })?;
+                if !rule.is_mapping() {
+                    anyhow::bail!("cannot parse linked rule {label}: expected a YAML mapping")
+                }
+                rule.get("language")
+                    .and_then(serde_yaml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_lowercase)
+                    .map(Ok)
+                    .unwrap_or_else(|| project_default_language(base_dir))?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                project_default_language(base_dir)?
+            }
+            Err(error) => return Err(error.into()),
+        }
     };
-    let language = normalize_language(&linked_language)?;
+    let language = normalize_language(&language)?;
     let (_, valid, invalid) = rule_examples(language)?;
     let tests_dir = base_dir.join("tests");
     fs::create_dir_all(&tests_dir)?;
@@ -94,7 +141,10 @@ pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<
         .as_bytes(),
         "Test file",
     )?;
-    println!("Created test scaffold in {:?}", path);
+    println!(
+        "Created test scaffold in {}.",
+        path.strip_prefix(".").unwrap_or(&path).display()
+    );
     Ok(())
 }
 
