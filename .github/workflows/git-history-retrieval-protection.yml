@@ -25,7 +25,9 @@ jobs:
               path === '.github/workflows/git-history-retrieval.yml' ||
               path === '.github/workflows/git-history-retrieval-protection.yml' ||
               path === '.gitattributes';
-            const changed = files.filter((file) => protectedFile(file.filename));
+            const changed = files.filter((file) =>
+              protectedFile(file.filename) ||
+              (file.status === 'renamed' && protectedFile(file.previous_filename || '')));
             const labels = context.payload.pull_request.labels.map((label) => label.name);
             if (changed.length && !labels.includes('eval-baseline-update')) {
               core.setFailed('protected_change_unlabelled: ' +

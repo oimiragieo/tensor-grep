@@ -128,6 +128,7 @@ def evaluator_sha256(root: Path = ROOT) -> str:
     digest = hashlib.sha256()
     for path in (
         root / "benchmarks/git_history_retrieval/harness.py",
+        root / "benchmarks/git_history_retrieval/worker.py",
         root / "benchmarks/git_history_retrieval/manifest.json",
         root / "benchmarks/git_history_retrieval/Dockerfile",
         root / "src/tensor_grep/core/retrieval_scoring.py",
@@ -350,6 +351,7 @@ def create_parent_repo(source: Path, parent: str, sha: str, target: Path) -> Non
     _git(
         target,
         "fetch",
+        "--depth=1",
         "--no-tags",
         "--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack",
         str(source),
@@ -358,8 +360,7 @@ def create_parent_repo(source: Path, parent: str, sha: str, target: Path) -> Non
     )
     _git(target, "checkout", "-q", "eval")
     actual = set(_out(_git(target, "rev-list", "--all")).splitlines())
-    expected = set(_out(_git(source, "rev-list", parent)).splitlines())
-    if actual != expected or _git(target, "cat-file", "-e", sha, check=False).returncode == 0:
+    if actual != {parent} or _git(target, "cat-file", "-e", sha, check=False).returncode == 0:
         raise HarnessError(f"history_leak: {sha}")
     if _out(_git(target, "rev-parse", "HEAD")) != parent:
         raise HarnessError(f"wrong_parent: {sha}")
@@ -739,6 +740,7 @@ def _revision_checkout(source: Path, revision: str, target: Path) -> None:
     _git(
         target,
         "fetch",
+        "--depth=1",
         "--no-tags",
         "--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack",
         str(source),
@@ -760,13 +762,11 @@ def _read_only_tree(root: Path) -> None:
 
 def worker_build(source: Path, work: Path) -> dict[str, Any]:
     build = work / "build"
-    if build.exists():
-        raise HarnessError("build_directory_exists")
-    build.mkdir(parents=True)
     for subject in ("baseline", "head"):
         target = build / subject
         tree = target / "tree"
-        _revision_checkout(source, "v1.126.0" if subject == "baseline" else "HEAD", tree)
+        if not tree.is_dir():
+            raise HarnessError(f"build_tree_missing:{subject}")
         venv = target / "venv"
         env = os.environ.copy()
         env["UV_PROJECT_ENVIRONMENT"] = str(venv)
@@ -793,7 +793,6 @@ def worker_build(source: Path, work: Path) -> dict[str, Any]:
         (target / "tg").chmod(0o755)
         _, _, runtime = _runtime_identity(subject, build)
         _write_json(target / "runtime.json", runtime)
-    _run(["python3", "-m", "venv", str(build / "harness-venv")])
     identity = environment_identity()
     _write_json(work / "environment.json", identity)
     _read_only_tree(build)
@@ -848,7 +847,10 @@ def worker_prepare(source: Path, work: Path, manifest: dict[str, Any], subject: 
                     elif _out(_git(repo, "status", "--porcelain")):
                         raise HarnessError(f"dirty_search_repo:{sha}")
                     _normalize_mtimes(repo, timestamp)
-                    _write_json(run_dir / "case.json", case)
+                    _write_json(
+                        run_dir / "case.json",
+                        {key: case[key] for key in ("sha", "parent", "query", "tokens")},
+                    )
     finally:
         if (
             _source_identity(source) != before
@@ -1011,8 +1013,6 @@ def worker_evaluate(
     argv = _arm_argv(tg, arm, case, repo)
     result = _run(argv, cwd=repo, env=env, check=False)
     payload = _tg_payload(result, arm)
-    scoring = load_scoring()
-    metrics = score_payload(payload, arm, case, repo, scoring)
     if arm in SEARCH_ARMS:
         prediction: Any = extract_ranking(payload, arm, repo)
     else:
@@ -1023,7 +1023,7 @@ def worker_evaluate(
     row = {
         "sha": case["sha"],
         "arm": arm,
-        "metrics": metrics,
+        "payload": payload,
         "prediction": prediction,
         "runtime": runtime,
         "confinement": "container" if confined else "none (advisory)",
@@ -1065,10 +1065,15 @@ def _selected_runs(manifest: dict[str, Any], subject: str, work: Path) -> list[t
 def _collect_report(manifest: dict[str, Any], subject: str, work: Path) -> dict[str, Any]:
     first: list[dict[str, Any]] = []
     repeats: dict[tuple[str, str], dict[str, Any]] = {}
+    cases = {case["sha"]: case for case in manifest["cases"]}
+    scoring = load_scoring()
     for run_dir, arm in _selected_runs(manifest, subject, work):
         row = _read_json(run_dir / "result.json")
         if row["sha"] != run_dir.parents[2].name or row["arm"] != arm:
             raise HarnessError("result_identity_mismatch")
+        row["metrics"] = score_payload(
+            row.pop("payload"), arm, cases[row["sha"]], run_dir / "repo", scoring
+        )
         if run_dir.name == "repeat":
             repeats[(row["sha"], arm)] = row
         else:
@@ -1147,12 +1152,24 @@ def orchestrate(
     preflight_source(source, manifest)
     image = "tg-git-history-retrieval:local"
     _run(["docker", "build", "-f", str(HERE / "Dockerfile"), "-t", image, str(ROOT)])
-    with tempfile.TemporaryDirectory(prefix="tg-git-history-") as temp:
+    with tempfile.TemporaryDirectory(prefix="tg-git-history-", ignore_cleanup_errors=True) as temp:
         work = Path(temp)
+        for revision, subject_name in (("v1.126.0", "baseline"), ("HEAD", "head")):
+            tree = work / "build" / subject_name / "tree"
+            tree.parent.mkdir(parents=True, exist_ok=True)
+            _revision_checkout(source, revision, tree)
+            shutil.rmtree(tree / ".git")
+            (tree / "benchmarks/git_history_retrieval/manifest.json").unlink(missing_ok=True)
+            (tree / "benchmarks/git_history_retrieval/baseline.json").unlink(missing_ok=True)
+            patches = tree / "benchmarks/git_history_retrieval/patches"
+            if patches.is_symlink():
+                patches.unlink()
+            elif patches.exists():
+                shutil.rmtree(patches)
         _docker_run(
             image,
             network="bridge",
-            mounts=[(source, "/source", "readonly"), (work, "/work", "rw")],
+            mounts=[(work, "/work", "rw")],
             arguments=["build"],
         )
         _docker_run(
@@ -1163,6 +1180,8 @@ def orchestrate(
                 (source, "/source", "readonly"),
                 (work, "/work", "rw"),
                 (work / "build", "/work/build", "readonly"),
+                (manifest_path, "/work/manifest.json", "readonly"),
+                (manifest_path.parent / "patches", str(HERE / "patches"), "readonly"),
             ],
             arguments=["prepare", "--subject", subject],
         )
@@ -1265,7 +1284,7 @@ def main(argv: list[str] | None = None) -> int:
         worker_build(Path("/source"), Path("/work"))
     elif args.phase == "prepare":
         worker_prepare(
-            Path("/source"), Path("/work"), _read_json(HERE / "manifest.json"), args.subject
+            Path("/source"), Path("/work"), _read_json(Path("/work/manifest.json")), args.subject
         )
     else:
         if args.arm is None:

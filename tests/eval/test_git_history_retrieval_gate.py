@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,7 @@ BASELINE = ROOT / "benchmarks/git_history_retrieval/baseline.json"
 
 
 def harness_module() -> ModuleType:
-    root = Path(os.environ.get("TG_EVAL_HARNESS_ROOT", ROOT))
+    root = harness_root()
     path = root / "benchmarks/git_history_retrieval/harness.py"
     assert path.is_file(), "git-history retrieval harness entrypoint is missing"
     spec = importlib.util.spec_from_file_location("git_history_retrieval_harness", path)
@@ -31,6 +32,10 @@ def harness_module() -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def harness_root() -> Path:
+    return Path(os.environ.get("TG_EVAL_HARNESS_ROOT", ROOT))
 
 
 def git(repo: Path, *argv: str, date: str | None = None) -> str:
@@ -685,3 +690,295 @@ def test_advisory_worker_cannot_write_baseline(
             "--baseline-output",
             str(tmp_path / "baseline.json"),
         ])
+
+
+def test_subject_run_cannot_read_gold_or_heldout_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, sha, manifest, out = generated(tmp_path)
+    monkeypatch.setattr(harness, "HERE", out)
+    work = tmp_path / "work"
+    harness.worker_prepare(source, work, manifest, "head")
+    run_dir = work / "runs" / sha / "head" / "find" / "first"
+    exposed = json.loads((run_dir / "case.json").read_text(encoding="utf-8"))
+    assert not {"gold_files", "gold_tests", "input_patch_sha256"} & exposed.keys(), (
+        "subject_case_exposes_gold"
+    )
+    assert harness._git(run_dir / "repo", "cat-file", "-e", sha, check=False).returncode != 0, (
+        "subject_repo_exposes_heldout_commit"
+    )
+
+
+def test_evaluation_image_does_not_copy_frozen_dataset() -> None:
+    dockerfile = (harness_root() / "benchmarks/git_history_retrieval/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    sources = {
+        line.split()[1]
+        for line in dockerfile.splitlines()
+        if line.startswith("COPY benchmarks/git_history_retrieval/")
+    }
+    assert sources == {
+        "benchmarks/git_history_retrieval/harness.py",
+        "benchmarks/git_history_retrieval/worker.py",
+        "benchmarks/git_history_retrieval/Dockerfile",
+    }, "image_copies_heldout_patches"
+
+
+@pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="container confinement check requires Docker",
+)
+def test_confined_subject_cannot_read_labels_or_heldout_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, sha, manifest, out = generated(tmp_path)
+    monkeypatch.setattr(harness, "HERE", out)
+    work = tmp_path / "work"
+    harness.worker_prepare(source, work, manifest, "head")
+    run_dir = work / "runs" / sha / "head" / "find" / "first"
+    build = work / "build"
+    build.mkdir()
+    image = "ubuntu:24.04@sha256:f610ab94648195aa356059f5b41d6085c9d4d903c072430cdd1af7bdb646106b"
+    script = (
+        "test ! -e /source && test ! -e /work/patches && "
+        "! grep -q gold_files /work/run/case.json && "
+        "test -f /work/run/repo/.git/shallow && "
+        f'test "$(cat /work/run/repo/.git/shallow)" = {manifest["cases"][0]["parent"]} && '
+        "! touch /work/build/denied"
+    )
+    harness._docker_run(
+        image,
+        network="none",
+        read_only=True,
+        mounts=[(run_dir, "/work/run", "rw"), (build, "/work/build", "readonly")],
+        arguments=["sh", "-c", script],
+    )
+    assert harness._git(run_dir / "repo", "cat-file", "-e", sha, check=False).returncode != 0
+
+
+def test_build_checkout_does_not_retain_prior_history(tmp_path: Path) -> None:
+    harness, source, sha, _, _ = generated(tmp_path)
+    target = tmp_path / "checkout"
+    harness._revision_checkout(source, "HEAD", target)
+    parent = git(source, "rev-parse", f"{sha}^")
+    assert harness._git(target, "cat-file", "-e", parent, check=False).returncode != 0, (
+        "build_tree_exposes_prior_history"
+    )
+
+
+def test_build_container_receives_sanitized_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, _, manifest, out = generated(tmp_path)
+    harness._write_json(out / "manifest.json", manifest)
+    monkeypatch.setattr(harness, "preflight_source", lambda *args: None)
+    monkeypatch.setattr(
+        harness,
+        "_run",
+        lambda *args, **kwargs: subprocess.CompletedProcess([], 0, b"", b""),
+    )
+
+    def fake_checkout(source: Path, revision: str, target: Path) -> None:
+        (target / ".git").mkdir(parents=True)
+        dataset = target / "benchmarks/git_history_retrieval"
+        (dataset / "patches").mkdir(parents=True)
+        (dataset / "manifest.json").write_text("gold", encoding="utf-8")
+        (dataset / "baseline.json").write_text("gold", encoding="utf-8")
+        (dataset / "patches/gold.patch").write_text("gold", encoding="utf-8")
+
+    def inspect_build(
+        image: str,
+        *,
+        network: str,
+        mounts: list[tuple[Path, str, str]],
+        arguments: list[str],
+        read_only: bool = False,
+    ) -> None:
+        assert arguments == ["build"]
+        assert all(container != "/source" for _, container, _ in mounts), (
+            "build_mount_exposes_full_source"
+        )
+        build = mounts[0][0] / "build"
+        for subject in ("baseline", "head"):
+            tree = build / subject / "tree"
+            assert not (tree / ".git").exists(), "build_mount_exposes_history"
+            assert not (tree / "benchmarks/git_history_retrieval/manifest.json").exists(), (
+                "build_mount_exposes_gold"
+            )
+            assert not (tree / "benchmarks/git_history_retrieval/patches").exists(), (
+                "build_mount_exposes_patches"
+            )
+        raise harness.HarnessError("build_snapshot_checked")
+
+    monkeypatch.setattr(harness, "_revision_checkout", fake_checkout)
+    monkeypatch.setattr(harness, "_docker_run", inspect_build)
+    with pytest.raises(harness.HarnessError, match="build_snapshot_checked"):
+        harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
+
+
+def test_evaluator_interpreter_is_outside_subject_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker_path = harness_root() / "benchmarks/git_history_retrieval/worker.py"
+    spec = importlib.util.spec_from_file_location("git_history_retrieval_worker", worker_path)
+    assert spec and spec.loader
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    marker = tmp_path / "pth-ran"
+    site = tmp_path / "build/harness-venv/lib/python3.12/site-packages"
+    site.mkdir(parents=True)
+    (site / "subject.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('poison')\n",
+        encoding="utf-8",
+    )
+    launched: list[str] = []
+    monkeypatch.setattr(worker.sys, "argv", [str(worker_path), "evaluate"])
+    monkeypatch.setattr(worker.os, "execv", lambda python, argv: launched.append(python))
+    worker.main()
+    assert launched == [sys.executable], "subject_pth_can_run_before_evaluator_startup"
+    assert not marker.exists(), "subject_pth_executed"
+    harness = (harness_root() / "benchmarks/git_history_retrieval/harness.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'str(build / "harness-venv")' not in harness, "subject_pth_survives_venv_creation"
+
+
+@pytest.mark.parametrize(
+    ("status", "filename", "previous_filename"),
+    [
+        ("renamed", "safe/new.py", "benchmarks/git_history_retrieval/manifest.json"),
+        ("modified", "benchmarks/git_history_retrieval/harness.py", None),
+    ],
+)
+def test_protected_workflow_detects_protected_paths(
+    status: str, filename: str, previous_filename: str | None
+) -> None:
+    workflow = (
+        harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
+    ).read_text(encoding="utf-8")
+    script = workflow.split("          script: |\n", 1)[1]
+    script = "\n".join(line[12:] for line in script.splitlines())
+    changed = json.dumps({
+        "filename": filename,
+        "previous_filename": previous_filename,
+        "status": status,
+    })
+    probe = (
+        "let failure = ''; const core = {setFailed: x => failure = x}; "
+        "const context = {repo: {owner:'o',repo:'r'}, issue:{number:1}, "
+        "payload:{pull_request:{labels:[]}}}; "
+        f"const github = {{paginate: async () => [{changed}], "
+        "rest:{pulls:{listFiles:{}}}}; "
+        "(async () => {" + script + "\nif (!failure.includes('protected_change_unlabelled')) "
+        "throw new Error('protected_change_accepted');})().catch(e=>{console.error(e.message);process.exit(1)});"
+    )
+    result = subprocess.run(["node", "-e", probe], capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+
+
+def test_host_cleanup_ignores_unremovable_build_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, _, manifest, out = generated(tmp_path)
+    harness._write_json(out / "manifest.json", manifest)
+
+    class UnremovableTree:
+        def __init__(self, *, prefix: str, ignore_cleanup_errors: bool = False) -> None:
+            self.ignore_cleanup_errors = ignore_cleanup_errors
+
+        def __enter__(self) -> str:
+            work = tmp_path / "root-owned-work"
+            work.mkdir()
+            return str(work)
+
+        def __exit__(self, *args: object) -> None:
+            if not self.ignore_cleanup_errors:
+                raise PermissionError("root_owned_build_cleanup_can_fail_gate")
+
+    def stop(*args: object, **kwargs: object) -> None:
+        raise harness.HarnessError("stop_after_cleanup_probe")
+
+    monkeypatch.setattr(harness.tempfile, "TemporaryDirectory", UnremovableTree)
+    monkeypatch.setattr(harness, "preflight_source", lambda *args: None)
+    monkeypatch.setattr(
+        harness, "_run", lambda *args, **kwargs: subprocess.CompletedProcess([], 0, b"", b"")
+    )
+    monkeypatch.setattr(harness, "_revision_checkout", stop)
+    monkeypatch.setattr(harness, "_docker_run", stop)
+    with pytest.raises(harness.HarnessError, match="stop_after_cleanup_probe"):
+        harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
+
+
+def test_prepare_normalizes_case_tree_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, sha, manifest, out = generated(tmp_path)
+    monkeypatch.setattr(harness, "HERE", out)
+    work = tmp_path / "work"
+    harness.worker_prepare(source, work, manifest, "head")
+    repo = work / "runs" / sha / "head" / "find" / "first" / "repo"
+    timestamp = int(git(source, "show", "-s", "--format=%ct", manifest["cases"][0]["parent"]))
+    assert int((repo / "src/a.py").stat().st_mtime) == timestamp, "mtime_normalization_missing"
+
+
+def test_confined_evaluation_runs_tg_writer_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    harness._write_json(
+        run_dir / "case.json",
+        {
+            "parent": "a" * 40,
+            "sha": "b" * 40,
+            "query": "query",
+            "tokens": ["query"],
+            "gold_files": ["src/a.py"],
+            "gold_tests": ["tests/a.py"],
+            "input_paths": ["src/a.py"],
+        },
+    )
+    (run_dir / "repo").mkdir()
+    (tmp_path / "build/head/venv").mkdir(parents=True)
+    harness._write_json(tmp_path / "build/head/runtime.json", {})
+    seen: list[str] = []
+    monkeypatch.setattr(harness, "confinement_controls", lambda *args: None)
+    monkeypatch.setattr(harness, "tg_launched_write_control", lambda *args: seen.append("writer"))
+
+    def fake_git(repo: Path, *args: str, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        output = b"a" * 40 if args[:2] == ("rev-parse", "HEAD") else b""
+        return subprocess.CompletedProcess([], 0, output, b"")
+
+    monkeypatch.setattr(harness, "_git", fake_git)
+    monkeypatch.setattr(
+        harness,
+        "_run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            [], 1, b'{"total_matches":0,"matches":[]}', b""
+        ),
+    )
+    harness.worker_evaluate(run_dir, tmp_path / "build", subject="head", arm="find", confined=True)
+    assert seen == ["writer"], "tg_launched_write_control_missing"
+
+
+def test_generate_command_enforces_compatibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    seen: list[str] = []
+    monkeypatch.setattr(harness, "generate_dataset", lambda *args, **kwargs: {"cases": []})
+    monkeypatch.setattr(harness, "_compatibility_check", lambda *args: seen.append("compatibility"))
+    harness.main([
+        "generate",
+        "--repo",
+        str(tmp_path),
+        "--cutoff",
+        "HEAD",
+        "--out-dir",
+        str(tmp_path),
+        "--baseline-tg",
+        str(tmp_path / "tg"),
+    ])
+    assert seen == ["compatibility"], "generation_compatibility_check_missing"

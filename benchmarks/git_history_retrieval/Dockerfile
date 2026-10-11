@@ -19,7 +19,9 @@ RUN curl --fail --location --silent --show-error https://sh.rustup.rs --output /
     && sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain 1.96.0 \
     && rm /tmp/rustup-init.sh
 ENV PATH=/root/.cargo/bin:$PATH
-COPY benchmarks/git_history_retrieval/ /opt/checkout/benchmarks/git_history_retrieval/
+COPY benchmarks/git_history_retrieval/harness.py /opt/checkout/benchmarks/git_history_retrieval/harness.py
+COPY benchmarks/git_history_retrieval/worker.py /opt/checkout/benchmarks/git_history_retrieval/worker.py
+COPY benchmarks/git_history_retrieval/Dockerfile /opt/checkout/benchmarks/git_history_retrieval/Dockerfile
 COPY src/tensor_grep/core/retrieval_scoring.py /opt/checkout/src/tensor_grep/core/retrieval_scoring.py
 WORKDIR /opt/checkout
 ENTRYPOINT ["/usr/bin/python3", "/opt/checkout/benchmarks/git_history_retrieval/worker.py"]

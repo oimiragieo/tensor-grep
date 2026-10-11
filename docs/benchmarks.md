@@ -19,18 +19,20 @@ the `eval-baseline-update` label, reruns v1.126.0 through the dispatch workflow,
 and records each metric delta against the previous baseline in the PR body.
 The PR head never writes the baseline.
 
-The host orchestrates a build container, a network-disabled prepare container,
+The host prepares depth-one subject snapshots without Git metadata or frozen
+dataset files, then orchestrates a build container, a network-disabled prepare container,
 and one network-disabled evaluation container per case, subject, arm, and run.
 Each evaluation container receives only its own writable run directory and the
-read-only build directory. The source repository, committed patches, and sibling
-runs are absent. Search repositories are clean parent checkouts. Diff-impact
+read-only build directory. Gold labels stay with the host for scoring after the
+subject run. The source repository, committed patches, and sibling runs are
+absent. Search repositories are shallow parent checkouts. Diff-impact
 repositories receive the committed, hash-checked input patch during prepare.
 The harness checks the applied paths and the command's `changed_files` against
 the frozen input paths. Checkout mtimes are normalized to the parent commit's
 timestamp. Every run gets a fresh home and caches. Container writes to the
 build directory and outside the case directory must be denied.
 
-The evaluator runs in a dedicated interpreter with a standard-library-only
+The evaluator runs in the image's system interpreter with a standard-library-only
 import closure; each subject has a separate non-editable installation and native
 binary. The fixed manifest, patches, and baseline arrive in leaf 11b. Until
 `baseline.json` exists, the PR job is report-only. Local runs without the
