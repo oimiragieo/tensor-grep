@@ -1,5 +1,71 @@
 # Benchmarks
 
+## Git history retrieval gate
+
+`benchmarks/git_history_retrieval/harness.py` evaluates `tg find`, ranked `tg search`,
+and `tg diff-impact` against this repository's first-parent fix history. The dataset
+generator uses only modified paths present in each parent, strips issue suffixes from
+subjects, and freezes the test-path classifier's output. The last 20% of qualifying
+cases are held out by first-parent sequence position. A case is eligible for
+`diff-impact` only when it has both gold tests and non-test input paths and its
+committed patch applies cleanly. The search arms run on every heldout case.
+
+The gate compares file MRR@10 and F1@10 for both search arms, and set recall and
+set precision for `affected_tests`, against a fixed v1.126.0 baseline with zero
+tolerance. Other search metrics, false-primary rate, and `affected_files` set
+metrics are reported. Empty predictions score zero. The evaluator and container
+environment identities must match the baseline exactly. A baseline update uses
+the `eval-baseline-update` label, reruns v1.126.0 through the dispatch workflow,
+and records each metric delta against the previous baseline in the PR body.
+The PR head never writes the baseline.
+
+The host orchestrates a build container, a network-disabled prepare container,
+and one network-disabled evaluation container per case, subject, arm, and run.
+Each evaluation container receives only its own writable run directory and the
+read-only build directory. The source repository, committed patches, and sibling
+runs are absent. Search repositories are clean parent checkouts. Diff-impact
+repositories receive the committed, hash-checked input patch during prepare.
+The harness checks the applied paths and the command's `changed_files` against
+the frozen input paths. Checkout mtimes are normalized to the parent commit's
+timestamp. Every run gets a fresh home and caches. Container writes to the
+build directory and outside the case directory must be denied.
+
+The evaluator runs in a dedicated interpreter with a standard-library-only
+import closure; each subject has a separate non-editable installation and native
+binary. The fixed manifest, patches, and baseline arrive in leaf 11b. Until
+`baseline.json` exists, the PR job is report-only. Local runs without the
+container are advisory and cannot produce `baseline.json`.
+Branch protection must require the `protected-change-label` status check from
+the base-branch `pull_request_target` workflow.
+
+To generate the frozen dataset after 11a is merged, use a v1.126.0 `tg` binary:
+
+```bash
+python benchmarks/git_history_retrieval/harness.py generate \
+  --repo . --cutoff <origin-main-ancestor-sha> \
+  --out-dir benchmarks/git_history_retrieval --baseline-tg <v1.126.0-tg>
+```
+
+Dispatch `.github/workflows/git-history-retrieval.yml` with `baseline=true`
+and `source_ref` pointing to the ref containing the generated manifest and
+patches. After reviewing its `baseline.json` artifact and committing it, PRs
+run the enforcing container gate automatically. For a local container run:
+
+```bash
+python benchmarks/git_history_retrieval/harness.py orchestrate \
+  --repo . --subject head --output artifacts/git_history_retrieval_head.json --enforce
+```
+
+For local diagnosis of an already prepared run, `worker evaluate --advisory
+--run-dir <run> --build-dir <build> --subject head --arm find` reports
+`confinement: none (advisory)` and cannot write a baseline.
+
+Heldout queries are public and later ranking changes could overfit them. The
+fixed baseline, review of ranking leaves, and optional cutoff rotation through
+an `eval-baseline-update` PR mitigate this. Baseline number integrity relies on
+the label-gated review path, not cryptographic provenance. The recorded run ID
+is for human audit; the gate never downloads expiring workflow artifacts.
+
 `tensor-grep` is designed as a routing-first search engine that keeps strict behavioral parity while selecting the best backend per query class.
 
 ## Benchmark Matrix
