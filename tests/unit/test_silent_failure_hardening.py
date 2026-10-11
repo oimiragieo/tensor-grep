@@ -205,7 +205,9 @@ _EXCLUDED_MODULES = frozenset({
 # boundaries in core/cross_encoder.py and core/cross_encoder_assets.py). Both re-raise
 # BackendExecutionError with the original cause; ledger records cite injected-failure tests.
 # Pin the actual population, using the one spare slot in the historical ceiling of 340.
-TOTAL_BROAD_HANDLERS_CEILING = 341
+# 2026-10-11 diff-impact refs lookup: 341 -> 342 (+1 intentional fail-closed boundary;
+# failed lookups mark risk_cap_evidence incomplete and prevent the uncalled-symbol cap).
+TOTAL_BROAD_HANDLERS_CEILING = 342
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

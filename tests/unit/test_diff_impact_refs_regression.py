@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -225,3 +226,31 @@ def test_refs_lookup_reused_by_symbol_name_with_existing_limits(
     assert len(calls) == 1
     assert calls[0][0] is not None
     assert calls[0][1] == 3
+
+
+def test_refs_lookup_failure_is_dispositioned_and_disables_cap(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+
+    def fail_refs(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("reference parser failed")
+
+    monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", fail_refs)
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+    ledger_path = (
+        Path(__file__).resolve().parents[1] / "fixtures/governance/handler-dispositions.json"
+    )
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert any(
+        record["module"] == "cli/diff_impact_refs.py"
+        and record["enclosing_symbol"] == "_test_reference_evidence"
+        and record["handler_index_within_symbol"] == 0
+        and record["category"] == "INTENTIONAL-BOUNDARY"
+        for record in ledger
+    ), "refs lookup failure boundary has no disposition record"
