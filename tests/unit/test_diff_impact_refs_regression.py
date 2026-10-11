@@ -125,6 +125,99 @@ def test_non_windows_reference_scan_keeps_ordinary_file_evidence_complete(
     assert evidence == (True, False)
 
 
+def test_non_windows_reference_scan_confines_opened_identity(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
+    outside.write_text("value = 2\n", encoding="utf-8")
+    repo_map_payload = {"path": str(tmp_path), "files": [str(source)], "tests": []}
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_refs_from_map",
+        lambda *args, **kwargs: {"references": [], "string_refs": []},
+    )
+    real_open = Path.open
+    real_stat = Path.stat
+    opened_fd: int | None = None
+
+    def swapped_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        nonlocal opened_fd
+        if path == source:
+            handle = real_open(outside, *args, **kwargs)
+            opened_fd = handle.fileno()
+            return handle
+        return real_open(path, *args, **kwargs)
+
+    def swapped_stat(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == source and opened_fd is not None:
+            return os.fstat(opened_fd)
+        return real_stat(path, *args, **kwargs)
+
+    real_readlink = os.readlink
+
+    def opened_target(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if opened_fd is not None and str(path) == f"/proc/self/fd/{opened_fd}":
+            return str(outside)
+        return real_readlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(diff_impact_refs.sys, "platform", "linux")
+        patch.setattr(Path, "open", swapped_open)
+        patch.setattr(Path, "stat", swapped_stat)
+        patch.setattr(os, "readlink", opened_target)
+        evidence = diff_impact_refs._test_reference_evidence(
+            repo_map_payload, "dormant", None, None, ("pkg/core.py",)
+        )
+
+    assert opened_fd is not None
+    assert evidence == (False, False)
+
+
+def test_package_qualified_module_alias_call_preserves_critical_gate(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    module = tmp_path / "src" / "auditedpkg" / "app" / "changed.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("def dormant():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_changed.py").write_text(
+        'import auditedpkg.app.changed as changed_alias\ngetattr(changed_alias, "dor" + "mant")()\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/src/auditedpkg/app/changed.py b/src/auditedpkg/app/changed.py\n"
+        "--- a/src/auditedpkg/app/changed.py\n+++ b/src/auditedpkg/app/changed.py\n"
+        "@@ -1,2 +1,2 @@\n def dormant():\n-    return 1\n+    return 2\n"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
+def test_unrelated_never_gap_keeps_uncalled_cap(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    baseline = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+    assert baseline["risk_tier"] == "medium"
+    assert baseline["risk_cap_evidence"] == "complete"
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "unrelated"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["blast_radius_score"] == baseline["blast_radius_score"]
+    assert payload["risk_tier"] == "medium"
+    assert payload["risk_cap_evidence"] == "complete"
+    assert "capped_uncalled_symbols" in payload["risk_reasons"]
+
+
 def test_imported_alias_caller_disables_uncalled_cap(tmp_path: Path) -> None:
     diff = _dormant_diff(tmp_path)
     (tmp_path / "consumer.py").write_text(

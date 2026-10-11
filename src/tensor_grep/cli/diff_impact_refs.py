@@ -10,11 +10,22 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.repo_map_coverage_gaps import blocking_gaps
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
 
 
 def _opened_file_path(fd: int, path: Path) -> Path:
-    if sys.platform == "win32":
+    if sys.platform != "win32":
+        try:
+            return Path(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            if os.name != "nt":
+                if sys.platform != "darwin":
+                    raise
+                import fcntl
+
+                return Path(fcntl.fcntl(fd, fcntl.F_GETPATH).decode("utf-8", errors="strict"))
+    if os.name == "nt":
         import ctypes
         import msvcrt
 
@@ -31,7 +42,7 @@ def _opened_file_path(fd: int, path: Path) -> Path:
         elif name.startswith("\\\\?\\"):
             name = name[4:]
         return Path(name)
-    return path.resolve(strict=True)
+    raise OSError("opened file path unavailable")
 
 
 def _origin_modules(root: Path, origin_files: tuple[str, ...]) -> set[str]:
@@ -102,9 +113,15 @@ def _python_import_reference(
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
         if any(
-            isinstance(node, ast.ImportFrom)
-            and _import_module(node, path, root) in origin_modules
-            and any(alias.name in {symbol, "*"} for alias in node.names)
+            (
+                isinstance(node, ast.ImportFrom)
+                and _import_module(node, path, root) in origin_modules
+                and any(alias.name in {symbol, "*"} for alias in node.names)
+            )
+            or (
+                isinstance(node, ast.Import)
+                and any(alias.asname and alias.name in origin_modules for alias in node.names)
+            )
             for node in ast.walk(tree)
         ):
             return True, True
@@ -175,7 +192,7 @@ def _test_reference_evidence(
         return False, False
     if payload.get("no_match"):
         return False, False
-    if payload.get("resolution_gaps"):
+    if blocking_gaps(payload.get("resolution_gaps") or [], answer_empty=not any(reference_groups)):
         return False, False
     has_test_reference = any(
         isinstance(reference, dict) and _is_test_file(Path(str(reference.get("file", ""))))
