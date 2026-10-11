@@ -28,9 +28,11 @@ def _explicit_rg_format_requested(
         token = tokens[index]
         if token == "--format":
             index += 1
-            return index < len(tokens) and tokens[index] == "rg"
+            if index < len(tokens) and tokens[index] == "rg":
+                return True
         if token.startswith("--format="):
-            return token.split("=", 1)[1] == "rg"
+            if token.split("=", 1)[1] == "rg":
+                return True
         index += 1
     return False
 
@@ -115,11 +117,30 @@ def citation_envelope(
     }
 
 
-def result_citations(result: Any, root: str | Path, *, symbols: bool = False) -> dict[str, Any]:
+def result_citations(
+    result: Any,
+    root: str | Path,
+    *,
+    symbols: bool = False,
+    max_results: int | None = None,
+    max_files: int | None = None,
+) -> dict[str, Any]:
     citations: list[dict[str, Any]] = []
+    seen_files: set[str] = set()
     for match in getattr(result, "matches", ()):
+        if getattr(match, "rg_kind", None) == "context":
+            continue
+        path = getattr(match, "file", None)
+        if not path:
+            continue
+        if max_results is not None and len(citations) >= max_results:
+            break
+        if path not in seen_files:
+            if max_files is not None and len(seen_files) >= max_files:
+                continue
+            seen_files.add(path)
         item: dict[str, Any] = {
-            "path": getattr(match, "file", None),
+            "path": path,
             "line": getattr(match, "line_number", None),
         }
         if symbols and item["path"] and item["line"]:
@@ -145,10 +166,14 @@ def result_citations_json(
     *,
     symbols: bool = False,
     scan_limit: dict[str, Any] | None = None,
+    max_results: int | None = None,
+    max_files: int | None = None,
 ) -> str:
     import json
 
-    envelope = result_citations(result, root, symbols=symbols)
+    envelope = result_citations(
+        result, root, symbols=symbols, max_results=max_results, max_files=max_files
+    )
     if scan_limit and scan_limit.get("possibly_truncated"):
         envelope["result_incomplete"] = True
         envelope["incomplete_reason"] = envelope["incomplete_reason"] or scan_limit.get(
@@ -185,6 +210,10 @@ def emit_search_citations(result: Any, paths: Sequence[str | Path], json_output:
         root = Path(os.path.commonpath([str(item) for item in roots]))
     except ValueError:
         root = Path.cwd()
+    for parent in (root, *root.parents):
+        if (parent / ".git").exists():
+            root = parent
+            break
     typer.echo(
         render_citations(result_citations(result, root), json_output=json_output), nl=json_output
     )
@@ -221,8 +250,7 @@ def _source_match_line(source: dict[str, Any], query: str) -> int | None:
                         if last - first == original_last - original:
                             return original + rendered_line - first
                         return original
-    start = source.get("start_line", source.get("line"))
-    return start if isinstance(start, int) and start >= 1 else None
+    return None
 
 
 def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> dict[str, Any] | None:
@@ -249,6 +277,7 @@ def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> di
 
 def payload_citations(payload: dict[str, Any], root: str | Path) -> dict[str, Any]:
     citations: list[dict[str, Any]] = []
+    unsupported = 0
     sources = payload.get("sources") or payload.get("snippets")
     if isinstance(sources, list):
         for source in sources:
@@ -257,19 +286,47 @@ def payload_citations(payload: dict[str, Any], root: str | Path) -> dict[str, An
             citation = _source_citation(source, root, str(payload.get("query") or ""))
             if citation is not None:
                 citations.append(citation)
+            else:
+                unsupported += 1
     if not citations:
         primary = payload.get("primary_target")
         if isinstance(primary, dict):
             citation = _source_citation(primary, root, str(payload.get("query") or ""))
             if citation is not None:
                 citations.append(citation)
-    incomplete = bool(payload.get("result_incomplete", payload.get("partial", False)))
+            else:
+                unsupported += 1
+    incomplete = bool(payload.get("result_incomplete", payload.get("partial", False))) or bool(
+        unsupported
+    )
     reason = payload.get("incomplete_reason") or payload.get("partial_reason")
+    if unsupported and not reason:
+        reason = "source_match_evidence_unavailable"
     omissions = payload.get("omissions")
     omitted_value = payload.get("omitted_sources", payload.get("omitted_source_count", 0))
     if isinstance(omissions, dict):
         omitted_value = omissions.get("omitted_section_count", omitted_value)
     omitted = int(omitted_value or 0)
+    source_budget = payload.get("source_budget")
+    if isinstance(source_budget, dict):
+        omitted = max(
+            omitted,
+            int(source_budget.get("omitted_sources", 0) or 0)
+            + int(source_budget.get("omitted_line_count", 0) or 0),
+        )
+    omitted_sections = payload.get("omitted_sections")
+    if isinstance(omitted_sections, list):
+        omitted = max(omitted, len(omitted_sections))
+    if isinstance(sources, list):
+        omitted = max(
+            omitted,
+            sum(
+                int(source.get("focus", {}).get("omitted_line_count", 0) or 0)
+                for source in sources
+                if isinstance(source, dict) and isinstance(source.get("focus"), dict)
+            ),
+        )
+    omitted += unsupported
     return citation_envelope(
         citations,
         root=root,
@@ -358,6 +415,9 @@ def serialize_workspace_citations(
     omitted = len(omitted_roots)
     for workspace_root, payload in results_by_root.items():
         if not isinstance(payload, dict):
+            incomplete = True
+            reason = str(payload) if payload else "workspace_error"
+            omitted += 1
             continue
         if isinstance(payload.get("error"), dict) and payload["error"]:
             return json.dumps(payload, indent=2)

@@ -74,6 +74,152 @@ def test_relative_match_path_is_resolved_within_root(tmp_path: Path) -> None:
     assert result["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 1}]
 
 
+def test_search_context_cites_only_matching_lines(tmp_path: Path) -> None:
+    (tmp_path / "sample.txt").write_text("before\nneedle\nneedle\nafter\n", encoding="utf-8")
+    result = CliRunner().invoke(
+        app, ["search", "needle", str(tmp_path), "--json", "--citations", "-C", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    assert _assert_citation_envelope(result.stdout)["citations"] == [
+        {"path": "sample.txt", "start_line": 2, "end_line": 3}
+    ]
+
+
+def test_absolute_search_file_keeps_repository_relative_path() -> None:
+    source = Path(__file__).resolve().parents[2] / "src/tensor_grep/cli/citations.py"
+    result = CliRunner().invoke(
+        app, ["search", "def citation_envelope", str(source), "--json", "--citations"]
+    )
+    assert result.exit_code == 0, result.output
+    assert _assert_citation_envelope(result.stdout)["citations"][0]["path"] == (
+        "src/tensor_grep/cli/citations.py"
+    )
+
+
+def test_mcp_search_citation_limits_zero_omit_all(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text("needle\n", encoding="utf-8")
+    payload = _assert_citation_envelope(
+        mcp_server.tg_search(
+            "needle", path=str(tmp_path), max_results=0, max_files=0, citations=True
+        )
+    )
+    assert payload["citations"] == []
+    assert payload["omitted"] == 2
+
+
+def test_mcp_search_zero_limit_counts_adjacent_hidden_matches(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    payload = _assert_citation_envelope(
+        mcp_server.tg_search("needle", path=str(tmp_path), max_results=0, citations=True)
+    )
+    assert payload["citations"] == []
+    assert payload["omitted"] == 2
+
+
+def test_mcp_workspace_citations_keep_unstructured_error(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import serialize_workspace_citations
+
+    payload = json.loads(
+        serialize_workspace_citations({str(tmp_path): "invalid regular expression"}, [], tmp_path)
+    )
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason"] == "invalid regular expression"
+
+
+def test_mcp_workspace_invalid_regex_response_is_incomplete(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    root = tmp_path / "project"
+    root.mkdir()
+    with patch(
+        "tensor_grep.cli.mcp_server._tg_query_dispatch", return_value="invalid regular expression"
+    ):
+        payload = json.loads(
+            mcp_server.tg_query(
+                action="text",
+                pattern="[",
+                path=str(tmp_path),
+                workspace_roots=[str(root)],
+                citations=True,
+            )
+        )
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason"] == "invalid regular expression"
+
+
+def test_context_citation_requires_matching_evidence(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import payload_citations
+
+    source = tmp_path / "sample.py"
+    source.write_text("def f():\n    needle = True\n", encoding="utf-8")
+    payload = {
+        "query": "needle",
+        "sources": [
+            {"file": str(source), "start_line": 1, "line_map": [{"line": 1, "text": "def f():"}]}
+        ],
+    }
+    result = payload_citations(payload, tmp_path)
+    assert result["citations"] == []
+    assert result["result_incomplete"] is True
+
+
+def test_context_citation_counts_omitted_render_lines(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import payload_citations
+
+    source = tmp_path / "sample.py"
+    source.write_text("needle\n", encoding="utf-8")
+    payload = {
+        "query": "needle",
+        "sources": [
+            {
+                "file": str(source),
+                "line_map": [{"line": 1, "text": "needle"}],
+                "focus": {"omitted_line_count": 3},
+            }
+        ],
+    }
+    assert payload_citations(payload, tmp_path)["omitted"] == 3
+
+
+def test_context_citation_counts_source_budget_omissions(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import payload_citations
+
+    source = tmp_path / "sample.py"
+    source.write_text("needle\n", encoding="utf-8")
+    payload = {
+        "query": "needle",
+        "sources": [{"file": str(source), "line_map": [{"line": 1, "text": "needle"}]}],
+        "source_budget": {"omitted_sources": 1, "omitted_line_count": 2},
+    }
+    assert payload_citations(payload, tmp_path)["omitted"] == 3
+
+
+def test_search_citations_refuse_files_with_matches(tmp_path: Path) -> None:
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    result = CliRunner().invoke(
+        app, ["search", "needle", str(tmp_path), "--citations", "--files-with-matches"]
+    )
+    assert result.exit_code == 2
+    assert "--citations" in result.output
+
+
+def test_search_citations_refuse_repeated_format(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    args = ["search", "needle", str(tmp_path), "--citations", "--format", "json", "--format", "rg"]
+    monkeypatch.setattr("sys.argv", ["tg", *args])
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2
+    assert "--format" in result.output
+
+
 @pytest.mark.parametrize(
     ("args", "filename"),
     [

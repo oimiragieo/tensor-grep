@@ -8,7 +8,7 @@ fn citations_search_routes_to_python_instead_of_ripgrep() {
         .collect::<Vec<_>>();
 
     assert_eq!(
-        super::search_format_python_passthrough_args(&raw_args),
+        search_format_python_passthrough_args(&raw_args),
         Some(vec![
             "--citations".to_string(),
             "X".to_string(),

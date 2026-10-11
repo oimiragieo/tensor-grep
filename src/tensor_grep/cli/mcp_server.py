@@ -3205,7 +3205,13 @@ def tg_search(
             if citations:
                 from tensor_grep.cli.citations import result_citations_json
 
-                return result_citations_json(all_results, path, scan_limit=scan_limit_payload)
+                return result_citations_json(
+                    all_results,
+                    path,
+                    scan_limit=scan_limit_payload,
+                    max_results=rendered_result_limit,
+                    max_files=rendered_file_limit,
+                )
 
             empty_scan_capped = bool(
                 scan_limit_payload and scan_limit_payload["possibly_truncated"]

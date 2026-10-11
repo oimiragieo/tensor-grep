@@ -48,10 +48,13 @@ The stable text-search compatibility contract is the validated compatibility set
 `tg search`, `tg find`, `tg agent`, and `tg context-render` accept `--citations`. With `--json`,
 the flag emits only `{"version":1,"citations":[{"path":"repo/relative/posix","start_line":1,"end_line":2}],"result_incomplete":false,"incomplete_reason":null,"omitted":0}`.
 Paths are repository-relative POSIX paths. Search citations identify individual match lines;
-find, agent, and context-render use an enclosing parser-backed symbol range when available and
-otherwise use the match line. Adjacent or overlapping ranges merge only when consecutive in the
-existing command ranking. Without `--json`, each range is printed as `path:start-end`. The option
-is refused with `--ndjson` or explicit `--format rg` (exit 2). MCP `citations=true` on
+  find, agent, and context-render use an enclosing parser-backed symbol range when available and
+  otherwise use the match line. Search context lines are excluded from citation ranges. Agent and
+  context-render omit citations without visible match evidence and mark the result incomplete.
+  Adjacent or overlapping ranges merge only when consecutive in the existing command ranking.
+  MCP search citation limits honor `max_results` and `max_files`; `omitted` counts matching rows
+  withheld by those limits. Without `--json`, each range is printed as `path:start-end`. The option
+  is refused with `--ndjson`, explicit `--format rg`, or `--files-with-matches` (exit 2). MCP `citations=true` on
 `tg_search`, `tg_find`, `tg_agent_capsule`, `tg_context_render`, `tg_query`, or `tg_context`
 returns this same five-key envelope without snippets or MCP metadata fields.
 

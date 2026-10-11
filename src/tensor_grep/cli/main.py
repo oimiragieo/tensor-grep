@@ -3712,6 +3712,9 @@ def search_command(
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
     _citations.validate_search_citation_modes(citations, ndjson, explicit_rg_format)
+    if citations and files_with_matches:
+        typer.echo("--citations cannot be combined with --files-with-matches", err=True)
+        raise typer.Exit(2)
     # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
     # text-shaping flags. Honoring them is impossible and silently dropping them is a
     # footgun that also lets the front-door launcher spawn an undrained text-render
