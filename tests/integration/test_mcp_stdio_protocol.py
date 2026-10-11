@@ -98,6 +98,30 @@ async def _stdio_protocol_roundtrip() -> None:
             search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
             assert "paths_defaulted" not in search_tool.inputSchema["properties"]
 
+            unknown_action = await session.call_tool(
+                "tg_navigate", {"action": "bogus", "symbol": "Foo"}
+            )
+            assert unknown_action.isError is True
+            assert unknown_action.content[0].text == json.dumps(
+                {
+                    "version": 1,
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "routing_backend": "MCPMeta",
+                    "routing_reason": "tg_navigate:bogus",
+                    "sidecar_used": False,
+                    "tool": "tg_navigate",
+                    "action": "bogus",
+                    "error": {
+                        "code": "invalid_input",
+                        "message": (
+                            "Unknown action 'bogus' for tg_navigate. "
+                            "Valid actions: defs, source, refs, callers, imports, importers."
+                        ),
+                    },
+                },
+                indent=2,
+            )
+
             capabilities = await session.call_tool("tg_mcp_capabilities", {})
             assert capabilities.isError is False
             capabilities_payload = json.loads(capabilities.content[0].text)

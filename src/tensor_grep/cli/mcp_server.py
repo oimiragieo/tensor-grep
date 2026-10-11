@@ -36,6 +36,7 @@ from tensor_grep.cli import mcp_checkpoint_label_args as _checkpoint_label_args
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli import mcp_search_scope as _search_scope
 from tensor_grep.cli import mcp_serial_execution as _serial_execution
+from tensor_grep.cli import mcp_tool_contract as _tool_contract
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -112,6 +113,28 @@ from tensor_grep.core.pipeline import (
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner as DirectoryScanner
 
+AuditAction = _tool_contract.AuditAction
+CheckpointAction = _tool_contract.CheckpointAction
+ContextAction = _tool_contract.ContextAction
+ExploreAction = _tool_contract.ExploreAction
+ImpactAction = _tool_contract.ImpactAction
+NavigateAction = _tool_contract.NavigateAction
+QueryAction = _tool_contract.QueryAction
+RewriteAction = _tool_contract.RewriteAction
+ScanAction = _tool_contract.ScanAction
+SessionAction = _tool_contract.SessionAction
+_TG_AUDIT_ACTIONS = _tool_contract.TG_AUDIT_ACTIONS
+_TG_CHECKPOINT_ACTIONS = _tool_contract.TG_CHECKPOINT_ACTIONS
+_TG_CONTEXT_ACTIONS = _tool_contract.TG_CONTEXT_ACTIONS
+_TG_EXPLORE_ACTIONS = _tool_contract.TG_EXPLORE_ACTIONS
+_TG_IMPACT_ACTIONS = _tool_contract.TG_IMPACT_ACTIONS
+_TG_NAVIGATE_ACTIONS = _tool_contract.TG_NAVIGATE_ACTIONS
+_TG_QUERY_ACTIONS = _tool_contract.TG_QUERY_ACTIONS
+_TG_REWRITE_ACTIONS = _tool_contract.TG_REWRITE_ACTIONS
+_TG_SCAN_ACTIONS = _tool_contract.TG_SCAN_ACTIONS
+_TG_SESSION_ACTIONS = _tool_contract.TG_SESSION_ACTIONS
+register_mcp_tool = _tool_contract.register_mcp_tool
+
 # Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
 # welding the calling function to this file -- move it and the test still passes while
@@ -145,7 +168,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.16.0"  # investigation, grounding, native reranking
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.17.0"  # action enums and MCP error signaling
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -155,6 +178,7 @@ def _apply_mcp_server_metadata(server: FastMCP) -> None:
 # Initialize the FastMCP server
 mcp = FastMCP("tensor-grep")
 _apply_mcp_server_metadata(mcp)
+_register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
@@ -187,7 +211,7 @@ def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
     note after the meta tools are defined (see `_LEGACY_NOTE`).
     """
     if _legacy_tools_enabled():
-        return mcp.tool()(fn)  # type: ignore[no-any-return]
+        return _register_tool(fn)  # type: ignore[no-any-return]
     return fn
 
 
@@ -1085,7 +1109,7 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
 _PLAN_DIGEST_VERSION = "tg-plan-digest-v1"
 
 
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_mcp_capabilities() -> str:
     """
     Report MCP tool availability for the current runtime.
@@ -1094,7 +1118,9 @@ def tg_mcp_capabilities() -> str:
     tg binary from tools that require one.
     """
     try:
-        return _self._inject_mcp_contract_fields(json.dumps(_mcp_capabilities_payload(), indent=2))
+        return _self._inject_mcp_contract_fields(
+            json.dumps(_self._mcp_capabilities_payload(), indent=2)
+        )
     except Exception as exc:
         _log_tool_exception("tg_mcp_capabilities", exc)
         return json.dumps(
@@ -3738,7 +3764,7 @@ def tg_ast_search(
         return _sanitized_tool_error_text("tg_ast_search", exc)
 
 
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     """
     Analyze a system log file with local heuristics by default, or the opt-in
@@ -4189,7 +4215,7 @@ def tg_session_context(
 # ================================================================================================
 # #98 (MCP consolidation Phase-1): 10 ADDITIVE task-shaped meta-tools composing the 46 legacy
 # tools above by an `action` string selector, plus the 2 always-on singletons already defined
-# (tg_mcp_capabilities, tg_classify_logs). ALWAYS registered via plain `@mcp.tool()` -- never
+# (tg_mcp_capabilities, tg_classify_logs). ALWAYS registered via the shared tool wrapper -- never
 # gated by TG_MCP_LEGACY_TOOLS -- since they are the additive surface that flag exists to let an
 # operator eventually rely on alone (see `_legacy_tools_enabled` docstring). Every meta tool:
 #   1. confines its PRIMARY path/root param -- and most other path-shaped params it declares --
@@ -4218,12 +4244,10 @@ def tg_session_context(
 #      unexpected exception in `_sanitized_tool_error` -- never a raw traceback.
 # ================================================================================================
 
-_TG_NAVIGATE_ACTIONS = ("defs", "source", "refs", "callers", "imports", "importers")
 
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_navigate(
-    action: str,
+    action: NavigateAction,
     symbol: str | None = None,
     file: str | None = None,
     path: str = ".",
@@ -4318,12 +4342,9 @@ def tg_navigate(
         return _sanitized_tool_error_text("tg_navigate", exc)
 
 
-_TG_IMPACT_ACTIONS = ("impact", "blast_radius", "blast_radius_plan", "blast_radius_render")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_impact(
-    action: str,
+    action: ImpactAction,
     symbol: str | None = None,
     path: str = ".",
     max_depth: int = 3,
@@ -4440,9 +4461,6 @@ def tg_impact(
 _MAX_WORKSPACE_ROOTS = 8
 
 
-_TG_QUERY_ACTIONS = ("text", "search", "ast", "find", "index")
-
-
 def _tg_query_dispatch(
     action: str,
     *,
@@ -4532,9 +4550,9 @@ def _tg_query_dispatch(
     return _meta_unknown_action_error("tg_query", action, _TG_QUERY_ACTIONS)
 
 
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_query(
-    action: str,
+    action: QueryAction,
     pattern: str | None = None,
     query: str | None = None,
     lang: str | None = None,
@@ -4741,12 +4759,9 @@ def tg_query(
         return _sanitized_tool_error_text("tg_query", exc)
 
 
-_TG_CONTEXT_ACTIONS = ("pack", "edit_plan", "render", "capsule")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_context(
-    action: str,
+    action: ContextAction,
     query: str | None = None,
     path: str = ".",
     max_files: int = 3,
@@ -4878,12 +4893,9 @@ def tg_context(
         return _sanitized_tool_error_text("tg_context", exc)
 
 
-_TG_EXPLORE_ACTIONS = ("orient", "repo_map", "doctor", "devices")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_explore(
-    action: str,
+    action: ExploreAction,
     path: str = ".",
     max_tokens: int = 3000,
     max_central_files: int = 10,
@@ -4947,25 +4959,12 @@ def tg_explore(
         return _sanitized_tool_error_text("tg_explore", exc)
 
 
-_TG_SESSION_ACTIONS = (
-    "open",
-    "list",
-    "show",
-    "refresh",
-    "context",
-    "edit_plan",
-    "context_render",
-    "blast_radius",
-    "blast_radius_plan",
-    "blast_radius_render",
-    "file_importers",
-)
 _TG_SESSION_ACTIONS_NEEDING_ID = frozenset(_TG_SESSION_ACTIONS) - {"open", "list"}
 
 
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_session(
-    action: str,
+    action: SessionAction,
     session_id: str | None = None,
     query: str | None = None,
     symbol: str | None = None,
@@ -5162,12 +5161,9 @@ def tg_session(
         return _sanitized_tool_error_text("tg_session", exc)
 
 
-_TG_SCAN_ACTIONS = ("scan", "rulesets")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_scan(
-    action: str,
+    action: ScanAction,
     ruleset: str | None = None,
     inline_rules: str | None = None,
     path: str = ".",
@@ -5245,12 +5241,9 @@ def tg_scan(
         return _sanitized_tool_error_text("tg_scan", exc)
 
 
-_TG_AUDIT_ACTIONS = ("manifest_verify", "history", "diff", "bundle_create", "bundle_verify")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_audit(
-    action: str,
+    action: AuditAction,
     manifest_path: str | None = None,
     signing_key: str | None = None,
     previous_manifest: str | None = None,
@@ -5352,12 +5345,9 @@ def tg_audit(
         return _sanitized_tool_error_text("tg_audit", exc)
 
 
-_TG_CHECKPOINT_ACTIONS = ("create", "list", "undo")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_checkpoint(
-    action: str,
+    action: CheckpointAction,
     checkpoint_id: str | None = None,
     path: str = ".",
     label: str | None = None,
@@ -5405,12 +5395,9 @@ def tg_checkpoint(
 _checkpoint_label_args.install_checkpoint_label_arguments(mcp)
 
 
-_TG_REWRITE_ACTIONS = ("plan", "apply", "diff")
-
-
-@mcp.tool()  # type: ignore
+@_register_tool  # type: ignore
 def tg_rewrite(
-    action: str,
+    action: RewriteAction,
     pattern: str | None = None,
     replacement: str | None = None,
     lang: str | None = None,

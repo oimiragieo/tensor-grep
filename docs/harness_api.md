@@ -1540,7 +1540,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.16.0`), which is distinct from the installed CLI/package version and
+`1.17.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1549,6 +1549,13 @@ package or protocol compatibility from `serverInfo.version`. Stdio MCP messages
 are newline-delimited JSON-RPC per the
 MCP transport spec. The server also accepts legacy `Content-Length` JSON-RPC
 frames defensively and still writes newline-delimited JSON-RPC responses to stdout.
+
+### MCP 1.17.0 migration note
+
+The 10 meta-tools advertise their supported `action` values in `tools/list`. Tool responses
+whose JSON body contains a **non-empty** top-level `error` object now set MCP `isError: true`; clients that
+inspected `error` in the body keep working; `isError` is now true for those responses. A
+partial response with `result_incomplete: true` and no `error` remains a non-error result.
 
 PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_apply(...)` through the packaged PyO3 Rust extension even when a standalone native `tg` binary is unavailable. Rewrite diff, checkpoint, audit, validation, verify, and other native-only rewrite options still require a standalone native `tg` binary via `TG_NATIVE_TG_BINARY` or an in-tree/release build.
 

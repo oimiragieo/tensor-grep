@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tensor_grep.core.result import SearchResult
+from tests.unit.mcp_tool_test_helpers import call_mcp_tool_parts
 
 # A message shaped like a real Python exception: an absolute filesystem path
 # plus internal module structure that must never reach the MCP client.
@@ -1321,13 +1322,12 @@ def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, mon
 
 def test_direct_call_tool_broad_poison_sanitized(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool handles broad exceptions without leaking poison on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_server
 
     poison = r"SEC007_BROAD_SECRET at C:\private\trace.py"
     with patch.object(mcp_server, "build_symbol_defs", side_effect=RuntimeError(poison)):
-        content, _data = asyncio.run(
+        content, _data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool("tg_symbol_defs", {"symbol": "foo", "path": "."})
         )
         text = content[0].text
@@ -1341,13 +1341,12 @@ def test_direct_call_tool_broad_poison_sanitized(capsys):
 
 def test_direct_call_tool_narrow_poison_sanitized(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool handles narrow exceptions without leaking poison on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_server
 
     poison = r"SEC007_NARROW_SECRET at C:\private\missing.py"
     with patch.object(mcp_server, "build_file_importers", side_effect=FileNotFoundError(poison)):
-        content, _data = asyncio.run(
+        content, _data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
                 "tg_file_importers",
                 {"file": "src/tensor_grep/cli/mcp_server.py", "path": "."},
@@ -1367,13 +1366,12 @@ def test_direct_call_tool_narrow_poison_sanitized(capsys):
 
 def test_direct_call_tool_cwd_failure_sanitized(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool handles Path.cwd() failure without escaping as ToolError."""
-    import asyncio
 
     from tensor_grep.cli import mcp_server
 
     poison = r"SEC007_CWD_SECRET"
     with patch("pathlib.Path.cwd", side_effect=RuntimeError(poison)):
-        content, _data = asyncio.run(
+        content, _data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool("tg_classify_logs", {"file_path": "a.log"})
         )
         text = content[0].text
@@ -1388,13 +1386,14 @@ def test_direct_call_tool_cwd_failure_sanitized(capsys):
 
 def test_direct_call_tool_external_path_redacted(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool redacts external paths to [refused] on the wire."""
-    import asyncio
     import sys
 
     from tensor_grep.cli import mcp_server
 
     poison_file = r"C:\outside\secret.py" if sys.platform == "win32" else "/outside/secret.py"
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_file_imports", {"file": poison_file}))
+    content, _data = call_mcp_tool_parts(
+        mcp_server.mcp.call_tool("tg_file_imports", {"file": poison_file})
+    )
     text = content[0].text
     assert "outside" not in text and "secret.py" not in text
     payload = json.loads(text)
@@ -1430,7 +1429,6 @@ def test_direct_call_tool_session_open_get_session_poison_sanitized(tmp_path, mo
 
 def test_direct_call_tool_rewrite_diff_subprocess_poison_sanitized(tmp_path, monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles subprocess failure without leaking poison."""
-    import asyncio
     from pathlib import Path
 
     from tensor_grep.cli import mcp_server
@@ -1445,7 +1443,7 @@ def test_direct_call_tool_rewrite_diff_subprocess_poison_sanitized(tmp_path, mon
         patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
         patch.object(mcp_server, "_run_rewrite_subprocess", side_effect=poison),
     ):
-        content, data = asyncio.run(
+        content, data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
                 "tg_rewrite_diff",
                 {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
@@ -1464,7 +1462,6 @@ def test_direct_call_tool_rewrite_diff_subprocess_poison_sanitized(tmp_path, mon
 
 def test_direct_call_tool_rewrite_plan_embedded_poison_sanitized(tmp_path, monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles embedded rewrite failure without leaking poison."""
-    import asyncio
     import sys
     import types
     from unittest.mock import MagicMock
@@ -1481,7 +1478,7 @@ def test_direct_call_tool_rewrite_plan_embedded_poison_sanitized(tmp_path, monke
     monkeypatch.setitem(sys.modules, "tensor_grep.rust_core", fake_rust)
 
     with patch.object(mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(None, None)):
-        content, data = asyncio.run(
+        content, data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
                 "tg_rewrite_plan",
                 {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
@@ -1501,7 +1498,6 @@ def test_direct_call_tool_rewrite_diff_native_stderr_poison_sanitized(
     tmp_path, monkeypatch, capsys
 ):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff sanitizes native stderr on wire."""
-    import asyncio
     from pathlib import Path
     from subprocess import CompletedProcess
 
@@ -1522,7 +1518,7 @@ def test_direct_call_tool_rewrite_diff_native_stderr_poison_sanitized(
         patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
         patch.object(mcp_server, "_run_rewrite_subprocess", return_value=completed),
     ):
-        content, data = asyncio.run(
+        content, data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
                 "tg_rewrite_diff",
                 {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
@@ -1541,7 +1537,6 @@ def test_direct_call_tool_rewrite_diff_native_stderr_poison_sanitized(
 
 def test_direct_call_tool_index_search_subprocess_poison_sanitized(tmp_path, monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_index_search handles subprocess failure without leaking poison."""
-    import asyncio
     from pathlib import Path
 
     from tensor_grep.cli import mcp_server
@@ -1556,7 +1551,7 @@ def test_direct_call_tool_index_search_subprocess_poison_sanitized(tmp_path, mon
         patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
         patch.object(mcp_server, "_run_rewrite_subprocess", side_effect=poison),
     ):
-        content, data = asyncio.run(
+        content, data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
                 "tg_index_search",
                 {"pattern": "def foo", "path": str(tmp_path)},
@@ -1776,7 +1771,10 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                         and isinstance(d.func, ast.Attribute)
                         and d.func.attr == "tool"
                     )
-                    or (isinstance(d, ast.Name) and d.id == "_register_legacy_tool")
+                    or (
+                        isinstance(d, ast.Name)
+                        and d.id in {"_register_legacy_tool", "_register_tool"}
+                    )
                     for d in node.decorator_list
                 )
                 if is_tool:
@@ -2041,7 +2039,6 @@ def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitiz
     tmp_path, monkeypatch, capsys
 ):
     """SEC-007: Direct FastMCP tg_rewrite_apply sanitizes PolicyValidationError.details on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_server
     from tensor_grep.cli.apply_policy import PolicyValidationError
@@ -2064,7 +2061,7 @@ def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitiz
     (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr("tensor_grep.cli.apply_policy.load_apply_policy", _raise_policy_poison)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_apply",
             {
@@ -2089,7 +2086,6 @@ def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
     tmp_path, monkeypatch, capsys
 ):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply handles evaluate_apply_policy failure with edit disclosure."""
-    import asyncio
 
     from tensor_grep.cli import mcp_server
 
@@ -2116,7 +2112,7 @@ def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
     fake_result = json.dumps({"applied_edits": 1, "edits": [{"path": "foo.py"}]})
     monkeypatch.setattr(mcp_server, "_execute_embedded_rewrite_json", lambda **_kwargs: fake_result)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_apply",
             {
@@ -2157,7 +2153,6 @@ def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
 
 def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles confinement poison without leaking."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2168,7 +2163,7 @@ def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_diff",
             {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
@@ -2182,7 +2177,6 @@ def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch,
 
 def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles confinement poison without leaking."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2193,7 +2187,7 @@ def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_plan",
             {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
@@ -2207,7 +2201,6 @@ def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch,
 
 def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply handles confinement poison without leaking."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2218,7 +2211,7 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_apply",
             {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
@@ -2232,7 +2225,6 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
 
 def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_index_search handles confinement poison without leaking."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2243,7 +2235,7 @@ def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_index_search",
             {"pattern": "x", "path": "."},
@@ -2257,7 +2249,6 @@ def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch,
 
 def test_direct_call_tool_ruleset_scan_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_ruleset_scan handles confinement poison without leaking."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2268,7 +2259,7 @@ def test_direct_call_tool_ruleset_scan_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = asyncio.run(
+    content, _data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_ruleset_scan",
             {"ruleset": "security", "path": "."},
@@ -2313,7 +2304,6 @@ def test_direct_call_tool_broken_stderr_poison_sanitized(monkeypatch):
 
 def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Attacker-controlled dynamic exception type name degrades safely to InternalError on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2325,7 +2315,7 @@ def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_dynamic_error)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
     assert "SEC007_DYNAMIC_TYPE_SECRET" not in wire, (
         f"Dynamic exception class name leaked to wire: {wire}"
@@ -2341,7 +2331,6 @@ def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
 
 def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
     """SEC-007: Hostile __class__ property accessor does not escape boundary or leak secret on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2355,7 +2344,7 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_hostile_error)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
     assert "SEC007_CLASS_ACCESS_SECRET" not in wire, f"Hostile class secret leaked: {wire}"
     assert "underlying secret" not in wire, f"Underlying secret leaked to wire: {wire}"
@@ -2366,7 +2355,6 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
 
 def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Exception with forged __module__ matching tensor_grep degrades safely to InternalError on wire."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2382,7 +2370,7 @@ def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, c
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_spoofed_error)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
     assert "SEC007_SPOOFED_MODULE_SECRET" not in wire, f"Spoofed leaked: {wire}"
     assert poison_msg not in wire, f"Poison message leaked to wire: {wire}"
@@ -2396,7 +2384,6 @@ def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, c
 
 def test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Dynamic synthetic exception claiming trusted name (e.g. ValueError) degrades safely to InternalError."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2408,7 +2395,7 @@ def test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized(monkey
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_synthetic_value_error)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
     # Exact type identity does not match builtins.ValueError -> must be InternalError
     assert "ValueError" not in wire, f"Synthetic ValueError leaked on wire: {wire}"
@@ -2482,7 +2469,6 @@ def test_direct_call_tool_rewrite_apply_audit_manifest_record_failure_sanitized(
 
 def test_direct_call_tool_metaclass_equality_spoof_sanitized(monkeypatch, capsys):
     """SEC-007: Exception with hostile metaclass spoofing __eq__ and __hash__ degrades to InternalError."""
-    import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
@@ -2500,7 +2486,7 @@ def test_direct_call_tool_metaclass_equality_spoof_sanitized(monkeypatch, capsys
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_meta_error)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
     assert "SEC007_METACLASS_SPOOF_SECRET" not in wire, (
         f"Metaclass spoof secret leaked to wire: {wire}"

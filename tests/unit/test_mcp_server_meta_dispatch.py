@@ -211,8 +211,9 @@ def test_register_legacy_tool_returns_fn_unchanged_when_flag_off(monkeypatch):
 
 
 def test_register_legacy_tool_registers_via_mcp_tool_when_flag_on(monkeypatch):
-    """Proves `_register_legacy_tool` calls `mcp.tool()(fn)` when the flag is ON, WITHOUT
-    actually mutating the real shared `mcp` singleton's tool registry -- registering a real
+    """Proves `_register_legacy_tool` registers its wrapped function through `mcp.tool()`
+    when the flag is ON, WITHOUT actually mutating the real shared `mcp` singleton's tool
+    registry -- registering a real
     extra tool there would leak into every other test in this file that enumerates
     `mcp.list_tools()` (including the harness_api.md doc-parity governance test), since the
     FastMCP tool table has no per-test reset hook. Spy on `mcp.tool` itself instead."""
@@ -229,7 +230,9 @@ def test_register_legacy_tool_registers_via_mcp_tool_when_flag_on(monkeypatch):
     result = mcp_server._register_legacy_tool(_sample)
 
     tool_factory_spy.assert_called_once_with()
-    decorator_spy.assert_called_once_with(_sample)
+    decorator_spy.assert_called_once()
+    registered_fn = decorator_spy.call_args.args[0]
+    assert registered_fn.__wrapped__ is _sample
     assert result is _sample
 
 
