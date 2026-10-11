@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+import ast
 import time
 from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
+
+
+def _python_import_reference(
+    repo_map_payload: dict[str, Any], symbol: str, deadline_monotonic: float | None
+) -> tuple[bool, bool]:
+    files, tests = repo_map._repo_map_file_and_test_universe(repo_map_payload)
+    root = repo_map._repo_map_root_dir(repo_map_payload)
+    max_bytes = repo_map._max_parse_bytes()
+    for path in [*files, *tests]:
+        if path.suffix.lower() != ".py":
+            continue
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return False, False
+        if not repo_map._path_is_relative_to(path, root):
+            return False, False
+        try:
+            with path.open("rb") as source_file:
+                raw = source_file.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                return False, False
+            tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
+        except (OSError, UnicodeError, SyntaxError):
+            return False, False
+        if any(
+            isinstance(node, ast.ImportFrom) and any(alias.name == symbol for alias in node.names)
+            for node in ast.walk(tree)
+        ):
+            return True, True
+    return True, False
 
 
 def _test_reference_evidence(
@@ -17,7 +47,7 @@ def _test_reference_evidence(
     max_repo_files: int | None,
     lookup_incomplete: list[str] | None = None,
 ) -> tuple[bool, bool]:
-    """Return complete-reference-data and whether any test file references the symbol."""
+    """Return complete-reference-data and whether a test reference or Python import exists."""
     if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
         if lookup_incomplete is not None:
             lookup_incomplete.append("deadline_exceeded")
@@ -80,4 +110,11 @@ def _test_reference_evidence(
         for group in reference_groups
         for reference in group
     )
-    return True, has_test_reference
+    if has_test_reference:
+        return True, True
+    imports_complete, has_import_reference = _python_import_reference(
+        repo_map_payload, symbol, deadline_monotonic
+    )
+    if not imports_complete and lookup_incomplete is not None:
+        lookup_incomplete.append("test_reference_lookup_incomplete")
+    return imports_complete, has_import_reference

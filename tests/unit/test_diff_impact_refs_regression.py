@@ -76,9 +76,9 @@ def test_imported_alias_call_disables_uncalled_cap_and_preserves_gate_exit(
 
     payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
-    assert payload["caller_count"] == 1
+    assert payload["caller_count"] == 0
     assert payload["risk_cap_evidence"] == "complete"
-    assert payload["risk_tier"] == "high"
+    assert payload["risk_tier"] == "critical"
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
     monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
@@ -92,10 +92,58 @@ def test_imported_alias_caller_disables_uncalled_cap(tmp_path: Path) -> None:
 
     payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
-    assert payload["caller_count"] == 1
+    assert payload["caller_count"] == 0
     assert payload["risk_cap_evidence"] == "complete"
     assert payload["risk_tier"] == "critical"
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_alias_call_preserves_precap_payload_and_gate(tmp_path: Path, monkeypatch: Any) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        "from pkg.core import dormant as observed\nobserved()\n", encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["blast_radius_score"] == 1.0
+    assert payload["risk_tier"] == "critical"
+    assert payload["risk_cap_evidence"] == "complete"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "critical"]).exit_code == 2
+
+
+def test_import_only_alias_disables_uncalled_cap(tmp_path: Path, monkeypatch: Any) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        "from pkg.core import dormant as observed\n", encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "critical"]).exit_code == 2
+
+
+def test_shadowed_alias_does_not_create_public_python_ast_ref(tmp_path: Path) -> None:
+    _dormant_diff(tmp_path)
+    test_file = tmp_path / "test_core.py"
+    test_file.write_text(
+        "from pkg.core import dormant as observed\ndef test_shadow(observed):\n    observed()\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("dormant", tmp_path)
+
+    assert not any(
+        row["file"] == str(test_file.resolve()) and row.get("provenance") == "python-ast"
+        for row in payload["references"]
+    )
 
 
 @pytest.mark.parametrize("with_submodule", [False, True], ids=["deletion", "mixed_submodule"])

@@ -3463,21 +3463,12 @@ def _python_references_and_calls(
     lines = lang_registry.split_source_lines(source)
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
-    imported_aliases = {
-        alias.asname
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
-        for alias in node.names
-        if alias.name == symbol and alias.asname
-    }
 
     # Manual recursive walk (equivalent to ast.NodeVisitor's generic_visit dispatch, which the
     # prior Visitor class relied on) so we can thread `parent` + `in_annotation` context down to
     # the match sites for ref_kind classification -- ast.NodeVisitor gives no parent access.
     def _walk(node: ast.AST, parent: ast.AST | None, in_annotation: bool) -> None:
-        if isinstance(node, ast.Name) and (
-            node.id == symbol or (node.id in imported_aliases and isinstance(node.ctx, ast.Load))
-        ):
+        if isinstance(node, ast.Name) and node.id == symbol:
             references.append({
                 "name": symbol,
                 "kind": "reference",
@@ -3497,9 +3488,7 @@ def _python_references_and_calls(
             })
         elif isinstance(node, ast.Call):
             matched = False
-            if isinstance(node.func, ast.Name) and (
-                node.func.id == symbol or node.func.id in imported_aliases
-            ):
+            if isinstance(node.func, ast.Name) and node.func.id == symbol:
                 matched = True
             elif isinstance(node.func, ast.Attribute) and node.func.attr == symbol:
                 matched = True
