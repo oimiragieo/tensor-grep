@@ -8796,6 +8796,23 @@ def session_refresh(
 
     try:
         payload = refresh_session(session_id, path)
+    except FileNotFoundError as exc:
+        message = str(exc)
+        if not message.startswith("Session not found:"):
+            typer.echo(message, err=True)
+            raise typer.Exit(1) from exc
+        hint = "pass SESSION_ID (see tg session list PATH --json)"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {"error": {"code": "session_not_found", "message": message, "hint": hint}},
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(message, err=True)
+            typer.echo(f"Hint: {hint}", err=True)
+        raise typer.Exit(1) from exc
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

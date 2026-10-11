@@ -421,8 +421,10 @@ def _run_imports_pass(
 
 
 def sql_command(
-    arg1: str | None = typer.Argument(None, help="Path to search, or SQL query string."),
-    arg2: str | None = typer.Argument(None, help="SQL query string (if path was first argument)."),
+    arg1: str | None = typer.Argument(
+        None, help="PATH to scan (default: .), or the QUERY string when passed alone."
+    ),
+    arg2: str | None = typer.Argument(None, help="QUERY string to execute when PATH is first."),
     query_file: Path | None = typer.Option(
         None, "--query-file", help="UTF-8 SQL file, at most 1 MiB; path defaults to ."
     ),
@@ -555,7 +557,8 @@ def sql_command(
                         "rows": [],
                         "count": 0,
                         "truncated": False,
-                        "result_incomplete": False,
+                        "result_incomplete": True,
+                        "incomplete_reason": "query_error",
                     })
                 )
             else:
@@ -614,6 +617,7 @@ def sql_command(
                         "count": 0,
                         "truncated": False,
                         "result_incomplete": True,
+                        "incomplete_reason": "query_error",
                         "partial": True,
                     },
                     indent=2,
@@ -632,7 +636,8 @@ def sql_command(
                         "rows": [],
                         "count": 0,
                         "truncated": False,
-                        "result_incomplete": False,
+                        "result_incomplete": True,
+                        "incomplete_reason": "query_error",
                     },
                     indent=2,
                 )
@@ -651,7 +656,8 @@ def sql_command(
                         "rows": [],
                         "count": 0,
                         "truncated": False,
-                        "result_incomplete": False,
+                        "result_incomplete": True,
+                        "incomplete_reason": "query_error",
                     },
                     indent=2,
                 )
@@ -670,7 +676,8 @@ def sql_command(
                         "rows": [],
                         "count": 0,
                         "truncated": False,
-                        "result_incomplete": False,
+                        "result_incomplete": True,
+                        "incomplete_reason": "query_error",
                     },
                     indent=2,
                 )
@@ -896,7 +903,8 @@ def sql_command(
                                     "rows": [],
                                     "count": 0,
                                     "truncated": False,
-                                    "result_incomplete": False,
+                                    "result_incomplete": True,
+                                    "incomplete_reason": "query_error",
                                 },
                                 indent=2,
                             )
@@ -940,6 +948,7 @@ def sql_command(
                     "error": "query_deadline_exceeded",
                     "deadline_exceeded": True,
                     "result_incomplete": True,
+                    "incomplete_reason": "query_error",
                     "partial": True,
                     "rows": [],
                     "count": 0,
@@ -968,7 +977,8 @@ def sql_command(
                                 "rows": [],
                                 "count": 0,
                                 "truncated": False,
-                                "result_incomplete": False,
+                                "result_incomplete": True,
+                                "incomplete_reason": "query_error",
                             },
                             indent=2,
                         )
