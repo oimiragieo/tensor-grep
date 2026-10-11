@@ -14,7 +14,7 @@ _CHANGED_TIERS = {
     "tests/unit/test_diff_impact.py::test_diff_impact_scenario_risk_pins#3": ("critical", "medium"),
     "tests/unit/test_diff_impact.py::test_real_repo_spaces_nonascii_and_deleted#1": (
         "critical",
-        "medium",
+        "critical",
     ),
     "tests/unit/test_diff_impact.py::test_real_repo_unicode_separator_filename#1": (
         "critical",
@@ -34,7 +34,7 @@ _CHANGED_TIERS = {
     ),
     "tests/unit/test_diff_impact_hardening.py::test_controls_ordinary_file_is_analyzed_and_deleted_file_keeps_its_handling#1": (
         "critical",
-        "medium",
+        "critical",
     ),
     "tests/unit/test_diff_impact_hardening.py::test_crlf_only_content_is_still_analysed#1": (
         "critical",
@@ -62,7 +62,7 @@ _CHANGED_TIERS = {
     ),
     "tests/unit/test_diff_impact_hardening.py::test_symlink_replaced_by_a_regular_file_is_analysed_normally#1": (
         "critical",
-        "medium",
+        "critical",
     ),
     "tests/unit/test_diff_impact_hardening.py::test_unstaged_control_still_uses_and_verifies_the_working_tree#1": (
         "critical",

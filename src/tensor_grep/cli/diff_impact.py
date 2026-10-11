@@ -25,6 +25,7 @@ from tensor_grep.cli.diff_impact_cap import (
     collect_test_reference_evidence,
     risk_cap_evidence_status,
 )
+from tensor_grep.cli.diff_impact_payload import _empty_payload
 from tensor_grep.cli.diff_impact_refs import _test_reference_evidence
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
@@ -1103,48 +1104,6 @@ def _content_mode(ref: str | None, staged: bool, *, from_git: bool) -> str:
     return "worktree"  # no ref, or a single rev compared with the working tree
 
 
-def _empty_payload(
-    root: Path,
-    ref: str | None,
-    staged: bool,
-    *,
-    partial: bool,
-    reason: str | None = None,
-    error: str | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "root": str(root).replace("\\", "/"),
-        "ref": ref,
-        "staged": staged,
-        "changed_files": [],
-        "changed_symbols": [],
-        "callers": [],
-        "affected_files": [],
-        "affected_tests": [],
-        "blast_radius_score": 0.0,
-        "risk_tier": "low",
-        "risk_reasons": [],
-        "risk_cap_evidence": "not_applicable",
-        "partial": partial,
-        "downgrade_reasons": [reason] if partial and reason else [],
-        "symbol_count": 0,
-        "caller_count": 0,
-        "file_count": 0,
-        "test_count": 0,
-        "deleted_files": [],
-        "not_analyzed_paths": [],
-        "unparsed_changed_files": [],
-        "binary_files": [],
-        "mode_changed_files": [],
-        "submodule_changed_files": [],
-        "result_incomplete": partial,
-        "incomplete_reason": reason if partial else None,
-    }
-    if partial:
-        payload["error"] = error
-    return payload
-
-
 def build_diff_blast_radius(
     ref: str | None = None,
     staged: bool = False,
@@ -1247,9 +1206,14 @@ def build_diff_blast_radius(
     union_affected_files: set[str] = set(changed_files)
     union_tests: set[str] = set()
     per_symbol_scores: list[float] = []
-    symbol_evidence_complete = bool(changed_symbols) and not not_analyzed_paths
+    cap_paths_analyzed = not (
+        not_analyzed_paths or deleted_files or binary_files or submodule_changed_files
+    )
+    symbol_evidence_complete = bool(changed_symbols) and cap_paths_analyzed
     all_changed_symbols_uncalled = bool(changed_symbols)
-    reference_lookup_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
+    reference_lookup_complete = (
+        bool(changed_symbols) and cap_paths_analyzed and not _scan_did_not_finish(repo_m)
+    )
     symbol_analysis_complete = True
 
     for sym in changed_symbols:

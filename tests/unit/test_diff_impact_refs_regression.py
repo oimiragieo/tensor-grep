@@ -67,6 +67,74 @@ def test_getattr_string_reference_disables_uncalled_cap(tmp_path: Path) -> None:
     assert payload["risk_cap_evidence"] == "complete"
 
 
+def test_imported_alias_call_disables_uncalled_cap_and_preserves_gate_exit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    test_file = tmp_path / "test_core.py"
+    test_file.write_text("from pkg.core import dormant as observed\nobserved()\n", encoding="utf-8")
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 1
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "high"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
+def test_imported_alias_caller_disables_uncalled_cap(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "consumer.py").write_text(
+        "from pkg.core import dormant as observed\nresult = observed()\n", encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 1
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+@pytest.mark.parametrize("with_submodule", [False, True], ids=["deletion", "mixed_submodule"])
+def test_unanalyzed_deletion_disables_cap_and_preserves_gate_exit(
+    tmp_path: Path, monkeypatch: Any, with_submodule: bool
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_removed.py").write_text(
+        "from pkg.removed import tested\n\ndef test_removed():\n    assert tested() == 1\n",
+        encoding="utf-8",
+    )
+    diff += (
+        "diff --git a/pkg/removed.py b/pkg/removed.py\n"
+        "deleted file mode 100644\n"
+        "--- a/pkg/removed.py\n+++ /dev/null\n"
+        "@@ -1,2 +0,0 @@\n-def tested():\n-    return 1\n"
+    )
+    if with_submodule:
+        diff += (
+            "diff --git a/vendor/lib b/vendor/lib\n"
+            "index 1111111..2222222 160000\n"
+            "--- a/vendor/lib\n+++ b/vendor/lib\n"
+            "@@ -1 +1 @@\n"
+            "-Subproject commit 1111111\n+Subproject commit 2222222\n"
+        )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["deleted_files"] == ["pkg/removed.py"]
+    assert "deleted_files_symbols_not_analyzed" in payload["downgrade_reasons"]
+    if with_submodule:
+        assert payload["submodule_changed_files"] == ["vendor/lib"]
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
 def test_reference_deadline_preserves_completed_analysis_and_exit(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
