@@ -133,12 +133,15 @@ pub(super) fn write_test(
                 })?;
                 let mut rule: serde_yaml::Value =
                     serde_yaml::from_str(&contents).map_err(|error| {
-                        if error
-                            .to_string()
-                            .starts_with("duplicate entry with key \"language\"")
-                        {
+                        let message = error.to_string();
+                        if let Some(entry) = message.strip_prefix("duplicate entry with key ") {
+                            let key = entry
+                                .split(" at line ")
+                                .next()
+                                .unwrap_or(entry)
+                                .trim_matches('"');
                             anyhow::anyhow!(
-                                "cannot parse linked rule {label}: duplicate key 'language'"
+                                "cannot parse linked rule {label}: duplicate key '{key}'"
                             )
                         } else {
                             anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")

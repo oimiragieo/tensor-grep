@@ -509,6 +509,46 @@ def test_new_test_inherits_merged_yaml_language_across_front_doors(
     assert generated["python-m"] == generated["native"]
 
 
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_duplicate_merge_keys_across_front_doors(
+    tmp_path: Path, location: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        duplicate_merges = "first: &first {language: json}\nsecond: &second {severity: warning}\n<<: *first\n<<: *second\n"
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text(duplicate_merges, encoding="utf-8")
+            expected = "cannot parse linked rule rules/probe.yml: duplicate key '<<'"
+        else:
+            (project_dir / "sgconfig.yml").write_text(duplicate_merges, encoding="utf-8")
+            expected = "cannot parse sgconfig.yml: duplicate key '<<'"
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message, after))
+
+    assert outcomes[0] == outcomes[1]
+
+
 @pytest.mark.parametrize("kind", ["project", "rule", "test"])
 def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
     _skip_if_native_binary_missing("native")
@@ -775,6 +815,34 @@ def test_test_empty_case_pattern_resolves_linked_rule_across_front_doors(tmp_pat
 
         result = run_command(launcher, ["test"], cwd=project_dir)
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_test_merged_empty_linked_rule_pattern_across_front_doors(tmp_path: Path) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        (project_dir / "rules").mkdir(parents=True)
+        (project_dir / "tests").mkdir()
+        (project_dir / "sgconfig.yml").write_text(
+            "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+        )
+        (project_dir / "rules" / "probe.yml").write_text(
+            "defaults: &defaults {pattern: ''}\nid: probe\nlanguage: python\nrule:\n  <<: *defaults\n",
+            encoding="utf-8",
+        )
+        (project_dir / "tests" / "probe.yml").write_text(
+            "id: probe\nruleId: probe\nvalid: [PASS]\ninvalid: [ERROR]\n", encoding="utf-8"
+        )
+
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        message = result.stdout + result.stderr
+        assert result.returncode == 1, message
+        assert "probe: rule probe has an empty pattern" in message
+        assert "missing pattern or ruleId" not in message
+        outcomes.append(message.replace(str(project_dir), "<project>"))
+
+    assert outcomes[0] == outcomes[1]
 
 
 LAUNCHERS = ["python-m", "native", "bootstrap"]

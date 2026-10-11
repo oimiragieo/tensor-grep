@@ -9,9 +9,12 @@ pub(super) fn empty_rule_ids(data: &ProjectDataV6) -> HashSet<String> {
         let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
-        let Ok(payload) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
+        let Ok(mut payload) = serde_yaml::from_str::<serde_yaml::Value>(&content) else {
             continue;
         };
+        if payload.apply_merge().is_err() {
+            continue;
+        }
         let items = payload
             .get("rules")
             .and_then(serde_yaml::Value::as_sequence)

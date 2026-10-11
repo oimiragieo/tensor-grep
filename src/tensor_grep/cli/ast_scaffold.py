@@ -64,9 +64,11 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         keys: set[Hashable] = set()
         construct = cast(Callable[..., object], self.construct_object)
         for key_node, _value_node in node.value:
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                continue
-            key = construct(key_node, deep=True)
+            key: object = (
+                "<<"
+                if key_node.tag == "tag:yaml.org,2002:merge"
+                else construct(key_node, deep=True)
+            )
             if not isinstance(key, Hashable):
                 raise yaml.constructor.ConstructorError(
                     None, None, "found unhashable key", key_node.start_mark
