@@ -254,6 +254,23 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
         ("project_default", None, [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
         ("no_config", None, [], 0, "Created test scaffold", "other(1)"),
         ("linked_language", "language:  RuSt  \n", [], 0, "Created test scaffold", "other(1)"),
+        (
+            "linked_merge_block",
+            "defaults: &defaults\n  severity: warning\n<<: *defaults\nlanguage: json\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "linked_merge_inline",
+            "defaults: &defaults {severity: warning}\n<<: *defaults\nlanguage: json\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        ("config_merge", None, [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
         ("missing_language", "id: probe\n", [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
         (
             "blank_language",
@@ -352,6 +369,9 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
         "project_default",
         "no_config",
         "linked_language",
+        "linked_merge_block",
+        "linked_merge_inline",
+        "config_merge",
         "missing_language",
         "blank_language",
         "explicit_over_linked",
@@ -395,6 +415,7 @@ def test_new_test_language_resolution_parity(
                     "malformed_config_fallback": "language: [\n",
                     "duplicate_config_language": "language: json\nlanguage: python\n",
                     "duplicate_config_rule_dirs": "ruleDirs: [rules]\nruleDirs: [other]\n",
+                    "config_merge": "defaults: &defaults {severity: warning}\n<<: *defaults\nlanguage: json\n",
                 }.get(case, "language: json\n")
                 config_path.write_text(config_yaml, encoding="utf-8")
         rule_path = rules_dir / "probe.yml"

@@ -53,19 +53,28 @@ class _DuplicateYamlKeyError(yaml.YAMLError):
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[object, object]:
-        mapping: dict[object, object] = {}
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._checked_mappings: set[yaml.MappingNode] = set()
+
+    def flatten_mapping(self, node: yaml.MappingNode) -> None:
+        if node in self._checked_mappings:
+            return
+        self._checked_mappings.add(node)
+        keys: set[Hashable] = set()
         construct = cast(Callable[..., object], self.construct_object)
-        for key_node, value_node in node.value:
-            key = construct(key_node, deep=deep)
+        for key_node, _value_node in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
+            key = construct(key_node, deep=True)
             if not isinstance(key, Hashable):
                 raise yaml.constructor.ConstructorError(
                     None, None, "found unhashable key", key_node.start_mark
                 )
-            if key in mapping:
+            if key in keys:
                 raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
-            mapping[key] = construct(value_node, deep=deep)
-        return mapping
+            keys.add(key)
+        super().flatten_mapping(node)
 
 
 def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:
