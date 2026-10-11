@@ -2789,6 +2789,8 @@ fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepS
 
 #[cfg(test)]
 mod tests {
+    include!("../tests/search_citations_frontdoor.rs");
+
     use super::*;
     use std::collections::HashMap;
     // Bug #88/#480/#100: these 3 items moved to `rg_passthrough.rs` (see the breadcrumb comment

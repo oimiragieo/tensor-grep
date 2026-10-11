@@ -167,7 +167,12 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
+<<<<<<< HEAD
 _TG_MCP_SERVER_CONTRACT_VERSION = "1.18.0"  # batch after action enums and MCP error signaling
+=======
+# Earlier MCP changes: investigation, grounding, native reranking.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.18.0"  # action enums and MCP error signaling
+>>>>>>> 50ab5fe (feat(cli): add opt-in citation-only output for search, find, agent and context-render)
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1979,6 +1984,7 @@ def tg_context_render(
     render_profile: str = "full",
     provider: str = "native",
     profile: bool = False,
+    citations: bool = False,
 ) -> str:
     """
     Return a prompt-ready repository context bundle for edit planning.
@@ -2011,25 +2017,15 @@ def tg_context_render(
             return json.dumps(payload, indent=2)
 
         try:
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    _self.build_context_render(
-                        query,
-                        path,
-                        max_files=max_files,
-                        max_repo_files=max_repo_files,
-                        max_sources=max_sources,
-                        max_symbols_per_file=max_symbols_per_file,
-                        max_render_chars=max_render_chars,
-                        max_tokens=max_tokens,
-                        model=model,
-                        optimize_context=optimize_context,
-                        render_profile=render_profile,
-                        semantic_provider=provider,
-                        profile=profile,
-                    ),
-                    indent=2,
-                )
+            from tensor_grep.cli.citations import invoke_mcp_payload_builder
+
+            return invoke_mcp_payload_builder(
+                _self.build_context_render,
+                locals(),
+                path,
+                citations=citations,
+                inject_contract_fields=_self._inject_mcp_contract_fields,
+                aliases={"semantic_provider": "provider"},
             )
         except FileNotFoundError as exc:
             _log_tool_exception("tg_context_render", exc)
@@ -2076,6 +2072,7 @@ def tg_agent_capsule(
     plan_hops: bool = False,
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
+    citations: bool = False,
 ) -> str:
     """
     Return an Actionable Context Capsule for agent edit planning.
@@ -2122,27 +2119,15 @@ def tg_agent_capsule(
 
         try:
             from tensor_grep.cli.agent_capsule import build_agent_capsule
+            from tensor_grep.cli.citations import invoke_mcp_payload_builder
 
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    build_agent_capsule(
-                        query,
-                        path,
-                        max_files=max_files,
-                        max_sources=max_sources,
-                        max_tokens=max_tokens,
-                        max_repo_files=max_repo_files,
-                        model=model,
-                        semantic_provider=provider,
-                        gpu_device_ids=gpu_device_ids,
-                        gpu_timeout_s=gpu_timeout_s,
-                        deadline_seconds=deadline,
-                        plan_hops=plan_hops,
-                        grounding=grounding,
-                        rerank=rerank,
-                    ),
-                    indent=2,
-                )
+            return invoke_mcp_payload_builder(
+                build_agent_capsule,
+                locals(),
+                path,
+                citations=citations,
+                inject_contract_fields=_self._inject_mcp_contract_fields,
+                aliases={"semantic_provider": "provider", "deadline_seconds": "deadline"},
             )
         except FileNotFoundError as exc:
             _log_tool_exception("tg_agent_capsule", exc)
@@ -2834,6 +2819,7 @@ def tg_find(
     deadline: float | None = None,
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
+    citations: bool = False,
 ) -> str:
     """
     Whole-repo hybrid semantic search with optional installed native cross-encoder ordering.
@@ -2927,12 +2913,15 @@ def tg_find(
         result.routing_backend = _FIND_ROUTING_BACKEND
         result.routing_reason = _FIND_ROUTING_REASON
 
-        # Share the CLI serializer for ranking, partial results, and grounding evidence.
-        from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+        from tensor_grep.cli.citations import serialize_mcp_find_result
 
-        envelope = json.loads(JsonFormatter().format(result))
-        envelope = {"query": query, "path": path, **envelope}
-        return _self._inject_mcp_contract_fields(json.dumps(envelope, indent=2))
+        return serialize_mcp_find_result(
+            result,
+            path,
+            query,
+            citations=citations,
+            inject_contract_fields=_self._inject_mcp_contract_fields,
+        )
     except Exception as exc:
         _log_tool_exception("tg_find", exc)
         return _sanitized_tool_error_text("tg_find", exc)
@@ -2962,6 +2951,7 @@ def tg_search(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     rank: bool = False,
     semantic: bool = False,
+    citations: bool = False,
 ) -> str:
     """
     Search files for a regex or literal pattern and return bounded structured JSON. Routing,
@@ -3216,6 +3206,11 @@ def tg_search(
                 all_results = rerank_by_bm25(
                     all_results, search_pattern, all_results.matched_file_paths
                 )
+
+            if citations:
+                from tensor_grep.cli.citations import result_citations_json
+
+                return result_citations_json(all_results, path, scan_limit=scan_limit_payload)
 
             empty_scan_capped = bool(
                 scan_limit_payload and scan_limit_payload["possibly_truncated"]
@@ -4500,6 +4495,7 @@ def _tg_query_dispatch(
     paths_defaulted: bool = False,
     grounding: str = "local",
     rerank: str = "off",
+    citations: bool = False,
 ) -> str:
     """Single-root dispatch core for `tg_query`, shared by the direct call and the per-root
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
@@ -4526,6 +4522,7 @@ def _tg_query_dispatch(
             max_repo_files=max_repo_files,
             rank=rank,
             semantic=semantic,
+            citations=citations,
         )
     if action == "ast":
         if pattern is None or lang is None:
@@ -4553,6 +4550,7 @@ def _tg_query_dispatch(
             deadline=deadline,
             grounding=grounding,
             rerank=rerank,
+            citations=citations,
         )
     if action == "index":
         if pattern is None:
@@ -4583,6 +4581,7 @@ def tg_query(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     rank: bool = False,
     semantic: bool = False,
+    citations: bool = False,
     limit: int = 10,
     max_tokens: int | None = None,
     deadline: float | None = None,
@@ -4685,6 +4684,7 @@ def tg_query(
                     max_repo_files=max_repo_files,
                     rank=rank,
                     semantic=semantic,
+                    citations=citations,
                     limit=limit,
                     max_tokens=max_tokens,
                     deadline=deadline,
@@ -4733,6 +4733,7 @@ def tg_query(
                     max_repo_files=max_repo_files,
                     rank=rank,
                     semantic=semantic,
+                    citations=citations,
                     limit=limit,
                     max_tokens=max_tokens,
                     deadline=root_deadline,
@@ -4743,6 +4744,11 @@ def tg_query(
                     results_by_root[root] = json.loads(single_text)
                 except json.JSONDecodeError:
                     results_by_root[root] = single_text
+
+            if citations and action in {"text", "search", "find"}:
+                from tensor_grep.cli.citations import serialize_workspace_citations
+
+                return serialize_workspace_citations(results_by_root, omitted_roots, _mcp_root())
 
             extra: dict[str, Any] = {
                 "path": confined_path,
@@ -4793,6 +4799,7 @@ def tg_context(
     plan_hops: bool = False,
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
+    citations: bool = False,
 ) -> str:
     """
     Task-shaped meta-tool: repository context for edit planning. Composes 4 legacy tools:
@@ -4875,6 +4882,7 @@ def tg_context(
                     render_profile=render_profile,
                     provider=provider,
                     profile=profile,
+                    citations=citations,
                     **max_tokens_kwargs,
                 )
             if action == "capsule":
@@ -4892,6 +4900,7 @@ def tg_context(
                     plan_hops=plan_hops,
                     grounding=grounding,
                     rerank=rerank,
+                    citations=citations,
                     **max_tokens_kwargs,
                 )
             return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
