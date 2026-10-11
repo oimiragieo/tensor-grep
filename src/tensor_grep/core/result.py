@@ -167,7 +167,6 @@ class SearchResult:
     # to stderr + this field so a BM25-only result is never mislabeled "semantic" output.
     rank_fallback_reason: str | None = None
     rank_fusion: dict[str, object] | None = None
-    excluded_generated_dirs: list[str] = field(default_factory=list)
     # Internal evidence aligned with matches; never serialized into the search envelope.
     rerank_texts: list[str] | None = field(default=None, repr=False)
     dependency_grounding: dict[str, object] | None = None

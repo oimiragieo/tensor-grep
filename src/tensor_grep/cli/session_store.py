@@ -30,6 +30,8 @@ from tensor_grep.cli.repo_map import (
     build_context_pack_from_map,
     build_context_render_from_map,
     build_file_importers_from_map,
+    build_repo_map,
+    build_repo_map_incremental,
     build_symbol_blast_radius_from_map,
     build_symbol_blast_radius_plan_from_map,
     build_symbol_blast_radius_render_from_map,
@@ -37,9 +39,6 @@ from tensor_grep.cli.repo_map import (
     build_symbol_defs_from_map,
     build_symbol_impact_from_map,
     build_symbol_refs_from_map,
-)
-from tensor_grep.cli.repo_map import (
-    build_repo_map as build_repo_map,
 )
 from tensor_grep.cli.session_content_reconciliation import capture_snapshot, content_digest
 from tensor_grep.cli.session_provenance import (
@@ -95,7 +94,6 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_root import (
     _shared_territory_roots as _shared_territory_roots,
 )
-from tensor_grep.cli.session_scan import build_session_repo_map
 from tensor_grep.cli.symbols_cache import collect_content_receipts
 
 logger = logging.getLogger(__name__)
@@ -171,7 +169,6 @@ class SessionOpenResult:
     changeset: dict[str, list[str]]
     scan_limit: dict[str, Any] | None = None
     build_seconds: float | None = None
-    excluded_generated_dirs: list[str] | None = None
 
 
 @dataclass
@@ -185,7 +182,6 @@ class SessionRefreshResult:
     changeset: dict[str, list[str]]
     scan_limit: dict[str, Any] | None = None
     refresh_fallback_reason: str | None = None
-    excluded_generated_dirs: list[str] | None = None
 
 
 class SessionStaleError(RuntimeError):
@@ -546,7 +542,6 @@ def _stale_changeset(
                 deadline_monotonic=reconciliation_deadline,
                 deadline_hit=walk_deadline,
                 unreadable_hit=walk_unreadable,
-                exclude_codemap_dirs=True,
             )
             if _is_repo_context_file(current, context_root)
         ]
@@ -740,7 +735,7 @@ def open_session(
     started_at = monotonic()
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files)
     with collect_content_receipts() as content_receipts:
-        repo_map = build_session_repo_map(
+        repo_map = build_repo_map(
             scan_target,
             max_repo_files=effective_max_repo_files,
             deadline_monotonic=deadline_monotonic,
@@ -816,7 +811,6 @@ def open_session(
         changeset=changeset,
         scan_limit=scan_limit,
         build_seconds=max(0.0, built_at - started_at),
-        excluded_generated_dirs=repo_map.get("excluded_generated_dirs"),
     )
 
 
@@ -860,15 +854,16 @@ def refresh_session(
     with collect_content_receipts() as content_receipts:
         if changeset is not None:
             try:
-                repo_map = build_session_repo_map(
-                    root,
+                repo_map = build_repo_map_incremental(
+                    cast(dict[str, Any], existing["repo_map"]),
+                    changeset,
                     max_repo_files=effective_max_repo_files,
                     deadline_monotonic=deadline_monotonic,
                 )
                 refresh_type = "incremental"
             except Exception:
                 logger.warning("Incremental session refresh failed; performing a full rebuild")
-                repo_map = build_session_repo_map(
+                repo_map = build_repo_map(
                     root,
                     max_repo_files=effective_max_repo_files,
                     deadline_monotonic=deadline_monotonic,
@@ -876,7 +871,7 @@ def refresh_session(
                 refresh_type = "full"
                 refresh_fallback_reason = "incremental_failed"
         else:
-            repo_map = build_session_repo_map(
+            repo_map = build_repo_map(
                 root,
                 max_repo_files=effective_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
@@ -978,7 +973,6 @@ def refresh_session(
         changeset=changeset,
         scan_limit=cast(dict[str, Any] | None, repo_map.get("scan_limit")),
         refresh_fallback_reason=refresh_fallback_reason,
-        excluded_generated_dirs=repo_map.get("excluded_generated_dirs"),
     )
 
 

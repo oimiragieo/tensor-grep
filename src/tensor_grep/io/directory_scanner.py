@@ -115,8 +115,6 @@ class DirectoryScanner:
         # is a bounded preview for a human-readable message.
         self.unreadable_path_count = 0
         self.unreadable_path_sample: list[str] = []
-        self.excluded_generated_dirs: list[str] = []
-        self.exclude_codemap_dirs = bool(self.config.rank_bm25 or self.config.semantic_rank)
 
     def _load_ignore_spec(self, base_path: Path) -> "GitIgnoreSpec | None":
         if self.config.no_ignore or self.config.no_ignore_vcs or self.config.no_ignore_files:
@@ -288,18 +286,6 @@ class DirectoryScanner:
                 for directory in dirs
                 if self._should_descend_dir(base_path, root_path, directory)
             ]
-
-            if self.exclude_codemap_dirs:
-                from tensor_grep.cli.codemap_exclusions import is_codemap_generated_dir
-
-                retained_dirs = []
-                for directory in dirs:
-                    child = root_path / directory
-                    if is_codemap_generated_dir(child):
-                        self.excluded_generated_dirs.append(_relative_posix(child))
-                    else:
-                        retained_dirs.append(directory)
-                dirs[:] = retained_dirs
 
             if spec_stack:
                 dirs[:] = [

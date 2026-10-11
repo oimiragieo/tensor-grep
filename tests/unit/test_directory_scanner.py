@@ -3,42 +3,6 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 class TestDirectoryScanner:
-    def test_explicit_codemap_root_is_scanned_but_nested_codemap_is_excluded(
-        self, tmp_path, monkeypatch
-    ):
-        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
-        from tensor_grep.cli.repo_map import _iter_repo_files
-
-        marker = (
-            '{"schema_version":1,"out":"docs/code-map","tree_manifest_sha256":"'
-            + "0" * 64
-            + '","files_total":1,"folders_total":0,"symbols_total":1}'
-        )
-        explicit_root = tmp_path / "docs" / "code-map"
-        explicit_root.mkdir(parents=True)
-        (explicit_root / "_coverage.json").write_text(marker, encoding="utf-8")
-        explicit_file = explicit_root / "result.txt"
-        explicit_file.write_text("needle\n", encoding="utf-8")
-
-        nested_root = tmp_path / "nested-code-map"
-        nested_root.mkdir()
-        (nested_root / "_coverage.json").write_text(marker, encoding="utf-8")
-        nested_file = nested_root / "result.txt"
-        nested_file.write_text("needle\n", encoding="utf-8")
-
-        scanner = DirectoryScanner(SearchConfig(rank_bm25=True))
-        scanned = list(scanner.walk(str(explicit_root)))
-        repo_scanned = _iter_repo_files(tmp_path, exclude_codemap_dirs=True)
-
-        assert str(explicit_file) in scanned
-        assert explicit_root / "result.txt" in _iter_repo_files(
-            explicit_root, exclude_codemap_dirs=True
-        )
-        assert str(nested_file) not in [str(path) for path in repo_scanned]
-        assert str(nested_file) not in list(
-            DirectoryScanner(SearchConfig(rank_bm25=True)).walk(str(tmp_path))
-        )
-
     def test_should_skip_gitignored_directories_by_default(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
 
