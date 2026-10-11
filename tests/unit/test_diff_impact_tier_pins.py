@@ -24,10 +24,6 @@ _CHANGED_TIERS = {
         "critical",
         "medium",
     ),
-    "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[unparseable]#1": (
-        "low",
-        "critical",
-    ),
     "tests/unit/test_diff_impact_hardening.py::test_autocrlf_crlf_working_tree_is_analysed_with_no_git_process#1": (
         "critical",
         "medium",
@@ -105,10 +101,6 @@ _CHANGED_TIERS = {
         "medium",
     ),
 }
-_CHANGED_SCORES = {
-    "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[unparseable]#1": 1.0,
-}
-
 _CAPTURED: list[dict[str, Any]] = []
 _COUNTS: dict[str, int] = defaultdict(int)
 
@@ -200,7 +192,7 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
                 assert "capped_uncalled_symbols" in actual[scenario_id]["risk_reasons"]
         assert (actual[scenario_id]["risk_tier"], actual[scenario_id]["blast_radius_score"]) == (
             new_tier,
-            _CHANGED_SCORES.get(scenario_id, pin["blast_radius_score"]),
+            pin["blast_radius_score"],
         ), scenario_id
     assert actual.keys() == expected.keys()
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]

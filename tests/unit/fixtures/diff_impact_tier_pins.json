@@ -56,8 +56,8 @@
   },
   {
     "scenario_id": "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[unparseable]#1",
-    "risk_tier": "low",
-    "blast_radius_score": 0.05
+    "risk_tier": "critical",
+    "blast_radius_score": 1.0
   },
   {
     "scenario_id": "tests/unit/test_diff_impact.py::test_uncalled_symbol_cap_counts_non_call_test_references#1",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,61 @@ def test_getattr_string_reference_disables_uncalled_cap(tmp_path: Path) -> None:
 
     assert payload["caller_count"] == 0
     assert payload["risk_tier"] == "critical"
-    assert "capped_uncalled_symbols" not in payload.get("risk_reasons", [])
+    assert payload["risk_reasons"]
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    assert payload["risk_cap_evidence"] == "complete"
+
+
+def test_reference_deadline_preserves_completed_analysis_and_exit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "core.py").write_text(
+        "def alpha():\n    return 2\n\ndef beta():\n    return 2\n", encoding="utf-8"
+    )
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_core.py").write_text(
+        'from pkg import core\nfirst = getattr(core, "alpha")\nsecond = getattr(core, "beta")\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n+++ b/pkg/core.py\n"
+        "@@ -1,5 +1,5 @@\n"
+        " def alpha():\n-    return 1\n+    return 2\n"
+        " \n def beta():\n-    return 1\n+    return 2\n"
+    )
+    baseline = di.build_diff_blast_radius(root=tmp_path, diff_text=diff, deadline_seconds=3)
+    assert [symbol["name"] for symbol in baseline["changed_symbols"]] == ["alpha", "beta"]
+
+    real = repo_map.build_symbol_refs_from_map
+
+    def consume_remaining_budget(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        deadline = kwargs["deadline_monotonic"]
+        time.sleep(max(0.0, deadline - time.monotonic() + 0.01))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", consume_remaining_budget)
+    bounded = di.build_diff_blast_radius(root=tmp_path, diff_text=diff, deadline_seconds=3)
+
+    def existing(payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in payload.items()
+            if key not in {"risk_reasons", "risk_cap_evidence"}
+        }
+
+    assert existing(bounded) == existing(baseline)
+    assert bounded["risk_cap_evidence"] == "incomplete"
+    assert "capped_uncalled_symbols" not in bounded["risk_reasons"]
+
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: baseline)
+    baseline_exit = CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "critical"]).exit_code
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: bounded)
+    bounded_exit = CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "critical"]).exit_code
+    assert bounded_exit == baseline_exit == 2
 
 
 def test_malformed_test_reference_lookup_preserves_payload_and_exit(

@@ -20,7 +20,11 @@ from typing import Any
 from tensor_grep.cli import diff_impact_git as _dig
 from tensor_grep.cli import diff_impact_risk as _risk
 from tensor_grep.cli import lang_registry, repo_map
-from tensor_grep.cli.diff_impact_cap import apply_uncalled_symbol_cap, risk_cap_evidence_status
+from tensor_grep.cli.diff_impact_cap import (
+    apply_uncalled_symbol_cap,
+    collect_test_reference_evidence,
+    risk_cap_evidence_status,
+)
 from tensor_grep.cli.diff_impact_refs import _test_reference_evidence
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
@@ -1245,27 +1249,22 @@ def build_diff_blast_radius(
     per_symbol_scores: list[float] = []
     symbol_evidence_complete = bool(changed_symbols) and not not_analyzed_paths
     all_changed_symbols_uncalled = bool(changed_symbols)
-    test_reference_data_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
-    reference_lookup_complete = test_reference_data_complete
-    reference_evidence_by_name: dict[str, tuple[bool, bool]] = {}
-
-    if partial or not_analyzed_paths:
-        test_reference_data_complete = False
+    reference_lookup_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
+    symbol_analysis_complete = True
 
     for sym in changed_symbols:
         symbol_name = str(sym.get("name", ""))
         if not symbol_name:
             symbol_evidence_complete = False
             all_changed_symbols_uncalled = False
-            reference_lookup_complete = False
             continue
 
         # Check deadline before building symbol blast radius
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             partial = True
+            symbol_analysis_complete = False
             symbol_evidence_complete = False
             all_changed_symbols_uncalled = False
-            reference_lookup_complete = False
             if "deadline_exceeded" not in downgrade_reasons:
                 downgrade_reasons.append("deadline_exceeded")
                 partial_reasons.append("deadline_exceeded")
@@ -1302,20 +1301,6 @@ def build_diff_blast_radius(
             if "symbol_blast_radius_partial" not in downgrade_reasons:
                 downgrade_reasons.append("symbol_blast_radius_partial")
                 partial_reasons.append("symbol_blast_radius_partial")
-
-        if symbol_name not in reference_evidence_by_name:
-            reference_evidence_by_name[symbol_name] = _test_reference_evidence(
-                repo_m,
-                symbol_name,
-                deadline_monotonic,
-                max_repo_files,
-            )
-        refs_complete, has_test_reference = reference_evidence_by_name[symbol_name]
-        if not refs_complete:
-            test_reference_data_complete = False
-            reference_lookup_complete = False
-        elif has_test_reference:
-            all_changed_symbols_uncalled = False
 
         # Collect callers
         for c in sym_radius.get("callers", []):
@@ -1362,19 +1347,7 @@ def build_diff_blast_radius(
     risk_tier, risk_reasons = _calculate_risk_tier_with_reasons(
         overall_score, len(sorted_affected_files), len(union_callers)
     )
-    risk_tier, risk_reasons = apply_uncalled_symbol_cap(
-        risk_tier,
-        risk_reasons,
-        symbol_evidence_complete=symbol_evidence_complete,
-        all_changed_symbols_uncalled=all_changed_symbols_uncalled,
-        test_reference_data_complete=test_reference_data_complete,
-        partial=partial,
-        not_analyzed_paths=not_analyzed_paths,
-        repo_map_payload=repo_m,
-        deadline_monotonic=deadline_monotonic,
-    )
-
-    return {
+    payload = {
         "root": str(root).replace("\\", "/"),
         "ref": ref,
         "staged": staged,
@@ -1386,7 +1359,7 @@ def build_diff_blast_radius(
         "blast_radius_score": overall_score,
         "risk_tier": risk_tier,
         "risk_reasons": risk_reasons,
-        "risk_cap_evidence": risk_cap_evidence_status(changed_symbols, reference_lookup_complete),
+        "risk_cap_evidence": "incomplete",
         "partial": partial,
         "downgrade_reasons": downgrade_reasons,
         "symbol_count": len(changed_symbols),
@@ -1413,6 +1386,37 @@ def build_diff_blast_radius(
             else {}
         ),
     }
+
+    if partial:
+        reference_lookup_complete = False
+    reference_lookup_complete, has_test_reference = collect_test_reference_evidence(
+        changed_symbols,
+        repo_m,
+        _test_reference_evidence,
+        deadline_monotonic=deadline_monotonic,
+        max_repo_files=max_repo_files,
+        analysis_complete=symbol_analysis_complete,
+        initial_complete=reference_lookup_complete,
+    )
+    if has_test_reference:
+        all_changed_symbols_uncalled = False
+    risk_tier, risk_reasons = apply_uncalled_symbol_cap(
+        risk_tier,
+        risk_reasons,
+        symbol_evidence_complete=symbol_evidence_complete,
+        all_changed_symbols_uncalled=all_changed_symbols_uncalled,
+        test_reference_data_complete=reference_lookup_complete,
+        partial=partial,
+        not_analyzed_paths=not_analyzed_paths,
+        repo_map_payload=repo_m,
+        deadline_monotonic=deadline_monotonic,
+    )
+    payload["risk_tier"] = risk_tier
+    payload["risk_reasons"] = risk_reasons
+    payload["risk_cap_evidence"] = risk_cap_evidence_status(
+        changed_symbols, reference_lookup_complete
+    )
+    return payload
 
 
 def diff_impact_command(
