@@ -238,7 +238,6 @@ def test_calculate_risk_tier_reasons_pin_existing_threshold_scenarios(
         "build_repo_map",
         lambda *args, **kwargs: {"path": str(tmp_path), "files": [], "tests": [], "symbols": []},
     )
-    monkeypatch.setattr(di, "_test_reference_evidence", lambda *args: (True, True))
     radius: dict[str, Any] = {}
     monkeypatch.setattr(di, "build_symbol_blast_radius_from_map", lambda *args, **kwargs: radius)
     for score, files, callers, expected_tier, expected_reasons in scenarios:
@@ -336,6 +335,7 @@ def test_uncalled_symbol_risk_cap_requires_complete_symbol_data(
     )
     if unparseable:
         core.write_bytes(b"def dormant():\n    return 2\n# bad byte \xff\n")
+        (pkg / "active.py").write_text("def active():\n    return 2\n", encoding="utf-8")
 
     diff = (
         "diff --git a/pkg/core.py b/pkg/core.py\n"
@@ -346,13 +346,21 @@ def test_uncalled_symbol_risk_cap_requires_complete_symbol_data(
         "-    return 1\n"
         "+    return 2\n"
     )
+    if unparseable:
+        diff += (
+            "diff --git a/pkg/active.py b/pkg/active.py\n"
+            "--- a/pkg/active.py\n+++ b/pkg/active.py\n"
+            "@@ -1,2 +1,2 @@\n def active():\n"
+            "-    return 1\n+    return 2\n"
+        )
     payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
     if unparseable:
         assert "risk_reasons" in payload
         assert "capped_uncalled_symbols" not in payload["risk_reasons"]
         assert payload["unparsed_changed_files"] == ["pkg/core.py"]
-        assert (payload["risk_tier"], payload["blast_radius_score"]) == ("low", 0.05)
+        assert payload["risk_tier"] == "critical"
+        assert payload["blast_radius_score"] >= 0.7
     else:
         assert (payload["risk_tier"], payload["blast_radius_score"]) == ("medium", 0.714)
         assert "capped_uncalled_symbols" in payload.get("risk_reasons", [])
@@ -360,7 +368,7 @@ def test_uncalled_symbol_risk_cap_requires_complete_symbol_data(
 
 
 def test_uncalled_symbol_cap_counts_non_call_test_references(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path,
 ) -> None:
     pkg = tmp_path / "pkg"
     pkg.mkdir()
@@ -382,21 +390,12 @@ def test_uncalled_symbol_cap_counts_non_call_test_references(
         "+    return 2\n"
     )
 
-    reference_evidence: list[tuple[bool, bool]] = []
-    original_reference_evidence = di._test_reference_evidence
-
-    def record_reference_evidence(*args: Any) -> tuple[bool, bool]:
-        evidence = original_reference_evidence(*args)
-        reference_evidence.append(evidence)
-        return evidence
-
-    monkeypatch.setattr(di, "_test_reference_evidence", record_reference_evidence)
     payload = build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
     assert payload["caller_count"] == 0
-    assert reference_evidence == [(True, True)]
     assert payload["partial"] is False
     assert "risk_reasons" in payload
+    assert payload["risk_tier"] == "critical"
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 

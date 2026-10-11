@@ -55,8 +55,15 @@ def _test_reference_evidence(
         or bool(payload.get("scan_limit", {}).get("possibly_truncated"))
         or bool(payload.get("caller_scan_limit", {}).get("possibly_truncated"))
     )
-    references = payload.get("references")
-    if truncated or not isinstance(references, list):
+    reference_groups = [
+        value for key, value in payload.items() if key == "references" or key.endswith("_refs")
+    ]
+    if (
+        truncated
+        or not isinstance(payload.get("references"), list)
+        or not isinstance(payload.get("string_refs"), list)
+        or not all(isinstance(group, list) for group in reference_groups)
+    ):
         if lookup_incomplete is not None:
             lookup_incomplete.append(
                 "deadline_exceeded"
@@ -70,6 +77,7 @@ def _test_reference_evidence(
         return False, False
     has_test_reference = any(
         isinstance(reference, dict) and _is_test_file(Path(str(reference.get("file", ""))))
-        for reference in references
+        for group in reference_groups
+        for reference in group
     )
     return True, has_test_reference

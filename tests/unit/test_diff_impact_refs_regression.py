@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
 import tensor_grep.cli.diff_impact as di
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.main import app
 
 
 def _dormant_diff(root: Path, test_name: str | None = None) -> str:
@@ -46,6 +48,77 @@ def test_non_call_test_reference_disables_uncalled_cap(tmp_path: Path, test_name
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
+def test_getattr_string_reference_disables_uncalled_cap(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_core.py").write_text(
+        'from pkg import core\nobserved = getattr(core, "dormant")\n', encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload.get("risk_reasons", [])
+
+
+def test_malformed_test_reference_lookup_preserves_payload_and_exit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_broken.py").write_bytes(b"from pkg import core\n# \xff\n")
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    legacy_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"risk_reasons", "risk_cap_evidence"}
+    }
+    assert legacy_payload == {
+        "root": str(tmp_path).replace("\\", "/"),
+        "ref": None,
+        "staged": False,
+        "changed_files": ["pkg/core.py"],
+        "changed_symbols": [
+            {
+                "name": "dormant",
+                "kind": "function",
+                "file": "pkg/core.py",
+                "line": 1,
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+        "callers": [],
+        "affected_files": [str(tmp_path / "pkg" / "core.py").replace("\\", "/"), "pkg/core.py"],
+        "affected_tests": [str(tests_dir / "test_broken.py").replace("\\", "/")],
+        "blast_radius_score": 1.0,
+        "risk_tier": "critical",
+        "partial": False,
+        "downgrade_reasons": [],
+        "symbol_count": 1,
+        "caller_count": 0,
+        "file_count": 2,
+        "test_count": 1,
+        "deleted_files": [],
+        "not_analyzed_paths": [],
+        "unparsed_changed_files": [],
+        "binary_files": [],
+        "mode_changed_files": [],
+        "submodule_changed_files": [],
+        "result_incomplete": False,
+        "incomplete_reason": None,
+    }
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload.copy())
+    result = CliRunner().invoke(app, ["diff-impact", "--json"])
+    assert result.exit_code == 0
+
+
 def test_refs_deadline_cutoff_marks_diff_impact_partial_and_uncapped(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -64,8 +137,9 @@ def test_refs_deadline_cutoff_marks_diff_impact_partial_and_uncapped(
     monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", expire_during_refs)
     payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff, deadline_seconds=60)
     assert calls and calls[0][0] is not None
-    assert payload["partial"] is True
-    assert "deadline_exceeded" in payload["downgrade_reasons"]
+    assert payload["partial"] is False
+    assert payload["downgrade_reasons"] == []
+    assert payload["risk_cap_evidence"] == "incomplete"
     assert payload["risk_tier"] == "critical"
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 

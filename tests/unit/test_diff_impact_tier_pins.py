@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,10 @@ _CHANGED_TIERS = {
     "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[parsed]#1": (
         "critical",
         "medium",
+    ),
+    "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[unparseable]#1": (
+        "low",
+        "critical",
     ),
     "tests/unit/test_diff_impact_hardening.py::test_autocrlf_crlf_working_tree_is_analysed_with_no_git_process#1": (
         "critical",
@@ -100,6 +105,9 @@ _CHANGED_TIERS = {
         "medium",
     ),
 }
+_CHANGED_SCORES = {
+    "tests/unit/test_diff_impact.py::test_uncalled_symbol_risk_cap_requires_complete_symbol_data[unparseable]#1": 1.0,
+}
 
 _CAPTURED: list[dict[str, Any]] = []
 _COUNTS: dict[str, int] = defaultdict(int)
@@ -149,16 +157,7 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
         str(Path(__file__).parent),
     ])
     command = [
-        "uv",
-        "run",
-        "--no-sync",
-        "python",
-        r"C:\Users\oimir\AppData\Local\Temp\tgprog\run_to.py",
-        "240",
-        "uv",
-        "run",
-        "--no-sync",
-        "python",
+        sys.executable,
         "-m",
         "pytest",
         "tests/unit/test_diff_impact.py",
@@ -197,10 +196,11 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
         if scenario_id in _CHANGED_TIERS:
             assert _CHANGED_TIERS[scenario_id][0] == old_tier
             new_tier = _CHANGED_TIERS[scenario_id][1]
-            assert "capped_uncalled_symbols" in actual[scenario_id]["risk_reasons"]
+            if new_tier == "medium":
+                assert "capped_uncalled_symbols" in actual[scenario_id]["risk_reasons"]
         assert (actual[scenario_id]["risk_tier"], actual[scenario_id]["blast_radius_score"]) == (
             new_tier,
-            pin["blast_radius_score"],
+            _CHANGED_SCORES.get(scenario_id, pin["blast_radius_score"]),
         ), scenario_id
     assert actual.keys() == expected.keys()
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]

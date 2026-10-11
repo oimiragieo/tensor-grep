@@ -12721,7 +12721,7 @@ def build_symbol_refs(
     repo_map = _self.build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
-    result = build_symbol_refs_from_map(
+    result = _self.build_symbol_refs_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,

@@ -20,6 +20,7 @@ from typing import Any
 from tensor_grep.cli import diff_impact_git as _dig
 from tensor_grep.cli import diff_impact_risk as _risk
 from tensor_grep.cli import lang_registry, repo_map
+from tensor_grep.cli.diff_impact_cap import apply_uncalled_symbol_cap, risk_cap_evidence_status
 from tensor_grep.cli.diff_impact_refs import _test_reference_evidence
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
@@ -1119,6 +1120,7 @@ def _empty_payload(
         "blast_radius_score": 0.0,
         "risk_tier": "low",
         "risk_reasons": [],
+        "risk_cap_evidence": "not_applicable",
         "partial": partial,
         "downgrade_reasons": [reason] if partial and reason else [],
         "symbol_count": 0,
@@ -1244,8 +1246,8 @@ def build_diff_blast_radius(
     symbol_evidence_complete = bool(changed_symbols) and not not_analyzed_paths
     all_changed_symbols_uncalled = bool(changed_symbols)
     test_reference_data_complete = bool(changed_symbols) and not _scan_did_not_finish(repo_m)
+    reference_lookup_complete = test_reference_data_complete
     reference_evidence_by_name: dict[str, tuple[bool, bool]] = {}
-    incomplete_reference_lookups: list[str] = []
 
     if partial or not_analyzed_paths:
         test_reference_data_complete = False
@@ -1255,6 +1257,7 @@ def build_diff_blast_radius(
         if not symbol_name:
             symbol_evidence_complete = False
             all_changed_symbols_uncalled = False
+            reference_lookup_complete = False
             continue
 
         # Check deadline before building symbol blast radius
@@ -1262,6 +1265,7 @@ def build_diff_blast_radius(
             partial = True
             symbol_evidence_complete = False
             all_changed_symbols_uncalled = False
+            reference_lookup_complete = False
             if "deadline_exceeded" not in downgrade_reasons:
                 downgrade_reasons.append("deadline_exceeded")
                 partial_reasons.append("deadline_exceeded")
@@ -1305,16 +1309,11 @@ def build_diff_blast_radius(
                 symbol_name,
                 deadline_monotonic,
                 max_repo_files,
-                incomplete_reference_lookups,
             )
         refs_complete, has_test_reference = reference_evidence_by_name[symbol_name]
         if not refs_complete:
             test_reference_data_complete = False
-            for reason in incomplete_reference_lookups:
-                partial = True
-                if reason not in downgrade_reasons:
-                    downgrade_reasons.append(reason)
-                    partial_reasons.append(reason)
+            reference_lookup_complete = False
         elif has_test_reference:
             all_changed_symbols_uncalled = False
 
@@ -1363,22 +1362,17 @@ def build_diff_blast_radius(
     risk_tier, risk_reasons = _calculate_risk_tier_with_reasons(
         overall_score, len(sorted_affected_files), len(union_callers)
     )
-    if (
-        symbol_evidence_complete
-        and all_changed_symbols_uncalled
-        and test_reference_data_complete
-        and not partial
-        and not not_analyzed_paths
-        and not any(
-            entry.get("reason", "").startswith(("coverage_gap", "extraction_failed"))
-            for entry in not_analyzed_paths
-        )
-        and not _scan_did_not_finish(repo_m)
-        and not (deadline_monotonic is not None and time.monotonic() >= deadline_monotonic)
-        and risk_tier in {"high", "critical"}
-    ):
-        risk_tier = "medium"
-        risk_reasons = sorted({*risk_reasons, "capped_uncalled_symbols"})
+    risk_tier, risk_reasons = apply_uncalled_symbol_cap(
+        risk_tier,
+        risk_reasons,
+        symbol_evidence_complete=symbol_evidence_complete,
+        all_changed_symbols_uncalled=all_changed_symbols_uncalled,
+        test_reference_data_complete=test_reference_data_complete,
+        partial=partial,
+        not_analyzed_paths=not_analyzed_paths,
+        repo_map_payload=repo_m,
+        deadline_monotonic=deadline_monotonic,
+    )
 
     return {
         "root": str(root).replace("\\", "/"),
@@ -1392,6 +1386,7 @@ def build_diff_blast_radius(
         "blast_radius_score": overall_score,
         "risk_tier": risk_tier,
         "risk_reasons": risk_reasons,
+        "risk_cap_evidence": risk_cap_evidence_status(changed_symbols, reference_lookup_complete),
         "partial": partial,
         "downgrade_reasons": downgrade_reasons,
         "symbol_count": len(changed_symbols),
