@@ -452,6 +452,71 @@ def test_empty_json_ranking_scores_zero_and_command_errors_fail() -> None:
         harness._tg_payload(subprocess.CompletedProcess(["tg"], 2, b"{}", b""), "find")
 
 
+@pytest.mark.parametrize("arm", ["find", "search_rank", "diff_impact"])
+@pytest.mark.parametrize(
+    "failure", [{"ok": False}, {"error": "failed"}, {"result_incomplete": True}]
+)
+def test_failed_payload_cannot_enter_scoring(arm: str, failure: dict[str, object]) -> None:
+    harness = harness_module()
+    payload = {"total_matches": 0, "matches": [], **failure}
+    result = subprocess.CompletedProcess(["tg"], 1, json.dumps(payload).encode("utf-8"), b"")
+    with pytest.raises(harness.HarnessError, match=r"command_failure|incomplete_result"):
+        harness._tg_payload(result, arm)
+
+
+def test_diff_impact_exit_one_cannot_score_perfect_metrics(tmp_path: Path) -> None:
+    harness = harness_module()
+    case = {"input_paths": ["src/a.py"], "gold_tests": ["tests/a.py"], "gold_files": ["src/a.py"]}
+    payload = {
+        "total_matches": 0,
+        "matches": [],
+        "changed_files": ["src/a.py"],
+        "affected_tests": ["tests/a.py"],
+        "affected_files": ["src/a.py"],
+    }
+    result = subprocess.CompletedProcess(["tg"], 1, json.dumps(payload).encode("utf-8"), b"")
+    with pytest.raises(harness.HarnessError, match="command_failure:diff_impact"):
+        harness.score_payload(
+            harness._tg_payload(result, "diff_impact"), "diff_impact", case, tmp_path, None
+        )
+
+
+@pytest.mark.parametrize(
+    "failure", [{"ok": False}, {"error": "failed"}, {"result_incomplete": True}]
+)
+def test_failed_diff_payload_cannot_score_perfect_sets(
+    tmp_path: Path, failure: dict[str, object]
+) -> None:
+    harness = harness_module()
+    case = {"input_paths": ["src/a.py"], "gold_tests": ["tests/a.py"], "gold_files": ["src/a.py"]}
+    payload = {
+        "changed_files": ["src/a.py"],
+        "affected_tests": ["tests/a.py"],
+        "affected_files": ["src/a.py"],
+        **failure,
+    }
+    with pytest.raises(harness.HarnessError, match="incomplete_result:diff_impact"):
+        harness.score_payload(payload, "diff_impact", case, tmp_path, None)
+
+
+def test_container_absolute_paths_are_relative_to_case_repo(tmp_path: Path) -> None:
+    harness = harness_module()
+    assert harness._unique_paths(["/work/run/repo/src/a.py"], tmp_path / "host/repo") == [
+        "src/a.py"
+    ]
+
+
+def test_standalone_gate_recomputes_evaluator_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    report = {"evaluator_sha256": "stale", "environment": {}, "metrics": {}, "case_set": {}}
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr(harness, "evaluator_sha256", lambda: "current")
+    assert "evaluator_changed" in harness.gate_report(report, baseline)
+
+
 def test_ranked_paths_keep_emitted_order_and_normalize(tmp_path: Path) -> None:
     harness = harness_module()
     payload = {
@@ -567,6 +632,55 @@ def test_protected_workflow_and_patch_bytes_contract() -> None:
     assert "baseline_delta.md" in gate_workflow
 
 
+def test_protected_label_check_has_required_ruleset_documentation() -> None:
+    workflow = (
+        harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
+    ).read_text(encoding="utf-8")
+    docs = (harness_root() / "docs/benchmarks.md").read_text(encoding="utf-8")
+    assert "protected-change-label:" in workflow
+    assert "!labels.includes('eval-baseline-update')" in workflow
+    assert "path === 'docs/benchmarks.md'" in workflow
+    assert "Git history retrieval protection / protected-change-label" in docs
+    assert "Require status checks to pass" in docs
+    assert "eval-baseline-update" in docs
+
+
+def test_prepare_mounts_patches_at_worker_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, _, manifest, out = generated(tmp_path)
+    harness._write_json(out / "manifest.json", manifest)
+    monkeypatch.setattr(harness, "preflight_source", lambda *args: None)
+    monkeypatch.setattr(
+        harness, "_run", lambda *args, **kwargs: subprocess.CompletedProcess([], 0, b"", b"")
+    )
+
+    def fake_checkout(source: Path, revision: str, target: Path) -> None:
+        (target / ".git").mkdir(parents=True)
+
+    def inspect_mount(
+        image: str,
+        *,
+        network: str,
+        mounts: list[tuple[Path, str, str]],
+        arguments: list[str],
+        read_only: bool = False,
+    ) -> None:
+        if arguments[0] == "prepare":
+            assert any(
+                host == out / "patches"
+                and container == "/opt/checkout/benchmarks/git_history_retrieval/patches"
+                and mode == "readonly"
+                for host, container, mode in mounts
+            ), "patch_mount_misses_worker_here"
+            raise harness.HarnessError("mount_checked")
+
+    monkeypatch.setattr(harness, "_revision_checkout", fake_checkout)
+    monkeypatch.setattr(harness, "_docker_run", inspect_mount)
+    with pytest.raises(harness.HarnessError, match="mount_checked"):
+        harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
+
+
 def test_environment_identity_changes_with_base_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -585,6 +699,25 @@ def test_environment_identity_changes_with_base_digest(
     second = harness.environment_identity()
     assert first["base_image_digest"] != second["base_image_digest"]
     assert first["dockerfile_sha256"] != second["dockerfile_sha256"]
+
+
+def test_environment_identity_records_executed_toolchains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM ubuntu:24.04@sha256:" + "a" * 64 + "\n", encoding="utf-8")
+    monkeypatch.setattr(harness, "HERE", tmp_path)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        output = b"git=1\npython3=2\n" if argv[0] == "dpkg-query" else argv[0].encode("utf-8")
+        return subprocess.CompletedProcess(argv, 0, output, b"")
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    identity = harness.environment_identity()
+    assert identity["cargo_version"] == "cargo"
+    assert identity["python_version"] == "python3"
+    assert identity["git_version"] == "git"
 
 
 def test_docker_mounts_keep_only_case_writable(
@@ -908,7 +1041,7 @@ def test_host_cleanup_ignores_unremovable_build_tree(
     )
     monkeypatch.setattr(harness, "_revision_checkout", stop)
     monkeypatch.setattr(harness, "_docker_run", stop)
-    with pytest.raises(harness.HarnessError, match="stop_after_cleanup_probe"):
+    with pytest.raises(PermissionError, match="root_owned_build_cleanup_can_fail_gate"):
         harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
 
 

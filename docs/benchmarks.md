@@ -37,8 +37,17 @@ import closure; each subject has a separate non-editable installation and native
 binary. The fixed manifest, patches, and baseline arrive in leaf 11b. Until
 `baseline.json` exists, the PR job is report-only. Local runs without the
 container are advisory and cannot produce `baseline.json`.
-Branch protection must require the `protected-change-label` status check from
-the base-branch `pull_request_target` workflow.
+Leaf 11b also needs a container-executed proof that subject `.pth` files cannot
+run in the evaluator interpreter and an explicit policy for queries needing
+history before the shallow parent commit.
+The GitHub ruleset for `main` must enable **Require a pull request before merging**
+and **Require status checks to pass**, with the required check
+`Git history retrieval protection / protected-change-label` from GitHub Actions.
+Keep this check required even while the evaluation gate is report-only. The
+base-branch `pull_request_target` workflow fails that check when a PR changes a
+protected path without the `eval-baseline-update` label. Repository ruleset
+configuration is external to this repository and must be verified in GitHub
+before treating the label as enforced.
 
 To generate the frozen dataset after 11a is merged, use a v1.126.0 `tg` binary:
 

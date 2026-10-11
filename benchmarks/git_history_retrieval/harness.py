@@ -107,8 +107,13 @@ def _tg_payload(result: subprocess.CompletedProcess[bytes], arm: str) -> dict[st
         raise HarnessError(f"malformed_json:{arm}") from error
     if not isinstance(value, dict):
         raise HarnessError(f"malformed_json:{arm}")
+    if value.get("ok") is False or value.get("error") or value.get("result_incomplete") is True:
+        raise HarnessError(f"incomplete_result:{arm}")
     no_matches = (
-        result.returncode == 1 and value.get("total_matches") == 0 and value.get("matches") == []
+        arm in SEARCH_ARMS
+        and result.returncode == 1
+        and value.get("total_matches") == 0
+        and value.get("matches") == []
     )
     if result.returncode and not no_matches:
         raise HarnessError(f"command_failure:{arm}:exit={result.returncode}")
@@ -519,7 +524,14 @@ def _unique_paths(items: Any, root: Path) -> list[str]:
     for item in items:
         if not isinstance(item, str):
             raise HarnessError("malformed_json: expected path string")
-        path = Path(item.replace("\\", "/"))
+        raw = item.replace("\\", "/")
+        if raw.startswith("/work/run/repo/"):
+            raw = raw.removeprefix("/work/run/repo/")
+            if raw.startswith("/"):
+                raise HarnessError(f"ranking_path_outside_case: {item}")
+        elif raw.startswith("/") and os.name == "nt":
+            raise HarnessError(f"ranking_path_outside_case: {item}")
+        path = Path(raw)
         if path.is_absolute():
             try:
                 path = path.resolve().relative_to(root.resolve())
@@ -577,6 +589,12 @@ def score_set(predicted: set[str], gold: set[str]) -> dict[str, float]:
 def score_payload(
     payload: dict[str, Any], arm: str, case: dict[str, Any], repo: Path, scoring: Any
 ) -> dict[str, float]:
+    if (
+        payload.get("ok") is False
+        or payload.get("error")
+        or payload.get("result_incomplete") is True
+    ):
+        raise HarnessError(f"incomplete_result:{arm}")
     if arm in SEARCH_ARMS:
         return score_ranking(extract_ranking(payload, arm, repo), set(case["gold_files"]), scoring)
     if set(_unique_paths(payload.get("changed_files"), repo)) != set(case["input_paths"]):
@@ -729,6 +747,9 @@ def environment_identity() -> dict[str, Any]:
         "dockerfile_sha256": _sha256(dockerfile.read_bytes()),
         "packages": dict(line.split("=", 1) for line in versions.splitlines()),
         "rust_toolchain": _out(_run(["rustc", "--version"])),
+        "cargo_version": _out(_run(["cargo", "--version"])),
+        "python_version": _out(_run(["python3", "--version"])),
+        "git_version": _out(_run(["git", "--version"])),
         "uv_version": _out(_run(["uv", "--version"])),
     }
 
@@ -1114,9 +1135,18 @@ def gate_report(report: dict[str, Any], baseline_path: Path, *, enforce: bool = 
             raise HarnessError("baseline_missing")
         return ["report_only: baseline_missing"]
     baseline = _read_json(baseline_path)
-    return compare_gate(
-        baseline, report, evaluator=report["evaluator_sha256"], environment=report["environment"]
+    try:
+        actual_evaluator = evaluator_sha256()
+    except HarnessError:
+        actual_evaluator = None
+    failures = compare_gate(
+        baseline, report, evaluator=actual_evaluator, environment=report["environment"]
     )
+    if actual_evaluator is None:
+        failures.append("evaluator_unavailable")
+    if report.get("evaluator_sha256") != actual_evaluator:
+        failures.append("report_evaluator_mismatch")
+    return failures
 
 
 def metric_delta_markdown(previous: dict[str, Any], updated: dict[str, Any]) -> str:
@@ -1152,7 +1182,7 @@ def orchestrate(
     preflight_source(source, manifest)
     image = "tg-git-history-retrieval:local"
     _run(["docker", "build", "-f", str(HERE / "Dockerfile"), "-t", image, str(ROOT)])
-    with tempfile.TemporaryDirectory(prefix="tg-git-history-", ignore_cleanup_errors=True) as temp:
+    with tempfile.TemporaryDirectory(prefix="tg-git-history-") as temp:
         work = Path(temp)
         for revision, subject_name in (("v1.126.0", "baseline"), ("HEAD", "head")):
             tree = work / "build" / subject_name / "tree"
@@ -1181,7 +1211,11 @@ def orchestrate(
                 (work, "/work", "rw"),
                 (work / "build", "/work/build", "readonly"),
                 (manifest_path, "/work/manifest.json", "readonly"),
-                (manifest_path.parent / "patches", str(HERE / "patches"), "readonly"),
+                (
+                    manifest_path.parent / "patches",
+                    "/opt/checkout/benchmarks/git_history_retrieval/patches",
+                    "readonly",
+                ),
             ],
             arguments=["prepare", "--subject", subject],
         )

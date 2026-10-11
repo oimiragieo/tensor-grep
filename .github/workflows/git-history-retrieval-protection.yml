@@ -24,6 +24,7 @@ jobs:
               path === 'src/tensor_grep/core/retrieval_scoring.py' ||
               path === '.github/workflows/git-history-retrieval.yml' ||
               path === '.github/workflows/git-history-retrieval-protection.yml' ||
+              path === 'docs/benchmarks.md' ||
               path === '.gitattributes';
             const changed = files.filter((file) =>
               protectedFile(file.filename) ||
