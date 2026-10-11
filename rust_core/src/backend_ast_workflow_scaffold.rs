@@ -67,10 +67,31 @@ pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<
 
 fn project_default_language(base_dir: &Path) -> Result<String> {
     let config_path = base_dir.join("sgconfig.yml");
+    match fs::metadata(&config_path) {
+        Ok(metadata) if !metadata.is_file() => {
+            anyhow::bail!("sgconfig.yml must be a regular file")
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok("python".to_string())
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
     match fs::read_to_string(&config_path) {
         Ok(contents) => {
-            let config: serde_yaml::Value = serde_yaml::from_str(&contents)
-                .map_err(|_| anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax"))?;
+            let config: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|error| {
+                let message = error.to_string();
+                if let Some(entry) = message.strip_prefix("duplicate entry with key ") {
+                    let key = entry
+                        .split(" at line ")
+                        .next()
+                        .unwrap_or(entry)
+                        .trim_matches('"');
+                    anyhow::anyhow!("cannot parse sgconfig.yml: duplicate key '{key}'")
+                } else {
+                    anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax")
+                }
+            })?;
             Ok(config
                 .get("language")
                 .and_then(serde_yaml::Value::as_str)

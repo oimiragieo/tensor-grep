@@ -297,6 +297,30 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
             None,
         ),
         (
+            "duplicate_config_language",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml: duplicate key 'language'",
+            None,
+        ),
+        (
+            "duplicate_config_rule_dirs",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml: duplicate key 'ruleDirs'",
+            None,
+        ),
+        (
+            "directory_config",
+            None,
+            [],
+            1,
+            "sgconfig.yml must be a regular file",
+            None,
+        ),
+        (
             "unsupported",
             "language: unknown-language\n",
             [],
@@ -335,6 +359,9 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
         "malformed",
         "duplicate_language",
         "malformed_config_fallback",
+        "duplicate_config_language",
+        "duplicate_config_rule_dirs",
+        "directory_config",
         "unsupported",
         "blank_explicit",
         "symlink",
@@ -359,12 +386,17 @@ def test_new_test_language_resolution_parity(
         rules_dir = project_dir / "rules"
         rules_dir.mkdir(parents=True)
         if case != "no_config":
-            config_yaml = (
-                "language: [\n"
-                if case in {"explicit_over_malformed_config", "malformed_config_fallback"}
-                else "language: json\n"
-            )
-            (project_dir / "sgconfig.yml").write_text(config_yaml, encoding="utf-8")
+            config_path = project_dir / "sgconfig.yml"
+            if case == "directory_config":
+                config_path.mkdir()
+            else:
+                config_yaml = {
+                    "explicit_over_malformed_config": "language: [\n",
+                    "malformed_config_fallback": "language: [\n",
+                    "duplicate_config_language": "language: json\nlanguage: python\n",
+                    "duplicate_config_rule_dirs": "ruleDirs: [rules]\nruleDirs: [other]\n",
+                }.get(case, "language: json\n")
+                config_path.write_text(config_yaml, encoding="utf-8")
         rule_path = rules_dir / "probe.yml"
         if case in {"symlink", "dangling_symlink", "explicit_over_symlink"}:
             target = project_dir / "target.yml"
@@ -396,6 +428,8 @@ def test_new_test_language_resolution_parity(
             assert message == f"Error: {expected_message}"
         if case == "malformed_config_fallback":
             assert message == "Error: cannot parse sgconfig.yml: invalid YAML syntax"
+        if case in {"duplicate_config_language", "duplicate_config_rule_dirs", "directory_config"}:
+            assert message == f"Error: {expected_message}"
         assert (project_dir / "tests" / "probe.yml").exists() == (expected_code == 0)
         if expected_code == 1:
             assert written == before

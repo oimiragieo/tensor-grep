@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from collections.abc import Callable, Hashable
 from pathlib import Path
 from typing import cast
@@ -125,10 +126,16 @@ def _linked_ast_rule_language(
 
 def _ast_project_default_language(base_dir: Path) -> str:
     config_path = base_dir / "sgconfig.yml"
-    if not config_path.is_file():
-        return "python"
     try:
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        config_mode = config_path.stat().st_mode
+    except FileNotFoundError:
+        return "python"
+    if not stat.S_ISREG(config_mode):
+        raise ValueError("sgconfig.yml must be a regular file")
+    try:
+        config = yaml.load(config_path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+    except _DuplicateYamlKeyError as exc:
+        raise ValueError(f"cannot parse sgconfig.yml: {exc}") from exc
     except yaml.YAMLError as exc:
         raise ValueError("cannot parse sgconfig.yml: invalid YAML syntax") from exc
     except UnicodeDecodeError as exc:
