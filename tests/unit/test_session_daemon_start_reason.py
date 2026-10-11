@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -144,18 +145,21 @@ def test_start_capture_exists_during_child_and_is_removed_afterwards(
 def test_real_daemon_starts_with_trusted_secret_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = tmp_path / "secret"
-    secret_dir.mkdir()
-    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
-    if session_daemon_trust.diagnose_user_secret() is not None:
-        pytest.skip("trusted secret dir unavailable on this host")
-    project = tmp_path / "project"
-    project.mkdir()
-
+    if sys.platform == "win32":
+        pytest.skip("Windows temp and profile ACLs are host-specific; covered by POSIX CI")
+    secret_dir = Path.home() / ".cache" / f"tg-daemon-secret-test-{tmp_path.name}"
+    secret_dir.mkdir(mode=0o700, parents=True)
     try:
-        assert session_daemon.start_session_daemon(str(project))["running"] is True
+        monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
+        assert session_daemon_trust.diagnose_user_secret() is None
+        project = tmp_path / "project"
+        project.mkdir()
+        try:
+            assert session_daemon.start_session_daemon(str(project))["running"] is True
+        finally:
+            session_daemon.stop_session_daemon(str(project))
     finally:
-        session_daemon.stop_session_daemon(str(project))
+        shutil.rmtree(secret_dir, ignore_errors=True)
 
 
 def test_spawn_refuses_symlink_at_exact_capture_path(
