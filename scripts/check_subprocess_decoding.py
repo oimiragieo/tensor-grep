@@ -52,13 +52,6 @@ FORWARDER_ALLOWLIST: dict[tuple[str, str, str, str, str], str] = {
         "8738fd491a3755df63fa84ec355ed46191cbfcf8259c211ca83de4a5cc476300",
     ): "Windows containment primitive forwards options from its checked caller",
     (
-        "cli/session_daemon.py:_spawn_daemon_subprocess:subprocess.Popen:18836de9a392fbedcd6d1c9c81b077de877fed544733faa6e29002ba1c58f99f:0",
-        "subprocess.Popen",
-        "popen_kwargs",
-        "18836de9a392fbedcd6d1c9c81b077de877fed544733faa6e29002ba1c58f99f",
-        "677876295c273e09bf25288b00544a46a78023c1b64de7e987fff0cdfe4ce565",
-    ): "daemon spawn uses its locally assembled launch options",
-    (
         "cli/subprocess_policy.py:run_subprocess:subprocess.run:6eaec4d190ffafae3d3f611906e7558f07e7f694cb80feb84d63e8de95060f85:0",
         "subprocess.run",
         "kwargs",
@@ -992,6 +985,7 @@ STREAM_FORWARDERS = {
     ("cli/main.py", "calibrate"),
     ("cli/main.py", "worker"),
 }
+DAEMON_FD_CAPTURE_SITE = ("cli/session_daemon_start_capture.py", "spawn_daemon_subprocess")
 
 
 def policy_for(
@@ -1022,6 +1016,16 @@ def policy_for(
     policy_path = row.path.split("::<-c:", 1)[0]
     site = (policy_path, row.function)
     decoding_enabled = _uses_text_decoding(row)
+    if site == DAEMON_FD_CAPTURE_SITE:
+        if decoding_enabled or row.output_captured:
+            return (
+                "unclassified",
+                "Daemon stderr capture must remain binary until diagnostic decoding.",
+            )
+        return (
+            "diagnostic-bytes-fd",
+            "Daemon stderr is captured in a binary file descriptor, read as bytes, then decoded as UTF-8 with replacement for diagnostics.",
+        )
     if site in STREAM_FORWARDERS:
         return (
             "stream-forwarder",

@@ -378,6 +378,21 @@ def test_production_census_and_all_embedded_helpers_are_guarded() -> None:
     assert sum(row.path.startswith("cli/windows_launcher.py::<-c:") for row in generated) == 2
 
 
+def test_daemon_start_fd_capture_has_explicit_bytes_policy() -> None:
+    rows = [
+        row
+        for row in scan_tree(PRODUCTION)
+        if row.path == "cli/session_daemon_start_capture.py"
+        and row.function == "spawn_daemon_subprocess"
+        and row.target == "subprocess.Popen"
+    ]
+    assert len(rows) == 1
+    assert rows[0].dynamic_kwargs == ()
+    policy, rationale = policy_for(rows[0])
+    assert policy == "diagnostic-bytes-fd"
+    assert "UTF-8" in rationale and "replacement" in rationale
+
+
 def test_production_manifest_detects_same_count_sink_swap() -> None:
     rows = scan_tree(PRODUCTION)
     altered = replace(rows[-1], fingerprint="different-call-at-the-same-population-size")

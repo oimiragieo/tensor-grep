@@ -1173,6 +1173,28 @@ def _load_or_create_user_secret() -> bytes | None:
     return _read_user_secret(path)
 
 
+def diagnose_user_secret() -> str | None:
+    """Return the first read-only reason the per-user secret cannot be used or created."""
+    path = _daemon_secret_path()
+    try:
+        if _read_user_secret(path) is not None:
+            return None
+        if os.path.lexists(path):
+            return "secret_extra_links" if _extra_links(path) else "secret_untrusted_present"
+        try:
+            if not path.parent.is_dir():
+                return "secret_dir_unavailable"
+        except OSError:
+            return "secret_dir_unavailable"
+        if not _parent_trusted(path.parent):
+            return "secret_dir_untrusted_owner_or_acl"
+        if not _ancestors_trusted(path.parent):
+            return "secret_ancestor_untrusted"
+        return None
+    except OSError:
+        return "secret_io_error"
+
+
 def _daemon_ping_proof(secret: bytes, nonce: str, pid: int, root: str, port: int) -> str:
     msg = "\n".join(("tg-daemon-ping-v1", nonce, str(pid), root, str(port))).encode("utf-8")
     return hmac.new(secret, msg, hashlib.sha256).hexdigest()

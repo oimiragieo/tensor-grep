@@ -32,6 +32,9 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_shell_guidance import (
+    _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
+)
 from tensor_grep.cli.runtime_paths import (
     gpu_probe_timeout_s,
     iter_in_tree_native_tg_binaries,
@@ -61,8 +64,19 @@ def _doctor_session_daemon_autostart_status() -> str:
 
 def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
     from tensor_grep.cli.session_daemon import get_session_daemon_status
+    from tensor_grep.cli.session_daemon_start_diagnostics import daemon_start_reason_detail
+    from tensor_grep.cli.session_daemon_trust import _daemon_secret_path, diagnose_user_secret
 
     status = get_session_daemon_status(path)
+    reason_code = diagnose_user_secret()
+    status["start_error"] = (
+        {
+            "reason_code": reason_code,
+            "detail": daemon_start_reason_detail(reason_code, _daemon_secret_path().parent),
+        }
+        if reason_code
+        else None
+    )
     if not status.get("running"):
         # Additive-only field, present only in the not-running state -- mirrors the
         # conditional `install_hint` precedent (_doctor_ast_grep_status/_doctor_dense_model_
@@ -1451,32 +1465,6 @@ def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
         except Exception:
             status["responding"] = False
     return status
-
-
-def _doctor_shell_escaping_guidance() -> dict[str, Any]:
-    return {
-        "platform": "windows",
-        "status": "informational",
-        "powershell": {
-            "summary": ("PowerShell double quotes expand $NAME before tensor-grep receives argv."),
-            "recommendation": (
-                "Use single quotes for literal patterns containing $, or escape `$` "
-                "inside double-quoted PowerShell strings."
-            ),
-            "literal_pattern_example": "tg search '$NAME' .",
-        },
-        "cmd": {
-            "summary": "cmd.exe parses metacharacters before tensor-grep receives argv.",
-            "metacharacters": ["|", "&", "<", ">", "^", "(", ")"],
-            "recommendation": (
-                "Quote arguments or caret-escape cmd.exe metacharacters such as ^| and ^&; "
-                "prefer normal interactive PowerShell `tg` over direct `tg.cmd` from "
-                "PowerShell. MCP/stdio clients using Start-Process should target native "
-                "`tg.exe` directly, not `tg.ps1`."
-            ),
-            "literal_pattern_example": 'cmd /c tg search "foo^|bar" .',
-        },
-    }
 
 
 def _doctor_native_frontdoor_flavor_mismatch_note(

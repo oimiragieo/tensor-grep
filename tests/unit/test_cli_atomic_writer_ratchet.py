@@ -952,6 +952,11 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "cannot express dir_fd-relative creation; it remains the fallback where dir_fd is unsupported. "
         "Every READ of the secret is by fd as well."
     ),
+    ("session_daemon_start_capture.py", "spawn_daemon_subprocess", "os.open"): (
+        "Creates a uuid4-named temporary stderr capture beside daemon metadata with "
+        "O_CREAT|O_EXCL|O_NOFOLLOW and mode 0600. The child writes through the held binary fd; "
+        "the parent reads that same fd and unlinks the scratch file without publishing it."
+    ),
 }
 
 
@@ -1697,6 +1702,7 @@ _EXPECTED_SANCTIONED = {
         "tensor_grep.cli._index_lock.replace_with_retry",
     ),
     ("session_daemon_trust.py", "_write_secret_posix", "os.open"),
+    ("session_daemon_start_capture.py", "spawn_daemon_subprocess", "os.open"),
 }
 
 # Source review classified and, where warranted, fixed all 16

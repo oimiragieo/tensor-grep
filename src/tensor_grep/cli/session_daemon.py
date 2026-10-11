@@ -23,6 +23,15 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_start_capture import (
+    cleanup_daemon_start_capture,
+    read_daemon_start_capture,
+    spawn_daemon_subprocess,
+)
+from tensor_grep.cli.session_daemon_start_diagnostics import (
+    DaemonStartError,
+    daemon_start_failure,
+)
 from tensor_grep.cli.session_daemon_start_lock import (  # noqa: F401  (re-exported for tests)
     _DAEMON_START_LOCK_FILE,
     _daemon_start_lock_path,
@@ -57,6 +66,7 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _unconfirmed_fields,
     _valid_daemon_port,
     _verify_ping_reply,
+    diagnose_user_secret,
 )
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
@@ -704,7 +714,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     )
 
 
-def _spawn_daemon_subprocess(root: Path) -> None:
+def _spawn_daemon_subprocess(root: Path) -> tuple[int, Path]:
     """Popen the session-daemon child process for ``root`` and return immediately.
 
     Extracted from ``start_session_daemon`` (task #94 Part A) so the SAME spawn logic can be
@@ -713,50 +723,7 @@ def _spawn_daemon_subprocess(root: Path) -> None:
     ``daemon.json`` to appear and does not touch the start-lock -- the caller is responsible for
     both (holding the lock across this call, and deciding whether/how long to wait afterward).
     """
-    # Task #143a-a: unconditional (force) removal is intentional and safe here -- every caller
-    # holds the daemon-start lock for `root` (excluding any concurrent spawn), so nothing else can
-    # be publishing fresh metadata for this root while we hold it, and we are about to Popen a
-    # brand-new instance that will publish its OWN metadata momentarily. There is no prior "self"
-    # identity to compare against yet, unlike the guarded callers in stop_session_daemon and
-    # run_session_daemon_server's shutdown path below.
-    _remove_daemon_metadata(root)
-    creationflags = 0
-    env = os.environ.copy()
-    # audit B20: only inject the editable-checkout 'src' onto PYTHONPATH when it actually
-    # exists (an installed wheel has no sibling src/), and derive cwd from the session root
-    # rather than assuming a fixed Path(__file__).parents[3] repo layout.
-    repo_src = Path(__file__).resolve().parents[3] / "src"
-    if repo_src.exists():
-        python_path_parts = [str(repo_src)]
-        if env.get("PYTHONPATH"):
-            python_path_parts.append(env["PYTHONPATH"])
-        env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
-    spawn_cwd = root if root.is_dir() else root.parent
-    # audit I7: detach the daemon from the launching process group/console so it is not
-    # killed by signals delivered to the parent and survives the CLI invocation.
-    popen_kwargs: dict[str, Any] = {}
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
-            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-        )
-    else:
-        popen_kwargs["start_new_session"] = True
-    subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "tensor_grep.cli.session_daemon",
-            "--root",
-            str(root),
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL,
-        creationflags=creationflags,
-        cwd=str(spawn_cwd),
-        env=env,
-        **popen_kwargs,
-    )
+    return spawn_daemon_subprocess(root, _sessions_dir(root), _remove_daemon_metadata)
 
 
 def start_session_daemon(path: str = ".") -> dict[str, Any]:
@@ -793,10 +760,20 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
                     "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
                 }
             time.sleep(0.05)
-        raise RuntimeError(f"session daemon did not start for {root}")
+        secret_reason = diagnose_user_secret()
+        detail = "daemon startup timed out (another tg process held the start lock)"
+        if secret_reason:
+            detail = f"{detail} [{secret_reason}]"
+        raise DaemonStartError(
+            root,
+            detail,
+            secret_reason or "daemon_start_failed",
+        )
 
+    capture_fd: int | None = None
+    capture_path: Path | None = None
     try:
-        _spawn_daemon_subprocess(root)
+        capture_fd, capture_path = _spawn_daemon_subprocess(root)
 
         deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
         while time.time() < deadline:
@@ -814,8 +791,11 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
                     "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
                 }
             time.sleep(0.05)
-        raise RuntimeError(f"session daemon did not start for {root}")
+        captured = read_daemon_start_capture(capture_fd)
+        raise daemon_start_failure(root, captured)
     finally:
+        if capture_fd is not None and capture_path is not None:
+            cleanup_daemon_start_capture(capture_fd, capture_path)
         _release_daemon_start_lock(root)
 
 
@@ -846,9 +826,13 @@ def maybe_autostart_session_daemon_nonblocking(path: str = ".") -> bool:
         return False
     if not _try_acquire_daemon_start_lock(root):
         return False
+    capture_fd: int | None = None
+    capture_path: Path | None = None
     try:
-        _spawn_daemon_subprocess(root)
+        capture_fd, capture_path = _spawn_daemon_subprocess(root)
     finally:
+        if capture_fd is not None and capture_path is not None:
+            cleanup_daemon_start_capture(capture_fd, capture_path)
         _release_daemon_start_lock(root)
     return True
 
@@ -2072,7 +2056,8 @@ def run_session_daemon_server(path: str = ".") -> None:
     # read daemon.json may issue commands.
     token = secrets.token_urlsafe(32)
     if _load_or_create_user_secret() is None:
-        raise RuntimeError("cannot establish per-user daemon secret; refusing to serve")
+        reason = diagnose_user_secret() or "secret_unavailable"
+        raise RuntimeError(f"cannot establish per-user daemon secret ({reason}); refusing to serve")
     with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
         # tg-ledger step-0: load any prior demand-metrics history for this root before serving,
         # so a daemon restart never clobbers the day-bucket counts a prior run already persisted.

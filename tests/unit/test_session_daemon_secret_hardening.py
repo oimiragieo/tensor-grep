@@ -31,6 +31,57 @@ def _seams(monkeypatch: pytest.MonkeyPatch, user: Any, queried: Any) -> None:
     monkeypatch.setattr(trust, "_win_owner_and_dacl", lambda _h: queried)
 
 
+def test_diagnose_user_secret_reports_untrusted_directory_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    (secret_dir / "sentinel").write_bytes(b"unchanged")
+    before = {
+        path.relative_to(tmp_path): (path.is_dir(), path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
+    monkeypatch.setattr(trust, "_parent_trusted", lambda _path: False)
+
+    assert trust.diagnose_user_secret() == "secret_dir_untrusted_owner_or_acl"
+    after = {
+        path.relative_to(tmp_path): (path.is_dir(), path.read_bytes() if path.is_file() else None)
+        for path in tmp_path.rglob("*")
+    }
+    assert after == before
+
+
+def test_diagnose_user_secret_trusted_directory_is_positive_control(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
+    monkeypatch.setattr(trust, "_read_user_secret", lambda _path: None)
+    monkeypatch.setattr(trust, "_parent_trusted", lambda _path: True)
+    monkeypatch.setattr(trust, "_ancestors_trusted", lambda _path: True)
+
+    assert trust.diagnose_user_secret() is None
+
+
+def test_diagnose_user_secret_ignores_fresh_creation_lock_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    secret_dir = tmp_path / "secret"
+    secret_dir.mkdir()
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
+    monkeypatch.setattr(trust, "_read_user_secret", lambda _path: None)
+    monkeypatch.setattr(trust, "_parent_trusted", lambda _path: True)
+    monkeypatch.setattr(trust, "_ancestors_trusted", lambda _path: True)
+    lock_path = secret_dir / ".daemon-secret.json.lock"
+    lock_path.write_text("held", encoding="utf-8")
+    before = lock_path.read_bytes()
+
+    assert trust.diagnose_user_secret() is None
+    assert lock_path.read_bytes() == before
+
+
 # ---- bypass 1: Windows ownership + DACL check on the OPENED handle (logic is OS-independent) ----
 
 
