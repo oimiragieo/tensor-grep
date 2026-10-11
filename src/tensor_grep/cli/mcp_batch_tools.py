@@ -2,6 +2,7 @@
 
 import json
 import sys
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, NoReturn, cast
@@ -14,6 +15,8 @@ _KIND_TO_TOOL = {
     "callers": "tg_symbol_callers",
     "source": "tg_symbol_source",
 }
+_BATCH_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-mcp-batch")
+_BATCH_SLOTS = threading.BoundedSemaphore(4)
 
 
 class _BatchRejected(Exception):
@@ -70,7 +73,15 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
     arguments = {key: value for key, value in item.items() if key not in {"id", "kind"}}
     arguments.setdefault("path", common_path)
     try:
-        payload = json.loads(getattr(server, tool_name)(**arguments))
+        output = getattr(server, tool_name)(**arguments)
+        if kind == "search" and arguments.get("structured_json") is False:
+            if not output.startswith("Search failed:"):
+                return {"id": item_id, "kind": kind, "result": output}
+            payload = json.loads(
+                getattr(server, tool_name)(**{**arguments, "structured_json": True})
+            )
+        else:
+            payload = json.loads(output)
     except TypeError:
         return _error_item(item_id, kind, "invalid_input", "tool arguments do not match its schema")
     except Exception:
@@ -88,6 +99,11 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
             str(error.get("message", "tool execution failed")),
         )
     return {"id": item_id, "kind": kind, "result": payload}
+
+
+def _release_batch_slot(future: Future[dict[str, object]]) -> None:
+    del future
+    _BATCH_SLOTS.release()
 
 
 def run_tg_batch(
@@ -109,7 +125,6 @@ def run_tg_batch(
     overall_end = started + deadline
     result_slots: list[dict[str, object] | None] = [None] * len(items)
     futures: dict[Future[dict[str, object]], tuple[int, float, str, str]] = {}
-    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-mcp-batch")
     try:
         for index, item in enumerate(items):
             now = time.monotonic()
@@ -122,7 +137,29 @@ def run_tg_batch(
                 )
                 continue
             item_end = min(now + item_deadline, overall_end)
-            future = executor.submit(_run_item, server, item, path)
+            if not _BATCH_SLOTS.acquire(timeout=max(0.0, item_end - time.monotonic())):
+                result_slots[index] = _error_item(
+                    str(item["id"]),
+                    str(item["kind"]),
+                    "deadline_exceeded",
+                    "item deadline exceeded",
+                )
+                continue
+            if time.monotonic() >= item_end:
+                _BATCH_SLOTS.release()
+                result_slots[index] = _error_item(
+                    str(item["id"]),
+                    str(item["kind"]),
+                    "deadline_exceeded",
+                    "item deadline exceeded",
+                )
+                continue
+            try:
+                future = _BATCH_EXECUTOR.submit(_run_item, server, item, path)
+            except RuntimeError:
+                _BATCH_SLOTS.release()
+                raise
+            future.add_done_callback(_release_batch_slot)
             futures[future] = (index, item_end, str(item["id"]), str(item["kind"]))
 
         pending = set(futures)
@@ -156,7 +193,9 @@ def run_tg_batch(
                     return_when=FIRST_COMPLETED,
                 )
     finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+        for future in futures:
+            if not future.done():
+                future.cancel()
 
     results = [result for result in result_slots if result is not None]
     return json.dumps(
@@ -183,7 +222,7 @@ def tg_batch(
     are returned in the corresponding result entry, and set `result_incomplete=true`.
     `item_deadline` bounds each item, while `deadline` bounds the whole call; each is capped at
     120 seconds. `citations` is accepted for client compatibility; the underlying tools' JSON
-    payloads, including their existing source locations, are returned unchanged.
+    payloads and search plain text, including existing source locations, are returned unchanged.
     """
     return run_tg_batch(
         sys.modules["tensor_grep.cli.mcp_server"], queries, path, citations, item_deadline, deadline

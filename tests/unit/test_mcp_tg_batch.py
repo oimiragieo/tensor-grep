@@ -53,15 +53,78 @@ def test_tg_batch_is_registered_and_returns_single_tool_json(monkeypatch):
     ],
 )
 def test_tg_batch_preserves_standalone_json_for_each_kind(monkeypatch, kind, tool_name, args):
-    expected = {"exact": [kind, args, "."]}
-    monkeypatch.setattr(mcp_server, tool_name, lambda **kwargs: json.dumps(expected))
+    def echo_arguments(**kwargs: object) -> str:
+        return json.dumps({"forwarded": kwargs})
+
+    monkeypatch.setattr(mcp_server, tool_name, echo_arguments)
     standalone = _payload(getattr(mcp_server, tool_name)(**args, path="."))
 
     result = _payload(mcp_server.tg_batch([{"id": "same", "kind": kind, **args}]))
 
     assert NORMALIZED_VOLATILE_FIELDS == ()
     assert result["results"] == [{"id": "same", "kind": kind, "result": standalone}]
-    assert result["results"][0]["result"] == expected
+    assert result["results"][0]["result"] == {"forwarded": {**args, "path": "."}}
+
+
+def test_tg_batch_preserves_plain_text_search_result_and_refusal(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    good = {"id": "good", "kind": "search", "pattern": "needle", "structured_json": False}
+    bad = {
+        "id": "bad",
+        "kind": "search",
+        "pattern": "needle",
+        "path": "../..",
+        "structured_json": False,
+    }
+    standalone = mcp_server.tg_search("needle", path=str(tmp_path), structured_json=False)
+
+    payload = _payload(mcp_server.tg_batch([good, bad], path=str(tmp_path)))
+
+    assert payload["results"][0] == {"id": "good", "kind": "search", "result": standalone}
+    assert payload["results"][1]["error"]["code"] == "invalid_input"
+    assert payload["result_incomplete"] is True
+
+
+def test_tg_batch_timeout_does_not_accumulate_active_work_across_mcp_calls(monkeypatch):
+    release = threading.Event()
+    four_started = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    maximum = 0
+
+    def blocked_search(**kwargs: object) -> str:
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == 4:
+                four_started.set()
+        release.wait(5)
+        with lock:
+            active -= 1
+        return json.dumps({"pattern": kwargs["pattern"]})
+
+    monkeypatch.setattr(mcp_server, "tg_search", blocked_search)
+    queries = [{"id": str(index), "kind": "search", "pattern": str(index)} for index in range(4)]
+    try:
+        first = asyncio.run(
+            mcp_server.mcp.call_tool("tg_batch", {"queries": queries, "item_deadline": 0.1})
+        )
+        assert four_started.is_set()
+        second = asyncio.run(
+            mcp_server.mcp.call_tool("tg_batch", {"queries": queries, "item_deadline": 0.1})
+        )
+        assert isinstance(first, tuple)
+        assert isinstance(second, tuple)
+        assert all(
+            item["error"]["code"] == "deadline_exceeded"
+            for wire in (first, second)
+            for item in _payload(wire[0][0].text)["results"]
+        )
+        assert maximum <= 4, f"timed-out batch work accumulated {maximum} active workers"
+    finally:
+        release.set()
 
 
 @pytest.mark.parametrize(

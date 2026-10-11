@@ -167,7 +167,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.18.0"  # batch after action enums and MCP error signaling
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.19.0"  # batch after action enums and MCP error signaling
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

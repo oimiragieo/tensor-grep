@@ -3410,7 +3410,6 @@
     "hardened_in": null
   },
   {
-<<<<<<< HEAD
     "module": "cli/diff_impact_refs.py",
     "lineno": 926,
     "enclosing_symbol": "_test_reference_evidence",
@@ -3418,7 +3417,9 @@
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "Catches exceptions raised by repo_map.build_symbol_refs_from_map during test-reference evidence collection. tests/unit/test_diff_impact_refs_regression.py::test_refs_lookup_failure_is_dispositioned_and_disables_cap injects RuntimeError and checks the public diff-impact risk fields.",
     "reason": "A failed parser or refs scan cannot prove that a changed symbol has no test references. Returning incomplete evidence makes risk_cap_evidence incomplete and prevents the uncalled-symbol cap; the uncapped critical risk remains visible.",
-=======
+    "hardened_in": null
+  },
+  {
     "module": "cli/mcp_batch_tools.py",
     "lineno": 76,
     "enclosing_symbol": "_run_item",
@@ -3436,7 +3437,6 @@
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "An unexpected future.result failure becomes a visible internal_error entry for that item; this is the last fail-closed boundary for worker infrastructure failures.",
     "reason": "Future execution can raise outside _run_item; one worker failure must not become a normal-looking empty result or abort unrelated batch items.",
->>>>>>> b81573b (feat(mcp): add tg_batch for bounded multi-query calls)
     "hardened_in": null
   }
 ]
