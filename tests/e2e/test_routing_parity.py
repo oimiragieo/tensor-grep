@@ -1393,7 +1393,7 @@ def test_public_help_falls_back_to_native_when_python_passthrough_is_broken(pari
         broken_python = str(shutil.which("powershell.exe"))
     else:
         broken_python = "/bin/sh"
-    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+    env = {**os.environ, "TG_SIDECAR_PYTHON": broken_python}
 
     native_help = _run_native_front_door(["search", "--help"], cwd=parity_env, env=env)
 
@@ -1408,7 +1408,7 @@ def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
         broken_python = str(shutil.which("powershell.exe"))
     else:
         broken_python = "/bin/sh"
-    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+    env = {**os.environ, "TG_SIDECAR_PYTHON": broken_python}
 
     native_help = _run_native_front_door([], cwd=parity_env, env=env)
 
@@ -1442,7 +1442,7 @@ def test_public_help_falls_back_to_native_when_python_passthrough_times_out(pari
         wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
-    env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
+    env = {**os.environ, "TG_SIDECAR_PYTHON": str(wrapper)}
     if _get_native_binary() is None:
         _run_native_front_door(["--version"], cwd=parity_env)
 
@@ -1489,7 +1489,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
         broken_python = str(shutil.which("powershell.exe"))
     else:
         broken_python = "/bin/sh"
-    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+    env = {**os.environ, "TG_SIDECAR_PYTHON": broken_python}
 
     native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env)
 
@@ -1536,10 +1536,12 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
         wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
-    env_override = dict(
-        **os.environ, TG_SIDECAR_PYTHON=str(wrapper), TG_HELP_PROBE_TIMEOUT_MS="250"
-    )
-    env_default = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
+    env_override = {
+        **os.environ,
+        "TG_SIDECAR_PYTHON": str(wrapper),
+        "TG_HELP_PROBE_TIMEOUT_MS": "250",
+    }
+    env_default = {**os.environ, "TG_SIDECAR_PYTHON": str(wrapper)}
     env_default.pop("TG_HELP_PROBE_TIMEOUT_MS", None)
     if _get_native_binary() is None:
         _run_native_front_door(["--version"], cwd=parity_env)

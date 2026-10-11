@@ -2,11 +2,44 @@ from __future__ import annotations
 
 import inspect
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
 import typer
+
+
+def _explicit_rg_format_requested(
+    argv: list[str] | None = None,
+    *,
+    format_value: str | None = None,
+) -> bool:
+    del format_value
+    tokens = list(sys.argv[1:] if argv is None else argv)
+    if argv is None:
+        if not tokens or tokens[0] != "search":
+            return False
+        tokens = tokens[1:]
+    elif tokens and tokens[0] == "search":
+        tokens = tokens[1:]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--format":
+            index += 1
+            return index < len(tokens) and tokens[index] == "rg"
+        if token.startswith("--format="):
+            return token.split("=", 1)[1] == "rg"
+        index += 1
+    return False
+
+
+def validate_search_citation_modes(citations: bool, ndjson: bool, explicit_rg_format: bool) -> None:
+    if citations and (ndjson or explicit_rg_format):
+        typer.echo("--citations cannot be combined with --ndjson or --format rg", err=True)
+        raise typer.Exit(2)
+
 
 _MCP_BUILDER_VALUE_NAMES = (
     "query",

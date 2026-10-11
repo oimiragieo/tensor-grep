@@ -98,6 +98,17 @@ def test_cli_citations_emit_only_the_citation_envelope(tmp_path: Path, args, fil
         assert all(item["start_line"] == item["end_line"] for item in payload["citations"])
 
 
+def test_search_citation_wiring_stays_within_main_size_pin(tmp_path: Path) -> None:
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["search", "needle", str(tmp_path), "--json", "--citations"])
+    assert result.exit_code == 0, result.output
+    assert _assert_citation_envelope(result.stdout)["citations"]
+
+    main_path = Path(__file__).resolve().parents[2] / "src/tensor_grep/cli/main.py"
+    lines = len(main_path.read_bytes().splitlines())
+    assert lines <= 13523, f"citation CLI wiring grew main.py to {lines} lines above pin 13523"
+
+
 @pytest.mark.parametrize(
     ("args", "path"),
     [

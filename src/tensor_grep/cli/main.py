@@ -30,6 +30,7 @@ from typer.core import TyperGroup
 
 from tensor_grep.cli import ast_scan as _ast_scan
 from tensor_grep.cli import backend_fallback as _backend_fallback
+from tensor_grep.cli import citations as _citations
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
@@ -1879,9 +1880,7 @@ def find(
         sys.exit(2)
 
     if citations:
-        from tensor_grep.cli.citations import emit_find_citations
-
-        raise typer.Exit(emit_find_citations(result, path, json_output, ndjson))
+        raise typer.Exit(_citations.emit_find_citations(result, path, json_output, ndjson))
 
     if result.is_empty:
         if json_output:
@@ -2538,29 +2537,7 @@ def _can_passthrough_rg(
     )
 
 
-def _explicit_rg_format_requested(
-    argv: list[str] | None = None,
-    *,
-    format_value: str | None = None,
-) -> bool:
-    del format_value
-    tokens = list(sys.argv[1:] if argv is None else argv)
-    if argv is None:
-        if not tokens or tokens[0] != "search":
-            return False
-        tokens = tokens[1:]
-    elif tokens and tokens[0] == "search":
-        tokens = tokens[1:]
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--format":
-            index += 1
-            return index < len(tokens) and tokens[index] == "rg"
-        if token.startswith("--format="):
-            return token.split("=", 1)[1] == "rg"
-        index += 1
-    return False
+_explicit_rg_format_requested = _citations._explicit_rg_format_requested
 
 
 # Render-only ripgrep flags that shape *text* output. The tensor-grep aggregate
@@ -3734,9 +3711,7 @@ def search_command(
         raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
-    if citations and (ndjson or explicit_rg_format):
-        typer.echo("--citations cannot be combined with --ndjson or --format rg", err=True)
-        raise typer.Exit(2)
+    _citations.validate_search_citation_modes(citations, ndjson, explicit_rg_format)
     # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
     # text-shaping flags. Honoring them is impossible and silently dropping them is a
     # footgun that also lets the front-door launcher spawn an undrained text-render
@@ -4449,9 +4424,11 @@ def search_command(
         sys.exit(2 if exit_incomplete else 1)
 
     if citations:
-        from tensor_grep.cli.citations import emit_search_citations as emit_citations
-
-        sys.exit(emit_citations(all_results, paths_to_search, json or format_type == "json"))
+        sys.exit(
+            _citations.emit_search_citations(
+                all_results, paths_to_search, json or format_type == "json"
+            )
+        )
 
     if all_results.is_empty:
         _emit_stats()
@@ -5735,9 +5712,7 @@ def context_render(
     # else indent=2) so both json and text branches share the same scan-truncation gate below --
     # output the full payload FIRST, then exit 2 if the scan itself (not just the output) was capped.
     if citations:
-        from tensor_grep.cli.citations import emit_payload_citations
-
-        emit_payload_citations(payload, resolved_path, json_output=json_output)
+        _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
     elif json_output:
         if payload.get("render_profile") == "llm":
             typer.echo(json.dumps(payload, separators=(",", ":")))
@@ -6026,9 +6001,7 @@ def agent(
 
     # Emit the full capsule before applying the scan-truncation exit contract.
     if citations:
-        from tensor_grep.cli.citations import emit_payload_citations
-
-        emit_payload_citations(payload, resolved_path, json_output=json_output)
+        _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
     elif json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
