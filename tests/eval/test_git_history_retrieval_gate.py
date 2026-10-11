@@ -864,6 +864,8 @@ def test_protected_workflow_detects_protected_paths(
         "previous_filename": previous_filename,
         "status": status,
     })
+    if shutil.which("node") is None:
+        pytest.skip("node is required to evaluate the protection workflow predicate")
     probe = (
         "let failure = ''; const core = {setFailed: x => failure = x}; "
         "const context = {repo: {owner:'o',repo:'r'}, issue:{number:1}, "
