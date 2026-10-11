@@ -8,7 +8,6 @@ import sys
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 
@@ -39,14 +38,11 @@ def spawn_daemon_subprocess(
     spawn_cwd = root if root.is_dir() else root.parent
     # audit I7: detach the daemon from the launching process group/console so it is not
     # killed by signals delivered to the parent and survives the CLI invocation.
-    popen_kwargs: dict[str, Any] = {}
     creationflags = 0
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
-    else:
-        popen_kwargs["start_new_session"] = True
     capture_path = sessions_dir / f"daemon-start.{uuid4().hex}.stderr"
     # O_EXCL rejects a planted symlink or junction at this unique name; the fd is never
     # re-opened by path after creation.
@@ -72,9 +68,9 @@ def spawn_daemon_subprocess(
             stderr=capture_fd,
             stdin=subprocess.DEVNULL,
             creationflags=creationflags,
+            start_new_session=os.name != "nt",
             cwd=str(spawn_cwd),
             env=env,
-            **popen_kwargs,
         )
     except BaseException:
         os.close(capture_fd)
