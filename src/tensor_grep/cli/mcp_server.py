@@ -59,6 +59,7 @@ from tensor_grep.cli.main import (
 from tensor_grep.cli.main import (
     _run_ast_scan_payload as _run_ast_scan_payload,
 )
+from tensor_grep.cli.mcp_batch_tools import tg_batch as tg_batch
 from tensor_grep.cli.mcp_path_errors import PathConfinementError as PathConfinementError
 from tensor_grep.cli.orient_capsule import (
     build_orient_capsule_json as build_orient_capsule_json,
@@ -107,9 +108,7 @@ from tensor_grep.core.hardware.device_inventory import (
     collect_device_inventory as collect_device_inventory,
 )
 from tensor_grep.core.pipeline import ConfigurationError
-from tensor_grep.core.pipeline import (
-    Pipeline as Pipeline,
-)
+from tensor_grep.core.pipeline import Pipeline as Pipeline
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner as DirectoryScanner
 
@@ -168,7 +167,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.17.0"  # action enums and MCP error signaling
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.18.0"  # batch after action enums and MCP error signaling
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -184,12 +183,12 @@ _register_tool = register_mcp_tool(mcp)
 def _legacy_tools_enabled() -> bool:
     """Whether the 46 legacy (pre-consolidation) MCP tool names stay individually registered
     and advertised via `list_tools()`, on top of the 10 additive task-shaped meta-tools and the
-    2 always-on singletons (MCP consolidation Phase-1, #98).
+    3 always-on tools (MCP consolidation Phase-1, #98, plus `tg_batch`).
 
     Default ON (unset, or any value other than the recognized "off" tokens below): this is an
     ADDITIVE change, so every existing external client keeps working with zero action required.
     Flipping OFF removes the 46 legacy names from the advertised tool surface -- the 10 meta
-    tools and the 2 singletons remain, since the meta tools' dispatch bodies call the legacy
+    tools and the 3 always-on tools remain, since the meta tools' dispatch bodies call the legacy
     Python functions directly regardless of flag state (`mcp.tool()(fn)` returns `fn`
     unchanged, so a de-advertised legacy function stays fully callable in-process). Consciously
     flipping this to OFF in production is a separate, deliberate, documented operator/decision (Enablement Discipline) -- never bundled into the default-ON Phase-1 PR.
@@ -297,11 +296,11 @@ _PYTHON_LOCAL_MCP_TOOLS = (
 )
 _EMBEDDED_SAFE_MCP_TOOLS = ("tg_rewrite_plan", "tg_rewrite_apply")
 _NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
-# The 2 always-on singletons (#98 build-precision must-fix #4): NEVER gated by
+# The always-on singletons (#98 build-precision must-fix #4): NEVER gated by
 # `TG_MCP_LEGACY_TOOLS` -- `tg_mcp_capabilities` is the discovery entrypoint an agent needs
 # even when every legacy name is de-advertised, and `tg_classify_logs` is a standalone-family
 # tool with no meta-tool home (niche, no sibling family to compose into).
-_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs")
+_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs", "tg_batch")
 # The 10 additive task-shaped meta-tools (#98, Phase-1): ALWAYS registered/advertised
 # regardless of `TG_MCP_LEGACY_TOOLS`, since they are the additive surface this flag exists to
 # let an operator eventually rely on ALONE. Each composes several of the 46 legacy tools by an
@@ -578,7 +577,7 @@ def _build_mcp_tool_capabilities() -> dict[str, dict[str, object]]:
     The 46 legacy entries are included ONLY when `_legacy_tools_enabled()` -- evaluated once
     here, at IMPORT time, the SAME read `_register_legacy_tool` uses for actual registration,
     so the two can never disagree within one running process (see that decorator's docstring).
-    The 2 singletons and the 10 meta tools are ALWAYS included, unconditionally.
+    The 3 always-on tools and the 10 meta tools are ALWAYS included, unconditionally.
     """
     capabilities: dict[str, dict[str, object]] = {}
     if _legacy_tools_enabled():
@@ -636,7 +635,7 @@ def _build_mcp_tool_capabilities() -> dict[str, dict[str, object]]:
             "native_required": False,
             "embedded_fallback": False,
             "native_required_options": [],
-            "notes": "Always-on singleton: runs without a standalone native tg binary.",
+            "notes": "Always-on tool: runs without a standalone native tg binary.",
         }
         for name in _SINGLETON_MCP_TOOLS
     })
@@ -657,6 +656,9 @@ def _build_mcp_tool_capabilities() -> dict[str, dict[str, object]]:
 
 
 _MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = _build_mcp_tool_capabilities()
+
+
+_register_tool(tg_batch)
 
 
 def _repo_root() -> Path:
@@ -4214,8 +4216,8 @@ def tg_session_context(
 
 # ================================================================================================
 # #98 (MCP consolidation Phase-1): 10 ADDITIVE task-shaped meta-tools composing the 46 legacy
-# tools above by an `action` string selector, plus the 2 always-on singletons already defined
-# (tg_mcp_capabilities, tg_classify_logs). ALWAYS registered via the shared tool wrapper -- never
+# tools above by an `action` string selector, plus the 3 always-on tools already defined
+# (tg_mcp_capabilities, tg_classify_logs, tg_batch). ALWAYS registered via the shared tool wrapper -- never
 # gated by TG_MCP_LEGACY_TOOLS -- since they are the additive surface that flag exists to let an
 # operator eventually rely on alone (see `_legacy_tools_enabled` docstring). Every meta tool:
 #   1. confines its PRIMARY path/root param -- and most other path-shaped params it declares --

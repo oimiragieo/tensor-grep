@@ -100,7 +100,7 @@ def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
 
 
 def test_mcp_legacy_tools_flag_on_by_default_subprocess():
-    """Baseline (flag unset -> treated as "" -> ON): all 58 tools register, and the
+    """Baseline (flag unset -> treated as "" -> ON): all 59 tools register, and the
     capability registry stays exactly in lockstep with the live registry -- the SAME
     self-consistency test_tg_mcp_capabilities_registry_covers_public_tools already proves for
     the (only) flag state that test can run in-process, re-proven here via the identical
@@ -108,7 +108,7 @@ def test_mcp_legacy_tools_flag_on_by_default_subprocess():
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": ""})
     assert result["legacy_enabled"] is True
     assert result["tool_names"] == result["capability_names"]
-    assert len(result["tool_names"]) == 58
+    assert len(result["tool_names"]) == 59
     assert _EXPECTED_META_TOOL_NAMES <= set(result["tool_names"])
     assert _EXPECTED_SINGLETON_TOOL_NAMES <= set(result["tool_names"])
     assert "tg_symbol_defs" in result["tool_names"]
@@ -118,13 +118,13 @@ def test_mcp_legacy_tools_flag_on_by_default_subprocess():
 @pytest.mark.parametrize("off_value", ["0", "false", "no", "off", "OFF", "False", "  off  "])
 def test_mcp_legacy_tools_flag_off_deregisters_legacy_tools_subprocess(off_value):
     """#98 must-fix 2: TG_MCP_LEGACY_TOOLS set to a recognized off-token de-registers all 46
-    legacy tool names, leaving EXACTLY the 10 meta tools + the 2 always-on singletons (12
+    legacy tool names, leaving EXACTLY the 10 meta tools + the 3 always-on tools (13
     total) -- and the capability registry stays in lockstep with the live registry in this
     flag state too, not just the flag-ON state the in-process invariant test covers."""
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": off_value})
     assert result["legacy_enabled"] is False
     assert result["tool_names"] == result["capability_names"]
-    assert len(result["tool_names"]) == 12
+    assert len(result["tool_names"]) == 13
     assert set(result["tool_names"]) == _EXPECTED_META_TOOL_NAMES | _EXPECTED_SINGLETON_TOOL_NAMES
     # every one of the 46 legacy names must be fully gone from BOTH the live registry and the
     # capability map -- spot-check a representative handful across families.
@@ -153,7 +153,7 @@ def test_mcp_legacy_tools_flag_on_recognizes_only_specific_off_tokens_subprocess
     behavior (fail-open toward the additive, non-breaking posture)."""
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": on_value})
     assert result["legacy_enabled"] is True
-    assert len(result["tool_names"]) == 58
+    assert len(result["tool_names"]) == 59
 
 
 @pytest.mark.parametrize(
@@ -1225,7 +1225,7 @@ def test_tg_rewrite_apply_test_cmd_gate_preserved_via_meta(monkeypatch, tmp_path
 
 # ------------------------------------------------------------------------------------------
 # Capability registry shape (#98 build-precision): the 10 meta tools carry mode="meta" +
-# composes[] + actions{} with the 3-class signal; the 2 singletons are unconditional and
+# composes[] + actions{} with the 3-class signal; the always-on tools are unconditional and
 # never carry the legacy "mode" gate.
 # ------------------------------------------------------------------------------------------
 
@@ -1278,7 +1278,7 @@ def test_meta_tool_capabilities_rewrite_apply_action_is_mutation():
 
 
 def test_singleton_capabilities_never_gate():
-    """tg_mcp_capabilities/tg_classify_logs stay in _MCP_TOOL_CAPABILITIES unconditionally --
+    """The always-on tools stay in _MCP_TOOL_CAPABILITIES unconditionally --
     proven directly against _build_mcp_tool_capabilities() output regardless of the CURRENT
     process's flag state (the subprocess tests above prove the flag-OFF case end-to-end; this
     is a same-process structural check that the singleton NAMES are present either way)."""
@@ -1292,7 +1292,7 @@ def test_singleton_capabilities_never_gate():
 
 
 def test_meta_and_singleton_tool_names_partition_cleanly():
-    """The 10 meta names, the 2 singleton names, and the 46 legacy names (python-local +
+    """The 10 meta names, the 3 always-on names, and the 46 legacy names (python-local +
     embedded-safe + native-required) must be pairwise disjoint and together equal the full
     default-ON registry -- a name accidentally listed in two groups would double-count or
     silently shadow in `_build_mcp_tool_capabilities`."""
@@ -1306,7 +1306,7 @@ def test_meta_and_singleton_tool_names_partition_cleanly():
         | set(mcp_server._NATIVE_REQUIRED_MCP_TOOLS)
     )
     assert len(meta) == 10
-    assert len(singletons) == 2
+    assert len(singletons) == 3
     assert len(legacy) == 46
     assert meta.isdisjoint(singletons)
     assert meta.isdisjoint(legacy)
@@ -1370,4 +1370,4 @@ def test_legacy_note_absent_when_legacy_tools_flag_off_subprocess():
         timeout=90,
     )
     assert done.returncode == 0, done.stderr
-    assert done.stdout.split() == ["12", "0"]
+    assert done.stdout.split() == ["13", "0"]

@@ -630,6 +630,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
 # downstream loader reads the file directly with no FileNotFoundError guard (see
 # _ratchet_positive_value below for the two params that need a real file).
 _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
+    "tg_batch": {"queries": [{"id": "q", "kind": "search", "pattern": "x"}], "path": "."},
     "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
     "tg_repo_map": {"path": "."},
     "tg_orient": {"path": "."},
@@ -923,7 +924,7 @@ _EXPECTED_META_TOOL_NAMES = {
     "tg_checkpoint",
     "tg_rewrite",
 }
-_EXPECTED_SINGLETON_TOOL_NAMES = {"tg_mcp_capabilities", "tg_classify_logs"}
+_EXPECTED_SINGLETON_TOOL_NAMES = {"tg_mcp_capabilities", "tg_classify_logs", "tg_batch"}
 
 
 def _run_mcp_flag_probe_subprocess(env_overrides: dict[str, str]) -> dict[str, object]:
