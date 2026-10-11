@@ -174,7 +174,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.18.0"  # batch after action enums and MCP error signaling
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.19.0"  # repository coverage inventory and citations batch
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -188,7 +188,7 @@ _register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
-    """Whether the 46 legacy (pre-consolidation) MCP tool names stay individually registered
+    """Whether the 47 legacy (pre-consolidation) MCP tool names stay individually registered
     and advertised via `list_tools()`, on top of the 10 additive task-shaped meta-tools and the
     3 always-on tools (MCP consolidation Phase-1, #98, plus `tg_batch`).
 
@@ -205,10 +205,10 @@ def _legacy_tools_enabled() -> bool:
 
 
 def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
-    """Decorator for the 46 legacy (pre-consolidation) MCP tool functions (#98).
+    """Decorator for the 47 legacy (pre-consolidation) MCP tool functions (#98).
 
-    Registers `fn` as an MCP tool via `mcp.tool()` only when `_legacy_tools_enabled()` is
-    True at IMPORT time. Both paths return `fn` unchanged: FastMCP's decorator only
+    Registers `fn` through the shared tool wrapper only when `_legacy_tools_enabled()` is
+    True at IMPORT time. Both paths return `fn` unchanged: the wrapper only
     registers the function, and the 10 meta-tools dispatch directly to these Python
     callables even when their legacy names are de-advertised from `list_tools()`.
 
@@ -219,6 +219,9 @@ def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
     if _legacy_tools_enabled():
         return _register_tool(fn)  # type: ignore[no-any-return]
     return fn
+
+
+from tensor_grep.cli.mcp_coverage_tool import coverage_tool as coverage_tool  # noqa: E402, I001
 
 
 _REWRITE_ROUTING_BACKEND = "AstBackend"
@@ -253,11 +256,12 @@ _DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000
 # test_cli_default_max_files_matches_module_constant pattern.
 _DEFAULT_MCP_FIND_MAX_TOKENS = 4000
 
-# The 46 legacy (pre-consolidation) tool names, gated on `_legacy_tools_enabled()` (#98) --
+# The 47 legacy (pre-consolidation) tool names, gated on `_legacy_tools_enabled()` (#98) --
 # `tg_mcp_capabilities`/`tg_classify_logs` are carved OUT into `_SINGLETON_MCP_TOOLS` below
 # (build-precision must-fix: they are ALWAYS registered/advertised, never gated, so they must
 # never sit in a tuple this module treats as conditional).
 _PYTHON_LOCAL_MCP_TOOLS = (
+    "tg_coverage",
     "tg_rulesets",
     "tg_ruleset_scan",
     "tg_repo_map",
@@ -310,7 +314,7 @@ _NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
 _SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs", "tg_batch")
 # The 10 additive task-shaped meta-tools (#98, Phase-1): ALWAYS registered/advertised
 # regardless of `TG_MCP_LEGACY_TOOLS`, since they are the additive surface this flag exists to
-# let an operator eventually rely on ALONE. Each composes several of the 46 legacy tools by an
+# let an operator eventually rely on ALONE. Each composes several of the 47 legacy tools by an
 # `action` string param; see `_META_MCP_TOOL_CAPABILITIES` below for the composition map.
 _META_MCP_TOOLS = (
     "tg_navigate",
@@ -581,7 +585,7 @@ _META_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
 def _build_mcp_tool_capabilities() -> dict[str, dict[str, object]]:
     """Build the live `_MCP_TOOL_CAPABILITIES` registry (#98 build-precision must-fix #4).
 
-    The 46 legacy entries are included ONLY when `_legacy_tools_enabled()` -- evaluated once
+    The 47 legacy entries are included ONLY when `_legacy_tools_enabled()` -- evaluated once
     here, at IMPORT time, the SAME read `_register_legacy_tool` uses for actual registration,
     so the two can never disagree within one running process (see that decorator's docstring).
     The 3 always-on tools and the 10 meta tools are ALWAYS included, unconditionally.
@@ -1657,6 +1661,12 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
     except Exception as exc:
         _log_tool_exception("tg_repo_map", exc)
         return _sanitized_tool_error_text("tg_repo_map", exc)
+
+
+@_register_legacy_tool  # type: ignore
+def tg_coverage(path: str = ".") -> str:
+    """Report repo-map session and AST-cache coverage for PATH without writing state."""
+    return coverage_tool(path)
 
 
 @_register_legacy_tool  # type: ignore

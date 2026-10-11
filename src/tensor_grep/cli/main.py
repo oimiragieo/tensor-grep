@@ -13202,6 +13202,17 @@ def freshness(
     raise typer.Exit(code=freshness_command(path, json_output=json_output))
 
 
+@app.command(name="coverage")
+def coverage(
+    path: str = typer.Argument(".", help="Repository root to inspect."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Report indexed, stale, and unparsed files without changing repository state."""
+    from tensor_grep.cli.coverage import coverage_command
+
+    raise typer.Exit(code=coverage_command(path, json_output=json_output))
+
+
 @app.command(name="file-api")
 def file_api(
     path: str = typer.Argument(..., help="File whose API surface to list."),

@@ -633,6 +633,7 @@ _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
     "tg_batch": {"queries": [{"id": "q", "kind": "search", "pattern": "x"}], "path": "."},
     "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
     "tg_repo_map": {"path": "."},
+    "tg_coverage": {"path": "."},
     "tg_orient": {"path": "."},
     "tg_doctor": {"path": "."},
     "tg_context_pack": {"query": "x", "path": "."},

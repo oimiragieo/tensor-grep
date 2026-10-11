@@ -1561,13 +1561,18 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
+<<<<<<< HEAD
 Current tool set (59 tools by default -- 46 gated legacy tools + 3 always-on tools + 10 additive task-shaped meta-tools; cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 gated legacy tools, leaving the 10 meta-tools + 3 always-on tools (13 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
+=======
+Current tool set (59 tools by default -- 49 legacy + 10 additive task-shaped meta-tools, MCP meta-tool consolidation; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 47 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
+>>>>>>> 78b68df (feat(cli): add tg coverage to report stale, unindexed and unparsed files)
 
 - `tg_mcp_capabilities()`
 - `tg_batch(queries, path=".", citations=False, item_deadline=10.0, deadline=30.0)` -- runs up to 16 `search`/`find`/`defs`/`refs`/`callers`/`source` items, with at most four concurrent items. Each item may override `path`; its path is confined independently to the MCP root. Results preserve input order and contain the exact standalone tool JSON on success. Item failures use an `error` entry and set `result_incomplete=true`; top-level validation rejects the whole tool call as an MCP error. `item_deadline` and overall `deadline` are capped at 120 seconds. `citations` is accepted for compatibility; existing tool payloads retain their source locations.
 - `tg_rulesets()`
 - `tg_ruleset_scan(ruleset=None, inline_rules=None, path=".", language=None, glob=None, file_type=None, max_depth=None, allow_broad_generated_scan=False, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, justification=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)` -- exactly one of `ruleset`/`inline_rules` is required; see "Inline Rules" below.
 - `tg_repo_map(path=".")`
+- `tg_coverage(path=".")` -- read-only session and AST-cache coverage inventory; reports `files_total`, `stale` entries with `modified`/`added`/`deleted` reasons, `unindexed`, `unparsed` reasons, `complete`, and hit `caps`. MCP contract 1.19.0 adds this path-confined tool.
 - `tg_orient(path=".", max_tokens=3000, max_central_files=10, ignore=None)` -- one-call orientation capsule for an unfamiliar repository (use it for "what is this codebase and where do I start"); see "Orient Capsule JSON" below.
 - `tg_doctor(path=".", config="sgconfig.yml", with_lsp=True)`
 - `tg_context_pack(query, path=".")`
@@ -1631,9 +1636,9 @@ understand.
 - `tg_review_bundle_verify(bundle_path)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
-Meta-Tools (task-shaped consolidation) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
+Meta-Tools (task-shaped consolidation) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 47 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
 
-Legacy vs meta surface: the 46 legacy per-function tools stay advertised by default (`TG_MCP_LEGACY_TOOLS` unset), but each one's advertised description now ends with a note naming the covering meta-tool and `action` (for example, `tg_symbol_defs` is covered by `tg_navigate` with `action=defs`). Agents should prefer the 10 meta-tools; set `TG_MCP_LEGACY_TOOLS=off` to advertise the 13 always-on tools (10 meta-tools + 3 always-on tools). With the flag off, descriptions and behavior are unchanged.
+Legacy vs meta surface: the 46 legacy per-function tools stay advertised by default (`TG_MCP_LEGACY_TOOLS` unset), but each one's advertised description now ends with a note naming the covering meta-tool and `action` (for example, `tg_symbol_defs` is covered by `tg_navigate` with `action=defs`). Agents should prefer the 10 meta-tools; set `TG_MCP_LEGACY_TOOLS=off` to advertise the 14 always-on tools (10 meta-tools + 3 always-on tools + `tg_coverage`). With the flag off, descriptions and behavior are unchanged.
 
 - `tg_navigate(action, symbol=None, file=None, path=".", provider="native", max_repo_files=2000, deadline=None)` -- actions: `defs`/`source`/`refs`/`callers` (= tg_symbol_defs/tg_symbol_source/tg_symbol_refs/tg_symbol_callers), `imports`/`importers` (= tg_file_imports/tg_file_importers).
 - `tg_impact(action, symbol=None, path=".", max_depth=3, max_files=3, max_symbols=5, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, provider="native", max_repo_files=2000, deadline=None)` -- actions: `impact`/`blast_radius`/`blast_radius_plan`/`blast_radius_render` (= tg_symbol_impact/tg_symbol_blast_radius/tg_symbol_blast_radius_plan/tg_symbol_blast_radius_render).

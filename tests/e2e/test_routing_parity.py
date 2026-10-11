@@ -92,6 +92,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "codemap",
     "file-api",
     "freshness",
+    "coverage",
     "inventory",
     "docs-coverage",
     "session",
@@ -1500,6 +1501,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
 
     for moat_command in (
         "orient",
+        "coverage",
         "defs",
         "refs",
         "callers",
