@@ -13,7 +13,7 @@ from tensor_grep.cli import repo_map
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
 
 
-def _opened_file_path(fd: int) -> Path:
+def _opened_file_path(fd: int, path: Path) -> Path:
     if sys.platform == "win32":
         import ctypes
         import msvcrt
@@ -31,7 +31,7 @@ def _opened_file_path(fd: int) -> Path:
         elif name.startswith("\\\\?\\"):
             name = name[4:]
         return Path(name)
-    return Path(os.readlink(f"/proc/self/fd/{fd}"))
+    return path.resolve(strict=True)
 
 
 def _origin_modules(root: Path, origin_files: tuple[str, ...]) -> set[str]:
@@ -86,7 +86,7 @@ def _python_import_reference(
             return False, False
         try:
             with path.open("rb") as source_file:
-                opened_path = _opened_file_path(source_file.fileno())
+                opened_path = _opened_file_path(source_file.fileno(), path)
                 opened_path.relative_to(root)
                 opened_stat = os.fstat(source_file.fileno())
                 current_stat = path.stat()
@@ -104,7 +104,7 @@ def _python_import_reference(
         if any(
             isinstance(node, ast.ImportFrom)
             and _import_module(node, path, root) in origin_modules
-            and any(alias.name == symbol for alias in node.names)
+            and any(alias.name in {symbol, "*"} for alias in node.names)
             for node in ast.walk(tree)
         ):
             return True, True

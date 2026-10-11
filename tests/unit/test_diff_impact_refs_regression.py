@@ -86,6 +86,45 @@ def test_imported_alias_call_disables_uncalled_cap_and_preserves_gate_exit(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+def test_star_import_call_disables_uncalled_cap_and_preserves_gate_exit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        'from pkg.core import *\nglobals()["dor" + "mant"]()\n', encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
+def test_non_windows_reference_scan_keeps_ordinary_file_evidence_complete(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    repo_map_payload = {"path": str(tmp_path), "files": [str(source)], "tests": []}
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_refs_from_map",
+        lambda *args, **kwargs: {"references": [], "string_refs": []},
+    )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(diff_impact_refs.sys, "platform", "darwin")
+        evidence = diff_impact_refs._test_reference_evidence(
+            repo_map_payload, "dormant", None, None, ("pkg/core.py",)
+        )
+
+    assert evidence == (True, False)
+
+
 def test_imported_alias_caller_disables_uncalled_cap(tmp_path: Path) -> None:
     diff = _dormant_diff(tmp_path)
     (tmp_path / "consumer.py").write_text(
