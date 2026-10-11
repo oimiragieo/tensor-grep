@@ -32,22 +32,28 @@ the frozen input paths. Checkout mtimes are normalized to the parent commit's
 timestamp. Every run gets a fresh home and caches. Container writes to the
 build directory and outside the case directory must be denied.
 
-The evaluator runs in the image's system interpreter with a standard-library-only
-import closure; each subject has a separate non-editable installation and native
-binary. The fixed manifest, patches, and baseline arrive in leaf 11b. Until
+The evaluator runs in the image's system interpreter. The harness and scoring
+module have a standard-library-only import closure; each subject has a separate
+non-editable installation and native binary. The fixed manifest, patches, and
+baseline arrive in leaf 11b. Until
 `baseline.json` exists, the PR job is report-only. Local runs without the
 container are advisory and cannot produce `baseline.json`.
+The worker checks the baseline executable and runtime record after the head build;
+report collection verifies the recorded executable hash against the build tree.
 Leaf 11b also needs a container-executed proof that subject `.pth` files cannot
 run in the evaluator interpreter and an explicit policy for queries needing
 history before the shallow parent commit.
-The GitHub ruleset for `main` must enable **Require a pull request before merging**
-and **Require status checks to pass**, with the required check
-`Git history retrieval protection / protected-change-label` from GitHub Actions.
+Ops follow-up: enable a GitHub ruleset targeting `main` with **Require a pull
+request before merging** and **Require status checks to pass**. Add the GitHub
+Actions check named exactly `Git history retrieval protection / protected-change-label`
+to the required checks. The ruleset must require this protection workflow for
+every merge to `main`.
 Keep this check required even while the evaluation gate is report-only. The
 base-branch `pull_request_target` workflow fails that check when a PR changes a
 protected path without the `eval-baseline-update` label. Repository ruleset
-configuration is external to this repository and must be verified in GitHub
-before treating the label as enforced.
+configuration is external to this repository. If GitHub reports `main` as
+unprotected or the required check is absent, I5 is not enforced; verify the
+active ruleset in GitHub before claiming enforcement.
 
 To generate the frozen dataset after 11a is merged, use a v1.126.0 `tg` binary:
 

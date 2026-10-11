@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -255,18 +257,19 @@ def load_scoring(path: Path = SCORING) -> Any:
 
 
 def assert_stdlib_import_closure(path: Path = Path(__file__)) -> None:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
     stdlib = sys.stdlib_module_names
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names = [alias.name for alias in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            names = [node.module or ""]
-        else:
-            continue
-        for name in names:
-            if name.split(".")[0] not in stdlib:
-                raise HarnessError(f"non_stdlib_import: {name}")
+    for source in (path, SCORING):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name.split(".")[0] not in stdlib:
+                    raise HarnessError(f"non_stdlib_import: {name}")
 
 
 def query_from_subject(subject: str) -> str:
@@ -783,6 +786,7 @@ def _read_only_tree(root: Path) -> None:
 
 def worker_build(source: Path, work: Path) -> dict[str, Any]:
     build = work / "build"
+    baseline_runtime: dict[str, str] | None = None
     for subject in ("baseline", "head"):
         target = build / subject
         tree = target / "tree"
@@ -814,6 +818,13 @@ def worker_build(source: Path, work: Path) -> dict[str, Any]:
         (target / "tg").chmod(0o755)
         _, _, runtime = _runtime_identity(subject, build)
         _write_json(target / "runtime.json", runtime)
+        if subject == "baseline":
+            baseline_runtime = runtime.copy()
+    if baseline_runtime is None or (
+        _sha256((build / "baseline/tg").read_bytes()) != baseline_runtime["binary_sha256"]
+        or _read_json(build / "baseline/runtime.json") != baseline_runtime
+    ):
+        raise HarnessError("runtime_binary_hash_mismatch:baseline")
     identity = environment_identity()
     _write_json(work / "environment.json", identity)
     _read_only_tree(build)
@@ -951,6 +962,8 @@ def _runtime_identity(subject: str, build: Path) -> tuple[Path, Path, dict[str, 
     if match is None:
         raise HarnessError("binary_version_missing")
     expected_version = match.group()
+    if subject == "baseline" and expected_version != "1.126.0":
+        raise HarnessError("baseline_binary_version_mismatch")
     script = (
         "import importlib.metadata,json,tensor_grep; "
         "print(json.dumps({'file':tensor_grep.__file__,"
@@ -1088,10 +1101,16 @@ def _collect_report(manifest: dict[str, Any], subject: str, work: Path) -> dict[
     repeats: dict[tuple[str, str], dict[str, Any]] = {}
     cases = {case["sha"]: case for case in manifest["cases"]}
     scoring = load_scoring()
+    saved_runtime = _read_json(work / "build" / subject / "runtime.json")
+    binary = work / "build" / subject / "tg"
+    if _sha256(binary.read_bytes()) != saved_runtime.get("binary_sha256"):
+        raise HarnessError(f"runtime_binary_hash_mismatch:{subject}")
     for run_dir, arm in _selected_runs(manifest, subject, work):
         row = _read_json(run_dir / "result.json")
         if row["sha"] != run_dir.parents[2].name or row["arm"] != arm:
             raise HarnessError("result_identity_mismatch")
+        if row.get("runtime") != saved_runtime:
+            raise HarnessError(f"runtime_row_mismatch:{subject}")
         row["metrics"] = score_payload(
             row.pop("payload"), arm, cases[row["sha"]], run_dir / "repo", scoring
         )
@@ -1117,7 +1136,7 @@ def _collect_report(manifest: dict[str, Any], subject: str, work: Path) -> dict[
     }
     if set(case_set["find"]) != set(heldout):
         raise HarnessError("evaluated_case_set_mismatch")
-    runtime = first[0]["runtime"]
+    runtime = saved_runtime
     return {
         "metrics": metrics,
         "case_set": case_set,
@@ -1127,6 +1146,36 @@ def _collect_report(manifest: dict[str, Any], subject: str, work: Path) -> dict[
         "confinement": "container",
         "subject": subject,
     }
+
+
+@contextmanager
+def _host_work_directory(image: str) -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="tg-git-history-", ignore_cleanup_errors=True) as temp:
+        work = Path(temp)
+        try:
+            yield work
+        finally:
+            if os.name == "posix" and (work / "build").exists():
+                cleanup = _run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--network",
+                        "none",
+                        "--mount",
+                        f"type=bind,src={work.resolve()},dst=/work",
+                        "--entrypoint",
+                        "/bin/sh",
+                        image,
+                        "-c",
+                        f"chown -R {os.getuid()}:{os.getgid()} /work && chmod -R u+rwX /work",
+                    ],
+                    check=False,
+                )
+                if cleanup.returncode and sys.exc_info()[0] is None:
+                    detail = cleanup.stderr.decode("utf-8", errors="replace").strip()
+                    raise HarnessError(f"host_cleanup_failed:{detail}")
 
 
 def gate_report(report: dict[str, Any], baseline_path: Path, *, enforce: bool = True) -> list[str]:
@@ -1182,8 +1231,7 @@ def orchestrate(
     preflight_source(source, manifest)
     image = "tg-git-history-retrieval:local"
     _run(["docker", "build", "-f", str(HERE / "Dockerfile"), "-t", image, str(ROOT)])
-    with tempfile.TemporaryDirectory(prefix="tg-git-history-") as temp:
-        work = Path(temp)
+    with _host_work_directory(image) as work:
         for revision, subject_name in (("v1.126.0", "baseline"), ("HEAD", "head")):
             tree = work / "build" / subject_name / "tree"
             tree.parent.mkdir(parents=True, exist_ok=True)

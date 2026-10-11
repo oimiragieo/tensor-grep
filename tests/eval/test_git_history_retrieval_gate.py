@@ -298,6 +298,17 @@ def test_harness_import_closure_and_cache_variable_census() -> None:
     assert "TG_SESSION_DAEMON_AUTOSTART" in HARNESS.read_text(encoding="utf-8")
 
 
+def test_scoring_import_closure_rejects_external_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    scoring = tmp_path / "retrieval_scoring.py"
+    scoring.write_text("import external_scoring_package\n", encoding="utf-8")
+    monkeypatch.setattr(harness, "SCORING", scoring)
+    with pytest.raises(harness.HarnessError, match="non_stdlib_import: external_scoring_package"):
+        harness.assert_stdlib_import_closure(HARNESS)
+
+
 def test_case_environment_confines_home_and_scrubs_inherited_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -632,6 +643,144 @@ def test_protected_workflow_and_patch_bytes_contract() -> None:
     assert "baseline_delta.md" in gate_workflow
 
 
+def test_report_rejects_replaced_baseline_binary_after_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    work = tmp_path / "work"
+    binary = work / "build/baseline/tg"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"original baseline executable")
+    runtime = {"binary_version": "9.9.9", "binary_sha256": harness._sha256(binary.read_bytes())}
+    harness._write_json(work / "build/baseline/runtime.json", runtime)
+    binary.write_bytes(b"replacement that reports version 9.9.9")
+    sha = "a" * 40
+    run_dir = work / "runs" / sha / "baseline/find/first"
+    (run_dir / "repo").mkdir(parents=True)
+    harness._write_json(
+        run_dir / "case.json",
+        {"sha": sha, "parent": "b" * 40, "query": "query", "tokens": ["query"]},
+    )
+    harness._write_json(work / "environment.json", {})
+    executed: list[bytes] = []
+
+    def fake_git(repo: Path, *args: str, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        output = b"b" * 40 if args[:2] == ("rev-parse", "HEAD") else b""
+        return subprocess.CompletedProcess([], 0, output, b"")
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        executed.append(Path(argv[0]).read_bytes())
+        return subprocess.CompletedProcess(argv, 1, b'{"total_matches":0,"matches":[]}', b"")
+
+    monkeypatch.setattr(harness, "_git", fake_git)
+    monkeypatch.setattr(harness, "_run", fake_run)
+    row = harness.worker_evaluate(
+        run_dir, work / "build", subject="baseline", arm="find", confined=False
+    )
+    assert executed == [b"replacement that reports version 9.9.9"]
+    assert row["runtime"]["binary_sha256"] == runtime["binary_sha256"]
+    monkeypatch.setattr(harness, "_selected_runs", lambda *args: [(run_dir, "find")])
+    monkeypatch.setattr(harness, "load_scoring", lambda: None)
+    monkeypatch.setattr(harness, "score_payload", lambda *args: {})
+    monkeypatch.setattr(harness, "aggregate_scores", lambda *args: {})
+    monkeypatch.setattr(harness, "evaluator_sha256", lambda: "fixed")
+    manifest = {"cases": [{"sha": sha, "split": "heldout", "diff_impact_eligible": False}]}
+    with pytest.raises(harness.HarnessError, match="runtime_binary_hash_mismatch:baseline"):
+        harness._collect_report(manifest, "baseline", work)
+
+
+def test_repeat_prediction_mismatch_fails_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    work = tmp_path / "work"
+    binary = work / "build/head/tg"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"head executable")
+    runtime = {"binary_sha256": harness._sha256(binary.read_bytes())}
+    harness._write_json(work / "build/head/runtime.json", runtime)
+    sha = "a" * 40
+    runs = [work / "runs" / sha / "head/find" / name for name in ("first", "repeat")]
+    for run_dir, prediction in zip(runs, (["src/a.py"], ["src/b.py"]), strict=True):
+        harness._write_json(
+            run_dir / "result.json",
+            {
+                "sha": sha,
+                "arm": "find",
+                "payload": {},
+                "prediction": prediction,
+                "runtime": runtime,
+            },
+        )
+    monkeypatch.setattr(harness, "_selected_runs", lambda *args: [(run, "find") for run in runs])
+    monkeypatch.setattr(harness, "load_scoring", lambda: None)
+    monkeypatch.setattr(harness, "score_payload", lambda *args: {})
+    manifest = {"cases": [{"sha": sha, "split": "heldout", "diff_impact_eligible": False}]}
+    with pytest.raises(harness.HarnessError, match=f"determinism_mismatch:{sha}:find"):
+        harness._collect_report(manifest, "head", work)
+
+
+def test_baseline_build_rejects_wrong_binary_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    subject = tmp_path / "build/baseline"
+    package_file = subject / "venv/lib/python3.12/site-packages/tensor_grep/__init__.py"
+    package_file.parent.mkdir(parents=True)
+    (subject / "tg").write_bytes(b"replacement")
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[1:] == ["--version"]:
+            output = b"tg 9.9.9"
+        elif argv[1] == "-c":
+            output = json.dumps({"file": str(package_file), "version": "9.9.9"}).encode("utf-8")
+        else:
+            output = b'{"version":"9.9.9"}'
+        return subprocess.CompletedProcess(argv, 0, output, b"")
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    with pytest.raises(harness.HarnessError, match="baseline_binary_version_mismatch"):
+        harness._runtime_identity("baseline", tmp_path / "build")
+
+
+def test_head_build_cannot_replace_baseline_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    work = tmp_path / "work"
+    for subject in ("baseline", "head"):
+        (work / "build" / subject / "tree").mkdir(parents=True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        tree = Path(kwargs["cwd"])
+        target = tree.parent
+        if argv[0] == "cargo":
+            built = target / "cargo-target/release/tg"
+            built.parent.mkdir(parents=True)
+            built.write_bytes(b"baseline" if target.name == "baseline" else b"head")
+            if target.name == "head":
+                (work / "build/baseline/tg").write_bytes(b"replacement")
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    def fake_identity(subject: str, build: Path) -> tuple[Path, Path, dict[str, str]]:
+        target = build / subject
+        return (
+            target / "tg",
+            target / "venv",
+            {
+                "binary_version": "1.126.0",
+                "binary_sha256": harness._sha256((target / "tg").read_bytes()),
+            },
+        )
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    monkeypatch.setattr(harness, "_runtime_identity", fake_identity)
+    monkeypatch.setattr(harness, "environment_identity", lambda: {})
+    monkeypatch.setattr(harness, "_read_only_tree", lambda *args: None)
+    with pytest.raises(harness.HarnessError, match="runtime_binary_hash_mismatch:baseline"):
+        harness.worker_build(tmp_path, work)
+
+
 def test_protected_label_check_has_required_ruleset_documentation() -> None:
     workflow = (
         harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
@@ -643,6 +792,21 @@ def test_protected_label_check_has_required_ruleset_documentation() -> None:
     assert "Git history retrieval protection / protected-change-label" in docs
     assert "Require status checks to pass" in docs
     assert "eval-baseline-update" in docs
+
+
+def test_protection_workflow_requires_label_for_every_protected_pr() -> None:
+    workflow = (
+        harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
+    ).read_text(encoding="utf-8")
+    assert "pull_request_target:" in workflow
+    assert "types: [opened, synchronize, reopened, labeled, unlabeled]" in workflow
+    assert "continue-on-error" not in workflow
+    assert "path === '.github/workflows/git-history-retrieval-protection.yml'" in workflow
+    assert (
+        "const labels = context.payload.pull_request.labels.map((label) => label.name);" in workflow
+    )
+    assert "if (changed.length && !labels.includes('eval-baseline-update'))" in workflow
+    assert "core.setFailed('protected_change_unlabelled: '" in workflow
 
 
 def test_prepare_mounts_patches_at_worker_path(
@@ -977,6 +1141,27 @@ def test_evaluator_interpreter_is_outside_subject_build(
     assert 'str(build / "harness-venv")' not in harness, "subject_pth_survives_venv_creation"
 
 
+def test_subject_pth_positive_control_does_not_run_in_evaluator(tmp_path: Path) -> None:
+    worker = harness_root() / "benchmarks/git_history_retrieval/worker.py"
+    site = tmp_path / "build/subject/venv/lib/python3.12/site-packages"
+    site.mkdir(parents=True)
+    marker = tmp_path / "pth-executed"
+    (site / "subject.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('poison')\n",
+        encoding="utf-8",
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", f"import site; site.addsitedir({str(site)!r})"],
+        capture_output=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr.decode("utf-8", errors="replace")
+    assert marker.read_text(encoding="utf-8") == "poison"
+    marker.unlink()
+    subprocess.run([sys.executable, str(worker), "evaluate"], capture_output=True, check=False)
+    assert not marker.exists(), "subject_pth_executed_in_evaluator"
+
+
 @pytest.mark.parametrize(
     ("status", "filename", "previous_filename"),
     [
@@ -1041,7 +1226,39 @@ def test_host_cleanup_ignores_unremovable_build_tree(
     )
     monkeypatch.setattr(harness, "_revision_checkout", stop)
     monkeypatch.setattr(harness, "_docker_run", stop)
-    with pytest.raises(PermissionError, match="root_owned_build_cleanup_can_fail_gate"):
+    with pytest.raises(harness.HarnessError, match="stop_after_cleanup_probe"):
+        harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
+
+
+def test_host_cleanup_preserves_evaluation_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness, source, _, manifest, out = generated(tmp_path)
+    harness._write_json(out / "manifest.json", manifest)
+
+    class RootOwnedTree:
+        def __init__(self, *, prefix: str, ignore_cleanup_errors: bool = False) -> None:
+            self.ignore_cleanup_errors = ignore_cleanup_errors
+
+        def __enter__(self) -> str:
+            work = tmp_path / "root-owned-work"
+            work.mkdir()
+            return str(work)
+
+        def __exit__(self, *args: object) -> None:
+            if not self.ignore_cleanup_errors:
+                raise PermissionError("root_owned_cleanup_masked_evaluation_failure")
+
+    def stop(*args: object, **kwargs: object) -> None:
+        raise harness.HarnessError("evaluation_failure")
+
+    monkeypatch.setattr(harness.tempfile, "TemporaryDirectory", RootOwnedTree)
+    monkeypatch.setattr(harness, "preflight_source", lambda *args: None)
+    monkeypatch.setattr(
+        harness, "_run", lambda *args, **kwargs: subprocess.CompletedProcess([], 0, b"", b"")
+    )
+    monkeypatch.setattr(harness, "_revision_checkout", stop)
+    with pytest.raises(harness.HarnessError, match="evaluation_failure"):
         harness.orchestrate(source, out / "manifest.json", tmp_path / "report.json", subject="head")
 
 
