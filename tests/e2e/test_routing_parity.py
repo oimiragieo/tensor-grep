@@ -281,6 +281,22 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
         ),
         ("malformed", "language: [\n", [], 1, "cannot parse linked rule rules/probe.yml:", None),
         (
+            "duplicate_language",
+            "language: json\nlanguage: python\n",
+            [],
+            1,
+            "cannot parse linked rule rules/probe.yml: duplicate key 'language'",
+            None,
+        ),
+        (
+            "malformed_config_fallback",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml:",
+            None,
+        ),
+        (
             "unsupported",
             "language: unknown-language\n",
             [],
@@ -317,6 +333,8 @@ def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, l
         "explicit_over_linked",
         "explicit_over_malformed",
         "malformed",
+        "duplicate_language",
+        "malformed_config_fallback",
         "unsupported",
         "blank_explicit",
         "symlink",
@@ -342,7 +360,9 @@ def test_new_test_language_resolution_parity(
         rules_dir.mkdir(parents=True)
         if case != "no_config":
             config_yaml = (
-                "language: [\n" if case == "explicit_over_malformed_config" else "language: json\n"
+                "language: [\n"
+                if case in {"explicit_over_malformed_config", "malformed_config_fallback"}
+                else "language: json\n"
             )
             (project_dir / "sgconfig.yml").write_text(config_yaml, encoding="utf-8")
         rule_path = rules_dir / "probe.yml"
@@ -357,6 +377,11 @@ def test_new_test_language_resolution_parity(
         elif rule_yaml is not None:
             rule_path.write_text(rule_yaml, encoding="utf-8")
 
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
         result = run_command(launcher, ["new", "test", "probe", *args, "--yes"], cwd=project_dir)
         message = (result.stdout + result.stderr).strip().replace("tg.exe", "tg")
         written = {
@@ -367,7 +392,15 @@ def test_new_test_language_resolution_parity(
         outcomes[launcher] = (result.returncode, message, written)
         assert result.returncode == expected_code, message
         assert expected_message in message
+        if case == "duplicate_language":
+            assert message == f"Error: {expected_message}"
+        if case == "malformed_config_fallback":
+            assert message == "Error: cannot parse sgconfig.yml: invalid YAML syntax"
         assert (project_dir / "tests" / "probe.yml").exists() == (expected_code == 0)
+        if expected_code == 1:
+            assert written == before
+            assert not (project_dir / "tests").exists()
+            assert "Traceback" not in message
         if expected_valid is not None:
             generated_test = yaml.safe_load(
                 (project_dir / "tests" / "probe.yml").read_text(encoding="utf-8")

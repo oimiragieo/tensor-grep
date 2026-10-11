@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from pathlib import Path
+from typing import cast
+
+import yaml
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 
@@ -42,6 +45,26 @@ _AST_RULE_SCAFFOLD_EXAMPLES = {
     "rust": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
     "typescript": ("TODO_REPLACE_ME($$$ARGS)", "other(1)", "TODO_REPLACE_ME(1)"),
 }
+
+
+class _DuplicateYamlKeyError(yaml.YAMLError):
+    pass
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[object, object]:
+        mapping: dict[object, object] = {}
+        construct = cast(Callable[..., object], self.construct_object)
+        for key_node, value_node in node.value:
+            key = construct(key_node, deep=deep)
+            if not isinstance(key, Hashable):
+                raise yaml.constructor.ConstructorError(
+                    None, None, "found unhashable key", key_node.start_mark
+                )
+            if key in mapping:
+                raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
+            mapping[key] = construct(value_node, deep=deep)
+        return mapping
 
 
 def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:
@@ -84,10 +107,10 @@ def _linked_ast_rule_language(
     label = f"{rule_path.parent.name}/{rule_path.name}"
     if rule_path.is_symlink() or not rule_path.is_file():
         raise ValueError(f"linked rule must be a regular file: {label}")
-    import yaml
-
     try:
-        rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+        rule = yaml.load(rule_path.read_text(encoding="utf-8"), Loader=_UniqueKeyLoader)
+    except _DuplicateYamlKeyError as exc:
+        raise ValueError(f"cannot parse linked rule {label}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise ValueError(f"cannot parse linked rule {label}: invalid YAML syntax") from exc
     except UnicodeDecodeError as exc:
@@ -101,12 +124,15 @@ def _linked_ast_rule_language(
 
 
 def _ast_project_default_language(base_dir: Path) -> str:
-    import yaml
-
     config_path = base_dir / "sgconfig.yml"
     if not config_path.is_file():
         return "python"
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    try:
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError("cannot parse sgconfig.yml: invalid YAML syntax") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError("cannot parse sgconfig.yml: invalid UTF-8") from exc
     if not isinstance(config, dict):
         return "python"
     language = config.get("language")

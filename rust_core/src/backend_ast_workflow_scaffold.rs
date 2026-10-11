@@ -69,7 +69,8 @@ fn project_default_language(base_dir: &Path) -> Result<String> {
     let config_path = base_dir.join("sgconfig.yml");
     match fs::read_to_string(&config_path) {
         Ok(contents) => {
-            let config: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+            let config: serde_yaml::Value = serde_yaml::from_str(&contents)
+                .map_err(|_| anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax"))?;
             Ok(config
                 .get("language")
                 .and_then(serde_yaml::Value::as_str)
@@ -105,8 +106,17 @@ pub(super) fn write_test(
                         error.into()
                     }
                 })?;
-                let rule: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|_| {
-                    anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
+                let rule: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|error| {
+                    if error
+                        .to_string()
+                        .starts_with("duplicate entry with key \"language\"")
+                    {
+                        anyhow::anyhow!(
+                            "cannot parse linked rule {label}: duplicate key 'language'"
+                        )
+                    } else {
+                        anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
+                    }
                 })?;
                 if !rule.is_mapping() {
                     anyhow::bail!("cannot parse linked rule {label}: expected a YAML mapping")
