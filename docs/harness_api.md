@@ -1553,7 +1553,7 @@ frames defensively and still writes newline-delimited JSON-RPC responses to stdo
 ### MCP 1.17.0 migration note
 
 The 10 meta-tools advertise their supported `action` values in `tools/list`. Tool responses
-whose JSON body contains a top-level `error` object now set MCP `isError: true`; clients that
+whose JSON body contains a **non-empty** top-level `error` object now set MCP `isError: true`; clients that
 inspected `error` in the body keep working; `isError` is now true for those responses. A
 partial response with `result_incomplete: true` and no `error` remains a non-error result.
 

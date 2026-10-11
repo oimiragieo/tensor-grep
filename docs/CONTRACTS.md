@@ -124,7 +124,7 @@ MCP execution and diagnostic probes:
 
 - MCP contract 1.17.0 advertises each of the 10 meta-tools' valid `action` values in
   `tools/list` while leaving runtime action validation and its structured `unknown_action`
-  response unchanged. Any MCP tool result whose JSON body has a top-level `error` object sets
+  response unchanged. Any MCP tool result whose JSON body has a **non-empty** top-level `error` object sets
   protocol `isError: true` and preserves the JSON text; responses without `error`, including
   partial results with `result_incomplete: true`, remain `isError: false`.
 - `tg doctor PATH --json` adds `checkout_environment`, a bounded read-only inspection of PATH's `pyproject.toml` and Windows/POSIX `.venv` metadata. Only editable metadata pointing to that selected checkout can be diagnosed as `stale_editable`; missing, unrelated, unverified, and ambiguous environments have distinct statuses. It does not run the checkout interpreter or repair it. Refresh stale editable metadata with `uv run --refresh-package tensor-grep tg --version` in that checkout, then run checkout harnesses with its environment interpreter.
