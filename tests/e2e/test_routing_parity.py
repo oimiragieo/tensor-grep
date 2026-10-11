@@ -465,6 +465,50 @@ def test_new_test_language_resolution_parity(
     assert outcomes["python-m"] == outcomes["native"]
 
 
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+@pytest.mark.parametrize("merge_form", ["block", "inline"])
+def test_new_test_inherits_merged_yaml_language_across_front_doors(
+    tmp_path: Path, location: str, merge_form: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    defaults = (
+        "defaults: &d\n  language: json\n"
+        if merge_form == "block"
+        else "defaults: &d {language: json}\n"
+    )
+    generated: dict[str, bytes] = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        config = "ruleDirs: [rules]\ntestDirs: [tests]\n"
+        if location == "config":
+            config += defaults + "<<: *d\n"
+        else:
+            config += "language: python\n"
+            (rules_dir / "probe.yml").write_text(
+                defaults + '<<: *d\nid: probe\nrule:\n  pattern: "\\"TODO_REPLACE_ME\\""\n',
+                encoding="utf-8",
+            )
+        (project_dir / "sgconfig.yml").write_text(config, encoding="utf-8")
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+        scaffold = project_dir / "tests" / "probe.yml"
+        generated[launcher] = scaffold.read_bytes()
+        assert yaml.safe_load(generated[launcher])["valid"] == ['"OTHER_IDENTIFIER"'], launcher
+
+        if location == "config":
+            (rules_dir / "probe.yml").write_text(
+                'id: probe\nrule:\n  pattern: "\\"TODO_REPLACE_ME\\""\n',
+                encoding="utf-8",
+            )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    assert generated["python-m"] == generated["native"]
+
+
 @pytest.mark.parametrize("kind", ["project", "rule", "test"])
 def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
     _skip_if_native_binary_missing("native")

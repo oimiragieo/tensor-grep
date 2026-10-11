@@ -79,19 +79,23 @@ fn project_default_language(base_dir: &Path) -> Result<String> {
     }
     match fs::read_to_string(&config_path) {
         Ok(contents) => {
-            let config: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|error| {
-                let message = error.to_string();
-                if let Some(entry) = message.strip_prefix("duplicate entry with key ") {
-                    let key = entry
-                        .split(" at line ")
-                        .next()
-                        .unwrap_or(entry)
-                        .trim_matches('"');
-                    anyhow::anyhow!("cannot parse sgconfig.yml: duplicate key '{key}'")
-                } else {
-                    anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax")
-                }
-            })?;
+            let mut config: serde_yaml::Value =
+                serde_yaml::from_str(&contents).map_err(|error| {
+                    let message = error.to_string();
+                    if let Some(entry) = message.strip_prefix("duplicate entry with key ") {
+                        let key = entry
+                            .split(" at line ")
+                            .next()
+                            .unwrap_or(entry)
+                            .trim_matches('"');
+                        anyhow::anyhow!("cannot parse sgconfig.yml: duplicate key '{key}'")
+                    } else {
+                        anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax")
+                    }
+                })?;
+            config
+                .apply_merge()
+                .map_err(|_| anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax"))?;
             Ok(config
                 .get("language")
                 .and_then(serde_yaml::Value::as_str)
@@ -127,17 +131,21 @@ pub(super) fn write_test(
                         error.into()
                     }
                 })?;
-                let rule: serde_yaml::Value = serde_yaml::from_str(&contents).map_err(|error| {
-                    if error
-                        .to_string()
-                        .starts_with("duplicate entry with key \"language\"")
-                    {
-                        anyhow::anyhow!(
-                            "cannot parse linked rule {label}: duplicate key 'language'"
-                        )
-                    } else {
-                        anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
-                    }
+                let mut rule: serde_yaml::Value =
+                    serde_yaml::from_str(&contents).map_err(|error| {
+                        if error
+                            .to_string()
+                            .starts_with("duplicate entry with key \"language\"")
+                        {
+                            anyhow::anyhow!(
+                                "cannot parse linked rule {label}: duplicate key 'language'"
+                            )
+                        } else {
+                            anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
+                        }
+                    })?;
+                rule.apply_merge().map_err(|_| {
+                    anyhow::anyhow!("cannot parse linked rule {label}: invalid YAML syntax")
                 })?;
                 if !rule.is_mapping() {
                     anyhow::bail!("cannot parse linked rule {label}: expected a YAML mapping")

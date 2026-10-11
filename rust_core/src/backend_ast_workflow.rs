@@ -722,8 +722,13 @@ impl AstWorkflowOrchestrator {
     pub fn load_config(&self) -> Result<AstProjectConfig> {
         let content =
             fs::read_to_string(&self.config_path).context("Failed to read sgconfig.yml")?;
-        let config: AstProjectConfig =
+        let mut value: serde_yaml::Value =
             serde_yaml::from_str(&content).context("Failed to parse sgconfig.yml")?;
+        value
+            .apply_merge()
+            .context("Failed to parse sgconfig.yml")?;
+        let config: AstProjectConfig =
+            serde_yaml::from_value(value).context("Failed to parse sgconfig.yml")?;
         Ok(config)
     }
 
@@ -836,7 +841,8 @@ impl AstWorkflowOrchestrator {
                 meta.insert(path.to_string_lossy().to_string(), ns);
 
                 let content = fs::read_to_string(path)?;
-                let payload: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                let mut payload: serde_yaml::Value = serde_yaml::from_str(&content)?;
+                payload.apply_merge()?;
 
                 if let Some(rules) = payload.get("rules").and_then(|v| v.as_sequence()) {
                     for (idx, item) in rules.iter().enumerate() {
