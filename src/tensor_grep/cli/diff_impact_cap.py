@@ -18,7 +18,9 @@ def risk_cap_evidence_status(changed_symbols: list[dict[str, Any]], lookup_compl
 def collect_test_reference_evidence(
     changed_symbols: list[dict[str, Any]],
     repo_map_payload: dict[str, Any],
-    reference_lookup: Callable[[dict[str, Any], str, float | None, int | None], tuple[bool, bool]],
+    reference_lookup: Callable[
+        [dict[str, Any], str, float | None, int | None, tuple[str, ...]], tuple[bool, bool]
+    ],
     *,
     deadline_monotonic: float | None,
     max_repo_files: int | None,
@@ -29,6 +31,10 @@ def collect_test_reference_evidence(
     has_test_reference = False
     if not analysis_complete or not changed_symbols:
         return False, False
+    origins_by_name: dict[str, set[str]] = {}
+    for symbol in changed_symbols:
+        name = str(symbol.get("name", ""))
+        origins_by_name.setdefault(name, set()).add(str(symbol.get("file", "")))
     evidence_by_name: dict[str, tuple[bool, bool]] = {}
     for symbol in changed_symbols:
         name = str(symbol.get("name", ""))
@@ -40,7 +46,11 @@ def collect_test_reference_evidence(
             break
         if name not in evidence_by_name:
             evidence_by_name[name] = reference_lookup(
-                repo_map_payload, name, deadline_monotonic, max_repo_files
+                repo_map_payload,
+                name,
+                deadline_monotonic,
+                max_repo_files,
+                tuple(sorted(origins_by_name[name])),
             )
         refs_complete, referenced = evidence_by_name[name]
         if not refs_complete:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -11,11 +13,69 @@ from tensor_grep.cli import repo_map
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
 
 
+def _opened_file_path(fd: int) -> Path:
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+
+        get_name = ctypes.windll.kernel32.GetFinalPathNameByHandleW
+        get_name.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
+        get_name.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_name(msvcrt.get_osfhandle(fd), buffer, len(buffer), 0)
+        if not length or length >= len(buffer):
+            raise OSError("opened file path unavailable")
+        name = buffer.value
+        if name.startswith("\\\\?\\UNC\\"):
+            name = "\\\\" + name[8:]
+        elif name.startswith("\\\\?\\"):
+            name = name[4:]
+        return Path(name)
+    return Path(os.readlink(f"/proc/self/fd/{fd}"))
+
+
+def _origin_modules(root: Path, origin_files: tuple[str, ...]) -> set[str]:
+    modules: set[str] = set()
+    for raw_origin in origin_files:
+        origin = Path(raw_origin)
+        if origin.is_absolute():
+            origin = origin.relative_to(root)
+        if origin.suffix.lower() != ".py" or ".." in origin.parts:
+            continue
+        parts = list(origin.with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        if parts:
+            modules.add(".".join(parts))
+        if len(parts) > 1 and parts[0] == "src":
+            modules.add(".".join(parts[1:]))
+    return modules
+
+
+def _import_module(node: ast.ImportFrom, importer: Path, root: Path) -> str | None:
+    if not node.level:
+        return node.module
+    package = list(importer.relative_to(root).parts[:-1])
+    if node.level > len(package):
+        return None
+    prefix = package[: len(package) - node.level + 1]
+    return ".".join([*prefix, *node.module.split(".")]) if node.module else ".".join(prefix)
+
+
 def _python_import_reference(
-    repo_map_payload: dict[str, Any], symbol: str, deadline_monotonic: float | None
+    repo_map_payload: dict[str, Any],
+    symbol: str,
+    deadline_monotonic: float | None,
+    origin_files: tuple[str, ...],
 ) -> tuple[bool, bool]:
     files, tests = repo_map._repo_map_file_and_test_universe(repo_map_payload)
     root = repo_map._repo_map_root_dir(repo_map_payload)
+    try:
+        origin_modules = _origin_modules(root, origin_files)
+    except (OSError, ValueError):
+        return False, False
+    if not origin_modules:
+        return True, False
     max_bytes = repo_map._max_parse_bytes()
     for path in [*files, *tests]:
         if path.suffix.lower() != ".py":
@@ -26,14 +86,25 @@ def _python_import_reference(
             return False, False
         try:
             with path.open("rb") as source_file:
+                opened_path = _opened_file_path(source_file.fileno())
+                opened_path.relative_to(root)
+                opened_stat = os.fstat(source_file.fileno())
+                current_stat = path.stat()
+                if (opened_stat.st_dev, opened_stat.st_ino) != (
+                    current_stat.st_dev,
+                    current_stat.st_ino,
+                ):
+                    return False, False
                 raw = source_file.read(max_bytes + 1)
             if len(raw) > max_bytes:
                 return False, False
             tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
-        except (OSError, UnicodeError, SyntaxError):
+        except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
         if any(
-            isinstance(node, ast.ImportFrom) and any(alias.name == symbol for alias in node.names)
+            isinstance(node, ast.ImportFrom)
+            and _import_module(node, path, root) in origin_modules
+            and any(alias.name == symbol for alias in node.names)
             for node in ast.walk(tree)
         ):
             return True, True
@@ -45,6 +116,7 @@ def _test_reference_evidence(
     symbol: str,
     deadline_monotonic: float | None,
     max_repo_files: int | None,
+    origin_files: tuple[str, ...] = (),
     lookup_incomplete: list[str] | None = None,
 ) -> tuple[bool, bool]:
     """Return complete-reference-data and whether a test reference or Python import exists."""
@@ -113,7 +185,7 @@ def _test_reference_evidence(
     if has_test_reference:
         return True, True
     imports_complete, has_import_reference = _python_import_reference(
-        repo_map_payload, symbol, deadline_monotonic
+        repo_map_payload, symbol, deadline_monotonic, origin_files
     )
     if not imports_complete and lookup_incomplete is not None:
         lookup_incomplete.append("test_reference_lookup_incomplete")

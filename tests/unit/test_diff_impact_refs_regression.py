@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 from typer.testing import CliRunner
 
 import tensor_grep.cli.diff_impact as di
+import tensor_grep.cli.diff_impact_refs as diff_impact_refs
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import app
 
@@ -370,3 +372,125 @@ def test_refs_lookup_failure_is_dispositioned_and_disables_cap(
         and record["category"] == "INTENTIONAL-BOUNDARY"
         for record in ledger
     ), "refs lookup failure boundary has no disposition record"
+
+
+def test_symlink_swap_during_import_read_disables_cap_and_preserves_gate(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    link = tmp_path / "consumer.py"
+    link.write_text("value = 1\n", encoding="utf-8")
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
+    outside.write_text("from pkg.core import dormant\n", encoding="utf-8")
+    baseline = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+    assert baseline["risk_tier"] == "medium"
+    assert baseline["risk_cap_evidence"] == "complete"
+
+    real_open = Path.open
+    armed = False
+    swapped = False
+    real_refs = repo_map.build_symbol_refs_from_map
+
+    def arm_after_refs(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal armed
+        result = real_refs(*args, **kwargs)
+        armed = True
+        return result
+
+    def swap_before_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        nonlocal swapped
+        if armed and path == link and not swapped:
+            link.unlink()
+            link.symlink_to(outside)
+            swapped = True
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", arm_after_refs)
+    monkeypatch.setattr(Path, "open", swap_before_open)
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert swapped
+    assert link.is_symlink()
+    assert os.path.samefile(link, outside)
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "critical"]).exit_code == 2
+
+
+def test_parser_recursion_disables_cap_and_returns_completed_payload(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "consumer.py").write_text("value = 1\n", encoding="utf-8")
+    baseline = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+    assert baseline["risk_tier"] == "medium"
+
+    real_refs = repo_map.build_symbol_refs_from_map
+    real_parse = diff_impact_refs.ast.parse
+    armed = False
+
+    def arm_after_refs(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal armed
+        result = real_refs(*args, **kwargs)
+        armed = True
+        return result
+
+    def deep_expression_parse(source: Any, *args: Any, **kwargs: Any) -> Any:
+        if armed and isinstance(source, str) and source.startswith("def dormant():"):
+            raise RecursionError("deep expression parser recursion")
+        return real_parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "build_symbol_refs_from_map", arm_after_refs)
+    monkeypatch.setattr(diff_impact_refs.ast, "parse", deep_expression_parse)
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    assert {
+        key: value
+        for key, value in payload.items()
+        if key not in {"risk_tier", "risk_reasons", "risk_cap_evidence"}
+    } == {
+        key: value
+        for key, value in baseline.items()
+        if key not in {"risk_tier", "risk_reasons", "risk_cap_evidence"}
+    }
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--json"]).exit_code == 0
+
+
+def test_deep_expression_parser_failure_marks_reference_incomplete(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    deep_file = tmp_path / "consumer.py"
+    deep_file.write_text("value = " + "+" * 10000 + "1\n", encoding="utf-8")
+    repo_map_payload = {"path": str(tmp_path), "files": [str(deep_file)], "tests": []}
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_refs_from_map",
+        lambda *args, **kwargs: {"references": [], "string_refs": []},
+    )
+
+    assert diff_impact_refs._test_reference_evidence(
+        repo_map_payload, "dormant", None, None, ("app.py",)
+    ) == (False, False)
+
+
+@pytest.mark.parametrize("consumer_name", ["consumer.py", "test_consumer.py"])
+def test_unrelated_module_import_does_not_disable_uncalled_cap(
+    tmp_path: Path, consumer_name: str
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / consumer_name).write_text(
+        "from unrelated_library import dormant\n", encoding="utf-8"
+    )
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "medium"
+    assert "capped_uncalled_symbols" in payload["risk_reasons"]
