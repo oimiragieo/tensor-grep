@@ -73,12 +73,23 @@ def _ast_test_scaffold_contents(name: str, lang: str) -> str:
     return f"id: {quoted_name}\nruleId: {quoted_name}\nvalid:\n  - {json.dumps(valid, ensure_ascii=False)}\ninvalid:\n  - {json.dumps(invalid, ensure_ascii=False)}\n"
 
 
+def _linked_ast_rule_language(rule_path: Path, default_language: str) -> str:
+    if not os.path.lexists(rule_path):
+        return default_language
+    import yaml
+
+    rule = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+    if not isinstance(rule, dict) or not isinstance(rule.get("language"), str):
+        raise ValueError(f"Linked rule {rule_path} has no language.")
+    return str(rule["language"])
+
+
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
     # `lang` is interpolated into a hand-formatted YAML rule below; a newline would inject
     # sibling keys. Sibling `name` is already validated -- this closes the asymmetry without
     # rejecting real language spellings like `c++`/`c#`.
     if not lang.strip() or any(c in lang for c in "\r\n"):
-        raise ValueError(f"Invalid --lang {lang!r}; use a bare language name.")
+        raise ValueError(f"Invalid --lang {json.dumps(lang)}; use a bare language name.")
     import yaml
 
     config_path = base_dir / "sgconfig.yml"

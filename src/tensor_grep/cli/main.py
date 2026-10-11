@@ -10434,6 +10434,8 @@ def new(
     _ = yes
     scaffold_kind = command or "project"
     try:
+        if not lang.strip():
+            raise ValueError(f"Error: Invalid --lang {json.dumps(lang)}; use a bare language name.")
         if scaffold_kind == "project":
             project_dir = base_dir
             if name is not None:
@@ -10469,7 +10471,10 @@ def new(
             target_path = target_dir / f"{name}.yml"
             contents = _ast_rule_scaffold_contents(name, lang)
         elif scaffold_kind == "test":
-            from tensor_grep.cli.ast_scaffold import _ast_test_scaffold_contents
+            from tensor_grep.cli.ast_scaffold import (
+                _ast_test_scaffold_contents,
+                _linked_ast_rule_language,
+            )
 
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["test_dirs"])[0]
@@ -10477,7 +10482,13 @@ def new(
                 else base_dir / "tests"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = _ast_test_scaffold_contents(name, lang)
+            rule_dir = (
+                cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["rule_dirs"])[0]
+                if project_cfg is not None
+                else base_dir / "rules"
+            )
+            rule_language = _linked_ast_rule_language(rule_dir / f"{name}.yml", lang)
+            contents = _ast_test_scaffold_contents(name, rule_language)
         else:
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(str, project_cfg["utils_dir"])

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tensor_grep.backends.ast_backend import get_supported_languages
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
@@ -224,6 +225,53 @@ def test_new_rule_and_test_scaffolds_match_and_pass_test_across_front_doors(tmp_
     assert generated["python-m"] == generated["native"]
 
 
+@pytest.mark.parametrize("language", get_supported_languages())
+def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, language: str):
+    _skip_if_native_binary_missing("native")
+    generated = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        for args in (
+            ["new", "project", "--yes"],
+            ["new", "rule", "linked", "--lang", language, "--yes"],
+            ["new", "test", "linked", "--yes"],
+        ):
+            result = run_command(launcher, args, cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+        generated[launcher] = (
+            (project_dir / "rules" / "linked.yml").read_bytes(),
+            (project_dir / "tests" / "linked.yml").read_bytes(),
+        )
+    assert generated["python-m"] == generated["native"]
+
+
+@pytest.mark.parametrize("kind", ["project", "rule", "test"])
+def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        args = ["new", kind, *([] if kind == "project" else ["blank"]), "--lang", "   ", "--yes"]
+        result = run_command(launcher, args, cwd=project_dir)
+        outcomes.append((result.returncode, result.stdout + result.stderr))
+        assert list(project_dir.iterdir()) == []
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0] != 0
+
+
+@pytest.mark.parametrize("launcher", ["python-m", "native"])
+def test_run_java_rewrite_keeps_baseline_refusal(tmp_path: Path, launcher: str):
+    _skip_if_native_binary_missing(launcher)
+    (tmp_path / "Test.java").write_text("x", encoding="utf-8")
+    result = run_command(launcher, ["run", "--lang", "java", "-p", "x", str(tmp_path), "-r", "y"])
+    assert result.returncode == 2
+    assert "Unsupported language: java" in (result.stdout + result.stderr)
+
+
 @pytest.mark.parametrize("language", [" Python ", "PY", "c++"])
 def test_new_scaffold_normalizes_language_across_front_doors(tmp_path: Path, language: str):
     _skip_if_native_binary_missing("native")
@@ -403,6 +451,11 @@ def test_native_run_matches_each_scaffold_invalid_snippet_only(tmp_path: Path):
             result = run_command(
                 "native", ["run", "--lang", language, "-p", pattern, str(fixture), "--json"]
             )
+            if language not in {"python", "javascript", "typescript", "rust"}:
+                assert result.returncode == 2
+                assert result.stdout == ""
+                assert result.stderr == f"Error: Unsupported language: {language}\n"
+                continue
             assert result.returncode == (0 if expected else 1), (
                 f"{language} {snippet!r}: {result.stdout}{result.stderr}"
             )

@@ -1,4 +1,6 @@
 use anyhow::Result;
+use ast_grep_core::{tree_sitter::LanguageExt, Pattern};
+use ast_grep_language::SupportLang;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -12,6 +14,16 @@ pub(super) fn validate_new_name(name: &str) -> Result<()> {
             .all(|c| c.is_ascii_alphanumeric() || "_.~#-".contains(c))
     {
         anyhow::bail!("Invalid item name {name:?}; use letters, digits, _, ., ~, #, or -.");
+    }
+    Ok(())
+}
+
+pub(super) fn validate_language_arg(language: &str) -> Result<()> {
+    if language.trim().is_empty() {
+        anyhow::bail!(
+            "Invalid --lang {}; use a bare language name.",
+            serde_json::to_string(language)?
+        );
     }
     Ok(())
 }
@@ -54,7 +66,19 @@ pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<
 }
 
 pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<()> {
-    let language = normalize_language(language)?;
+    let linked_rule = base_dir.join("rules").join(format!("{name}.yml"));
+    let linked_language = match fs::read_to_string(&linked_rule) {
+        Ok(contents) => {
+            let rule: serde_yaml::Value = serde_yaml::from_str(&contents)?;
+            rule.get("language")
+                .and_then(serde_yaml::Value::as_str)
+                .ok_or_else(|| anyhow::anyhow!("Linked rule {:?} has no language.", linked_rule))?
+                .to_string()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => language.to_string(),
+        Err(error) => return Err(error.into()),
+    };
+    let language = normalize_language(&linked_language)?;
     let (_, valid, invalid) = rule_examples(language)?;
     let tests_dir = base_dir.join("tests");
     fs::create_dir_all(&tests_dir)?;
@@ -75,6 +99,7 @@ pub(super) fn write_test(base_dir: &Path, name: &str, language: &str) -> Result<
 }
 
 fn normalize_language(language: &str) -> Result<&'static str> {
+    validate_language_arg(language)?;
     let normalized = language.trim().to_lowercase();
     let canonical = match normalized.as_str() {
         "bash" | "sh" => "bash",
@@ -122,4 +147,28 @@ fn rule_examples(language: &str) -> Result<(&'static str, &'static str, &'static
         }
         _ => anyhow::bail!("Cannot scaffold AST rule for language {language:?}: no validated pattern example is available for `tg test` on both front doors."),
     }
+}
+
+pub(super) fn match_test_snippets(
+    pattern: &str,
+    language: &str,
+    snippets: &[String],
+) -> Result<Vec<bool>> {
+    let language = normalize_language(language)?;
+    let parser = language.parse::<SupportLang>()?;
+    let pattern = Pattern::try_new(pattern, parser)
+        .map_err(|error| anyhow::anyhow!("Invalid pattern: {error}"))?;
+    if pattern.has_error() {
+        anyhow::bail!("Invalid pattern: parse error");
+    }
+    Ok(snippets
+        .iter()
+        .map(|snippet| {
+            parser
+                .ast_grep(snippet)
+                .root()
+                .find(pattern.clone())
+                .is_some()
+        })
+        .collect())
 }

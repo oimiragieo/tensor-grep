@@ -558,6 +558,13 @@ fn execute_batched_tests(
     language: &str,
     snippets: &[BatchTestSnippet],
 ) -> Result<Vec<bool>> {
+    if !matches!(language, "python" | "javascript" | "typescript" | "rust") {
+        let sources = snippets
+            .iter()
+            .map(|snippet| snippet.snippet.clone())
+            .collect::<Vec<_>>();
+        return scaffold::match_test_snippets(pattern, language, &sources);
+    }
     let suffix = match language.to_lowercase().as_str() {
         "python" | "py" => ".py",
         "javascript" | "js" => ".js",
@@ -675,6 +682,7 @@ fn parse_ast_new_args(args: &[String]) -> Result<AstNewRequest> {
     if kind != AstNewKind::Project && name.is_none() {
         anyhow::bail!("tg new {:?} requires a name", kind);
     }
+    scaffold::validate_language_arg(&lang)?;
     Ok(AstNewRequest {
         kind,
         name,
