@@ -97,6 +97,27 @@ def _constant_string(node: ast.expr) -> str | None:
     return "".join(parts)
 
 
+class _ImportBindingState:
+    __slots__ = ("name_bindings", "binding_paths")
+
+    def __init__(self) -> None:
+        self.name_bindings: dict[str, tuple[str, ...]] = {}
+        self.binding_paths: set[tuple[str, ...]] = set()
+
+    def register_name(self, name: str, binding: tuple[str, ...]) -> None:
+        self.name_bindings[name] = binding
+        self.binding_paths.add(binding)
+        self.binding_paths.add((name,))
+
+    def expr_binding_path(self, expr: ast.expr) -> tuple[str, ...] | None:
+        path = _attribute_path(expr)
+        if path is not None and path in self.binding_paths:
+            return path
+        if isinstance(expr, ast.Name):
+            return self.name_bindings.get(expr.id)
+        return None
+
+
 def _python_import_reference(
     repo_map_payload: dict[str, Any],
     symbol: str,
