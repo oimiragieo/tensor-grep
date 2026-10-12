@@ -3286,9 +3286,14 @@ def tg_search(
                         count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
                     # M14: the count envelope crossed the wire un-stamped.
                     return _self._inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
+                capped_note = (
+                    f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                    if empty_scan_capped
+                    else ""
+                )
                 return (
                     f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
-                    f"{_routing_summary(all_results)}"
+                    f"{_routing_summary(all_results)}{capped_note}"
                 )
 
             by_file: dict[str, list[Any]] = {}

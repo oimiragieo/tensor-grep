@@ -44,7 +44,6 @@ def mcp_plain_search_output_is_incomplete(output: str) -> bool:
         line.startswith(("... output truncated", "Scan capped at "))
         or line == _MCP_OUTPUT_TRUNCATED_NOTICE
         or (line.startswith("... and ") and line.endswith(" more files."))
-        or "returning partial results" in line
         or "exceeded the wall-clock deadline" in line
         or "timeout and was stopped" in line
         for line in output.splitlines()
