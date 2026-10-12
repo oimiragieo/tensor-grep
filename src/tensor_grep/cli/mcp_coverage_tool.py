@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -58,15 +57,6 @@ def coverage_tool(path: str) -> str:
                 "budget_remediable": cause == "scan_limit",
             }
         return server._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-    except (OSError, ValueError, sqlite3.Error) as exc:
-        payload = server._envelope_base(
-            routing_backend="Coverage",
-            routing_reason="coverage-inventory",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = server._sanitized_tool_error("tg_coverage", exc)
-        return json.dumps(payload, indent=2)
     except Exception as exc:
         server._log_tool_exception("tg_coverage", exc)
         payload = server._envelope_base(

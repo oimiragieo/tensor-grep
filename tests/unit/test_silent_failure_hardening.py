@@ -204,8 +204,10 @@ _EXCLUDED_MODULES = frozenset({
 # 2026-10-09 investigation improvements: observed 339 -> 341 (+2 reviewed fail-closed
 # boundaries in core/cross_encoder.py and core/cross_encoder_assets.py). Both re-raise
 # BackendExecutionError with the original cause; ledger records cite injected-failure tests.
-# Pin the actual population after diff-impact refs lookup and two MCP batch boundaries.
-TOTAL_BROAD_HANDLERS_CEILING = 344
+# Pin the actual population, using the one spare slot in the historical ceiling of 340.
+# - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
+#   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
+TOTAL_BROAD_HANDLERS_CEILING = 342
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
