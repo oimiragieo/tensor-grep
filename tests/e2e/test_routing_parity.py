@@ -623,6 +623,54 @@ def test_new_test_refuses_deep_yaml_without_recursion_crash(tmp_path: Path, loca
         assert not (project_dir / "tests").exists()
 
 
+@pytest.mark.parametrize(
+    ("config_text", "expected"),
+    [
+        (
+            "language: python\nlanguage: json\n",
+            "cannot parse sgconfig.yml: duplicate key 'language'",
+        ),
+        (
+            "first: &first {language: json}\nsecond: &second {severity: warning}\n"
+            "<<: *first\n<<: *second\n",
+            "cannot parse sgconfig.yml: duplicate key '<<'",
+        ),
+        (
+            "extra: " + "[" * 600 + "0" + "]" * 600 + "\nlanguage: python\n",
+            "cannot parse sgconfig.yml: invalid YAML syntax",
+        ),
+        (
+            "language: on\n",
+            'Cannot scaffold AST rule for language "on"; run `tg ast-info` for supported languages.',
+        ),
+    ],
+    ids=["duplicate-key", "duplicate-merge", "deep-nesting", "boolean-language"],
+)
+def test_new_test_explicit_config_yaml_validation_parity(
+    tmp_path: Path, config_text: str, expected: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        config_path = project_dir / "sgconfig.yml"
+        config_path.write_text(config_text, encoding="utf-8")
+
+        result = run_command(
+            launcher,
+            ["new", "test", "probe", "--config", str(config_path), "--yes"],
+            cwd=project_dir,
+        )
+        message = (result.stdout + result.stderr).strip()
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message))
+
+    assert outcomes[0] == outcomes[1]
+
+
 @pytest.mark.parametrize("kind", ["project", "rule", "test"])
 def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
     _skip_if_native_binary_missing("native")

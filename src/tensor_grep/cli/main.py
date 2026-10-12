@@ -10458,7 +10458,9 @@ def new(
 
         project_cfg: dict[str, object] | None = None
         if config is not None:
-            project_cfg = _load_sg_project_config(config)
+            from tensor_grep.cli.ast_scaffold_resolve import load_ast_scaffold_config
+
+            project_cfg = load_ast_scaffold_config(config, scaffold_kind)
 
         if scaffold_kind == "rule":
             from tensor_grep.cli.ast_scaffold import _ast_rule_scaffold_contents

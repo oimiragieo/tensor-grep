@@ -155,11 +155,22 @@ def _linked_ast_rule_language(
 
 
 def _ast_project_default_language(base_dir: Path) -> str:
-    config_path = base_dir / "sgconfig.yml"
+    return _ast_project_config_language(base_dir / "sgconfig.yml")
+
+
+def _ast_project_config_language(config_path: Path) -> str:
+    config = _ast_project_config_data(config_path)
+    if config is None:
+        return "python"
+    language = config.get("language")
+    return language.strip().lower() if isinstance(language, str) and language.strip() else "python"
+
+
+def _ast_project_config_data(config_path: Path) -> dict[str, object] | None:
     try:
         config_mode = config_path.stat().st_mode
     except FileNotFoundError:
-        return "python"
+        return None
     if not stat.S_ISREG(config_mode):
         raise ValueError("sgconfig.yml must be a regular file")
     try:
@@ -171,9 +182,8 @@ def _ast_project_default_language(base_dir: Path) -> str:
     except UnicodeDecodeError as exc:
         raise ValueError("cannot parse sgconfig.yml: invalid UTF-8") from exc
     if not isinstance(config, dict):
-        return "python"
-    language = config.get("language")
-    return language.strip().lower() if isinstance(language, str) and language.strip() else "python"
+        return None
+    return config
 
 
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
