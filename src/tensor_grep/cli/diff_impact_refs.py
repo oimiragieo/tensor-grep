@@ -123,6 +123,8 @@ def _python_import_reference(
     symbol: str,
     deadline_monotonic: float | None,
     origin_files: tuple[str, ...],
+    *,
+    unreadable_hit: repo_map._UnreadablePathFlag | None = None,
 ) -> tuple[bool, bool]:
     files, tests = repo_map._repo_map_file_and_test_universe(repo_map_payload)
     root = repo_map._repo_map_root_dir(repo_map_payload)
@@ -155,7 +157,12 @@ def _python_import_reference(
             if len(raw) > max_bytes:
                 return False, False
             tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
-        except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
+        except OSError as exc:
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
+                continue
+            return False, False
+        except (UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
         bindings = _ImportBindingState()
 
@@ -234,6 +241,8 @@ def _python_import_reference(
                         return False, False
                     if attribute_node.value == symbol:
                         return True, True
+    if unreadable_hit is not None and unreadable_hit.hit:
+        return False, False
     return True, False
 
 
@@ -310,9 +319,21 @@ def _test_reference_evidence(
     )
     if has_test_reference:
         return True, True
+    import_scan_unreadable = repo_map._UnreadablePathFlag()
     imports_complete, has_import_reference = _python_import_reference(
-        repo_map_payload, symbol, deadline_monotonic, origin_files
+        repo_map_payload,
+        symbol,
+        deadline_monotonic,
+        origin_files,
+        unreadable_hit=import_scan_unreadable,
     )
+    if import_scan_unreadable.hit:
+        repo_map_payload["_diff_impact_reference_unreadable"] = {
+            "count": import_scan_unreadable.count,
+            "sample": import_scan_unreadable.sample,
+        }
+        if lookup_incomplete is not None:
+            lookup_incomplete.append("unreadable_path")
     if not imports_complete and lookup_incomplete is not None:
         lookup_incomplete.append("test_reference_lookup_incomplete")
     return imports_complete, has_import_reference

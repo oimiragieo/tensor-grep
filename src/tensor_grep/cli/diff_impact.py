@@ -1380,6 +1380,9 @@ def build_diff_blast_radius(
     payload["risk_cap_evidence"] = risk_cap_evidence_status(
         changed_symbols, reference_lookup_complete
     )
+    reference_unreadable = repo_m.pop("_diff_impact_reference_unreadable", None)
+    if isinstance(reference_unreadable, dict) and reference_unreadable.get("count"):
+        payload["reference_lookup_unreadable_paths"] = reference_unreadable
     return payload
 
 
