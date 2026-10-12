@@ -155,6 +155,37 @@ def test_mcp_workspace_invalid_regex_response_is_incomplete(tmp_path: Path, monk
     assert payload["incomplete_reason"] == "invalid regular expression"
 
 
+def test_heuristic_js_comment_function_does_not_widen_citation(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import _source_citation
+
+    source = tmp_path / "sample.js"
+    source.write_text(
+        "/*\nfunction fakeHelper() {\n  needle token\n}\n*/\nfunction real() { return 1; }\n",
+        encoding="utf-8",
+    )
+    citation = _source_citation(
+        {
+            "file": str(source),
+            "line_map": [{"line": 3, "text": "  needle token"}],
+        },
+        tmp_path,
+        "needle",
+    )
+    assert citation is not None
+    assert citation["start_line"] == citation["end_line"] == 3
+
+
+def test_find_citations_refuse_ndjson_before_repo_scan(tmp_path: Path, monkeypatch) -> None:
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("_execute_find must not run for incompatible citation modes")
+
+    monkeypatch.setattr("tensor_grep.cli.main._execute_find", fail_if_called)
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["find", "needle", str(tmp_path), "--citations", "--ndjson"])
+    assert result.exit_code == 2, result.output
+    assert "--citations cannot be combined with --ndjson or --format rg" in result.output
+
+
 def test_context_citation_requires_matching_evidence(tmp_path: Path) -> None:
     from tensor_grep.cli.citations import payload_citations
 

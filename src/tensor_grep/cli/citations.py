@@ -40,6 +40,12 @@ def _explicit_rg_format_requested(
     return False
 
 
+def validate_find_citation_modes(citations: bool, ndjson: bool) -> None:
+    if citations and ndjson:
+        typer.echo("--citations cannot be combined with --ndjson or --format rg", err=True)
+        raise typer.Exit(2)
+
+
 def validate_search_citation_modes(
     citations: bool,
     ndjson: bool,
@@ -183,7 +189,9 @@ def result_citations(
         if symbols and item["path"] and item["line"]:
             from tensor_grep.cli.ast_enrichment import enrich_match_with_container
 
-            container = enrich_match_with_container(str(item["path"]), int(item["line"]))
+            container = enrich_match_with_container(
+                str(item["path"]), int(item["line"]), parser_backed_only=True
+            )
             if container:
                 item["start_line"], item["end_line"] = container["range"]
         citations.append(item)
@@ -315,13 +323,13 @@ def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> di
             return None
         from tensor_grep.cli.ast_enrichment import enrich_match_with_container
 
-        container = enrich_match_with_container(path, start)
+        container = enrich_match_with_container(path, start, parser_backed_only=True)
         if not container or container["range"] != [start, end]:
             return None
         return {"path": str(path), "start_line": start, "end_line": end}
     from tensor_grep.cli.ast_enrichment import enrich_match_with_container
 
-    container = enrich_match_with_container(path, line)
+    container = enrich_match_with_container(path, line, parser_backed_only=True)
     start, end = container["range"] if container else (line, line)
     return {"path": str(path), "start_line": start, "end_line": end}
 

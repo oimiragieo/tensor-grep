@@ -1854,8 +1854,9 @@ def find(
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.core.pipeline import ConfigurationError
 
+    _citations.validate_find_citation_modes(citations, ndjson)
     try:
-        result = _execute_find(
+        result = _self._execute_find(
             query,
             path,
             limit=limit,

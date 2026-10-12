@@ -15,10 +15,36 @@ from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
 AST_ENRICH_FILE_LIMIT = 100
 
 
+def _symbols_for_container_enrichment(
+    path_obj: Path,
+    *,
+    parser_backed_only: bool,
+) -> list[dict[str, Any]]:
+    if not parser_backed_only:
+        _, symbols = repo_map._imports_and_symbols_for_path(path_obj)
+        return symbols
+    from tensor_grep.cli import lang_registry
+    from tensor_grep.cli.repo_map import _rust_parser_symbols
+    from tensor_grep.cli.repo_map_lang_js import _js_ts_parser_symbols
+
+    spec = lang_registry.spec_for_path(path_obj)
+    if spec is not None and spec.language_id in ("javascript", "typescript"):
+        return _js_ts_parser_symbols(path_obj)
+    if spec is not None and spec.language_id == "rust":
+        return _rust_parser_symbols(path_obj)
+    try:
+        _, symbols = repo_map._imports_and_symbols_for_path(path_obj)
+    except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
+        return []
+    return symbols
+
+
 def enrich_match_with_container(
     file_path: Path | str,
     line_number: int,
-    symbols_cache: dict[str, list[dict[str, Any]]] | None = None,
+    symbols_cache: dict[Any, list[dict[str, Any]]] | None = None,
+    *,
+    parser_backed_only: bool = False,
 ) -> dict[str, Any] | None:
     """Return the nearest enclosing AST container (function, class, method) for a file and line number.
 
@@ -27,16 +53,19 @@ def enrich_match_with_container(
     path_obj = Path(file_path)
     norm_path = str(path_obj.resolve())
 
+    cache_key = (norm_path, parser_backed_only)
     symbols: list[dict[str, Any]]
-    if symbols_cache is not None and norm_path in symbols_cache:
-        symbols = symbols_cache[norm_path]
+    if symbols_cache is not None and cache_key in symbols_cache:
+        symbols = symbols_cache[cache_key]
     else:
         try:
-            _, symbols = repo_map._imports_and_symbols_for_path(path_obj)
+            symbols = _symbols_for_container_enrichment(
+                path_obj, parser_backed_only=parser_backed_only
+            )
         except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
             symbols = []
         if symbols_cache is not None:
-            symbols_cache[norm_path] = symbols
+            symbols_cache[cache_key] = symbols
 
     candidates: list[dict[str, Any]] = []
     for s in symbols:
