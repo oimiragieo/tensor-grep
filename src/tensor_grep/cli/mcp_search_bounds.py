@@ -24,6 +24,33 @@ _MCP_OUTPUT_TRUNCATED_NOTICE = (
 )
 
 
+def emit_mcp_plain_search_output(
+    lines: list[str],
+    *,
+    result_incomplete: bool,
+    incomplete_reason: str | None,
+) -> str:
+    if (
+        result_incomplete
+        and incomplete_reason
+        and not any(incomplete_reason in line for line in lines)
+    ):
+        lines.append(f"\n{incomplete_reason}")
+    return "\n".join(_cap_output_lines(lines))
+
+
+def mcp_plain_search_output_is_incomplete(output: str) -> bool:
+    return any(
+        line.startswith(("... output truncated", "Scan capped at "))
+        or line == _MCP_OUTPUT_TRUNCATED_NOTICE
+        or (line.startswith("... and ") and line.endswith(" more files."))
+        or "returning partial results" in line
+        or "exceeded the wall-clock deadline" in line
+        or "timeout and was stopped" in line
+        for line in output.splitlines()
+    )
+
+
 _MCP_MAX_SUBMATCHES_EXAMINED = 1000
 
 

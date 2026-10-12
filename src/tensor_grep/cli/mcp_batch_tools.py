@@ -5,9 +5,22 @@ import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from typing import Any, NoReturn, cast
+from typing import Annotated, Any, NoReturn, cast
 
-from tensor_grep.cli.mcp_search_bounds import _MCP_OUTPUT_TRUNCATED_NOTICE
+from pydantic import Field
+
+from tensor_grep.cli.mcp_search_bounds import mcp_plain_search_output_is_incomplete
+
+BatchQueriesWire = Annotated[
+    object,
+    Field(
+        json_schema_extra={
+            "type": "array",
+            "items": {"type": "object", "additionalProperties": True},
+            "maxItems": 16,
+        },
+    ),
+]
 
 _KIND_TO_TOOL = {
     "search": "tg_search",
@@ -40,15 +53,6 @@ def _result_is_incomplete(result: dict[str, object]) -> bool:
         return True
     incomplete = payload.get("incomplete")
     return isinstance(incomplete, dict) and incomplete.get("status") is True
-
-
-def _text_search_is_incomplete(output: str) -> bool:
-    return any(
-        line.startswith(("... output truncated", "Scan capped at "))
-        or line == _MCP_OUTPUT_TRUNCATED_NOTICE
-        or (line.startswith("... and ") and line.endswith(" more files."))
-        for line in output.splitlines()
-    )
 
 
 def _reject(message: str) -> NoReturn:
@@ -98,7 +102,7 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
             if output.startswith("tg: "):
                 return _error_item(item_id, kind, "broad_scan_refused", output)
             result: dict[str, object] = {"id": item_id, "kind": kind, "result": output}
-            if _text_search_is_incomplete(output):
+            if mcp_plain_search_output_is_incomplete(output):
                 result["result_incomplete"] = True
             return result
         else:
@@ -246,7 +250,7 @@ def run_tg_batch(
 
 
 def tg_batch(
-    queries: object,
+    queries: BatchQueriesWire,
     path: str = ".",
     citations: bool = False,
     item_deadline: float = 10.0,

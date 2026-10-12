@@ -30,6 +30,17 @@ def test_tg_batch_stamps_its_own_envelope_with_current_contract(monkeypatch):
     assert payload["results"][0]["result"] == {"ok": True}
 
 
+def test_tg_batch_discovery_schema_describes_queries_as_object_list() -> None:
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    tool = next(item for item in tools if item.name == "tg_batch")
+    queries_schema = tool.inputSchema["properties"]["queries"]
+
+    assert queries_schema["type"] == "array"
+    assert queries_schema["items"]["type"] == "object"
+    assert queries_schema["items"].get("additionalProperties") is True
+    assert queries_schema.get("maxItems") == 16
+
+
 def test_tg_batch_is_registered_and_returns_single_tool_json(monkeypatch):
     def fake_search(pattern: str, path: str = ".", **kwargs: object) -> str:
         return json.dumps({"pattern": pattern, "path": path, "kwargs": kwargs})
@@ -328,6 +339,35 @@ def test_tg_batch_rejects_real_search_completed_after_item_deadline(tmp_path, mo
     )
 
     assert payload["results"][0]["error"]["code"] == "deadline_exceeded", payload
+
+
+def test_tg_batch_plain_text_search_timeout_sets_result_incomplete(monkeypatch) -> None:
+    def timed_out_plain_search(**kwargs: object) -> str:
+        del kwargs
+        return (
+            "Found 1 matches across 1 files:\n"
+            "Routing: backend=RustBackend reason=default gpu_device_ids=[] "
+            "gpu_chunk_plan_mb=[] distributed=False workers=0\n"
+            "\na.log:\n  1: needle\n"
+            "\nnative search exceeded the 30s timeout and was stopped; "
+            "returning partial results. Scope the search to a smaller path."
+        )
+
+    monkeypatch.setattr(mcp_server, "tg_search", timed_out_plain_search)
+    payload = _payload(
+        mcp_server.tg_batch([
+            {
+                "id": "plain-timeout",
+                "kind": "search",
+                "pattern": "needle",
+                "structured_json": False,
+            }
+        ])
+    )
+
+    result = payload["results"][0]
+    assert payload["result_incomplete"] is True, payload
+    assert result.get("result_incomplete") is True, result
 
 
 @pytest.mark.parametrize("structured_json", [True, False])

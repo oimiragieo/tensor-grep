@@ -3400,7 +3400,11 @@ def tg_search(
                 if omitted_path_files:
                     output.append(f"\n... and {omitted_path_files} more files.")
 
-            return "\n".join(_bounds._cap_output_lines(output))
+            return _bounds.emit_mcp_plain_search_output(
+                output,
+                result_incomplete=all_results.result_incomplete,
+                incomplete_reason=all_results.incomplete_reason,
+            )
 
         except _av.SEARCH_ERRORS as e:
             invalid = _av.search_error_message(e)
