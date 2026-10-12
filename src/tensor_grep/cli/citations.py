@@ -103,10 +103,18 @@ _MCP_BUILDER_VALUE_NAMES = (
 )
 
 
+def _repository_root(scope_path: Path) -> Path:
+    return next(
+        (parent for parent in (scope_path, *scope_path.parents) if (parent / ".git").exists()),
+        scope_path,
+    )
+
+
 def citation_envelope(
     citations: list[dict[str, Any]],
     *,
     root: str | Path,
+    path_anchor: str | Path | None = None,
     result_incomplete: bool = False,
     incomplete_reason: str | None = None,
     omitted: int = 0,
@@ -114,10 +122,10 @@ def citation_envelope(
     scope_path = Path(root).expanduser().resolve()
     if scope_path.is_file():
         scope_path = scope_path.parent
-    root_path = next(
-        (parent for parent in (scope_path, *scope_path.parents) if (parent / ".git").exists()),
-        scope_path,
-    )
+    root_path = _repository_root(scope_path)
+    anchor_path = Path(path_anchor).expanduser().resolve() if path_anchor is not None else scope_path
+    if anchor_path.is_file():
+        anchor_path = anchor_path.parent
     merged: list[dict[str, Any]] = []
     for item in citations:
         raw_path = item.get("path") or item.get("file")
@@ -125,9 +133,12 @@ def citation_envelope(
             continue
         file_path = Path(str(raw_path)).expanduser()
         if not file_path.is_absolute():
-            file_path = scope_path / file_path
+            file_path = anchor_path / file_path
         resolved_path = file_path.resolve()
-        resolved_path.relative_to(scope_path)
+        try:
+            resolved_path.relative_to(root_path)
+        except ValueError:
+            continue
         relative = resolved_path.relative_to(root_path).as_posix()
         start = item.get("start_line", item.get("line_number", item.get("line")))
         end = item.get("end_line", start)
@@ -164,6 +175,7 @@ def result_citations(
     result: Any,
     root: str | Path,
     *,
+    path_anchor: str | Path | None = None,
     symbols: bool = False,
     max_results: int | None = None,
     max_files: int | None = None,
@@ -199,6 +211,7 @@ def result_citations(
     return citation_envelope(
         citations,
         root=root,
+        path_anchor=path_anchor,
         result_incomplete=bool(getattr(result, "result_incomplete", False)),
         incomplete_reason=getattr(result, "incomplete_reason", None),
         omitted=omitted,
@@ -252,29 +265,33 @@ def emit_search_citations(result: Any, paths: Sequence[str | Path], json_output:
     roots = [Path(item).expanduser().resolve() for item in paths]
     roots = [item.parent if item.is_file() else item for item in roots]
     try:
-        root = Path(os.path.commonpath([str(item) for item in roots]))
+        path_anchor = Path(os.path.commonpath([str(item) for item in roots]))
     except ValueError:
-        root = Path.cwd()
-    for parent in (root, *root.parents):
-        if (parent / ".git").exists():
-            root = parent
-            break
+        path_anchor = Path.cwd()
+    repo_root = _repository_root(path_anchor)
     typer.echo(
-        render_citations(result_citations(result, root), json_output=json_output), nl=json_output
+        render_citations(
+            result_citations(result, repo_root, path_anchor=path_anchor),
+            json_output=json_output,
+        ),
+        nl=json_output,
     )
     return 2 if bool(getattr(result, "result_incomplete", False)) else (1 if result.is_empty else 0)
 
 
-def _source_match_line(source: dict[str, Any], query: str) -> int | None:
+def _source_match_lines(source: dict[str, Any], query: str) -> list[int]:
+    if not query:
+        return []
+    lines: list[int] = []
     line_map = source.get("line_map")
-    if query and isinstance(line_map, list):
+    if isinstance(line_map, list):
         for item in line_map:
             if isinstance(item, dict) and query.casefold() in str(item.get("text", "")).casefold():
                 line = item.get("line")
                 if isinstance(line, int) and line >= 1:
-                    return line
+                    lines.append(line)
     rendered = source.get("rendered_source")
-    if query and isinstance(rendered, str) and isinstance(line_map, list):
+    if isinstance(rendered, str) and isinstance(line_map, list):
         for rendered_line, text in enumerate(rendered.splitlines(), 1):
             if query.casefold() not in text.casefold():
                 continue
@@ -293,15 +310,24 @@ def _source_match_line(source: dict[str, Any], query: str) -> int | None:
                 ):
                     if first <= rendered_line <= last:
                         if last - first == original_last - original:
-                            return original + rendered_line - first
-                        return original
-    return None
+                            lines.append(original + rendered_line - first)
+                        else:
+                            lines.append(original)
+    deduped: list[int] = []
+    seen: set[int] = set()
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            deduped.append(line)
+    return deduped
 
 
-def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> dict[str, Any] | None:
+def _source_citations(
+    source: dict[str, Any], root: str | Path, query: str
+) -> tuple[list[dict[str, Any]], int]:
     source_path = source.get("file") or source.get("path")
     if not source_path:
-        return None
+        return [], 0
     root_path = Path(root).expanduser().resolve()
     if root_path.is_file():
         root_path = root_path.parent
@@ -309,9 +335,14 @@ def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> di
     if not path.is_absolute():
         path = root_path / path
     path = path.resolve()
-    path.relative_to(root_path)
-    line = _source_match_line(source, query)
-    if line is None:
+    try:
+        path.relative_to(root_path)
+    except ValueError:
+        return [], 0
+    from tensor_grep.cli.ast_enrichment import enrich_match_with_container
+
+    match_lines = _source_match_lines(source, query)
+    if not match_lines:
         start = source.get("start_line")
         end = source.get("end_line")
         if not (
@@ -320,39 +351,50 @@ def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> di
             and type(end) is int
             and 1 <= start <= end
         ):
-            return None
-        from tensor_grep.cli.ast_enrichment import enrich_match_with_container
-
+            return [], 0
         container = enrich_match_with_container(path, start, parser_backed_only=True)
         if not container or container["range"] != [start, end]:
-            return None
-        return {"path": str(path), "start_line": start, "end_line": end}
-    from tensor_grep.cli.ast_enrichment import enrich_match_with_container
+            return [], 0
+        return [{"path": str(path), "start_line": start, "end_line": end}], 0
 
-    container = enrich_match_with_container(path, line, parser_backed_only=True)
-    start, end = container["range"] if container else (line, line)
-    return {"path": str(path), "start_line": start, "end_line": end}
+    citations: list[dict[str, Any]] = []
+    seen_ranges: set[tuple[str, int, int]] = set()
+    for line in match_lines:
+        container = enrich_match_with_container(path, line, parser_backed_only=True)
+        start, end = container["range"] if container else (line, line)
+        key = (str(path), start, end)
+        if key in seen_ranges:
+            continue
+        seen_ranges.add(key)
+        citations.append({"path": str(path), "start_line": start, "end_line": end})
+    return citations, 0
+
+
+def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> dict[str, Any] | None:
+    citations, _hidden = _source_citations(source, root, query)
+    return citations[0] if citations else None
 
 
 def payload_citations(payload: dict[str, Any], root: str | Path) -> dict[str, Any]:
     citations: list[dict[str, Any]] = []
     unsupported = 0
+    query = str(payload.get("query") or "")
     sources = payload.get("sources") or payload.get("snippets")
     if isinstance(sources, list):
         for source in sources:
             if not isinstance(source, dict):
                 continue
-            citation = _source_citation(source, root, str(payload.get("query") or ""))
-            if citation is not None:
-                citations.append(citation)
+            source_citations, _hidden = _source_citations(source, root, query)
+            if source_citations:
+                citations.extend(source_citations)
             else:
                 unsupported += 1
     if not citations:
         primary = payload.get("primary_target")
         if isinstance(primary, dict):
-            citation = _source_citation(primary, root, str(payload.get("query") or ""))
-            if citation is not None:
-                citations.append(citation)
+            source_citations, _hidden = _source_citations(primary, root, query)
+            if source_citations:
+                citations.extend(source_citations)
             else:
                 unsupported += 1
     incomplete = bool(payload.get("result_incomplete", payload.get("partial", False))) or bool(

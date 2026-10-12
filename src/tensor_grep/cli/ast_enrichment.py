@@ -20,6 +20,11 @@ def _symbols_for_container_enrichment(
     *,
     parser_backed_only: bool,
 ) -> list[dict[str, Any]]:
+    try:
+        if path_obj.stat().st_size > repo_map._max_parse_bytes():
+            return []
+    except OSError:
+        return []
     if not parser_backed_only:
         _, symbols = repo_map._imports_and_symbols_for_path(path_obj)
         return symbols

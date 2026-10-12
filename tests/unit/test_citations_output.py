@@ -74,6 +74,51 @@ def test_relative_match_path_is_resolved_within_root(tmp_path: Path) -> None:
     assert result["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 1}]
 
 
+def test_search_citations_from_nested_working_directory(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "sample.py").write_text("needle\n", encoding="utf-8")
+    monkeypatch.chdir(src)
+    result = CliRunner().invoke(app, ["search", "needle", ".", "--json", "--citations", "--cpu"])
+    assert result.exit_code == 0, result.output
+    payload = _assert_citation_envelope(result.stdout)
+    assert payload["citations"] == [{"path": "src/sample.py", "start_line": 1, "end_line": 1}]
+
+
+@pytest.mark.parametrize("command", ["agent", "context-render"])
+def test_context_citations_include_each_matching_symbol_range(tmp_path: Path, command: str) -> None:
+    (tmp_path / "sample.py").write_text(
+        "def first():\n    needle = 1\n    return needle\n\n"
+        "def second():\n    needle = 2\n    return needle\n",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        app, [command, str(tmp_path), "needle", "--json", "--citations", "--no-deadline"]
+    )
+    assert result.exit_code in (0, 2), result.output
+    payload = _assert_citation_envelope(result.stdout)
+    assert payload["citations"] == [
+        {"path": "sample.py", "start_line": 1, "end_line": 3},
+        {"path": "sample.py", "start_line": 5, "end_line": 7},
+    ]
+
+
+def test_parser_backed_citation_enrichment_respects_parse_cap(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "32")
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    oversized = tmp_path / "large.js"
+    oversized.write_text("function first() {\n  return 'needle';\n}\n" * 20, encoding="utf-8")
+    payload = _assert_citation_envelope(
+        mcp_server.tg_search("needle", path=str(tmp_path), citations=True)
+    )
+    assert payload["citations"]
+    for citation in payload["citations"]:
+        assert citation["start_line"] == citation["end_line"]
+
+
 def test_search_context_cites_only_matching_lines(tmp_path: Path) -> None:
     (tmp_path / "sample.txt").write_text("before\nneedle\nneedle\nafter\n", encoding="utf-8")
     result = CliRunner().invoke(
