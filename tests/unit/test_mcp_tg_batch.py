@@ -6,12 +6,13 @@ import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 from mcp import types
 
 from tensor_grep.backends import ripgrep_backend
-from tensor_grep.cli import mcp_server
+from tensor_grep.cli import mcp_batch_tools, mcp_server
 
 NORMALIZED_VOLATILE_FIELDS: tuple[str, ...] = ()
 
@@ -57,18 +58,43 @@ def test_tg_batch_is_registered_and_returns_single_tool_json(monkeypatch):
         ("source", "tg_symbol_source", {"symbol": "s"}),
     ],
 )
-def test_tg_batch_preserves_standalone_json_for_each_kind(monkeypatch, kind, tool_name, args):
-    def echo_arguments(**kwargs: object) -> str:
-        return json.dumps({"forwarded": kwargs})
+def test_tg_batch_preserves_standalone_json_for_each_kind(
+    tmp_path, monkeypatch, kind, tool_name, args
+):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    monkeypatch.setattr(
+        "tensor_grep.core.retrieval_dense.dense_available",
+        lambda: (False, "dense model disabled for batch equivalence test"),
+    )
+    (tmp_path / "sample.py").write_text(
+        "def target(value):\n    return value\n\ndef caller():\n    return target('needle')\n",
+        encoding="utf-8",
+    )
+    arguments = {**args, "path": str(tmp_path)}
+    if kind == "search":
+        arguments["pattern"] = "target"
+    elif kind == "find":
+        arguments["query"] = "target"
+    else:
+        arguments["symbol"] = "target"
+    standalone = _payload(getattr(mcp_server, tool_name)(**arguments))
+    assert "error" not in standalone, standalone
+    if kind == "search":
+        assert standalone["total_matches"] > 0, standalone
+    else:
+        result_key = {
+            "find": "matches",
+            "defs": "definitions",
+            "refs": "references",
+            "callers": "callers",
+            "source": "sources",
+        }[kind]
+        assert standalone[result_key], standalone
 
-    monkeypatch.setattr(mcp_server, tool_name, echo_arguments)
-    standalone = _payload(getattr(mcp_server, tool_name)(**args, path="."))
-
-    result = _payload(mcp_server.tg_batch([{"id": "same", "kind": kind, **args}]))
+    result = _payload(mcp_server.tg_batch([{"id": "same", "kind": kind, **arguments}]))
 
     assert NORMALIZED_VOLATILE_FIELDS == ()
     assert result["results"] == [{"id": "same", "kind": kind, "result": standalone}]
-    assert result["results"][0]["result"] == {"forwarded": {**args, "path": "."}}
 
 
 def test_tg_batch_preserves_plain_text_search_result_and_refusal(tmp_path, monkeypatch):
@@ -251,20 +277,30 @@ def test_tg_batch_rejects_real_search_completed_after_item_deadline(tmp_path, mo
     monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
     (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
     real_search = mcp_server.tg_search
-    finished = threading.Event()
+    search_completed = threading.Event()
+    release = threading.Event()
+    advance_clock = threading.Event()
     real_add_done_callback = Future.add_done_callback
 
     def completed_late_search(**kwargs: object) -> str:
         result = real_search(**kwargs)
-        time.sleep(0.03)
-        finished.set()
+        search_completed.set()
+        assert release.wait(2), "real search was not released"
         return result
 
     def collect_after_completion(self: Future, callback: object) -> None:
+        assert search_completed.wait(2), "real search did not reach the deadline handshake"
+        advance_clock.set()
+        release.set()
+        self.result(timeout=2)
         real_add_done_callback(self, callback)
-        assert finished.wait(2), "real search did not finish before collection"
 
     monkeypatch.setattr(mcp_server, "tg_search", completed_late_search)
+    monkeypatch.setattr(
+        mcp_batch_tools,
+        "time",
+        SimpleNamespace(monotonic=lambda: time.monotonic() + int(advance_clock.is_set())),
+    )
     monkeypatch.setattr(Future, "add_done_callback", collect_after_completion)
     payload = _payload(
         mcp_server.tg_batch(
@@ -333,16 +369,22 @@ import json
 import os
 import sys
 import threading
-import time
 from tensor_grep.cli import mcp_server
+from tensor_grep.cli import mcp_batch_tools
 os.environ['TG_MCP_ROOT'] = sys.argv[1]
+settled = threading.Event()
+real_release = mcp_batch_tools._release_batch_slot
+def release_and_signal(future):
+    real_release(future)
+    settled.set()
+mcp_batch_tools._release_batch_slot = release_and_signal
 payload = json.loads(mcp_server.tg_batch([{'id': 'one', 'kind': 'search', 'pattern': 'needle'}], path=sys.argv[1]))
 assert payload['results'][0]['result']['total_matches'] == 1, payload
-for _ in range(100):
-    live = [thread.name for thread in threading.enumerate() if thread.name.startswith('tg-mcp-batch')]
-    if not live:
-        break
-    time.sleep(0.01)
+assert settled.wait(2), 'batch worker did not settle'
+workers = [thread for thread in threading.enumerate() if thread.name.startswith('tg-mcp-batch')]
+for worker in workers:
+    worker.join(timeout=2)
+live = [worker.name for worker in workers if worker.is_alive()]
 assert not live, f'batch worker threads remained after search completed: {live}'
 """
     completed = subprocess.run(
