@@ -33,4 +33,19 @@ jobs:
             if (changed.length && !labels.includes('eval-baseline-update')) {
               core.setFailed('protected_change_unlabelled: ' +
                 changed.map((file) => file.filename).join(', '));
+              return;
+            }
+            const {data: branch} = await github.rest.repos.getBranch({owner, repo, branch: 'main'});
+            if (!branch.protected) {
+              core.setFailed('main_protection_unenforced: main is unprotected');
+              return;
+            }
+            const {data: required} = await github.rest.repos.getRequiredStatusChecks({
+              owner, repo, branch: 'main'
+            });
+            const expected = 'Git history retrieval protection / protected-change-label';
+            const contexts = required.contexts || [];
+            const checks = required.checks || [];
+            if (!contexts.includes(expected) && !checks.some((check) => check.context === expected)) {
+              core.setFailed('main_protection_unenforced: required check absent');
             }

@@ -25,24 +25,25 @@ and one network-disabled evaluation container per case, subject, arm, and run.
 Each evaluation container receives only its own writable run directory and the
 read-only build directory. Gold labels stay with the host for scoring after the
 subject run. The source repository, committed patches, and sibling runs are
-absent. Search repositories are shallow parent checkouts. Diff-impact
+absent. Case repositories contain complete history through the parent commit,
+but no heldout commit or future history. Diff-impact
 repositories receive the committed, hash-checked input patch during prepare.
 The harness checks the applied paths and the command's `changed_files` against
 the frozen input paths. Checkout mtimes are normalized to the parent commit's
 timestamp. Every run gets a fresh home and caches. Container writes to the
 build directory and outside the case directory must be denied.
 
-The evaluator runs in the image's system interpreter. The harness and scoring
+The evaluator runs with `-I` in the image's fixed system interpreter. The harness and scoring
 module have a standard-library-only import closure; each subject has a separate
 non-editable installation and native binary. The fixed manifest, patches, and
 baseline arrive in leaf 11b. Until
 `baseline.json` exists, the PR job is report-only. Local runs without the
 container are advisory and cannot produce `baseline.json`.
-The worker checks the baseline executable and runtime record after the head build;
-report collection verifies the recorded executable hash against the build tree.
+The worker checks the baseline executable, Python package tree, and runtime
+record after the head build; report collection verifies the recorded executable
+and package hashes against the build tree.
 Leaf 11b also needs a container-executed proof that subject `.pth` files cannot
-run in the evaluator interpreter and an explicit policy for queries needing
-history before the shallow parent commit.
+run in the evaluator interpreter.
 Ops follow-up: enable a GitHub ruleset targeting `main` with **Require a pull
 request before merging** and **Require status checks to pass**. Add the GitHub
 Actions check named exactly `Git history retrieval protection / protected-change-label`
@@ -54,6 +55,8 @@ protected path without the `eval-baseline-update` label. Repository ruleset
 configuration is external to this repository. If GitHub reports `main` as
 unprotected or the required check is absent, I5 is not enforced; verify the
 active ruleset in GitHub before claiming enforcement.
+The protection workflow also queries GitHub for `main` protection and the
+required check, and fails when either is absent or the query fails.
 
 To generate the frozen dataset after 11a is merged, use a v1.126.0 `tg` binary:
 

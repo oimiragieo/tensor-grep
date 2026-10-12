@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -689,6 +690,78 @@ def test_report_rejects_replaced_baseline_binary_after_build(
         harness._collect_report(manifest, "baseline", work)
 
 
+def test_report_rejects_mutated_baseline_package_after_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    work = tmp_path / "work"
+    subject = work / "build/baseline"
+    package_file = subject / "venv/lib/python3.12/site-packages/tensor_grep/__init__.py"
+    package_file.parent.mkdir(parents=True)
+    package_file.write_text("original package\n", encoding="utf-8")
+    (subject / "tg").write_bytes(b"original binary")
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[1:] == ["--version"]:
+            output = b"tg 1.126.0"
+        elif argv[1] == "-c":
+            output = json.dumps({"file": str(package_file), "version": "1.126.0"}).encode("utf-8")
+        else:
+            output = b'{"version":"1.126.0"}'
+        return subprocess.CompletedProcess(argv, 0, output, b"")
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    runtime = harness._runtime_identity("baseline", work / "build")[2]
+    harness._write_json(subject / "runtime.json", runtime)
+    sha = "a" * 40
+    run_dir = work / "runs" / sha / "baseline/find/first"
+    harness._write_json(
+        run_dir / "result.json",
+        {"sha": sha, "arm": "find", "payload": {}, "prediction": [], "runtime": runtime},
+    )
+    monkeypatch.setattr(harness, "_selected_runs", lambda *args: [(run_dir, "find")])
+    monkeypatch.setattr(harness, "load_scoring", lambda: None)
+    monkeypatch.setattr(harness, "score_payload", lambda *args: {})
+    monkeypatch.setattr(harness, "aggregate_scores", lambda *args: {})
+    monkeypatch.setattr(harness, "evaluator_sha256", lambda: "fixed")
+    harness._write_json(work / "environment.json", {})
+    package_file.write_text("modified package\n", encoding="utf-8")
+    manifest = {"cases": [{"sha": sha, "split": "heldout", "diff_impact_eligible": False}]}
+    with pytest.raises(harness.HarnessError, match="runtime_package_hash_mismatch:baseline"):
+        harness._collect_report(manifest, "baseline", work)
+
+
+def test_ranked_search_uses_one_pattern_with_v1126_rank(tmp_path: Path) -> None:
+    harness = harness_module()
+    argv = harness._arm_argv(
+        tmp_path / "tg", "search_rank", {"tokens": ["first", "second"]}, tmp_path
+    )
+    assert argv.count("-e") <= 1, "ranked_search_multiple_patterns_unsupported_flag"
+    assert "--rank" in argv
+    assert "first" in " ".join(argv) and "second" in " ".join(argv)
+
+
+def test_case_checkout_contains_complete_parent_history(tmp_path: Path) -> None:
+    harness = harness_module()
+    source = tmp_path / "source"
+    source.mkdir()
+    git(source, "init", "-q", "-b", "main")
+    git(source, "config", "user.email", "eval@example.test")
+    git(source, "config", "user.name", "Eval")
+    for index in range(3):
+        (source / "history.txt").write_text(str(index), encoding="utf-8")
+        commit(source, f"fix: ancestor {index}")
+    parent = git(source, "rev-parse", "HEAD")
+    (source / "history.txt").write_text("future", encoding="utf-8")
+    sha = commit(source, "fix: heldout future")
+    target = tmp_path / "parent-history"
+    harness.create_parent_repo(source, parent, sha, target)
+    assert harness._out(harness._git(target, "rev-list", "HEAD")) == harness._out(
+        harness._git(source, "rev-list", parent)
+    ), "parent_history_truncated"
+    assert harness._git(target, "cat-file", "-e", sha, check=False).returncode != 0
+
+
 def test_repeat_prediction_mismatch_fails_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -778,6 +851,55 @@ def test_head_build_cannot_replace_baseline_executable(
     monkeypatch.setattr(harness, "environment_identity", lambda: {})
     monkeypatch.setattr(harness, "_read_only_tree", lambda *args: None)
     with pytest.raises(harness.HarnessError, match="runtime_binary_hash_mismatch:baseline"):
+        harness.worker_build(tmp_path, work)
+
+
+def test_head_build_cannot_replace_baseline_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = harness_module()
+    work = tmp_path / "work"
+    package_relpath = "lib/python3.12/site-packages/tensor_grep/__init__.py"
+    for subject in ("baseline", "head"):
+        (work / "build" / subject / "tree").mkdir(parents=True)
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        target = Path(kwargs["cwd"]).parent
+        if argv[0] == "uv":
+            package_file = target / "venv" / package_relpath
+            package_file.parent.mkdir(parents=True)
+            package_file.write_bytes(b"original baseline package")
+        elif argv[0] == "cargo":
+            built = target / "cargo-target/release/tg"
+            built.parent.mkdir(parents=True)
+            built.write_bytes(target.name.encode("utf-8"))
+            if target.name == "head":
+                (work / "build/baseline/venv" / package_relpath).write_bytes(
+                    b"modified baseline package"
+                )
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    def fake_identity(subject: str, build: Path) -> tuple[Path, Path, dict[str, str]]:
+        target = build / subject
+        content = (target / "venv" / package_relpath).read_bytes()
+        package_digest = hashlib.sha256(
+            b"__init__.py\0" + hashlib.sha256(content).digest()
+        ).hexdigest()
+        return (
+            target / "tg",
+            target / "venv",
+            {
+                "binary_sha256": harness._sha256((target / "tg").read_bytes()),
+                "package_relpath": package_relpath,
+                "package_sha256": package_digest,
+            },
+        )
+
+    monkeypatch.setattr(harness, "_run", fake_run)
+    monkeypatch.setattr(harness, "_runtime_identity", fake_identity)
+    monkeypatch.setattr(harness, "environment_identity", lambda: {})
+    monkeypatch.setattr(harness, "_read_only_tree", lambda *args: None)
+    with pytest.raises(harness.HarnessError, match="runtime_package_hash_mismatch:baseline"):
         harness.worker_build(tmp_path, work)
 
 
@@ -1040,8 +1162,7 @@ def test_confined_subject_cannot_read_labels_or_heldout_commit(
     script = (
         "test ! -e /source && test ! -e /work/patches && "
         "! grep -q gold_files /work/run/case.json && "
-        "test -f /work/run/repo/.git/shallow && "
-        f'test "$(cat /work/run/repo/.git/shallow)" = {manifest["cases"][0]["parent"]} && '
+        "test ! -e /work/run/repo/.git/shallow && "
         "! touch /work/build/denied"
     )
     harness._docker_run(
@@ -1162,6 +1283,47 @@ def test_subject_pth_positive_control_does_not_run_in_evaluator(tmp_path: Path) 
     assert not marker.exists(), "subject_pth_executed_in_evaluator"
 
 
+def test_subject_pth_isolation_runs_successful_worker_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker = tmp_path / "worker.py"
+    shutil.copy2(harness_root() / "benchmarks/git_history_retrieval/worker.py", worker)
+    result_file = tmp_path / "worker-result"
+    (tmp_path / "harness.py").write_text(
+        "import pathlib,sys\nassert sys.flags.isolated, 'evaluator_interpreter_not_isolated'\n"
+        "pathlib.Path(sys.argv[-1]).write_text('evaluated')\n",
+        encoding="utf-8",
+    )
+    site = tmp_path / "build/subject/venv/lib/python3.12/site-packages"
+    site.mkdir(parents=True)
+    marker = tmp_path / "pth-executed"
+    (site / "subject.pth").write_text(
+        f"import pathlib; pathlib.Path({str(marker)!r}).write_text('poison')\n",
+        encoding="utf-8",
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", f"import site; site.addsitedir({str(site)!r})"],
+        capture_output=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr.decode("utf-8", errors="replace")
+    assert marker.read_text(encoding="utf-8") == "poison"
+    marker.unlink()
+    spec = importlib.util.spec_from_file_location("git_history_retrieval_worker_probe", worker)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    launched: list[str] = []
+    monkeypatch.setattr(module.sys, "argv", [str(worker), "evaluate", str(result_file)])
+    monkeypatch.setattr(module.os, "execv", lambda python, argv: launched.extend(argv))
+    module.main()
+    assert launched[0] == sys.executable
+    evaluation = subprocess.run(launched, capture_output=True, check=False)
+    assert evaluation.returncode == 0, evaluation.stderr.decode("utf-8", errors="replace")
+    assert result_file.read_text(encoding="utf-8") == "evaluated"
+    assert not marker.exists(), "subject_pth_executed_in_evaluator"
+
+
 @pytest.mark.parametrize(
     ("status", "filename", "previous_filename"),
     [
@@ -1192,6 +1354,53 @@ def test_protected_workflow_detects_protected_paths(
         "rest:{pulls:{listFiles:{}}}}; "
         "(async () => {" + script + "\nif (!failure.includes('protected_change_unlabelled')) "
         "throw new Error('protected_change_accepted');})().catch(e=>{console.error(e.message);process.exit(1)});"
+    )
+    result = subprocess.run(["node", "-e", probe], capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+
+
+@pytest.mark.parametrize("protected", [False, True])
+def test_protection_workflow_fails_without_required_main_check(protected: bool) -> None:
+    workflow = (
+        harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
+    ).read_text(encoding="utf-8")
+    script = workflow.split("          script: |\n", 1)[1]
+    script = "\n".join(line[12:] for line in script.splitlines())
+    if shutil.which("node") is None:
+        pytest.skip("node is required to evaluate the protection workflow predicate")
+    probe = (
+        "let failure = ''; const core = {setFailed: x => failure = x}; "
+        "const context = {repo: {owner:'o',repo:'r'}, issue:{number:1}, "
+        "payload:{pull_request:{labels:[]}}}; "
+        "const github = {paginate: async () => [], rest:{pulls:{listFiles:{}}, repos:{"
+        f"getBranch: async () => ({{data:{{protected:{str(protected).lower()}}}}}), "
+        "getRequiredStatusChecks: async () => ({data:{contexts:[],checks:[]}})}}}; "
+        "(async () => {" + script + "\nif (!failure.includes('main_protection_unenforced')) "
+        "throw new Error('unprotected_main_accepted');})().catch(e=>{console.error(e.message);process.exit(1)});"
+    )
+    result = subprocess.run(["node", "-e", probe], capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
+
+
+def test_protection_workflow_accepts_required_main_check() -> None:
+    workflow = (
+        harness_root() / ".github/workflows/git-history-retrieval-protection.yml"
+    ).read_text(encoding="utf-8")
+    script = workflow.split("          script: |\n", 1)[1]
+    script = "\n".join(line[12:] for line in script.splitlines())
+    if shutil.which("node") is None:
+        pytest.skip("node is required to evaluate the protection workflow predicate")
+    expected = "Git history retrieval protection / protected-change-label"
+    probe = (
+        "let failure = ''; const core = {setFailed: x => failure = x}; "
+        "const context = {repo: {owner:'o',repo:'r'}, issue:{number:1}, "
+        "payload:{pull_request:{labels:[]}}}; "
+        "const github = {paginate: async () => [], rest:{pulls:{listFiles:{}}, repos:{"
+        "getBranch: async () => ({data:{protected:true}}), "
+        f"getRequiredStatusChecks: async () => ({{data:{{contexts:[{json.dumps(expected)}],checks:[]}}}})"
+        "}}}; "
+        "(async () => {" + script + "\nif (failure) "
+        "throw new Error(failure);})().catch(e=>{console.error(e.message);process.exit(1)});"
     )
     result = subprocess.run(["node", "-e", probe], capture_output=True, check=False)
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")

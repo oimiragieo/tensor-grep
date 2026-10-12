@@ -10,7 +10,7 @@ def main() -> None:
         raise SystemExit("expected build, prepare, or evaluate")
     python = sys.executable
     harness = Path(__file__).with_name("harness.py")
-    os.execv(python, [python, str(harness), "worker", *sys.argv[1:]])
+    os.execv(python, [python, "-I", str(harness), "worker", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

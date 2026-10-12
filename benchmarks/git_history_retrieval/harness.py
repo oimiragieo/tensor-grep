@@ -95,6 +95,28 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _package_sha256(package_file: Path, venv: Path) -> str:
+    package = package_file.parent
+    if package.is_symlink() or package_file.is_symlink():
+        raise HarnessError("runtime_package_symlink")
+    if package.name != "tensor_grep" or not package_file.is_file():
+        raise HarnessError("runtime_package_missing")
+    if not package.resolve().is_relative_to(venv.resolve()):
+        raise HarnessError("runtime_package_outside_venv")
+    digest = hashlib.sha256()
+    paths = sorted(package.rglob("*"))
+    if not paths:
+        raise HarnessError("runtime_package_missing")
+    for path in paths:
+        if path.is_symlink():
+            raise HarnessError("runtime_package_symlink")
+        if path.is_file():
+            digest.update(path.relative_to(package).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(bytes.fromhex(_sha256(path.read_bytes())))
+    return digest.hexdigest()
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
@@ -359,7 +381,6 @@ def create_parent_repo(source: Path, parent: str, sha: str, target: Path) -> Non
     _git(
         target,
         "fetch",
-        "--depth=1",
         "--no-tags",
         "--upload-pack=git -c uploadpack.allowAnySHA1InWant=true upload-pack",
         str(source),
@@ -368,7 +389,8 @@ def create_parent_repo(source: Path, parent: str, sha: str, target: Path) -> Non
     )
     _git(target, "checkout", "-q", "eval")
     actual = set(_out(_git(target, "rev-list", "--all")).splitlines())
-    if actual != {parent} or _git(target, "cat-file", "-e", sha, check=False).returncode == 0:
+    expected = set(_out(_git(source, "rev-list", parent)).splitlines())
+    if actual != expected or _git(target, "cat-file", "-e", sha, check=False).returncode == 0:
         raise HarnessError(f"history_leak: {sha}")
     if _out(_git(target, "rev-parse", "HEAD")) != parent:
         raise HarnessError(f"wrong_parent: {sha}")
@@ -825,6 +847,13 @@ def worker_build(source: Path, work: Path) -> dict[str, Any]:
         or _read_json(build / "baseline/runtime.json") != baseline_runtime
     ):
         raise HarnessError("runtime_binary_hash_mismatch:baseline")
+    if "package_sha256" in baseline_runtime:
+        package_file = build / "baseline/venv" / baseline_runtime["package_relpath"]
+        if (
+            _package_sha256(package_file, build / "baseline/venv")
+            != baseline_runtime["package_sha256"]
+        ):
+            raise HarnessError("runtime_package_hash_mismatch:baseline")
     identity = environment_identity()
     _write_json(work / "environment.json", identity)
     _read_only_tree(build)
@@ -992,6 +1021,8 @@ def _runtime_identity(subject: str, build: Path) -> tuple[Path, Path, dict[str, 
             "binary_version": expected_version,
             "package_version": package["version"],
             "package_file": package["file"],
+            "package_relpath": str(Path(package["file"]).resolve().relative_to(venv.resolve())),
+            "package_sha256": _package_sha256(Path(package["file"]), venv),
             "binary_sha256": _sha256(tg.read_bytes()),
         },
     )
@@ -1011,12 +1042,13 @@ def _arm_argv(tg: Path, arm: str, case: dict[str, Any], repo: Path) -> list[str]
             "off",
         ]
     if arm == "search_rank":
+        if not case["tokens"]:
+            raise HarnessError("empty_search_tokens")
         return [
             str(tg),
             "search",
             "-i",
-            "-F",
-            *(part for token in case["tokens"] for part in ("-e", token)),
+            "|".join(re.escape(token) for token in case["tokens"]),
             str(repo),
             "--rank",
             "--json",
@@ -1105,6 +1137,14 @@ def _collect_report(manifest: dict[str, Any], subject: str, work: Path) -> dict[
     binary = work / "build" / subject / "tg"
     if _sha256(binary.read_bytes()) != saved_runtime.get("binary_sha256"):
         raise HarnessError(f"runtime_binary_hash_mismatch:{subject}")
+    if subject == "baseline":
+        relpath = saved_runtime.get("package_relpath")
+        package_hash = saved_runtime.get("package_sha256")
+        if not isinstance(relpath, str) or not isinstance(package_hash, str):
+            raise HarnessError("runtime_package_hash_mismatch:baseline")
+        venv = work / "build/baseline/venv"
+        if _package_sha256(venv / relpath, venv) != package_hash:
+            raise HarnessError("runtime_package_hash_mismatch:baseline")
     for run_dir, arm in _selected_runs(manifest, subject, work):
         row = _read_json(run_dir / "result.json")
         if row["sha"] != run_dir.parents[2].name or row["arm"] != arm:
