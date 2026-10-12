@@ -164,10 +164,13 @@ def _python_import_reference(
                 for alias in node.names:
                     if alias.name not in origin_modules:
                         continue
+                    module_path = tuple(alias.name.split("."))
                     if alias.asname:
-                        bindings.register_name(alias.asname, (alias.asname,))
+                        bindings.register_name(alias.asname, module_path)
                     else:
-                        bindings.binding_paths.add(tuple(alias.name.split(".")))
+                        bindings.binding_paths.add(module_path)
+                        if len(module_path) == 1:
+                            bindings.register_name(module_path[0], module_path)
             elif isinstance(node, ast.ImportFrom):
                 module = _import_module(node, path, root)
                 if module is None:
@@ -180,7 +183,8 @@ def _python_import_reference(
                     qualified = f"{module}.{alias.name}"
                     if qualified not in origin_modules:
                         continue
-                    bindings.register_name(alias.asname or alias.name, (alias.asname or alias.name,))
+                    binding = tuple(qualified.split("."))
+                    bindings.register_name(alias.asname or alias.name, binding)
             elif (
                 isinstance(node, ast.Assign)
                 and len(node.targets) == 1
@@ -198,17 +202,22 @@ def _python_import_reference(
                 and bindings.expr_binding_path(node.value) is not None
             ):
                 return True, True
-            if isinstance(node, ast.Subscript) and bindings.expr_binding_path(node.value) is not None:
+            if (
+                isinstance(node, ast.Subscript)
+                and bindings.expr_binding_path(node.value) is not None
+            ):
                 return False, False
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 if node.func.id != "getattr" or len(node.args) < 2:
                     continue
                 if bindings.expr_binding_path(node.args[0]) is None:
                     continue
-                attribute = _constant_string(node.args[1])
-                if attribute is None:
+                attribute_node = node.args[1]
+                if not isinstance(attribute_node, ast.Constant) or not isinstance(
+                    attribute_node.value, str
+                ):
                     return False, False
-                if attribute == symbol:
+                if attribute_node.value == symbol:
                     return True, True
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Call):
                 inner = node.func
@@ -218,10 +227,12 @@ def _python_import_reference(
                     and len(inner.args) >= 2
                     and bindings.expr_binding_path(inner.args[0]) is not None
                 ):
-                    attribute = _constant_string(inner.args[1])
-                    if attribute is None:
+                    attribute_node = inner.args[1]
+                    if not isinstance(attribute_node, ast.Constant) or not isinstance(
+                        attribute_node.value, str
+                    ):
                         return False, False
-                    if attribute == symbol:
+                    if attribute_node.value == symbol:
                         return True, True
     return True, False
 
