@@ -74,28 +74,56 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         return super().construct_yaml_bool(node)
 
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
-        if node in self._checked_mappings:
-            return
-        self._checked_mappings.add(node)
-        keys: set[Hashable] = set()
-        construct = cast(Callable[..., object], self.construct_object)
-        for key_node, _value_node in node.value:
-            key: object = (
-                "<<"
-                if key_node.tag == "tag:yaml.org,2002:merge"
-                else construct(key_node, deep=True)
-            )
-            if not isinstance(key, Hashable):
-                raise yaml.constructor.ConstructorError(
-                    None, None, "found unhashable key", key_node.start_mark
+        self._nesting_depth += 1
+        try:
+            if self._nesting_depth > 128:
+                raise yaml.YAMLError("maximum YAML nesting depth exceeded")
+            if node in self._checked_mappings:
+                return
+            self._checked_mappings.add(node)
+            keys: set[Hashable] = set()
+            construct = cast(Callable[..., object], self.construct_object)
+            for key_node, _value_node in node.value:
+                key: object = (
+                    "<<"
+                    if key_node.tag == "tag:yaml.org,2002:merge"
+                    else construct(key_node, deep=True)
                 )
-            if key in keys:
-                raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
-            keys.add(key)
-        super().flatten_mapping(node)
+                if not isinstance(key, Hashable):
+                    raise yaml.constructor.ConstructorError(
+                        None, None, "found unhashable key", key_node.start_mark
+                    )
+                if key in keys:
+                    raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
+                keys.add(key)
+            super().flatten_mapping(node)
+        finally:
+            self._nesting_depth -= 1
 
 
 _UniqueKeyLoader.add_constructor("tag:yaml.org,2002:bool", _UniqueKeyLoader._construct_yaml_12_bool)
+
+
+def _coerce_scaffold_config_language(raw_language: object, *, default: str = "python") -> str:
+    from tensor_grep.backends.ast_backend import normalize_ast_language
+
+    if raw_language is None:
+        return default
+    if not isinstance(raw_language, str):
+        raise ValueError(
+            "Cannot scaffold AST rule for language "
+            f"{json.dumps(raw_language)}; run `tg ast-info` for supported languages."
+        )
+    stripped = raw_language.strip()
+    if not stripped:
+        return default
+    try:
+        return normalize_ast_language(stripped)
+    except ValueError as exc:
+        raise ValueError(
+            "Cannot scaffold AST rule for language "
+            f"{json.dumps(stripped)}; run `tg ast-info` for supported languages."
+        ) from exc
 
 
 def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:

@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.cli._main_binding import _self
 from tensor_grep.cli.ast_scaffold import (
     _ast_project_config_data,
     _ast_project_default_language,
     _ast_test_scaffold_contents,
+    _coerce_scaffold_config_language,
     _linked_ast_rule_language,
 )
 from tensor_grep.cli.ast_scan import _load_sg_project_config
@@ -21,20 +21,14 @@ def load_ast_scaffold_config(config: str, scaffold_kind: str) -> dict[str, objec
         return _load_sg_project_config(config)
     if raw_config is None:
         raise ValueError(f"YAML in {config_path} must be a mapping.")
-    raw_language = raw_config.get("language")
-    if scaffold_kind != "test":
-        normalize_ast_language(str(raw_language or "python"))
+    validated_language = _coerce_scaffold_config_language(raw_config.get("language"))
     return {
         "config_path": config_path,
         "root_dir": config_path.parent,
         "rule_dirs": _self._normalize_string_list(raw_config.get("ruleDirs"), ["rules"]),
         "test_dirs": _self._normalize_string_list(raw_config.get("testDirs"), ["tests"]),
         "utils_dir": str(raw_config.get("utilsDir") or "utils"),
-        "language": (
-            raw_language.strip().lower()
-            if isinstance(raw_language, str) and raw_language.strip()
-            else "python"
-        ),
+        "language": validated_language,
     }
 
 
