@@ -65,6 +65,27 @@ pub(super) fn write_rule(base_dir: &Path, name: &str, language: &str) -> Result<
     Ok(())
 }
 
+fn scaffold_language_json(value: &serde_yaml::Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"))
+}
+
+fn coerce_scaffold_language(value: Option<&serde_yaml::Value>) -> Result<String> {
+    match value {
+        None => Ok("python".to_string()),
+        Some(serde_yaml::Value::String(raw)) => {
+            let stripped = raw.trim();
+            if stripped.is_empty() {
+                return Ok("python".to_string());
+            }
+            normalize_language(stripped).map(str::to_string)
+        }
+        Some(other) => anyhow::bail!(
+            "Cannot scaffold AST rule for language {}; run `tg ast-info` for supported languages.",
+            scaffold_language_json(other)
+        ),
+    }
+}
+
 fn project_default_language(base_dir: &Path) -> Result<String> {
     let config_path = base_dir.join("sgconfig.yml");
     match fs::metadata(&config_path) {
@@ -96,13 +117,7 @@ fn project_default_language(base_dir: &Path) -> Result<String> {
             config
                 .apply_merge()
                 .map_err(|_| anyhow::anyhow!("cannot parse sgconfig.yml: invalid YAML syntax"))?;
-            Ok(config
-                .get("language")
-                .and_then(serde_yaml::Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .unwrap_or("python")
-                .to_lowercase())
+            coerce_scaffold_language(config.get("language"))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("python".to_string()),
         Err(error) => Err(error.into()),
@@ -153,13 +168,11 @@ pub(super) fn write_test(
                 if !rule.is_mapping() {
                     anyhow::bail!("cannot parse linked rule {label}: expected a YAML mapping")
                 }
-                rule.get("language")
-                    .and_then(serde_yaml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_lowercase)
-                    .map(Ok)
-                    .unwrap_or_else(|| project_default_language(base_dir))?
+                if rule.get("language").is_some() {
+                    coerce_scaffold_language(rule.get("language"))?
+                } else {
+                    project_default_language(base_dir)?
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 project_default_language(base_dir)?

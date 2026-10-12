@@ -51,6 +51,18 @@ def _deep_merge_chain_yaml(depth: int) -> str:
             "language: [python]\n",
             'Cannot scaffold AST rule for language ["python"]; run `tg ast-info` for supported languages.',
         ),
+        (
+            "language: 2024-01-01\n",
+            'Cannot scaffold AST rule for language "2024-01-01"; run `tg ast-info` for supported languages.',
+        ),
+        (
+            "42: value\nlanguage: python\n",
+            "cannot parse sgconfig.yml: invalid YAML syntax",
+        ),
+        (
+            "a: &a\n  <<: *a\n  language: python\n",
+            "cannot parse sgconfig.yml: invalid YAML syntax",
+        ),
     ],
     ids=[
         "duplicate-key",
@@ -61,6 +73,9 @@ def _deep_merge_chain_yaml(depth: int) -> str:
         "boolean-language-true",
         "numeric-language",
         "array-language",
+        "date-language",
+        "typed-key",
+        "cyclic-merge",
     ],
 )
 def test_new_test_explicit_config_refuses_invalid_yaml_before_writing(

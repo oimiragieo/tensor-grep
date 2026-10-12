@@ -56,6 +56,7 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
         self._checked_mappings: set[yaml.MappingNode] = set()
+        self._active_flatten_mappings: set[yaml.MappingNode] = set()
         self._nesting_depth = 0
 
     def compose_node(self, parent: yaml.Node | None, index: int) -> yaml.Node:
@@ -78,30 +79,47 @@ class _UniqueKeyLoader(yaml.SafeLoader):
         try:
             if self._nesting_depth > 128:
                 raise yaml.YAMLError("maximum YAML nesting depth exceeded")
+            if node in self._active_flatten_mappings:
+                raise yaml.YAMLError("cyclic YAML merge")
             if node in self._checked_mappings:
                 return
-            self._checked_mappings.add(node)
-            keys: set[Hashable] = set()
-            construct = cast(Callable[..., object], self.construct_object)
-            for key_node, _value_node in node.value:
-                key: object = (
-                    "<<"
-                    if key_node.tag == "tag:yaml.org,2002:merge"
-                    else construct(key_node, deep=True)
-                )
-                if not isinstance(key, Hashable):
-                    raise yaml.constructor.ConstructorError(
-                        None, None, "found unhashable key", key_node.start_mark
+            self._active_flatten_mappings.add(node)
+            try:
+                keys: set[Hashable] = set()
+                construct = cast(Callable[..., object], self.construct_object)
+                for key_node, _value_node in node.value:
+                    key: object = (
+                        "<<"
+                        if key_node.tag == "tag:yaml.org,2002:merge"
+                        else construct(key_node, deep=True)
                     )
-                if key in keys:
-                    raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
-                keys.add(key)
-            super().flatten_mapping(node)
+                    if not isinstance(key, Hashable):
+                        raise yaml.constructor.ConstructorError(
+                            None, None, "found unhashable key", key_node.start_mark
+                        )
+                    if key != "<<" and not isinstance(key, str):
+                        raise yaml.constructor.ConstructorError(
+                            None, None, "found non-string key", key_node.start_mark
+                        )
+                    if key in keys:
+                        raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
+                    keys.add(key)
+                super().flatten_mapping(node)
+                self._checked_mappings.add(node)
+            finally:
+                self._active_flatten_mappings.discard(node)
         finally:
             self._nesting_depth -= 1
 
 
 _UniqueKeyLoader.add_constructor("tag:yaml.org,2002:bool", _UniqueKeyLoader._construct_yaml_12_bool)
+
+
+def _scaffold_language_json(value: object) -> str:
+    try:
+        return json.dumps(value)
+    except TypeError:
+        return json.dumps(value, default=str)
 
 
 def _coerce_scaffold_config_language(raw_language: object, *, default: str = "python") -> str:
@@ -112,7 +130,7 @@ def _coerce_scaffold_config_language(raw_language: object, *, default: str = "py
     if not isinstance(raw_language, str):
         raise ValueError(
             "Cannot scaffold AST rule for language "
-            f"{json.dumps(raw_language)}; run `tg ast-info` for supported languages."
+            f"{_scaffold_language_json(raw_language)}; run `tg ast-info` for supported languages."
         )
     stripped = raw_language.strip()
     if not stripped:
@@ -176,9 +194,9 @@ def _linked_ast_rule_language(
         raise ValueError(f"cannot parse linked rule {label}: invalid UTF-8") from exc
     if not isinstance(rule, dict):
         raise ValueError(f"cannot parse linked rule {label}: expected a YAML mapping")
-    language = rule.get("language")
-    if isinstance(language, str) and language.strip():
-        return language.strip().lower()
+    if "language" in rule:
+        fallback = default_language() if callable(default_language) else default_language
+        return _coerce_scaffold_config_language(rule.get("language"), default=fallback)
     return default_language() if callable(default_language) else default_language
 
 
@@ -190,8 +208,7 @@ def _ast_project_config_language(config_path: Path) -> str:
     config = _ast_project_config_data(config_path)
     if config is None:
         return "python"
-    language = config.get("language")
-    return language.strip().lower() if isinstance(language, str) and language.strip() else "python"
+    return _coerce_scaffold_config_language(config.get("language"))
 
 
 def _ast_project_config_data(config_path: Path) -> dict[str, object] | None:
