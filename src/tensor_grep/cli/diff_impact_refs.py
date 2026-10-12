@@ -136,14 +136,31 @@ def _python_import_reference(
             tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
-        module_bindings: set[tuple[str, ...]] = set()
+        name_bindings: dict[str, tuple[str, ...]] = {}
+        binding_paths: set[tuple[str, ...]] = set()
+
+        def _register_name(name: str, binding: tuple[str, ...]) -> None:
+            name_bindings[name] = binding
+            binding_paths.add(binding)
+            binding_paths.add((name,))
+
+        def _expr_binding_path(expr: ast.expr) -> tuple[str, ...] | None:
+            path = _attribute_path(expr)
+            if path is not None and path in binding_paths:
+                return path
+            if isinstance(expr, ast.Name):
+                return name_bindings.get(expr.id)
+            return None
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                module_bindings |= {
-                    (alias.asname,) if alias.asname else tuple(alias.name.split("."))
-                    for alias in node.names
-                    if alias.name in origin_modules
-                }
+                for alias in node.names:
+                    if alias.name not in origin_modules:
+                        continue
+                    if alias.asname:
+                        _register_name(alias.asname, (alias.asname,))
+                    else:
+                        binding_paths.add(tuple(alias.name.split(".")))
             elif isinstance(node, ast.ImportFrom):
                 module = _import_module(node, path, root)
                 if module is None:
@@ -152,27 +169,53 @@ def _python_import_reference(
                     alias.name in {symbol, "*"} for alias in node.names
                 ):
                     return True, True
-                module_bindings |= {
-                    (alias.asname or alias.name,)
-                    for alias in node.names
-                    if f"{module}.{alias.name}" in origin_modules
-                }
+                for alias in node.names:
+                    qualified = f"{module}.{alias.name}"
+                    if qualified not in origin_modules:
+                        continue
+                    _register_name(alias.asname or alias.name, (alias.asname or alias.name,))
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Name)
+            ):
+                source = name_bindings.get(node.value.id)
+                if source is not None:
+                    _register_name(node.targets[0].id, source)
+
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Attribute)
                 and node.attr == symbol
-                and _attribute_path(node.value) in module_bindings
+                and _expr_binding_path(node.value) is not None
             ):
                 return True, True
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "getattr"
-                and len(node.args) >= 2
-                and _attribute_path(node.args[0]) in module_bindings
-                and _constant_string(node.args[1]) == symbol
-            ):
-                return True, True
+            if isinstance(node, ast.Subscript) and _expr_binding_path(node.value) is not None:
+                return False, False
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id != "getattr" or len(node.args) < 2:
+                    continue
+                if _expr_binding_path(node.args[0]) is None:
+                    continue
+                attribute = _constant_string(node.args[1])
+                if attribute is None:
+                    return False, False
+                if attribute == symbol:
+                    return True, True
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Call):
+                inner = node.func
+                if (
+                    isinstance(inner.func, ast.Name)
+                    and inner.func.id == "getattr"
+                    and len(inner.args) >= 2
+                    and _expr_binding_path(inner.args[0]) is not None
+                ):
+                    attribute = _constant_string(inner.args[1])
+                    if attribute is None:
+                        return False, False
+                    if attribute == symbol:
+                        return True, True
     return True, False
 
 

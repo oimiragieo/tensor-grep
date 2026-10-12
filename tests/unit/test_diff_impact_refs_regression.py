@@ -104,6 +104,49 @@ def test_star_import_call_disables_uncalled_cap_and_preserves_gate_exit(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+def test_module_import_assign_alias_getattr_disables_uncalled_cap(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    app_path = tmp_path / "app.py"
+    app_path.write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'import app as module\nalias = module\ngetattr(alias, "chan" + "ged")()\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
+def test_dynamic_getattr_on_module_binding_marks_cap_incomplete(tmp_path: Path) -> None:
+    app_path = tmp_path / "app.py"
+    app_path.write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        "import app as module\ngetattr(module, name)()\n",
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 @pytest.mark.parametrize(
     "source",
     [
