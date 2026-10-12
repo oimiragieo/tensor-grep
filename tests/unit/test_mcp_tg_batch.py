@@ -1,11 +1,16 @@
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import pytest
 from mcp import types
 
+from tensor_grep.backends import ripgrep_backend
 from tensor_grep.cli import mcp_server
 
 NORMALIZED_VOLATILE_FIELDS: tuple[str, ...] = ()
@@ -240,3 +245,114 @@ def test_tg_batch_never_runs_more_than_four_items_at_once(monkeypatch):
 
     assert maximum == 4
     assert len(result["results"]) == 8
+
+
+def test_tg_batch_rejects_real_search_completed_after_item_deadline(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    real_search = mcp_server.tg_search
+    finished = threading.Event()
+    real_add_done_callback = Future.add_done_callback
+
+    def completed_late_search(**kwargs: object) -> str:
+        result = real_search(**kwargs)
+        time.sleep(0.03)
+        finished.set()
+        return result
+
+    def collect_after_completion(self: Future, callback: object) -> None:
+        real_add_done_callback(self, callback)
+        assert finished.wait(2), "real search did not finish before collection"
+
+    monkeypatch.setattr(mcp_server, "tg_search", completed_late_search)
+    monkeypatch.setattr(Future, "add_done_callback", collect_after_completion)
+    payload = _payload(
+        mcp_server.tg_batch(
+            [{"id": "late", "kind": "search", "pattern": "needle"}],
+            path=str(tmp_path),
+            item_deadline=0.001,
+        )
+    )
+
+    assert payload["results"][0]["error"]["code"] == "deadline_exceeded", payload
+
+
+@pytest.mark.parametrize("structured_json", [True, False])
+def test_tg_batch_preserves_real_search_omission_signal(tmp_path, monkeypatch, structured_json):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.txt").write_text("needle\n" * 5, encoding="utf-8")
+    item = {
+        "id": "capped",
+        "kind": "search",
+        "pattern": "needle",
+        "max_results": 1,
+        "structured_json": structured_json,
+    }
+    payload = _payload(mcp_server.tg_batch([item], path=str(tmp_path)))
+    result = payload["results"][0]
+
+    assert payload["result_incomplete"] is True, payload
+    assert result.get("result_incomplete") is True, result
+    if structured_json:
+        assert result["result"]["truncated"] is True
+        assert result["result"]["omitted_matches"] > 0
+    else:
+        assert "output truncated" in result["result"]
+
+
+def test_tg_batch_failed_text_search_spawns_once_like_standalone(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    real_run = ripgrep_backend.run_subprocess
+    calls = 0
+
+    def counted_run(*args: object, **kwargs: object):
+        nonlocal calls
+        calls += 1
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(ripgrep_backend, "run_subprocess", counted_run)
+    standalone = mcp_server.tg_search("[", path=str(tmp_path), structured_json=False)
+    assert calls == 1, f"standalone invalid regex used {calls} subprocesses: {standalone}"
+
+    calls = 0
+    payload = _payload(
+        mcp_server.tg_batch(
+            [{"id": "bad", "kind": "search", "pattern": "[", "structured_json": False}],
+            path=str(tmp_path),
+        )
+    )
+    assert calls == 1, f"batch invalid regex used {calls} subprocesses: {payload}"
+    assert payload["results"][0]["error"]["code"] == "invalid_input"
+
+
+def test_tg_batch_settles_executor_threads_after_real_search(tmp_path):
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    script = """
+import json
+import os
+import sys
+import threading
+import time
+from tensor_grep.cli import mcp_server
+os.environ['TG_MCP_ROOT'] = sys.argv[1]
+payload = json.loads(mcp_server.tg_batch([{'id': 'one', 'kind': 'search', 'pattern': 'needle'}], path=sys.argv[1]))
+assert payload['results'][0]['result']['total_matches'] == 1, payload
+for _ in range(100):
+    live = [thread.name for thread in threading.enumerate() if thread.name.startswith('tg-mcp-batch')]
+    if not live:
+        break
+    time.sleep(0.01)
+assert not live, f'batch worker threads remained after search completed: {live}'
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        env=os.environ.copy(),
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr

@@ -3421,7 +3421,7 @@
   },
   {
     "module": "cli/mcp_batch_tools.py",
-    "lineno": 76,
+    "lineno": 108,
     "enclosing_symbol": "_run_item",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3431,7 +3431,7 @@
   },
   {
     "module": "cli/mcp_batch_tools.py",
-    "lineno": 136,
+    "lineno": 209,
     "enclosing_symbol": "run_tg_batch",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

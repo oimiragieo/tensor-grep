@@ -7,6 +7,8 @@ import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import Any, NoReturn, cast
 
+from tensor_grep.cli.mcp_search_bounds import _MCP_OUTPUT_TRUNCATED_NOTICE
+
 _KIND_TO_TOOL = {
     "search": "tg_search",
     "find": "tg_find",
@@ -15,7 +17,6 @@ _KIND_TO_TOOL = {
     "callers": "tg_symbol_callers",
     "source": "tg_symbol_source",
 }
-_BATCH_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-mcp-batch")
 _BATCH_SLOTS = threading.BoundedSemaphore(4)
 
 
@@ -28,15 +29,26 @@ def _error_item(item_id: str, kind: str, code: str, message: str) -> dict[str, o
 
 
 def _result_is_incomplete(result: dict[str, object]) -> bool:
-    if "error" in result:
+    if "error" in result or result.get("result_incomplete") is True:
         return True
     payload = result.get("result")
     if not isinstance(payload, dict):
         return False
-    if payload.get("result_incomplete") is True:
+    if any(
+        payload.get(key) is True for key in ("result_incomplete", "truncated", "output_truncated")
+    ):
         return True
     incomplete = payload.get("incomplete")
     return isinstance(incomplete, dict) and incomplete.get("status") is True
+
+
+def _text_search_is_incomplete(output: str) -> bool:
+    return any(
+        line.startswith(("... output truncated", "Scan capped at "))
+        or line == _MCP_OUTPUT_TRUNCATED_NOTICE
+        or (line.startswith("... and ") and line.endswith(" more files."))
+        for line in output.splitlines()
+    )
 
 
 def _reject(message: str) -> NoReturn:
@@ -75,11 +87,20 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
     try:
         output = getattr(server, tool_name)(**arguments)
         if kind == "search" and arguments.get("structured_json") is False:
-            if not output.startswith("Search failed:"):
-                return {"id": item_id, "kind": kind, "result": output}
-            payload = json.loads(
-                getattr(server, tool_name)(**{**arguments, "structured_json": True})
-            )
+            if output.startswith("Search failed: semantic backend error"):
+                return _error_item(item_id, kind, "semantic_backend_error", output)
+            if output.startswith("Search failed:"):
+                return _error_item(
+                    item_id, kind, "invalid_input", output.removeprefix("Search failed: ")
+                )
+            if output.startswith("tg_search failed:"):
+                return _error_item(item_id, kind, "internal_error", output)
+            if output.startswith("tg: "):
+                return _error_item(item_id, kind, "broad_scan_refused", output)
+            result: dict[str, object] = {"id": item_id, "kind": kind, "result": output}
+            if _text_search_is_incomplete(output):
+                result["result_incomplete"] = True
+            return result
         else:
             payload = json.loads(output)
     except TypeError:
@@ -98,10 +119,20 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
             str(error.get("code", "internal_error")),
             str(error.get("message", "tool execution failed")),
         )
-    return {"id": item_id, "kind": kind, "result": payload}
+    result = {"id": item_id, "kind": kind, "result": payload}
+    if _result_is_incomplete(result):
+        result["result_incomplete"] = True
+    return result
 
 
-def _release_batch_slot(future: Future[dict[str, object]]) -> None:
+def _timed_run_item(
+    server: Any, item: dict[str, object], common_path: str
+) -> tuple[dict[str, object], float]:
+    result = _run_item(server, item, common_path)
+    return result, time.monotonic()
+
+
+def _release_batch_slot(future: Future[tuple[dict[str, object], float]]) -> None:
     del future
     _BATCH_SLOTS.release()
 
@@ -124,7 +155,8 @@ def run_tg_batch(
     started = time.monotonic()
     overall_end = started + deadline
     result_slots: list[dict[str, object] | None] = [None] * len(items)
-    futures: dict[Future[dict[str, object]], tuple[int, float, str, str]] = {}
+    futures: dict[Future[tuple[dict[str, object], float]], tuple[int, float, str, str]] = {}
+    executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tg-mcp-batch")
     try:
         for index, item in enumerate(items):
             now = time.monotonic()
@@ -155,7 +187,7 @@ def run_tg_batch(
                 )
                 continue
             try:
-                future = _BATCH_EXECUTOR.submit(_run_item, server, item, path)
+                future = executor.submit(_timed_run_item, server, item, path)
             except RuntimeError:
                 _BATCH_SLOTS.release()
                 raise
@@ -164,14 +196,17 @@ def run_tg_batch(
 
         pending = set(futures)
         while pending:
-            now = time.monotonic()
             completed = {future for future in pending if future.done()}
             for future in completed:
-                index, _, _, _ = futures[future]
+                index, item_end, item_id, kind = futures[future]
                 try:
-                    result_slots[index] = future.result()
+                    result, finished_at = future.result()
+                    result_slots[index] = (
+                        _error_item(item_id, kind, "deadline_exceeded", "item deadline exceeded")
+                        if finished_at >= item_end
+                        else result
+                    )
                 except Exception:
-                    _, _, item_id, kind = futures[future]
                     result_slots[index] = _error_item(
                         item_id, kind, "internal_error", "tool execution failed"
                     )
@@ -196,6 +231,7 @@ def run_tg_batch(
         for future in futures:
             if not future.done():
                 future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     results = [result for result in result_slots if result is not None]
     return json.dumps(
