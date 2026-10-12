@@ -50,11 +50,14 @@ the flag emits only `{"version":1,"citations":[{"path":"repo/relative/posix","st
 Paths are repository-relative POSIX paths. Search citations identify individual match lines;
   find, agent, and context-render use an enclosing parser-backed symbol range when available and
   otherwise use the match line. Search context lines are excluded from citation ranges. Agent and
-  context-render omit citations without visible match evidence and mark the result incomplete.
+  context-render also accept a parser-backed symbol range when a natural-language query has no
+  literal line match; sources without either form of evidence are omitted and mark the result incomplete.
   Adjacent or overlapping ranges merge only when consecutive in the existing command ranking.
   MCP search citation limits honor `max_results` and `max_files`; `omitted` counts matching rows
   withheld by those limits. Without `--json`, each range is printed as `path:start-end`. The option
-  is refused with `--ndjson`, explicit `--format rg`, or `--files-with-matches` (exit 2). MCP `citations=true` on
+  is refused with `--ndjson`, explicit `--format rg`, `--files`, `--files-with-matches`,
+  `--files-without-match`, `--debug`, `--stats`, `--trace`, `--count`, or `--count-matches`
+  (exit 2). MCP `citations=true` on
 `tg_search`, `tg_find`, `tg_agent_capsule`, `tg_context_render`, `tg_query`, or `tg_context`
 returns this same five-key envelope without snippets or MCP metadata fields.
 

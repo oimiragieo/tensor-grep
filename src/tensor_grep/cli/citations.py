@@ -14,6 +14,7 @@ def _explicit_rg_format_requested(
     argv: list[str] | None = None,
     *,
     format_value: str | None = None,
+    any_occurrence: bool = False,
 ) -> bool:
     del format_value
     tokens = list(sys.argv[1:] if argv is None else argv)
@@ -28,18 +29,48 @@ def _explicit_rg_format_requested(
         token = tokens[index]
         if token == "--format":
             index += 1
-            if index < len(tokens) and tokens[index] == "rg":
-                return True
+            is_rg = index < len(tokens) and tokens[index] == "rg"
+            if not any_occurrence or is_rg:
+                return is_rg
         if token.startswith("--format="):
-            if token.split("=", 1)[1] == "rg":
-                return True
+            is_rg = token.split("=", 1)[1] == "rg"
+            if not any_occurrence or is_rg:
+                return is_rg
         index += 1
     return False
 
 
-def validate_search_citation_modes(citations: bool, ndjson: bool, explicit_rg_format: bool) -> None:
+def validate_search_citation_modes(
+    citations: bool,
+    ndjson: bool,
+    explicit_rg_format: bool,
+    *,
+    files: bool = False,
+    files_without_match: bool = False,
+    debug: bool = False,
+    stats: bool = False,
+    trace: bool = False,
+    count: bool = False,
+    count_matches: bool = False,
+) -> None:
     if citations and (ndjson or explicit_rg_format):
         typer.echo("--citations cannot be combined with --ndjson or --format rg", err=True)
+        raise typer.Exit(2)
+    incompatible = [
+        flag
+        for present, flag in (
+            (files, "--files"),
+            (files_without_match, "--files-without-match"),
+            (debug, "--debug"),
+            (stats, "--stats"),
+            (trace, "--trace"),
+            (count, "--count"),
+            (count_matches, "--count-matches"),
+        )
+        if present
+    ]
+    if citations and incompatible:
+        typer.echo(f"--citations cannot be combined with {', '.join(incompatible)}", err=True)
         raise typer.Exit(2)
 
 
@@ -74,9 +105,13 @@ def citation_envelope(
     incomplete_reason: str | None = None,
     omitted: int = 0,
 ) -> dict[str, Any]:
-    root_path = Path(root).expanduser().resolve()
-    if root_path.is_file():
-        root_path = root_path.parent
+    scope_path = Path(root).expanduser().resolve()
+    if scope_path.is_file():
+        scope_path = scope_path.parent
+    root_path = next(
+        (parent for parent in (scope_path, *scope_path.parents) if (parent / ".git").exists()),
+        scope_path,
+    )
     merged: list[dict[str, Any]] = []
     for item in citations:
         raw_path = item.get("path") or item.get("file")
@@ -84,8 +119,10 @@ def citation_envelope(
             continue
         file_path = Path(str(raw_path)).expanduser()
         if not file_path.is_absolute():
-            file_path = root_path / file_path
-        relative = file_path.resolve().relative_to(root_path).as_posix()
+            file_path = scope_path / file_path
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(scope_path)
+        relative = resolved_path.relative_to(root_path).as_posix()
         start = item.get("start_line", item.get("line_number", item.get("line")))
         end = item.get("end_line", start)
         if start is None or end is None or isinstance(start, bool) or isinstance(end, bool):
@@ -267,7 +304,21 @@ def _source_citation(source: dict[str, Any], root: str | Path, query: str) -> di
     path.relative_to(root_path)
     line = _source_match_line(source, query)
     if line is None:
-        return None
+        start = source.get("start_line")
+        end = source.get("end_line")
+        if not (
+            (source.get("symbol") or (source.get("name") and source.get("kind")))
+            and type(start) is int
+            and type(end) is int
+            and 1 <= start <= end
+        ):
+            return None
+        from tensor_grep.cli.ast_enrichment import enrich_match_with_container
+
+        container = enrich_match_with_container(path, start)
+        if not container or container["range"] != [start, end]:
+            return None
+        return {"path": str(path), "start_line": start, "end_line": end}
     from tensor_grep.cli.ast_enrichment import enrich_match_with_container
 
     container = enrich_match_with_container(path, line)

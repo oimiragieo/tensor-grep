@@ -3711,7 +3711,19 @@ def search_command(
         raise typer.Exit(2)
 
     explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
-    _citations.validate_search_citation_modes(citations, ndjson, explicit_rg_format)
+    _citations.validate_search_citation_modes(
+        citations,
+        ndjson,
+        explicit_rg_format
+        or (citations and _citations._explicit_rg_format_requested(any_occurrence=True)),
+        files=files,
+        files_without_match=files_without_match,
+        debug=debug,
+        stats=stats,
+        trace=trace,
+        count=count,
+        count_matches=count_matches,
+    )
     if citations and files_with_matches:
         typer.echo("--citations cannot be combined with --files-with-matches", err=True)
         raise typer.Exit(2)

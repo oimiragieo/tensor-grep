@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8670,
+    "lineno": 8685,
     "enclosing_symbol": "session_daemon_start",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1011,7 +1011,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8731,
+    "lineno": 8746,
     "enclosing_symbol": "session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

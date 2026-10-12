@@ -208,7 +208,48 @@ def test_search_citations_refuse_files_with_matches(tmp_path: Path) -> None:
         app, ["search", "needle", str(tmp_path), "--citations", "--files-with-matches"]
     )
     assert result.exit_code == 2
-    assert "--citations" in result.output
+    assert "--citations cannot be combined with --files-with-matches" in result.output
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--json", "--files"],
+        ["--json", "--debug"],
+        ["--files-without-match"],
+    ],
+)
+def test_search_citations_refuse_raw_or_debug_output_modes(
+    tmp_path: Path, extra: list[str]
+) -> None:
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "unmatched.txt").write_text("haystack\n", encoding="utf-8")
+    result = CliRunner().invoke(app, ["search", "needle", str(tmp_path), "--citations", *extra])
+    assert result.exit_code == 2, result.output
+    assert "--citations cannot be combined with" in result.output
+    assert any(flag in result.output for flag in extra)
+
+
+def test_search_without_citations_preserves_first_format_json_refusal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
+    args = [
+        "search",
+        "needle",
+        str(tmp_path),
+        "--json",
+        "--cpu",
+        "--format",
+        "json",
+        "--format",
+        "rg",
+        "--trim",
+    ]
+    monkeypatch.setattr("sys.argv", ["tg", *args])
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2, result.output
+    assert "--trim" in result.output
 
 
 def test_search_citations_refuse_repeated_format(tmp_path: Path, monkeypatch) -> None:
@@ -217,7 +258,7 @@ def test_search_citations_refuse_repeated_format(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr("sys.argv", ["tg", *args])
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 2
-    assert "--format" in result.output
+    assert "--citations cannot be combined with --ndjson or --format rg" in result.output
 
 
 @pytest.mark.parametrize(
@@ -270,7 +311,7 @@ def test_cli_citations_refuse_incompatible_output_modes(
         monkeypatch.setattr("sys.argv", ["tg", *[part.format(root=str(tmp_path)) for part in args]])
     result = CliRunner().invoke(app, [part.format(root=str(tmp_path)) for part in args])
     assert result.exit_code == 2
-    assert "cannot be combined with" in result.output.lower()
+    assert "--citations cannot be combined with --ndjson or --format rg" in result.output
 
 
 def test_mcp_tg_search_citations_envelope_and_confinement(tmp_path: Path, monkeypatch) -> None:
@@ -341,6 +382,76 @@ def test_find_citations_use_the_enclosing_symbol_range(tmp_path: Path) -> None:
     assert payload["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 3}]
 
 
+@pytest.mark.parametrize("command", ["find", "agent", "context-render"])
+def test_scoped_cli_citations_keep_repository_relative_paths(tmp_path: Path, command: str) -> None:
+    (tmp_path / ".git").mkdir()
+    scope = tmp_path / "src"
+    scope.mkdir()
+    (scope / "sample.py").write_text(
+        "def first():\n    needle = True\n    return needle\n", encoding="utf-8"
+    )
+    args = (
+        ["find", "needle", str(scope), "--json", "--citations"]
+        if command == "find"
+        else [command, str(scope), "needle", "--json", "--citations", "--no-deadline"]
+    )
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.output
+    payload = _assert_citation_envelope(result.stdout)
+    assert payload["citations"] == [{"path": "src/sample.py", "start_line": 1, "end_line": 3}]
+    assert payload["result_incomplete"] is False
+
+
+@pytest.mark.parametrize("tool", ["tg_find", "tg_agent_capsule", "tg_context_render"])
+def test_scoped_mcp_citations_keep_repository_relative_paths(
+    tmp_path: Path, monkeypatch, tool: str
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / ".git").mkdir()
+    scope = tmp_path / "src"
+    scope.mkdir()
+    (scope / "sample.py").write_text(
+        "def first():\n    needle = True\n    return needle\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    payload = _assert_citation_envelope(
+        getattr(mcp_server, tool)(query="needle", path=str(scope), citations=True)
+    )
+    assert payload["citations"] == [{"path": "src/sample.py", "start_line": 1, "end_line": 3}]
+    assert payload["result_incomplete"] is False
+
+
+@pytest.mark.parametrize(
+    ("tool", "options"),
+    [
+        ("tg_search", {"pattern": "needle"}),
+        ("tg_query", {"action": "text", "pattern": "needle"}),
+        ("tg_query", {"action": "find", "query": "needle"}),
+        ("tg_context", {"action": "render", "query": "needle"}),
+        ("tg_context", {"action": "capsule", "query": "needle"}),
+    ],
+)
+def test_scoped_mcp_meta_citations_keep_repository_relative_paths(
+    tmp_path: Path, monkeypatch, tool: str, options: dict[str, str]
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / ".git").mkdir()
+    scope = tmp_path / "src"
+    scope.mkdir()
+    (scope / "sample.py").write_text(
+        "def first():\n    needle = True\n    return needle\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    payload = _assert_citation_envelope(
+        getattr(mcp_server, tool)(path=str(scope), citations=True, **options)
+    )
+    assert payload["citations"]
+    assert all(item["path"] == "src/sample.py" for item in payload["citations"])
+    assert payload["result_incomplete"] is False
+
+
 @pytest.mark.parametrize("command", ["agent", "context-render"])
 def test_context_citations_use_symbol_not_snippet_window(tmp_path: Path, command: str) -> None:
     (tmp_path / "sample.py").write_text(
@@ -353,6 +464,21 @@ def test_context_citations_use_symbol_not_snippet_window(tmp_path: Path, command
     assert result.exit_code == 0, result.output
     payload = _assert_citation_envelope(result.stdout)
     assert payload["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 3}]
+
+
+@pytest.mark.parametrize("command", ["agent", "context-render"])
+def test_natural_query_cites_parser_backed_symbol_range(tmp_path: Path, command: str) -> None:
+    (tmp_path / "sample.py").write_text(
+        "def first():\n    return 1\n\ndef second():\n    return 2\n", encoding="utf-8"
+    )
+    result = CliRunner().invoke(
+        app,
+        [command, str(tmp_path), "find first function", "--json", "--citations", "--no-deadline"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = _assert_citation_envelope(result.stdout)
+    assert payload["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 2}]
+    assert payload["result_incomplete"] is False
 
 
 @pytest.mark.parametrize(
