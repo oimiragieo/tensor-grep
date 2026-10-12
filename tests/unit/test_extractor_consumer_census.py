@@ -33,6 +33,8 @@ DISPOSITIONS: dict[tuple[str, str], str] = {
     ("cli/agent_capsule.py", "_collect_outbound_dependencies"): "opt-in DAR only; primary file "
     "gap is attached in agent_capsule_builder (attach_target_gaps)",
     ("cli/ast_enrichment.py", "enrich_match_with_container"): "wired: enclosing_symbol_status",
+    ("cli/ast_enrichment.py", "_symbols_for_container_enrichment"): "wired: enrich_search_items_with_containers "
+    "-> target_file_gaps when container absent",
     # tg sql imports passes the extractor as a keyword argument (not a call here); its
     # _run_imports_pass is wired to python_syntax_error_gap (test_sql_imports_table.py).
     ("cli/symbol_suggestions.py", "suggestions_for_payload"): "EXEMPT: proposes names after a miss "
