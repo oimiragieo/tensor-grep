@@ -505,15 +505,25 @@ def test_no_flag_json_output_matches_origin_main_golden(
     completed = subprocess.run(
         [sys.executable, "-m", "tensor_grep", *args],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="strict",
+        text=False,
         env=os.environ.copy(),
         check=False,
     )
-    assert completed.returncode == 0, completed.stderr
-    output = completed.stdout.replace(str(tmp_path).replace("\\", "\\\\"), "ROOT")
-    assert hashlib.sha256(output.encode("utf-8")).hexdigest() == expected_digest, output
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    output = completed.stdout.replace(str(tmp_path).replace("\\", "\\\\").encode("utf-8"), b"ROOT")
+    assert hashlib.sha256(output).hexdigest() == expected_digest, output
+
+
+def test_no_flag_golden_hash_preserves_raw_newline_bytes(tmp_path: Path, monkeypatch) -> None:
+    def fake_run(args, **kwargs):
+        if kwargs.get("text"):
+            return subprocess.CompletedProcess(args, 0, "line\n", "")
+        return subprocess.CompletedProcess(args, 0, b"line\r\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    test_no_flag_json_output_matches_origin_main_golden(
+        tmp_path, monkeypatch, "search", hashlib.sha256(b"line\r\n").hexdigest()
+    )
 
 
 def test_native_front_doors_route_citations_away_from_ripgrep() -> None:
@@ -605,6 +615,48 @@ def test_mcp_workspace_query_citations_share_one_envelope(tmp_path: Path, monkey
         {"path": "a/sample.txt", "start_line": 1, "end_line": 1},
         {"path": "b/sample.txt", "start_line": 1, "end_line": 1},
     ]
+
+
+def test_workspace_citations_do_not_prefix_repository_relative_paths_twice(tmp_path: Path) -> None:
+    from tensor_grep.cli.citations import serialize_workspace_citations
+
+    (tmp_path / ".git").mkdir()
+    scope = tmp_path / "src"
+    scope.mkdir()
+    (scope / "sample.py").write_text("needle\n", encoding="utf-8")
+    payload = {"citations": [{"path": "src/sample.py", "start_line": 1, "end_line": 1}]}
+    result = serialize_workspace_citations({str(scope): payload}, [], tmp_path)
+    assert _assert_citation_envelope(result)["citations"] == [
+        {"path": "src/sample.py", "start_line": 1, "end_line": 1}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("action", "options"),
+    [("text", {"pattern": "needle"}), ("find", {"query": "needle"})],
+)
+def test_mcp_workspace_query_keeps_repository_relative_citations(
+    tmp_path: Path, monkeypatch, action: str, options: dict[str, str]
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / ".git").mkdir()
+    scope = tmp_path / "src"
+    scope.mkdir()
+    (scope / "sample.py").write_text(
+        "def sample():\n    needle = True\n    return needle\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    result = mcp_server.tg_query(
+        action=action,
+        path=str(tmp_path),
+        workspace_roots=[str(scope)],
+        citations=True,
+        **options,
+    )
+    payload = _assert_citation_envelope(result)
+    assert payload["citations"]
+    assert all(item["path"] == "src/sample.py" for item in payload["citations"])
 
 
 def test_mcp_search_citations_disclose_scan_cap(tmp_path: Path, monkeypatch) -> None:

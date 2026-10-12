@@ -460,6 +460,13 @@ def serialize_workspace_citations(
 ) -> str:
     import json
 
+    scope_path = Path(root).expanduser().resolve()
+    if scope_path.is_file():
+        scope_path = scope_path.parent
+    repository_root = next(
+        (parent for parent in (scope_path, *scope_path.parents) if (parent / ".git").exists()),
+        scope_path,
+    )
     citations: list[dict[str, Any]] = []
     incomplete = bool(omitted_roots)
     reason: str | None = "deadline" if omitted_roots else None
@@ -474,7 +481,15 @@ def serialize_workspace_citations(
             return json.dumps(payload, indent=2)
         for item in payload.get("citations", ()):
             if isinstance(item, dict) and isinstance(item.get("path"), str):
-                citations.append({**item, "path": str(Path(workspace_root) / item["path"])})
+                item_path = Path(item["path"])
+                if not item_path.is_absolute():
+                    repository_path = repository_root / item_path
+                    item_path = (
+                        repository_path
+                        if repository_path.is_relative_to(Path(workspace_root))
+                        else Path(workspace_root) / item_path
+                    )
+                citations.append({**item, "path": str(item_path)})
         incomplete = incomplete or bool(payload.get("result_incomplete"))
         if reason is None and isinstance(payload.get("incomplete_reason"), str):
             reason = payload["incomplete_reason"]
