@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
 from mcp import types
 
 from tensor_grep.cli import mcp_server
@@ -97,3 +100,28 @@ def test_tg_coverage_cap_sets_incomplete_status(tmp_path: Path, monkeypatch) -> 
     assert payload["incomplete"]["status"] is True
     assert payload["incomplete"]["cause"] == "scan_limit"
     assert payload["incomplete"]["budget_remediable"] is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows junction confinement")
+def test_tg_coverage_ignores_in_root_junction_to_external(tmp_path: Path, monkeypatch) -> None:
+    anchor = tmp_path / "anchor"
+    external = tmp_path / "external"
+    anchor.mkdir()
+    external.mkdir()
+    (external / "leak.py").write_text("secret = 1\n", encoding="utf-8")
+    link = anchor / "link"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(external)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"cannot create junction on this host: {completed.stderr}")
+    (anchor / "safe.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(anchor))
+
+    payload = json.loads(mcp_server.tg_coverage(str(anchor)))
+
+    assert payload["files_total"] == 1
+    assert "leak.py" not in json.dumps(payload)

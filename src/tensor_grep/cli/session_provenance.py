@@ -76,3 +76,23 @@ def verified_session(payload: dict[str, Any], root: Path) -> bool:
         )
     except (ValueError, TypeError, RecursionError):
         return False
+
+
+def verified_session_readonly(payload: dict[str, Any]) -> bool:
+    """Authenticate a session payload without creating a machine signing key."""
+    from tensor_grep.cli import session_daemon_trust
+    from tensor_grep.cli.symbols_cache_auth import _machine_key_path
+
+    receipt = payload.get(_FIELD)
+    if not isinstance(receipt, dict) or receipt.get("scheme") != "machine-hmac-sha256-v1":
+        return False
+    secret = session_daemon_trust._read_user_secret(_machine_key_path())
+    if secret is None:
+        return False
+    try:
+        return isinstance(receipt.get("tag"), str) and hmac.compare_digest(
+            _tag(payload, secret),
+            receipt["tag"],
+        )
+    except (ValueError, TypeError, RecursionError):
+        return False

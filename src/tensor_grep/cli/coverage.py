@@ -11,10 +11,36 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+_SESSION_INDEX_LIMIT = 8 * 1024 * 1024
 
-def _digest(path: Path, limit: int) -> str:
-    with path.open("rb") as handle:
-        content = handle.read(limit + 1)
+
+def _iso_timestamp(value: str) -> float:
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _session_receipt_stamp(payload: dict[str, Any], created_at: str) -> float:
+    refreshed = str(payload.get("refreshed_at", "") or "")
+    return max(_iso_timestamp(created_at), _iso_timestamp(refreshed))
+
+
+def _under_confinement(path: Path, anchor: Path) -> bool:
+    try:
+        return path.expanduser().resolve().is_relative_to(anchor.expanduser().resolve())
+    except OSError:
+        return False
+
+
+def _digest(path: Path, limit: int, *, confinement: Path | None = None) -> str:
+    if confinement is None:
+        with path.open("rb") as handle:
+            content = handle.read(limit + 1)
+    else:
+        from tensor_grep.cli.symbols_cache_io import read_confined
+
+        content = read_confined(confinement.resolve(), path, limit)
     if len(content) > limit:
         raise ValueError("oversize")
     return hashlib.sha256(content).hexdigest()
@@ -27,14 +53,41 @@ def _display_path(path: Path, root: Path) -> str:
         return path.name
 
 
+def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
+    from tensor_grep.cli import session_store
+    from tensor_grep.cli._index_lock import record_from_entry
+
+    index_path = session_store._index_path(root)
+    if not index_path.exists():
+        return []
+    if floor is None:
+        return session_store._load_index(root)
+    anchor = floor.resolve()
+    if not root.resolve().is_relative_to(anchor):
+        return []
+    from tensor_grep.cli.symbols_cache_io import read_confined
+
+    try:
+        raw = read_confined(anchor, index_path, _SESSION_INDEX_LIMIT)
+    except OSError as exc:
+        raise ValueError("session index unreadable or escapes confinement") from exc
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("session index is not valid JSON") from exc
+    if not isinstance(payload, list):
+        raise ValueError("session index is not a JSON array")
+    return [record_from_entry(session_store.SessionRecord, entry) for entry in payload]
+
+
 def _session_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[str, float]]:
     from tensor_grep.cli import session_store
-    from tensor_grep.cli.session_provenance import read_session_payload, verified_session
+    from tensor_grep.cli.session_provenance import read_session_payload, verified_session_readonly
 
     session_root = session_store._resolve_root(root)
-    if floor is not None and not session_root.is_relative_to(floor):
+    if floor is not None and not session_root.resolve().is_relative_to(floor.resolve()):
         return {}
-    records = session_store._load_index(session_root)
+    records = _load_session_index(session_root, floor)
     if not records:
         return {}
     if len(records) > 256:
@@ -43,24 +96,22 @@ def _session_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[s
     for record in sorted(records, key=lambda item: item.created_at, reverse=True):
         session_path = session_store._session_payload_path(session_root, record.session_id)
         payload = read_session_payload(session_root, session_path)
-        if payload.get("session_id") != record.session_id or not verified_session(
-            payload, session_root
-        ):
+        if payload.get("session_id") != record.session_id or not verified_session_readonly(payload):
             raise ValueError("session snapshot authentication failed")
         entries = payload.get("snapshot", [])
         if not isinstance(entries, list):
             raise ValueError("invalid session snapshot")
-        try:
-            session_stamp = datetime.fromisoformat(record.created_at).timestamp()
-        except (TypeError, ValueError, OverflowError):
-            session_stamp = 0.0
+        session_stamp = _session_receipt_stamp(payload, record.created_at)
         for entry in entries:
             if isinstance(entry, dict) and entry.get("path") and entry.get("content_sha256"):
                 candidate = Path(str(entry["path"])).resolve()
-                if floor is not None and not candidate.is_relative_to(floor):
+                if floor is not None and not _under_confinement(candidate, floor):
                     continue
                 if candidate.is_relative_to(root):
-                    result.setdefault(str(candidate), (str(entry["content_sha256"]), session_stamp))
+                    key = str(candidate)
+                    prior = result.get(key)
+                    if prior is None or session_stamp > prior[1]:
+                        result[key] = (str(entry["content_sha256"]), session_stamp)
     return result
 
 
@@ -101,7 +152,7 @@ def _ast_cache_entries(root: Path, floor: Path | None = None) -> dict[str, tuple
         entries: dict[str, tuple[str, float]] = {}
         for path, digest, key, payload, receipt in rows:
             candidate = Path(str(path)).resolve()
-            if floor is not None and not candidate.is_relative_to(floor):
+            if floor is not None and not _under_confinement(candidate, floor):
                 continue
             if not candidate.is_relative_to(root) or payload is None or receipt is None:
                 continue
@@ -175,7 +226,7 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     walked = walked[:cap]
     files = [item for item in walked if repo_map._is_repo_context_file(item, scope)]
     if floor is not None:
-        files = [item for item in files if item.is_relative_to(floor)]
+        files = [item for item in files if _under_confinement(item, floor)]
     displayed = {_display_path(item, scope): item for item in files}
     receipts: dict[str, tuple[str, float]] = dict(_session_entries(scope, floor))
     for name, (digest, cache_stamp) in _ast_cache_entries(scope, floor).items():
@@ -186,16 +237,16 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     stale: list[dict[str, str]] = []
     unindexed: list[str] = []
     has_index = bool(receipts)
-    current_absolute = {str(item) for item in files}
+    current_absolute = {str(item.resolve()) for item in files}
     for name, current in displayed.items():
-        old_digest = receipts.get(str(current), (None, 0.0))[0]
+        old_digest = receipts.get(str(current.resolve()), (None, 0.0))[0]
         if old_digest is None:
             unindexed.append(name)
             if has_index:
                 stale.append({"path": name, "reason": "added"})
             continue
         try:
-            digest = _digest(current, repo_map._max_parse_bytes())
+            digest = _digest(current, repo_map._max_parse_bytes(), confinement=floor)
         except ValueError:
             stale.append({"path": name, "reason": "modified"})
             continue
@@ -204,7 +255,7 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
         if digest and digest != old_digest:
             stale.append({"path": name, "reason": "modified"})
     for name in receipts:
-        if floor is not None and not Path(name).is_relative_to(floor):
+        if floor is not None and not _under_confinement(Path(name), floor):
             continue
         if name not in current_absolute and not Path(name).exists():
             stale.append({"path": _display_path(Path(name), scope), "reason": "deleted"})

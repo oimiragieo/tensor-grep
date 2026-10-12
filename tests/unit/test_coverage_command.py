@@ -293,8 +293,9 @@ def test_coverage_recursive_sqlite_view_is_bounded(tmp_path: Path) -> None:
         connection.executescript(f"""
             CREATE VIEW generations AS WITH RECURSIVE x(id) AS
                 (SELECT 1 UNION ALL SELECT id + 1 FROM x)
-                SELECT id, id AS created, '{scope_literal}' AS scope FROM x;
+                SELECT id, id AS created, 1 AS complete, '{scope_literal}' AS scope FROM x;
             CREATE TABLE files(scope TEXT, path TEXT, content TEXT, generation INTEGER);
+            PRAGMA user_version=1;
         """)
 
     try:
@@ -434,3 +435,46 @@ def test_coverage_rejects_stale_cache_after_ignore_rules_change(
 
     assert payload["unindexed"] == ["main.py"]
     assert payload["complete"] is False
+
+
+def test_coverage_prefers_refreshed_session_over_stale_newer_open(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    runner = CliRunner()
+    first = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert first.exit_code == 0, first.output
+    session_a = json.loads(first.stdout)["session_id"]
+    source.write_text("value = 2\n", encoding="utf-8")
+    second = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert second.exit_code == 0, second.output
+    source.write_text("value = 1\n", encoding="utf-8")
+    refreshed = runner.invoke(app, ["session", "refresh", session_a, str(project), "--json"])
+    assert refreshed.exit_code == 0, refreshed.output
+
+    payload = check_coverage(project)
+
+    assert payload["complete"] is True
+    assert payload["stale"] == []
+
+
+def test_coverage_confined_index_refuses_symlink(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    (allowed / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
+    (allowed / "main.py").write_text("value = 1\n", encoding="utf-8")
+    assert CliRunner().invoke(app, ["session", "open", str(allowed), "--json"]).exit_code == 0
+    outside = tmp_path / "outside-index.json"
+    outside.write_text("[]", encoding="utf-8")
+    index_path = session_store._index_path(session_store._resolve_root(allowed))
+    index_path.unlink()
+    try:
+        index_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"cannot create symlinks on this host: {exc}")
+
+    with pytest.raises(ValueError, match="session index unreadable"):
+        check_coverage(allowed, confinement_root=allowed)
