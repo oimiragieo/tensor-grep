@@ -13202,14 +13202,20 @@ def freshness(
     raise typer.Exit(code=freshness_command(path, json_output=json_output))
 
 
-@app.command(name="coverage")
+@app.command(
+    name="coverage", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
+)
 def coverage(
+    ctx: typer.Context,
     path: str = typer.Argument(".", help="Repository root to inspect."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Report indexed, stale, and unparsed files without changing repository state."""
     from tensor_grep.cli.coverage import coverage_command
 
+    if ctx.args:
+        typer.echo(f"coverage: unknown option or argument: {ctx.args[0]}", err=True)
+        raise typer.Exit(code=1)
     raise typer.Exit(code=coverage_command(path, json_output=json_output))
 
 

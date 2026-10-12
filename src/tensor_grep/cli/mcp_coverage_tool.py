@@ -43,7 +43,21 @@ def coverage_tool(path: str) -> str:
             return json.dumps(payload, indent=2)
         from tensor_grep.cli.coverage import check_coverage
 
-        return server._inject_mcp_contract_fields(json.dumps(check_coverage(Path(path)), indent=2))
+        payload = check_coverage(Path(path), confinement_root=server._mcp_root())
+        if not payload["complete"]:
+            cause = (
+                "scan_limit"
+                if "max_repo_files" in payload["caps"]
+                else "unreadable_path"
+                if "unreadable_paths" in payload["caps"]
+                else "partial"
+            )
+            payload["incomplete"] = {
+                "status": True,
+                "cause": cause,
+                "budget_remediable": cause == "scan_limit",
+            }
+        return server._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except (OSError, ValueError, sqlite3.Error) as exc:
         payload = server._envelope_base(
             routing_backend="Coverage",
