@@ -3411,7 +3411,7 @@
   },
   {
     "module": "cli/diff_impact_refs.py",
-    "lineno": 258,
+    "lineno": 308,
     "enclosing_symbol": "_test_reference_evidence",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
