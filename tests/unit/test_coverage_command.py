@@ -207,7 +207,7 @@ def test_coverage_js_parser_errors_are_unparsed(tmp_path: Path) -> None:
 
 
 def test_coverage_rejects_cache_rows_without_ast_products(tmp_path: Path, monkeypatch) -> None:
-    from tensor_grep.cli import session_daemon_trust, symbols_cache
+    from tensor_grep.cli import repo_map, session_daemon_trust, symbols_cache
 
     project = tmp_path / "project"
     project.mkdir()
@@ -217,9 +217,17 @@ def test_coverage_rejects_cache_rows_without_ast_products(tmp_path: Path, monkey
     cache.parent.mkdir(parents=True)
     secret = b"coverage-test-authentication-key"
     monkeypatch.setattr(session_daemon_trust, "_read_user_secret", lambda _path: secret)
-    product = json.dumps({"imports": [], "symbols": []})
-    receipt = symbols_cache._receipt(secret, "valid", product)
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    entry_key = symbols_cache.entry_key_for_digest(
+        project,
+        source,
+        digest,
+        scope=project,
+        max_bytes=repo_map._max_parse_bytes(),
+        ignore_policy=sorted(repo_map._SKIP_DIR_NAMES),
+    )
+    product = json.dumps({"imports": [], "symbols": []})
+    receipt = symbols_cache._receipt(secret, entry_key, product)
     with sqlite3.connect(cache) as connection:
         connection.executescript("""
             CREATE TABLE generations(id INTEGER PRIMARY KEY, scope TEXT, merkle TEXT,
@@ -232,12 +240,12 @@ def test_coverage_rejects_cache_rows_without_ast_products(tmp_path: Path, monkey
         """)
         connection.execute("INSERT INTO generations VALUES(1, ?, '', 1, 1)", (str(project),))
         connection.execute(
-            "INSERT INTO files VALUES(?, ?, ?, 'valid', 1)",
-            (str(project), str(source), digest),
+            "INSERT INTO files VALUES(?, ?, ?, ?, 1)",
+            (str(project), str(source), digest, entry_key),
         )
-        connection.execute("INSERT INTO entries VALUES('valid', ?, ?, 1)", (product, receipt))
+        connection.execute("INSERT INTO entries VALUES(?, ?, ?, 1)", (entry_key, product, receipt))
 
-    assert _ast_cache_entries(project)[0] == {str(source): digest}
+    assert _ast_cache_entries(project) == {str(source): (digest, 1.0)}
     with sqlite3.connect(cache) as connection:
         connection.execute("DELETE FROM entries")
 
@@ -308,3 +316,121 @@ def test_coverage_recursive_sqlite_view_is_bounded(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "DatabaseError" in result.stderr or "OperationalError" in result.stderr
+
+
+def test_coverage_rejects_forged_cache_content_binding(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import repo_map, session_daemon_trust, symbols_cache
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    cache = project / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    cache.parent.mkdir(parents=True)
+    secret = b"coverage-test-authentication-key"
+    monkeypatch.setattr(session_daemon_trust, "_read_user_secret", lambda _path: secret)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    entry_key = symbols_cache.entry_key_for_digest(
+        project,
+        source,
+        digest,
+        scope=project,
+        max_bytes=repo_map._max_parse_bytes(),
+        ignore_policy=sorted(repo_map._SKIP_DIR_NAMES),
+    )
+    product = json.dumps({"imports": [], "symbols": []})
+    receipt = symbols_cache._receipt(secret, entry_key, product)
+    forged_digest = hashlib.sha256(b"other-bytes").hexdigest()
+    with sqlite3.connect(cache) as connection:
+        connection.executescript("""
+            CREATE TABLE generations(id INTEGER PRIMARY KEY, scope TEXT, merkle TEXT,
+                complete INTEGER, created REAL);
+            CREATE TABLE files(scope TEXT, path TEXT, content TEXT, entry_key TEXT,
+                generation INTEGER, PRIMARY KEY(scope,path));
+            CREATE TABLE entries(key TEXT PRIMARY KEY, payload TEXT, receipt TEXT,
+                generation INTEGER);
+            PRAGMA user_version=1;
+        """)
+        connection.execute("INSERT INTO generations VALUES(1, ?, '', 1, 1)", (str(project),))
+        connection.execute(
+            "INSERT INTO files VALUES(?, ?, ?, ?, 1)",
+            (str(project), str(source), forged_digest, entry_key),
+        )
+        connection.execute("INSERT INTO entries VALUES(?, ?, ?, 1)", (entry_key, product, receipt))
+
+    payload = check_coverage(project)
+
+    assert payload["unindexed"] == ["main.py"]
+    assert payload["complete"] is False
+
+
+def test_coverage_prefers_newer_session_receipt_per_file(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "first.py").write_text("value = 1\n", encoding="utf-8")
+    second = project / "second.py"
+    second.write_text("value = 2\n", encoding="utf-8")
+    runner = CliRunner()
+    assert runner.invoke(app, ["session", "open", str(project), "--json"]).exit_code == 0
+    second.write_text("value = 3\n", encoding="utf-8")
+    assert (
+        runner.invoke(
+            app, ["session", "open", str(project), "--max-repo-files", "1", "--json"]
+        ).exit_code
+        == 0
+    )
+
+    payload = check_coverage(project)
+
+    assert {"path": "second.py", "reason": "modified"} in payload["stale"]
+    assert payload["unindexed"] == []
+
+
+def test_coverage_rejects_stale_cache_after_ignore_rules_change(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tensor_grep.cli import repo_map, session_daemon_trust, symbols_cache
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "main.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    ignore = project / ".gitignore"
+    ignore.write_text("\n", encoding="utf-8")
+    cache = project / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    cache.parent.mkdir(parents=True)
+    secret = b"coverage-test-authentication-key"
+    monkeypatch.setattr(session_daemon_trust, "_read_user_secret", lambda _path: secret)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    entry_key = symbols_cache.entry_key_for_digest(
+        project,
+        source,
+        digest,
+        scope=project,
+        max_bytes=repo_map._max_parse_bytes(),
+        ignore_policy=sorted(repo_map._SKIP_DIR_NAMES),
+    )
+    product = json.dumps({"imports": [], "symbols": []})
+    receipt = symbols_cache._receipt(secret, entry_key, product)
+    with sqlite3.connect(cache) as connection:
+        connection.executescript("""
+            CREATE TABLE generations(id INTEGER PRIMARY KEY, scope TEXT, merkle TEXT,
+                complete INTEGER, created REAL);
+            CREATE TABLE files(scope TEXT, path TEXT, content TEXT, entry_key TEXT,
+                generation INTEGER, PRIMARY KEY(scope,path));
+            CREATE TABLE entries(key TEXT PRIMARY KEY, payload TEXT, receipt TEXT,
+                generation INTEGER);
+            PRAGMA user_version=1;
+        """)
+        connection.execute("INSERT INTO generations VALUES(1, ?, '', 1, 1)", (str(project),))
+        connection.execute(
+            "INSERT INTO files VALUES(?, ?, ?, ?, 1)",
+            (str(project), str(source), digest, entry_key),
+        )
+        connection.execute("INSERT INTO entries VALUES(?, ?, ?, 1)", (entry_key, product, receipt))
+    ignore.write_text("vendor/\n", encoding="utf-8")
+
+    payload = check_coverage(project)
+
+    assert payload["unindexed"] == ["main.py"]
+    assert payload["complete"] is False

@@ -174,6 +174,12 @@ def _cases() -> list[tuple[str, Any, str, dict[str, Any]]]:
     return [
         # -- cli/mcp_server.py -------------------------------------------------
         ("tg_repo_map", mcp_server.tg_repo_map, f"{_SRV}.build_repo_map", {}),
+        (
+            "tg_coverage",
+            mcp_server.tg_coverage,
+            "tensor_grep.cli.coverage.check_coverage",
+            {},
+        ),
         ("tg_orient", mcp_server.tg_orient, f"{_SRV}.build_orient_capsule_json", {}),
         ("tg_doctor", mcp_server.tg_doctor, f"{_SRV}._build_doctor_payload", {}),
         (

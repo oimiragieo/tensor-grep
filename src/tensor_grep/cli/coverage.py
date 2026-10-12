@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import sqlite3
 import time
@@ -26,20 +27,19 @@ def _display_path(path: Path, root: Path) -> str:
         return path.name
 
 
-def _session_entries(root: Path, floor: Path | None = None) -> tuple[dict[str, str], float]:
+def _session_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[str, float]]:
     from tensor_grep.cli import session_store
     from tensor_grep.cli.session_provenance import read_session_payload, verified_session
 
     session_root = session_store._resolve_root(root)
     if floor is not None and not session_root.is_relative_to(floor):
-        return {}, 0.0
+        return {}
     records = session_store._load_index(session_root)
     if not records:
-        return {}, 0.0
+        return {}
     if len(records) > 256:
         raise ValueError("session index exceeds coverage limit")
-    result: dict[str, str] = {}
-    stamp = 0.0
+    result: dict[str, tuple[str, float]] = {}
     for record in sorted(records, key=lambda item: item.created_at, reverse=True):
         session_path = session_store._session_payload_path(session_root, record.session_id)
         payload = read_session_payload(session_root, session_path)
@@ -50,30 +50,35 @@ def _session_entries(root: Path, floor: Path | None = None) -> tuple[dict[str, s
         entries = payload.get("snapshot", [])
         if not isinstance(entries, list):
             raise ValueError("invalid session snapshot")
+        try:
+            session_stamp = datetime.fromisoformat(record.created_at).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            session_stamp = 0.0
         for entry in entries:
             if isinstance(entry, dict) and entry.get("path") and entry.get("content_sha256"):
                 candidate = Path(str(entry["path"])).resolve()
+                if floor is not None and not candidate.is_relative_to(floor):
+                    continue
                 if candidate.is_relative_to(root):
-                    result.setdefault(str(candidate), str(entry["content_sha256"]))
-        try:
-            stamp = max(stamp, datetime.fromisoformat(record.created_at).timestamp())
-        except (TypeError, ValueError, OverflowError):
-            pass
-    return result, stamp
+                    result.setdefault(str(candidate), (str(entry["content_sha256"]), session_stamp))
+    return result
 
 
-def _ast_cache_entries(root: Path) -> tuple[dict[str, str], float]:
+def _ast_cache_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[str, float]]:
     cache_path = root / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
     if not cache_path.is_file():
-        return {}, 0.0
-    from tensor_grep.cli import session_daemon_trust, symbols_cache, symbols_cache_auth
+        return {}
+    from tensor_grep.cli import repo_map, session_daemon_trust, symbols_cache, symbols_cache_auth
 
     key_path = symbols_cache_auth._machine_key_path()
     if key_path.is_relative_to(root) or key_path.resolve().is_relative_to(root):
-        return {}, 0.0
+        return {}
     secret = session_daemon_trust._read_user_secret(key_path)
     if secret is None:
-        return {}, 0.0
+        return {}
+    cache_root = repo_map._infer_project_root(root)
+    max_bytes = repo_map._max_parse_bytes()
+    ignore_policy = sorted(repo_map._SKIP_DIR_NAMES)
     connection = symbols_cache._database(root, cache_path)
     try:
         deadline = time.monotonic() + 0.25
@@ -83,7 +88,8 @@ def _ast_cache_entries(root: Path) -> tuple[dict[str, str], float]:
             (str(root),),
         ).fetchone()
         if generation is None or not generation[2]:
-            return {}, 0.0
+            return {}
+        cache_stamp = float(generation[1])
         rows = connection.execute(
             "SELECT f.path, f.content, f.entry_key, e.payload, e.receipt "
             "FROM files AS f LEFT JOIN entries AS e ON e.key=f.entry_key "
@@ -92,14 +98,26 @@ def _ast_cache_entries(root: Path) -> tuple[dict[str, str], float]:
         ).fetchall()
         if len(rows) > 8192:
             raise sqlite3.DatabaseError("symbol cache file count exceeds limit")
-        entries: dict[str, str] = {}
+        entries: dict[str, tuple[str, float]] = {}
         for path, digest, key, payload, receipt in rows:
             candidate = Path(str(path)).resolve()
+            if floor is not None and not candidate.is_relative_to(floor):
+                continue
             if not candidate.is_relative_to(root) or payload is None or receipt is None:
                 continue
-            symbols_cache._decode_product(str(payload), str(receipt), candidate, secret, str(key))
-            entries[str(candidate)] = str(digest)
-        return entries, float(generation[1])
+            bound_key = symbols_cache.entry_key_for_digest(
+                cache_root,
+                candidate,
+                str(digest),
+                scope=root,
+                max_bytes=max_bytes,
+                ignore_policy=ignore_policy,
+            )
+            if not hmac.compare_digest(bound_key, str(key)):
+                continue
+            symbols_cache._decode_product(str(payload), str(receipt), candidate, secret, bound_key)
+            entries[str(candidate)] = (str(digest), cache_stamp)
+        return entries
     finally:
         connection.close()
 
@@ -149,26 +167,28 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
     scope = root if root.is_dir() else root.parent
+    floor = confinement_root.resolve() if confinement_root is not None else None
     cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
     unreadable = repo_map._UnreadablePathFlag()
     walked = repo_map._iter_repo_files(root, max_files=cap + 1, unreadable_hit=unreadable)
     cap_hit = len(walked) > cap
     walked = walked[:cap]
     files = [item for item in walked if repo_map._is_repo_context_file(item, scope)]
+    if floor is not None:
+        files = [item for item in files if item.is_relative_to(floor)]
     displayed = {_display_path(item, scope): item for item in files}
-    session, session_time = _session_entries(scope, confinement_root)
-    cache, cache_time = _ast_cache_entries(scope)
-    receipts = dict(session)
-    for name, digest in cache.items():
-        if cache_time >= session_time or name not in receipts:
-            receipts[name] = digest
+    receipts: dict[str, tuple[str, float]] = dict(_session_entries(scope, floor))
+    for name, (digest, cache_stamp) in _ast_cache_entries(scope, floor).items():
+        prior = receipts.get(name)
+        if prior is None or cache_stamp >= prior[1]:
+            receipts[name] = (digest, cache_stamp)
 
     stale: list[dict[str, str]] = []
     unindexed: list[str] = []
     has_index = bool(receipts)
     current_absolute = {str(item) for item in files}
     for name, current in displayed.items():
-        old_digest = receipts.get(str(current))
+        old_digest = receipts.get(str(current), (None, 0.0))[0]
         if old_digest is None:
             unindexed.append(name)
             if has_index:
@@ -184,6 +204,8 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
         if digest and digest != old_digest:
             stale.append({"path": name, "reason": "modified"})
     for name in receipts:
+        if floor is not None and not Path(name).is_relative_to(floor):
+            continue
         if name not in current_absolute and not Path(name).exists():
             stale.append({"path": _display_path(Path(name), scope), "reason": "deleted"})
 

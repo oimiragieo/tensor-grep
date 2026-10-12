@@ -67,3 +67,13 @@ def coverage_tool(path: str) -> str:
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = server._sanitized_tool_error("tg_coverage", exc)
         return json.dumps(payload, indent=2)
+    except Exception as exc:
+        server._log_tool_exception("tg_coverage", exc)
+        payload = server._envelope_base(
+            routing_backend="Coverage",
+            routing_reason="coverage-inventory",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = server._sanitized_tool_error("tg_coverage", exc)
+        return json.dumps(payload, indent=2)
