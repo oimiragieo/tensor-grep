@@ -1382,7 +1382,7 @@ def build_diff_blast_radius(
     )
     reference_unreadable = repo_m.pop("_diff_impact_reference_unreadable", None)
     if isinstance(reference_unreadable, dict) and reference_unreadable.get("count"):
-        payload["reference_lookup_unreadable_paths"] = reference_unreadable
+        payload["reference_lookup_unreadable_paths"] = reference_unreadable  # type: ignore[assignment]
     return payload
 
 
