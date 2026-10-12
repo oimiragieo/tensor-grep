@@ -98,7 +98,7 @@ def _constant_string(node: ast.expr) -> str | None:
 
 
 class _ImportBindingState:
-    __slots__ = ("name_bindings", "binding_paths")
+    __slots__ = ("binding_paths", "name_bindings")
 
     def __init__(self) -> None:
         self.name_bindings: dict[str, tuple[str, ...]] = {}
@@ -157,21 +157,7 @@ def _python_import_reference(
             tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
-        name_bindings: dict[str, tuple[str, ...]] = {}
-        binding_paths: set[tuple[str, ...]] = set()
-
-        def _register_name(name: str, binding: tuple[str, ...]) -> None:
-            name_bindings[name] = binding
-            binding_paths.add(binding)
-            binding_paths.add((name,))
-
-        def _expr_binding_path(expr: ast.expr) -> tuple[str, ...] | None:
-            path = _attribute_path(expr)
-            if path is not None and path in binding_paths:
-                return path
-            if isinstance(expr, ast.Name):
-                return name_bindings.get(expr.id)
-            return None
+        bindings = _ImportBindingState()
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -179,9 +165,9 @@ def _python_import_reference(
                     if alias.name not in origin_modules:
                         continue
                     if alias.asname:
-                        _register_name(alias.asname, (alias.asname,))
+                        bindings.register_name(alias.asname, (alias.asname,))
                     else:
-                        binding_paths.add(tuple(alias.name.split(".")))
+                        bindings.binding_paths.add(tuple(alias.name.split(".")))
             elif isinstance(node, ast.ImportFrom):
                 module = _import_module(node, path, root)
                 if module is None:
@@ -194,30 +180,30 @@ def _python_import_reference(
                     qualified = f"{module}.{alias.name}"
                     if qualified not in origin_modules:
                         continue
-                    _register_name(alias.asname or alias.name, (alias.asname or alias.name,))
+                    bindings.register_name(alias.asname or alias.name, (alias.asname or alias.name,))
             elif (
                 isinstance(node, ast.Assign)
                 and len(node.targets) == 1
                 and isinstance(node.targets[0], ast.Name)
                 and isinstance(node.value, ast.Name)
             ):
-                source = name_bindings.get(node.value.id)
+                source = bindings.name_bindings.get(node.value.id)
                 if source is not None:
-                    _register_name(node.targets[0].id, source)
+                    bindings.register_name(node.targets[0].id, source)
 
         for node in ast.walk(tree):
             if (
                 isinstance(node, ast.Attribute)
                 and node.attr == symbol
-                and _expr_binding_path(node.value) is not None
+                and bindings.expr_binding_path(node.value) is not None
             ):
                 return True, True
-            if isinstance(node, ast.Subscript) and _expr_binding_path(node.value) is not None:
+            if isinstance(node, ast.Subscript) and bindings.expr_binding_path(node.value) is not None:
                 return False, False
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 if node.func.id != "getattr" or len(node.args) < 2:
                     continue
-                if _expr_binding_path(node.args[0]) is None:
+                if bindings.expr_binding_path(node.args[0]) is None:
                     continue
                 attribute = _constant_string(node.args[1])
                 if attribute is None:
@@ -230,7 +216,7 @@ def _python_import_reference(
                     isinstance(inner.func, ast.Name)
                     and inner.func.id == "getattr"
                     and len(inner.args) >= 2
-                    and _expr_binding_path(inner.args[0]) is not None
+                    and bindings.expr_binding_path(inner.args[0]) is not None
                 ):
                     attribute = _constant_string(inner.args[1])
                     if attribute is None:
