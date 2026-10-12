@@ -104,6 +104,30 @@ def test_star_import_call_disables_uncalled_cap_and_preserves_gate_exit(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        'import pkg.core\ngetattr(pkg.core, "dor" + "mant")()\n',
+        'from pkg import core as alias\ngetattr(alias, "dor" + "mant")()\n',
+    ],
+    ids=["unaliased_module_import", "package_submodule_alias"],
+)
+def test_module_import_call_disables_uncalled_cap_and_preserves_gate_exit(
+    tmp_path: Path, monkeypatch: Any, source: str
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(source, encoding="utf-8")
+
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
 def test_non_windows_reference_scan_keeps_ordinary_file_evidence_complete(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

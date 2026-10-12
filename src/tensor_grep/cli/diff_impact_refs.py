@@ -73,6 +73,30 @@ def _import_module(node: ast.ImportFrom, importer: Path, root: Path) -> str | No
     return ".".join([*prefix, *node.module.split(".")]) if node.module else ".".join(prefix)
 
 
+def _attribute_path(node: ast.expr) -> tuple[str, ...] | None:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    return (node.id, *reversed(parts))
+
+
+def _constant_string(node: ast.expr) -> str | None:
+    parts: list[str] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ast.Constant) and isinstance(current.value, str):
+            parts.append(current.value)
+        elif isinstance(current, ast.BinOp) and isinstance(current.op, ast.Add):
+            pending.extend((current.right, current.left))
+        else:
+            return None
+    return "".join(parts)
+
+
 def _python_import_reference(
     repo_map_payload: dict[str, Any],
     symbol: str,
@@ -112,19 +136,43 @@ def _python_import_reference(
             tree = ast.parse(raw.decode("utf-8-sig", errors="strict"))
         except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
-        if any(
-            (
-                isinstance(node, ast.ImportFrom)
-                and _import_module(node, path, root) in origin_modules
-                and any(alias.name in {symbol, "*"} for alias in node.names)
-            )
-            or (
-                isinstance(node, ast.Import)
-                and any(alias.asname and alias.name in origin_modules for alias in node.names)
-            )
-            for node in ast.walk(tree)
-        ):
-            return True, True
+        module_bindings: set[tuple[str, ...]] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                module_bindings |= {
+                    (alias.asname,) if alias.asname else tuple(alias.name.split("."))
+                    for alias in node.names
+                    if alias.name in origin_modules
+                }
+            elif isinstance(node, ast.ImportFrom):
+                module = _import_module(node, path, root)
+                if module is None:
+                    continue
+                if module in origin_modules and any(
+                    alias.name in {symbol, "*"} for alias in node.names
+                ):
+                    return True, True
+                module_bindings |= {
+                    (alias.asname or alias.name,)
+                    for alias in node.names
+                    if f"{module}.{alias.name}" in origin_modules
+                }
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == symbol
+                and _attribute_path(node.value) in module_bindings
+            ):
+                return True, True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "getattr"
+                and len(node.args) >= 2
+                and _attribute_path(node.args[0]) in module_bindings
+                and _constant_string(node.args[1]) == symbol
+            ):
+                return True, True
     return True, False
 
 
