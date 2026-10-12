@@ -104,6 +104,30 @@ def test_star_import_call_disables_uncalled_cap_and_preserves_gate_exit(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+def test_typed_module_alias_dynamic_getattr_marks_cap_incomplete(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'import app\nalias: object = app\ngetattr(alias, "chan" + "ged")()\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    assert "reference_lookup_unreadable_paths" not in payload
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
 def test_module_import_assign_alias_getattr_disables_uncalled_cap(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

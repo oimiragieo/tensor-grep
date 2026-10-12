@@ -107,14 +107,23 @@ class _ImportBindingState:
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
         self.name_bindings[name] = binding
         self.binding_paths.add(binding)
-        self.binding_paths.add((name,))
 
     def expr_binding_path(self, expr: ast.expr) -> tuple[str, ...] | None:
-        path = _attribute_path(expr)
-        if path is not None and path in self.binding_paths:
-            return path
         if isinstance(expr, ast.Name):
             return self.name_bindings.get(expr.id)
+        path = _attribute_path(expr)
+        if path is None:
+            return None
+        if path in self.binding_paths:
+            return path
+        root = path[0]
+        binding = self.name_bindings.get(root)
+        if binding is None:
+            return None
+        if len(path) == 1:
+            return binding
+        if path == binding:
+            return binding
         return None
 
 
@@ -192,17 +201,38 @@ def _python_import_reference(
                         continue
                     binding = tuple(qualified.split("."))
                     bindings.register_name(alias.asname or alias.name, binding)
+            elif isinstance(node, ast.Assign):
+                if not isinstance(node.value, ast.Name):
+                    continue
+                source = bindings.name_bindings.get(node.value.id)
+                if source is None:
+                    continue
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        bindings.register_name(target.id, source)
             elif (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
                 and isinstance(node.value, ast.Name)
             ):
                 source = bindings.name_bindings.get(node.value.id)
                 if source is not None:
-                    bindings.register_name(node.targets[0].id, source)
+                    bindings.register_name(node.target.id, source)
 
         for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "vars" and len(node.args) == 1:
+                    if bindings.expr_binding_path(node.args[0]) is not None:
+                        return False, False
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "vars"
+                and len(node.value.args) == 1
+                and bindings.expr_binding_path(node.value.args[0]) is not None
+            ):
+                return False, False
             if (
                 isinstance(node, ast.Attribute)
                 and node.attr == symbol
@@ -327,13 +357,8 @@ def _test_reference_evidence(
         origin_files,
         unreadable_hit=import_scan_unreadable,
     )
-    if import_scan_unreadable.hit:
-        repo_map_payload["_diff_impact_reference_unreadable"] = {
-            "count": import_scan_unreadable.count,
-            "sample": import_scan_unreadable.sample,
-        }
-        if lookup_incomplete is not None:
-            lookup_incomplete.append("unreadable_path")
+    if import_scan_unreadable.hit and lookup_incomplete is not None:
+        lookup_incomplete.append("unreadable_path")
     if not imports_complete and lookup_incomplete is not None:
         lookup_incomplete.append("test_reference_lookup_incomplete")
     return imports_complete, has_import_reference
