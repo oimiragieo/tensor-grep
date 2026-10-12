@@ -246,7 +246,7 @@ def run_tg_batch(
 
 
 def tg_batch(
-    queries: list[dict[str, object]],
+    queries: object,
     path: str = ".",
     citations: bool = False,
     item_deadline: float = 10.0,

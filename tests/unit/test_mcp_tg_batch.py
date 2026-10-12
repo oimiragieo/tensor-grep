@@ -177,6 +177,23 @@ def test_tg_batch_rejects_over_limit_or_duplicate_ids(queries):
     assert payload["error"]["code"] == "invalid_input"
 
 
+@pytest.mark.parametrize(
+    "queries",
+    [
+        [None],
+        {},
+        [{"id": "x", "kind": "search", "pattern": "a"}, None],
+    ],
+)
+def test_tg_batch_wire_malformed_queries_return_invalid_input_envelope(queries: object) -> None:
+    result = asyncio.run(mcp_server.mcp.call_tool("tg_batch", {"queries": queries}))
+
+    assert isinstance(result, types.CallToolResult)
+    assert result.isError is True
+    payload = _payload(result.content[0].text)
+    assert payload["error"]["code"] == "invalid_input"
+
+
 def test_tg_batch_confines_each_item_independently(tmp_path, monkeypatch):
     monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
 
