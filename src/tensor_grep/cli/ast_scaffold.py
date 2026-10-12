@@ -56,6 +56,22 @@ class _UniqueKeyLoader(yaml.SafeLoader):
     def __init__(self, stream: str) -> None:
         super().__init__(stream)
         self._checked_mappings: set[yaml.MappingNode] = set()
+        self._nesting_depth = 0
+
+    def compose_node(self, parent: yaml.Node | None, index: int) -> yaml.Node:
+        self._nesting_depth += 1
+        try:
+            if self._nesting_depth > 128:
+                raise yaml.YAMLError("maximum YAML nesting depth exceeded")
+            return cast(yaml.Node, super().compose_node(parent, index))
+        finally:
+            self._nesting_depth -= 1
+
+    def _construct_yaml_12_bool(self, node: yaml.ScalarNode) -> bool | str:
+        value = self.construct_scalar(node)
+        if value.lower() in {"on", "off", "yes", "no"}:
+            return value
+        return super().construct_yaml_bool(node)
 
     def flatten_mapping(self, node: yaml.MappingNode) -> None:
         if node in self._checked_mappings:
@@ -77,6 +93,9 @@ class _UniqueKeyLoader(yaml.SafeLoader):
                 raise _DuplicateYamlKeyError(f"duplicate key {key!r}")
             keys.add(key)
         super().flatten_mapping(node)
+
+
+_UniqueKeyLoader.add_constructor("tag:yaml.org,2002:bool", _UniqueKeyLoader._construct_yaml_12_bool)
 
 
 def _ast_rule_scaffold_examples(lang: str) -> tuple[str, str, str]:

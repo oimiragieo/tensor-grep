@@ -549,6 +549,80 @@ def test_new_test_refuses_duplicate_merge_keys_across_front_doors(
     assert outcomes[0] == outcomes[1]
 
 
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_boolean_yaml_language_across_front_doors(
+    tmp_path: Path, location: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text("language: on\n", encoding="utf-8")
+        else:
+            (project_dir / "sgconfig.yml").write_text("language: on\n", encoding="utf-8")
+        expected = (
+            'Cannot scaffold AST rule for language "on"; run `tg ast-info` for supported languages.'
+        )
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message, after))
+
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_deep_yaml_without_recursion_crash(tmp_path: Path, location: str) -> None:
+    _skip_if_native_binary_missing("native")
+    deep_yaml = "extra: " + "[" * 600 + "0" + "]" * 600 + "\nlanguage: python\n"
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text(deep_yaml, encoding="utf-8")
+            expected = "cannot parse linked rule rules/probe.yml: invalid YAML syntax"
+        else:
+            (project_dir / "sgconfig.yml").write_text(deep_yaml, encoding="utf-8")
+            expected = "cannot parse sgconfig.yml: invalid YAML syntax"
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+
+
 @pytest.mark.parametrize("kind", ["project", "rule", "test"])
 def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
     _skip_if_native_binary_missing("native")
