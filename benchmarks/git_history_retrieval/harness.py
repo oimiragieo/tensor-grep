@@ -806,6 +806,23 @@ def _read_only_tree(root: Path) -> None:
     root.chmod(root.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
 
 
+def _harness_venv_python(venv: Path) -> Path:
+    if os.name == "nt":
+        return venv / "Scripts" / "python.exe"
+    return venv / "bin" / "python"
+
+
+def ensure_harness_venv(build: Path) -> Path:
+    venv = build / "harness-venv"
+    python = _harness_venv_python(venv)
+    if python.is_file():
+        return python
+    _run([sys.executable, "-m", "venv", str(venv)])
+    if not python.is_file():
+        raise HarnessError("harness_venv_missing")
+    return python
+
+
 def worker_build(source: Path, work: Path) -> dict[str, Any]:
     build = work / "build"
     baseline_runtime: dict[str, str] | None = None
@@ -854,6 +871,7 @@ def worker_build(source: Path, work: Path) -> dict[str, Any]:
             != baseline_runtime["package_sha256"]
         ):
             raise HarnessError("runtime_package_hash_mismatch:baseline")
+    ensure_harness_venv(build)
     identity = environment_identity()
     _write_json(work / "environment.json", identity)
     _read_only_tree(build)

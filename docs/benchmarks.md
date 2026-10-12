@@ -33,7 +33,9 @@ the frozen input paths. Checkout mtimes are normalized to the parent commit's
 timestamp. Every run gets a fresh home and caches. Container writes to the
 build directory and outside the case directory must be denied.
 
-The evaluator runs with `-I` in the image's fixed system interpreter. The harness and scoring
+The evaluator runs with `-I` in `/work/build/harness-venv` after the build phase
+(stdlib-only venv, separate from subject installs). Local advisory runs fall back to the
+image system interpreter until that venv exists. The harness and scoring
 module have a standard-library-only import closure; each subject has a separate
 non-editable installation and native binary. The fixed manifest, patches, and
 baseline arrive in leaf 11b. Until

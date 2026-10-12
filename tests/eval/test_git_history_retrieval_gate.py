@@ -849,6 +849,9 @@ def test_head_build_cannot_replace_baseline_executable(
     monkeypatch.setattr(harness, "_run", fake_run)
     monkeypatch.setattr(harness, "_runtime_identity", fake_identity)
     monkeypatch.setattr(harness, "environment_identity", lambda: {})
+    monkeypatch.setattr(
+        harness, "ensure_harness_venv", lambda build: build / "harness-venv/bin/python"
+    )
     monkeypatch.setattr(harness, "_read_only_tree", lambda *args: None)
     with pytest.raises(harness.HarnessError, match="runtime_binary_hash_mismatch:baseline"):
         harness.worker_build(tmp_path, work)
@@ -898,9 +901,40 @@ def test_head_build_cannot_replace_baseline_package(
     monkeypatch.setattr(harness, "_run", fake_run)
     monkeypatch.setattr(harness, "_runtime_identity", fake_identity)
     monkeypatch.setattr(harness, "environment_identity", lambda: {})
+    monkeypatch.setattr(
+        harness, "ensure_harness_venv", lambda build: build / "harness-venv/bin/python"
+    )
     monkeypatch.setattr(harness, "_read_only_tree", lambda *args: None)
     with pytest.raises(harness.HarnessError, match="runtime_package_hash_mismatch:baseline"):
         harness.worker_build(tmp_path, work)
+
+
+def test_ensure_harness_venv_is_stdlib_only(tmp_path: Path) -> None:
+    harness = harness_module()
+    build = tmp_path / "build"
+    python = harness.ensure_harness_venv(build)
+    assert python.is_file()
+    assert python.resolve().is_relative_to((build / "harness-venv").resolve())
+    assert not any((build / "harness-venv").rglob("tensor_grep"))
+
+
+def test_worker_prefers_harness_venv_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker_path = harness_root() / "benchmarks/git_history_retrieval/worker.py"
+    spec = importlib.util.spec_from_file_location("git_history_retrieval_worker", worker_path)
+    assert spec and spec.loader
+    worker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(worker)
+    harness_venv = tmp_path / "harness-venv/bin/python"
+    harness_venv.parent.mkdir(parents=True)
+    harness_venv.write_text("", encoding="utf-8")
+    monkeypatch.setattr(worker, "HARNESS_VENV_PYTHON", harness_venv)
+    launched: list[str] = []
+    monkeypatch.setattr(worker.sys, "argv", [str(worker_path), "evaluate"])
+    monkeypatch.setattr(worker.os, "execv", lambda python, argv: launched.append(python))
+    worker.main()
+    assert launched == [str(harness_venv)], "evaluator_must_use_harness_venv"
 
 
 def test_protected_label_check_has_required_ruleset_documentation() -> None:
@@ -1256,10 +1290,12 @@ def test_evaluator_interpreter_is_outside_subject_build(
     worker.main()
     assert launched == [sys.executable], "subject_pth_can_run_before_evaluator_startup"
     assert not marker.exists(), "subject_pth_executed"
-    harness = (harness_root() / "benchmarks/git_history_retrieval/harness.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'str(build / "harness-venv")' not in harness, "subject_pth_survives_venv_creation"
+    harness = harness_module()
+    fresh_build = tmp_path / "fresh-harness-venv"
+    harness.ensure_harness_venv(fresh_build)
+    harness_venv_site = fresh_build / "harness-venv/lib/python3.12/site-packages"
+    if harness_venv_site.exists():
+        assert not list(harness_venv_site.glob("*.pth")), "subject_pth_survives_venv_creation"
 
 
 def test_subject_pth_positive_control_does_not_run_in_evaluator(tmp_path: Path) -> None:
