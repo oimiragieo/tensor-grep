@@ -196,9 +196,10 @@ def _getattr_call_reference(
             return False, False
         attribute = attribute_node.value
     else:
-        attribute = _constant_string(attribute_node)
-        if attribute is None:
+        folded = _constant_string(attribute_node)
+        if folded is None:
             return False, False
+        attribute = folded
     if attribute == symbol:
         return True, True
     return None
