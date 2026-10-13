@@ -237,6 +237,25 @@ def test_stored_attrgetter_result_call_disables_uncalled_cap(tmp_path: Path) -> 
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
+def test_non_call_bound_attrgetter_assign_disables_uncalled_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        "import operator\nimport app\n"
+        'observed = operator.attrgetter("chan" + "ged")(app)\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 def test_stored_saved_getter_result_call_disables_uncalled_cap(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
