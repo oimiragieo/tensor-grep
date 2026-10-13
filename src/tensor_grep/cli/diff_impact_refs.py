@@ -545,9 +545,7 @@ def _python_import_reference(
                         _register_bound_attrgetter_target(target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
                     for target in node.targets:
-                        if _register_bound_getter_result(
-                            target, node.value, bindings, symbol
-                        ):
+                        if _register_bound_getter_result(target, node.value, bindings, symbol):
                             bound_getter_symbol_reference = True
                 if isinstance(node.value, (ast.List, ast.Tuple)) and any(
                     _bound_module_expr(elt, bindings) for elt in node.value.elts
@@ -591,9 +589,7 @@ def _python_import_reference(
                 ):
                     _register_bound_attrgetter_target(node.target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
-                    if _register_bound_getter_result(
-                        node.target, node.value, bindings, symbol
-                    ):
+                    if _register_bound_getter_result(node.target, node.value, bindings, symbol):
                         bound_getter_symbol_reference = True
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):

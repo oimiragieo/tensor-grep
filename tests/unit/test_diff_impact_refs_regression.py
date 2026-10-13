@@ -240,8 +240,7 @@ def test_stored_attrgetter_result_call_disables_uncalled_cap(tmp_path: Path) -> 
 def test_non_call_bound_attrgetter_assign_disables_uncalled_cap(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
-        "import operator\nimport app\n"
-        'observed = operator.attrgetter("chan" + "ged")(app)\n',
+        'import operator\nimport app\nobserved = operator.attrgetter("chan" + "ged")(app)\n',
         encoding="utf-8",
     )
     diff = (
