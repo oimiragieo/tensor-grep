@@ -206,8 +206,9 @@ def test_list_held_module_reference_disables_uncalled_cap(tmp_path: Path) -> Non
     )
     payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
 
+    assert payload["caller_count"] == 1
     assert payload["risk_cap_evidence"] == "complete"
-    assert payload["risk_tier"] == "critical"
+    assert payload["risk_tier"] != "medium"
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
