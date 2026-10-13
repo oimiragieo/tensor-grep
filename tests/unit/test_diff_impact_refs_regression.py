@@ -178,8 +178,7 @@ def test_builtins_getattr_assigned_alias_marks_cap_incomplete(
 ) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
-        "import app, builtins\nlookup = builtins.getattr\n"
-        'lookup(app, "chan" + "ged")()\n',
+        'import app, builtins\nlookup = builtins.getattr\nlookup(app, "chan" + "ged")()\n',
         encoding="utf-8",
     )
     diff = (

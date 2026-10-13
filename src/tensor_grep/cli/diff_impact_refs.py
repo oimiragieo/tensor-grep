@@ -434,9 +434,7 @@ def _python_import_reference(
                     if isinstance(inner.func, ast.Name) and inner.func.id in (
                         bindings.operator_attrgetter_aliases
                     ):
-                        attribute = (
-                            _constant_string(inner.args[0]) if inner.args else None
-                        )
+                        attribute = _constant_string(inner.args[0]) if inner.args else None
                         if attribute is None:
                             return False, False
                         if node.args and _bound_module_expr(node.args[0], bindings):
