@@ -133,8 +133,11 @@ class _ImportBindingState:
         "getattr_aliases",
         "getattr_assigned_aliases",
         "getattr_import_aliases",
+        "methodcaller_import_aliases",
+        "module_dict_holders",
         "name_bindings",
         "operator_attrgetter_aliases",
+        "operator_methodcaller_aliases",
         "operator_module_aliases",
         "typed_getattr_aliases",
         "typed_module_aliases",
@@ -150,12 +153,15 @@ class _ImportBindingState:
         self.attrgetter_import_aliases: set[str] = set()
         self.attrgetter_assigned_aliases: set[str] = set()
         self.operator_module_aliases: set[str] = {"operator"}
+        self.operator_methodcaller_aliases: set[str] = {"methodcaller"}
+        self.methodcaller_import_aliases: set[str] = set()
         self.bound_attrgetter_targets: dict[str, str | None] = {}
         self.bound_getter_results: dict[str, str | None] = {}
         self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
         self.typed_getattr_aliases: set[str] = set()
         self.container_holders: set[str] = set()
+        self.module_dict_holders: set[str] = set()
 
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
         self.name_bindings[name] = binding
@@ -243,6 +249,53 @@ def _getattr_call_reference(
         if folded is None:
             return False, False
         attribute = folded
+    if attribute == symbol:
+        return True, True
+    return None
+
+
+def _call_is_methodcaller_factory(func: ast.expr, bindings: _ImportBindingState) -> bool:
+    if isinstance(func, ast.Name):
+        return func.id in bindings.operator_methodcaller_aliases
+    if isinstance(func, ast.Attribute) and func.attr == "methodcaller":
+        return (
+            isinstance(func.value, ast.Name) and func.value.id in bindings.operator_module_aliases
+        )
+    return False
+
+
+def _methodcaller_call_reference(
+    node: ast.Call, bindings: _ImportBindingState, symbol: str
+) -> tuple[bool, bool] | None:
+    if not isinstance(node.func, ast.Call):
+        return None
+    bound_call = node.func
+    factory = bound_call.func
+    if not isinstance(factory, ast.Call) or not _call_is_methodcaller_factory(
+        factory.func, bindings
+    ):
+        return None
+    if not bound_call.args or not _bound_module_expr(bound_call.args[0], bindings):
+        return None
+    allow_fold = isinstance(factory.func, ast.Attribute) or (
+        isinstance(factory.func, ast.Name)
+        and factory.func.id in bindings.methodcaller_import_aliases
+    )
+    if not factory.args:
+        return False, False
+    if len(factory.args) > 1:
+        return False, False
+    if allow_fold:
+        attribute = _constant_string(factory.args[0])
+    else:
+        attribute_node = factory.args[0]
+        if not isinstance(attribute_node, ast.Constant) or not isinstance(
+            attribute_node.value, str
+        ):
+            return False, False
+        attribute = attribute_node.value
+    if attribute is None:
+        return False, False
     if attribute == symbol:
         return True, True
     return None
@@ -416,6 +469,25 @@ def _attrgetter_call_reference(
     return None
 
 
+def _import_alias_call_reference(
+    node: ast.Call,
+    bindings: _ImportBindingState,
+    symbol: str,
+    origin_modules: set[str],
+) -> tuple[bool, bool] | None:
+    if not isinstance(node.func, ast.Name):
+        return None
+    binding = bindings.name_bindings.get(node.func.id)
+    if binding is None or not binding or binding[-1] != symbol:
+        return None
+    module = ".".join(binding[:-1]) if len(binding) > 1 else ""
+    if module in origin_modules:
+        return True, True
+    if len(binding) == 1 and binding[0] in origin_modules:
+        return True, True
+    return None
+
+
 def _python_import_reference(
     repo_map_payload: dict[str, Any],
     symbol: str,
@@ -433,7 +505,26 @@ def _python_import_reference(
     if not origin_modules:
         return True, False
     max_bytes = repo_map._max_parse_bytes()
+    scan_paths: list[Path] = []
+    seen_scan: set[str] = set()
     for path in [*files, *tests]:
+        key = os.path.abspath(str(path))
+        if key in seen_scan:
+            continue
+        seen_scan.add(key)
+        scan_paths.append(path)
+    for raw_path in repo_map_payload.get("tests", []) or []:
+        candidate = Path(str(raw_path)).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if not candidate.is_symlink() or candidate.suffix.lower() != ".py":
+            continue
+        key = os.path.abspath(str(candidate))
+        if key in seen_scan:
+            continue
+        seen_scan.add(key)
+        scan_paths.append(candidate)
+    for path in scan_paths:
         if path.suffix.lower() != ".py":
             continue
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -450,6 +541,9 @@ def _python_import_reference(
                     current_stat.st_dev,
                     current_stat.st_ino,
                 ):
+                    if unreadable_hit is not None:
+                        unreadable_hit.record(OSError("path identity changed during read"))
+                        continue
                     return False, False
                 raw = source_file.read(max_bytes + 1)
             if len(raw) > max_bytes:
@@ -488,8 +582,10 @@ def _python_import_reference(
                 module = _import_module(node, path, root)
                 if module is None:
                     continue
-                if module in origin_modules and any(
-                    alias.name in {symbol, "*"} for alias in node.names
+                if (
+                    _is_test_file(path)
+                    and module in origin_modules
+                    and any(alias.name in {symbol, "*"} for alias in node.names)
                 ):
                     return True, True
                 for alias in node.names:
@@ -501,11 +597,17 @@ def _python_import_reference(
                         imported = alias.asname or "attrgetter"
                         bindings.operator_attrgetter_aliases.add(imported)
                         bindings.attrgetter_import_aliases.add(imported)
+                    if alias.name == "methodcaller" and module == "operator":
+                        imported = alias.asname or "methodcaller"
+                        bindings.operator_methodcaller_aliases.add(imported)
+                        bindings.methodcaller_import_aliases.add(imported)
                     qualified = f"{module}.{alias.name}"
-                    if qualified not in origin_modules:
-                        continue
-                    binding = tuple(qualified.split("."))
-                    bindings.register_name(alias.asname or alias.name, binding)
+                    if module in origin_modules and alias.name == symbol:
+                        binding = (*module.split("."), alias.name)
+                        bindings.register_name(alias.asname or alias.name, binding)
+                    elif qualified in origin_modules:
+                        binding = tuple(qualified.split("."))
+                        bindings.register_name(alias.asname or alias.name, binding)
 
         bound_getter_symbol_reference = False
         for node in ordered_nodes:
@@ -560,6 +662,14 @@ def _python_import_reference(
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             bindings.container_holders.add(target.id)
+                if (
+                    isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "__dict__"
+                    and _bound_module_expr(node.value.value, bindings)
+                ):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.module_dict_holders.add(target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is None:
                     continue
@@ -633,6 +743,11 @@ def _python_import_reference(
                 return True, True
             if isinstance(node, ast.Subscript):
                 if (
+                    isinstance(node.value, ast.Name)
+                    and node.value.id in bindings.module_dict_holders
+                ):
+                    return False, False
+                if (
                     isinstance(node.value, ast.Attribute)
                     and node.value.attr == "__dict__"
                     and _bound_module_expr(node.value.value, bindings)
@@ -645,10 +760,16 @@ def _python_import_reference(
             if isinstance(node, ast.Call):
                 if _uses_module_dict_surface(node.func, bindings):
                     return False, False
+                ref = _import_alias_call_reference(node, bindings, symbol, origin_modules)
+                if ref is not None:
+                    return ref
                 ref = _getattr_call_reference(node, bindings, symbol)
                 if ref is not None:
                     return ref
                 ref = _attrgetter_call_reference(node, bindings, symbol)
+                if ref is not None:
+                    return ref
+                ref = _methodcaller_call_reference(node, bindings, symbol)
                 if ref is not None:
                     return ref
                 ref = _bound_attrgetter_call_reference(node, bindings, symbol)
@@ -662,6 +783,9 @@ def _python_import_reference(
                     if ref is not None:
                         return ref
                     ref = _attrgetter_call_reference(node.func, bindings, symbol)
+                    if ref is not None:
+                        return ref
+                    ref = _methodcaller_call_reference(node.func, bindings, symbol)
                     if ref is not None:
                         return ref
     if unreadable_hit is not None and unreadable_hit.hit:
