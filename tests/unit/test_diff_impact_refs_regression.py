@@ -173,6 +173,34 @@ def test_tuple_module_alias_dynamic_getattr_marks_cap_incomplete(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+def test_operator_attrgetter_concat_reference_disables_uncalled_cap(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        'import operator\nimport pkg.core as core\noperator.attrgetter("dor" + "mant")(core)()\n',
+        encoding="utf-8",
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["caller_count"] == 0
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_assigned_attrgetter_concat_marks_cap_incomplete(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        "from operator import attrgetter\nimport pkg.core as core\n"
+        'getter = attrgetter\ngetter("dor" + "mant")(core)()\n',
+        encoding="utf-8",
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 def test_builtins_getattr_assigned_alias_marks_cap_incomplete(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
