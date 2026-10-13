@@ -150,7 +150,6 @@ def test_module_import_assign_alias_getattr_disables_uncalled_cap(
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
-
 def test_tuple_module_alias_dynamic_getattr_marks_cap_incomplete(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -174,9 +173,7 @@ def test_tuple_module_alias_dynamic_getattr_marks_cap_incomplete(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
-def test_module_dict_alias_access_marks_cap_incomplete(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_module_dict_alias_access_marks_cap_incomplete(tmp_path: Path, monkeypatch: Any) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
         'import app\nalias = app\nalias.__dict__["chan" + "ged"]()\n',
@@ -195,6 +192,7 @@ def test_module_dict_alias_access_marks_cap_incomplete(
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
     monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
 
 def test_dynamic_getattr_on_module_binding_marks_cap_incomplete(tmp_path: Path) -> None:
     app_path = tmp_path / "app.py"
