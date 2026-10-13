@@ -187,6 +187,37 @@ def test_operator_attrgetter_concat_reference_disables_uncalled_cap(tmp_path: Pa
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
+def test_operator_module_alias_attrgetter_concat_disables_uncalled_cap(
+    tmp_path: Path,
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        'import operator as op\nimport pkg.core as core\nop.attrgetter("dor" + "mant")(core)()\n',
+        encoding="utf-8",
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_saved_attrgetter_from_operator_alias_disables_uncalled_cap(
+    tmp_path: Path,
+) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        "import operator as op\nimport pkg.core as core\n"
+        'getter = op.attrgetter("dor" + "mant")\ngetter(core)()\n',
+        encoding="utf-8",
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 def test_assigned_attrgetter_concat_marks_cap_incomplete(tmp_path: Path) -> None:
     diff = _dormant_diff(tmp_path)
     (tmp_path / "test_core.py").write_text(
@@ -207,6 +238,24 @@ def test_builtins_getattr_assigned_alias_marks_cap_incomplete(
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
         'import app, builtins\nlookup = builtins.getattr\nlookup(app, "chan" + "ged")()\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_annotated_builtins_getattr_alias_marks_cap_incomplete(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'import app, builtins\ng: object = builtins.getattr\nobserved = g(app, "chan" + "ged")\n',
         encoding="utf-8",
     )
     diff = (

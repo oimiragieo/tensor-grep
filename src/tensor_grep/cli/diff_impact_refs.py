@@ -126,6 +126,7 @@ class _ImportBindingState:
         "attrgetter_assigned_aliases",
         "attrgetter_import_aliases",
         "binding_paths",
+        "bound_attrgetter_targets",
         "builtin_module_aliases",
         "container_holders",
         "getattr_aliases",
@@ -133,6 +134,7 @@ class _ImportBindingState:
         "getattr_import_aliases",
         "name_bindings",
         "operator_attrgetter_aliases",
+        "operator_module_aliases",
         "typed_getattr_aliases",
         "typed_module_aliases",
     )
@@ -146,6 +148,8 @@ class _ImportBindingState:
         self.operator_attrgetter_aliases: set[str] = {"attrgetter"}
         self.attrgetter_import_aliases: set[str] = set()
         self.attrgetter_assigned_aliases: set[str] = set()
+        self.operator_module_aliases: set[str] = {"operator"}
+        self.bound_attrgetter_targets: dict[str, str | None] = {}
         self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
         self.typed_getattr_aliases: set[str] = set()
@@ -246,8 +250,66 @@ def _call_is_attrgetter_factory(func: ast.expr, bindings: _ImportBindingState) -
     if isinstance(func, ast.Name):
         return func.id in bindings.operator_attrgetter_aliases
     if isinstance(func, ast.Attribute) and func.attr == "attrgetter":
-        return isinstance(func.value, ast.Name) and func.value.id == "operator"
+        return (
+            isinstance(func.value, ast.Name) and func.value.id in bindings.operator_module_aliases
+        )
     return False
+
+
+def _attrgetter_factory_attribute(
+    factory: ast.Call, bindings: _ImportBindingState
+) -> str | None | bool:
+    if not _call_is_attrgetter_factory(factory.func, bindings):
+        return False
+    allow_fold = isinstance(factory.func, ast.Attribute) or (
+        isinstance(factory.func, ast.Name)
+        and factory.func.id in bindings.attrgetter_import_aliases
+        and factory.func.id not in bindings.attrgetter_assigned_aliases
+    )
+    if not factory.args:
+        return None
+    if allow_fold:
+        return _constant_string(factory.args[0])
+    attribute_node = factory.args[0]
+    if not isinstance(attribute_node, ast.Constant) or not isinstance(attribute_node.value, str):
+        return None
+    return attribute_node.value
+
+
+def _register_bound_attrgetter_target(
+    target: ast.expr, factory: ast.Call, bindings: _ImportBindingState
+) -> None:
+    attribute = _attrgetter_factory_attribute(factory, bindings)
+    if attribute is False:
+        return
+    if isinstance(target, ast.Name):
+        bindings.bound_attrgetter_targets[target.id] = None if attribute is None else str(attribute)
+    elif isinstance(target, ast.Tuple):
+        for elt in target.elts:
+            if isinstance(elt, ast.Name):
+                bindings.bound_attrgetter_targets[elt.id] = (
+                    None if attribute is None else str(attribute)
+                )
+
+
+def _bound_attrgetter_call_reference(
+    node: ast.Call, bindings: _ImportBindingState, symbol: str
+) -> tuple[bool, bool] | None:
+    if not isinstance(node.func, ast.Call):
+        return None
+    bound_call = node.func
+    if not isinstance(bound_call.func, ast.Name):
+        return None
+    attribute = bindings.bound_attrgetter_targets.get(bound_call.func.id)
+    if attribute is None and bound_call.func.id not in bindings.bound_attrgetter_targets:
+        return None
+    if not bound_call.args or not _bound_module_expr(bound_call.args[0], bindings):
+        return None
+    if attribute is None:
+        return False, False
+    if attribute == symbol:
+        return True, True
+    return None
 
 
 def _attrgetter_call_reference(
@@ -341,6 +403,8 @@ def _python_import_reference(
                 for alias in node.names:
                     if alias.name == "builtins":
                         bindings.builtin_module_aliases.add(alias.asname or "builtins")
+                    if alias.name == "operator":
+                        bindings.operator_module_aliases.add(alias.asname or "operator")
                     if alias.name not in origin_modules:
                         continue
                     module_path = tuple(alias.name.split("."))
@@ -403,6 +467,11 @@ def _python_import_reference(
                         if isinstance(target, ast.Name):
                             bindings.operator_attrgetter_aliases.add(target.id)
                             bindings.attrgetter_assigned_aliases.add(target.id)
+                elif isinstance(node.value, ast.Call) and _call_is_attrgetter_factory(
+                    node.value.func, bindings
+                ):
+                    for target in node.targets:
+                        _register_bound_attrgetter_target(target, node.value, bindings)
                 if isinstance(node.value, (ast.List, ast.Tuple)) and any(
                     _bound_module_expr(elt, bindings) for elt in node.value.elts
                 ):
@@ -426,8 +495,24 @@ def _python_import_reference(
                 if isinstance(node.value, ast.Name) and node.value.id == "getattr":
                     if isinstance(node.target, ast.Name):
                         bindings.getattr_aliases.add(node.target.id)
+                        bindings.getattr_assigned_aliases.add(node.target.id)
                         if node.annotation is not None:
                             bindings.typed_getattr_aliases.add(node.target.id)
+                elif (
+                    isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "getattr"
+                    and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id in bindings.builtin_module_aliases
+                    and isinstance(node.target, ast.Name)
+                ):
+                    bindings.getattr_aliases.add(node.target.id)
+                    bindings.getattr_assigned_aliases.add(node.target.id)
+                    if node.annotation is not None:
+                        bindings.typed_getattr_aliases.add(node.target.id)
+                elif isinstance(node.value, ast.Call) and _call_is_attrgetter_factory(
+                    node.value.func, bindings
+                ):
+                    _register_bound_attrgetter_target(node.target, node.value, bindings)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
                     _register_module_alias_target(node.target, source, bindings)
@@ -483,6 +568,9 @@ def _python_import_reference(
                 if ref is not None:
                     return ref
                 ref = _attrgetter_call_reference(node, bindings, symbol)
+                if ref is not None:
+                    return ref
+                ref = _bound_attrgetter_call_reference(node, bindings, symbol)
                 if ref is not None:
                     return ref
                 if isinstance(node.func, ast.Call):
