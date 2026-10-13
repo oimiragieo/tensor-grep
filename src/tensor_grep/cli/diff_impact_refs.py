@@ -100,6 +100,8 @@ def _constant_string(node: ast.expr) -> str | None:
 def _bound_module_expr(expr: ast.expr, bindings: _ImportBindingState) -> bool:
     if bindings.expr_binding_path(expr) is not None:
         return True
+    if isinstance(expr, ast.Name) and expr.id in bindings.container_holders:
+        return True
     if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
         return _bound_module_expr(expr.value, bindings)
     if isinstance(expr, ast.Subscript):
@@ -120,13 +122,20 @@ def _uses_module_dict_surface(callee: ast.expr, bindings: _ImportBindingState) -
 
 
 class _ImportBindingState:
-    __slots__ = ("binding_paths", "getattr_aliases", "name_bindings", "typed_module_aliases")
+    __slots__ = (
+        "binding_paths",
+        "container_holders",
+        "getattr_aliases",
+        "name_bindings",
+        "typed_module_aliases",
+    )
 
     def __init__(self) -> None:
         self.name_bindings: dict[str, tuple[str, ...]] = {}
         self.binding_paths: set[tuple[str, ...]] = set()
         self.getattr_aliases: set[str] = {"getattr"}
         self.typed_module_aliases: set[str] = set()
+        self.container_holders: set[str] = set()
 
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
         self.name_bindings[name] = binding
@@ -259,8 +268,12 @@ def _python_import_reference(
         except (UnicodeError, SyntaxError, ValueError, RecursionError, MemoryError):
             return False, False
         bindings = _ImportBindingState()
+        ordered_nodes = sorted(
+            (node for node in ast.walk(tree) if hasattr(node, "lineno")),
+            key=lambda node: node.lineno,
+        )
 
-        for node in ast.walk(tree):
+        for node in ordered_nodes:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name not in origin_modules:
@@ -288,11 +301,19 @@ def _python_import_reference(
                         continue
                     binding = tuple(qualified.split("."))
                     bindings.register_name(alias.asname or alias.name, binding)
-            elif isinstance(node, ast.Assign):
+
+        for node in ordered_nodes:
+            if isinstance(node, ast.Assign):
                 if isinstance(node.value, ast.Name) and node.value.id == "getattr":
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             bindings.getattr_aliases.add(target.id)
+                if isinstance(node.value, (ast.List, ast.Tuple)) and any(
+                    _bound_module_expr(elt, bindings) for elt in node.value.elts
+                ):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.container_holders.add(target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is None:
                     continue
