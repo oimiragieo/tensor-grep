@@ -486,7 +486,7 @@ def test_saved_module_dict_subscript_marks_cap_incomplete(tmp_path: Path) -> Non
 def test_saved_methodcaller_invoke_disables_uncalled_cap(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
-        'from operator import methodcaller\nimport app\n'
+        "from operator import methodcaller\nimport app\n"
         'invoke = methodcaller("chan" + "ged")\ninvoke(app)\n',
         encoding="utf-8",
     )
@@ -505,8 +505,7 @@ def test_saved_methodcaller_invoke_disables_uncalled_cap(tmp_path: Path) -> None
 def test_callable_attrgetter_bound_reference_disables_uncalled_cap(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(
-        'import operator\nimport app\n'
-        'callable(operator.attrgetter("chan" + "ged")(app))\n',
+        'import operator\nimport app\ncallable(operator.attrgetter("chan" + "ged")(app))\n',
         encoding="utf-8",
     )
     diff = (
