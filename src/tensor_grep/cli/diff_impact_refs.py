@@ -127,7 +127,10 @@ class _ImportBindingState:
         "builtin_module_aliases",
         "container_holders",
         "getattr_aliases",
+        "getattr_assigned_aliases",
+        "getattr_import_aliases",
         "name_bindings",
+        "operator_attrgetter_aliases",
         "typed_getattr_aliases",
         "typed_module_aliases",
     )
@@ -136,6 +139,9 @@ class _ImportBindingState:
         self.name_bindings: dict[str, tuple[str, ...]] = {}
         self.binding_paths: set[tuple[str, ...]] = set()
         self.getattr_aliases: set[str] = {"getattr"}
+        self.getattr_assigned_aliases: set[str] = set()
+        self.getattr_import_aliases: set[str] = set()
+        self.operator_attrgetter_aliases: set[str] = {"attrgetter"}
         self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
         self.typed_getattr_aliases: set[str] = set()
@@ -211,7 +217,12 @@ def _getattr_call_reference(
             return False, False
         return None
     attribute_node = node.args[1]
-    if getattr_name == "getattr":
+    allow_fold = (
+        isinstance(node.func, ast.Name)
+        and node.func.id in bindings.getattr_import_aliases
+        and node.func.id not in bindings.getattr_assigned_aliases
+    )
+    if getattr_name == "getattr" or not allow_fold:
         if not isinstance(attribute_node, ast.Constant) or not isinstance(
             attribute_node.value, str
         ):
@@ -303,7 +314,11 @@ def _python_import_reference(
                     return True, True
                 for alias in node.names:
                     if alias.name == "getattr":
-                        bindings.getattr_aliases.add(alias.asname or "getattr")
+                        imported = alias.asname or "getattr"
+                        bindings.getattr_aliases.add(imported)
+                        bindings.getattr_import_aliases.add(imported)
+                    if alias.name == "attrgetter" and module == "operator":
+                        bindings.operator_attrgetter_aliases.add(alias.asname or "attrgetter")
                     qualified = f"{module}.{alias.name}"
                     if qualified not in origin_modules:
                         continue
@@ -316,6 +331,22 @@ def _python_import_reference(
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             bindings.getattr_aliases.add(target.id)
+                            bindings.getattr_assigned_aliases.add(target.id)
+                elif (
+                    isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "getattr"
+                    and isinstance(node.value.value, ast.Name)
+                    and node.value.value.id in bindings.builtin_module_aliases
+                ):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.getattr_aliases.add(target.id)
+                            bindings.getattr_assigned_aliases.add(target.id)
+                elif isinstance(node.value, ast.Name) and node.value.id in bindings.getattr_aliases:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.getattr_aliases.add(target.id)
+                            bindings.getattr_assigned_aliases.add(target.id)
                 if isinstance(node.value, (ast.List, ast.Tuple)) and any(
                     _bound_module_expr(elt, bindings) for elt in node.value.elts
                 ):
