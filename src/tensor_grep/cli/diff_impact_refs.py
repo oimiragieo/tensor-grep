@@ -123,6 +123,8 @@ def _uses_module_dict_surface(callee: ast.expr, bindings: _ImportBindingState) -
 
 class _ImportBindingState:
     __slots__ = (
+        "attrgetter_assigned_aliases",
+        "attrgetter_import_aliases",
         "binding_paths",
         "builtin_module_aliases",
         "container_holders",
@@ -130,8 +132,6 @@ class _ImportBindingState:
         "getattr_assigned_aliases",
         "getattr_import_aliases",
         "name_bindings",
-        "attrgetter_assigned_aliases",
-        "attrgetter_import_aliases",
         "operator_attrgetter_aliases",
         "typed_getattr_aliases",
         "typed_module_aliases",
