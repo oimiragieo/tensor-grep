@@ -109,6 +109,8 @@ class _ImportBindingState:
         self.binding_paths.add(binding)
 
     def expr_binding_path(self, expr: ast.expr) -> tuple[str, ...] | None:
+        if isinstance(expr, ast.Tuple) and len(expr.elts) == 1:
+            return self.expr_binding_path(expr.elts[0])
         if isinstance(expr, ast.Name):
             return self.name_bindings.get(expr.id)
         path = _attribute_path(expr)
@@ -125,6 +127,28 @@ class _ImportBindingState:
         if path == binding:
             return binding
         return None
+
+
+def _module_binding_from_expr(
+    expr: ast.expr, bindings: _ImportBindingState
+) -> tuple[str, ...] | None:
+    if isinstance(expr, ast.Tuple) and len(expr.elts) == 1:
+        return _module_binding_from_expr(expr.elts[0], bindings)
+    if isinstance(expr, ast.Name):
+        return bindings.name_bindings.get(expr.id)
+    return bindings.expr_binding_path(expr)
+
+
+def _register_module_alias_target(
+    target: ast.expr, source: tuple[str, ...], bindings: _ImportBindingState
+) -> None:
+    if isinstance(target, ast.Name):
+        bindings.register_name(target.id, source)
+        return
+    if isinstance(target, ast.Tuple):
+        for elt in target.elts:
+            if isinstance(elt, ast.Name):
+                bindings.register_name(elt.id, source)
 
 
 def _python_import_reference(
@@ -202,22 +226,16 @@ def _python_import_reference(
                     binding = tuple(qualified.split("."))
                     bindings.register_name(alias.asname or alias.name, binding)
             elif isinstance(node, ast.Assign):
-                if not isinstance(node.value, ast.Name):
-                    continue
-                source = bindings.name_bindings.get(node.value.id)
+                source = _module_binding_from_expr(node.value, bindings)
                 if source is None:
                     continue
                 for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        bindings.register_name(target.id, source)
-            elif (
-                isinstance(node, ast.AnnAssign)
-                and isinstance(node.target, ast.Name)
-                and isinstance(node.value, ast.Name)
-            ):
-                source = bindings.name_bindings.get(node.value.id)
-                if source is not None:
-                    bindings.register_name(node.target.id, source)
+                    if isinstance(target, (ast.Name, ast.Tuple)):
+                        _register_module_alias_target(target, source, bindings)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                source = _module_binding_from_expr(node.value, bindings)
+                if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
+                    _register_module_alias_target(node.target, source, bindings)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -239,15 +257,21 @@ def _python_import_reference(
                 and bindings.expr_binding_path(node.value) is not None
             ):
                 return True, True
-            if (
-                isinstance(node, ast.Subscript)
-                and bindings.expr_binding_path(node.value) is not None
-            ):
-                return False, False
+            if isinstance(node, ast.Subscript):
+                if bindings.expr_binding_path(node.value) is not None:
+                    return False, False
+                if (
+                    isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "__dict__"
+                    and bindings.expr_binding_path(node.value.value) is not None
+                ):
+                    return False, False
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 if node.func.id != "getattr" or len(node.args) < 2:
                     continue
                 if bindings.expr_binding_path(node.args[0]) is None:
+                    if isinstance(node.args[0], ast.Name):
+                        return False, False
                     continue
                 attribute_node = node.args[1]
                 if not isinstance(attribute_node, ast.Constant) or not isinstance(
