@@ -328,11 +328,14 @@ def _attrgetter_bound_module_call(
 
 
 def _register_bound_getter_result(
-    target: ast.expr, call: ast.Call, bindings: _ImportBindingState
-) -> None:
+    target: ast.expr,
+    call: ast.Call,
+    bindings: _ImportBindingState,
+    symbol: str,
+) -> bool:
     attribute = _attrgetter_bound_module_call(call, bindings)
     if attribute is False:
-        return
+        return False
     if isinstance(target, ast.Name):
         bindings.bound_getter_results[target.id] = None if attribute is None else str(attribute)
     elif isinstance(target, ast.Tuple):
@@ -341,6 +344,7 @@ def _register_bound_getter_result(
                 bindings.bound_getter_results[elt.id] = (
                     None if attribute is None else str(attribute)
                 )
+    return isinstance(attribute, str) and attribute == symbol
 
 
 def _bound_getter_result_call_reference(
@@ -503,6 +507,7 @@ def _python_import_reference(
                     binding = tuple(qualified.split("."))
                     bindings.register_name(alias.asname or alias.name, binding)
 
+        bound_getter_symbol_reference = False
         for node in ordered_nodes:
             if isinstance(node, ast.Assign):
                 if isinstance(node.value, ast.Name) and node.value.id == "getattr":
@@ -540,7 +545,10 @@ def _python_import_reference(
                         _register_bound_attrgetter_target(target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
                     for target in node.targets:
-                        _register_bound_getter_result(target, node.value, bindings)
+                        if _register_bound_getter_result(
+                            target, node.value, bindings, symbol
+                        ):
+                            bound_getter_symbol_reference = True
                 if isinstance(node.value, (ast.List, ast.Tuple)) and any(
                     _bound_module_expr(elt, bindings) for elt in node.value.elts
                 ):
@@ -583,7 +591,10 @@ def _python_import_reference(
                 ):
                     _register_bound_attrgetter_target(node.target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
-                    _register_bound_getter_result(node.target, node.value, bindings)
+                    if _register_bound_getter_result(
+                        node.target, node.value, bindings, symbol
+                    ):
+                        bound_getter_symbol_reference = True
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
                     _register_module_alias_target(node.target, source, bindings)
@@ -594,6 +605,9 @@ def _python_import_reference(
                             for elt in node.target.elts:
                                 if isinstance(elt, ast.Name):
                                     bindings.typed_module_aliases.add(elt.id)
+
+        if bound_getter_symbol_reference:
+            return True, True
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
