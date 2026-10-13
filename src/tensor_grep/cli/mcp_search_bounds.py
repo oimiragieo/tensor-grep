@@ -13,7 +13,7 @@ import itertools
 import json
 from typing import Any
 
-from tensor_grep.cli.incompleteness import unified_incomplete_envelope
+from tensor_grep.cli.incompleteness import disclosed_incomplete, unified_incomplete_envelope
 
 _MCP_MATCH_TEXT_MAX_CHARS = 400
 _MCP_MATCH_WINDOW_LEAD_CHARS = 100
@@ -40,12 +40,15 @@ def emit_mcp_plain_search_output(
 
 
 def mcp_plain_search_output_is_incomplete(output: str) -> bool:
+    if disclosed_incomplete(output, None):
+        return True
     return any(
         line.startswith(("... output truncated", "Scan capped at "))
         or line == _MCP_OUTPUT_TRUNCATED_NOTICE
         or (line.startswith("... and ") and line.endswith(" more files."))
         or "exceeded the wall-clock deadline" in line
         or "timeout and was stopped" in line
+        or ("rg exit 2" in line and "partial results" in line)
         for line in output.splitlines()
     )
 

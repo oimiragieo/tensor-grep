@@ -12,7 +12,7 @@ import pytest
 from mcp import types
 
 from tensor_grep.backends import ripgrep_backend
-from tensor_grep.cli import mcp_batch_tools, mcp_server
+from tensor_grep.cli import mcp_batch_tools, mcp_search_bounds, mcp_server
 
 NORMALIZED_VOLATILE_FIELDS: tuple[str, ...] = ()
 
@@ -417,6 +417,17 @@ def test_tg_batch_failed_text_search_spawns_once_like_standalone(tmp_path, monke
     )
     assert calls == 1, f"batch invalid regex used {calls} subprocesses: {payload}"
     assert payload["results"][0]["error"]["code"] == "invalid_input"
+
+
+def test_mcp_plain_search_output_detects_disclosed_rg_partial() -> None:
+    output = "sample.txt:1:needle\n\nrg exit 2 (partial results)"
+    assert mcp_search_bounds.mcp_plain_search_output_is_incomplete(output) is True
+    assert (
+        mcp_search_bounds.mcp_plain_search_output_is_incomplete(
+            "Search returning partial results without a sentinel"
+        )
+        is False
+    )
 
 
 def test_tg_batch_settles_executor_threads_after_real_search(tmp_path):
