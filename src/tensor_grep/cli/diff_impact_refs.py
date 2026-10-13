@@ -128,6 +128,7 @@ class _ImportBindingState:
         "container_holders",
         "getattr_aliases",
         "name_bindings",
+        "typed_getattr_aliases",
         "typed_module_aliases",
     )
 
@@ -137,6 +138,7 @@ class _ImportBindingState:
         self.getattr_aliases: set[str] = {"getattr"}
         self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
+        self.typed_getattr_aliases: set[str] = set()
         self.container_holders: set[str] = set()
 
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
@@ -199,6 +201,8 @@ def _getattr_call_reference(
 ) -> tuple[bool, bool] | None:
     if len(node.args) < 2 or not _call_is_getattr(node.func, bindings):
         return None
+    if isinstance(node.func, ast.Name) and node.func.id in bindings.typed_getattr_aliases:
+        return False, False
     getattr_name = node.func.id if isinstance(node.func, ast.Name) else "getattr"
     if isinstance(node.args[0], ast.Name) and node.args[0].id in bindings.typed_module_aliases:
         return False, False
@@ -335,6 +339,8 @@ def _python_import_reference(
                 if isinstance(node.value, ast.Name) and node.value.id == "getattr":
                     if isinstance(node.target, ast.Name):
                         bindings.getattr_aliases.add(node.target.id)
+                        if node.annotation is not None:
+                            bindings.typed_getattr_aliases.add(node.target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
                     _register_module_alias_target(node.target, source, bindings)
