@@ -132,6 +132,7 @@ class _ImportBindingState:
         "container_holders",
         "getattr_aliases",
         "getattr_assigned_aliases",
+        "getattr_builtins_fold_aliases",
         "getattr_import_aliases",
         "methodcaller_import_aliases",
         "module_dict_holders",
@@ -141,6 +142,7 @@ class _ImportBindingState:
         "operator_module_aliases",
         "typed_getattr_aliases",
         "typed_module_aliases",
+        "vars_aliases",
     )
 
     def __init__(self) -> None:
@@ -149,6 +151,7 @@ class _ImportBindingState:
         self.getattr_aliases: set[str] = {"getattr"}
         self.getattr_assigned_aliases: set[str] = set()
         self.getattr_import_aliases: set[str] = set()
+        self.getattr_builtins_fold_aliases: set[str] = set()
         self.operator_attrgetter_aliases: set[str] = {"attrgetter"}
         self.attrgetter_import_aliases: set[str] = set()
         self.attrgetter_assigned_aliases: set[str] = set()
@@ -162,6 +165,7 @@ class _ImportBindingState:
         self.typed_getattr_aliases: set[str] = set()
         self.container_holders: set[str] = set()
         self.module_dict_holders: set[str] = set()
+        self.vars_aliases: set[str] = {"vars"}
 
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
         self.name_bindings[name] = binding
@@ -224,7 +228,8 @@ def _getattr_call_reference(
     if len(node.args) < 2 or not _call_is_getattr(node.func, bindings):
         return None
     if isinstance(node.func, ast.Name) and node.func.id in bindings.typed_getattr_aliases:
-        return False, False
+        if node.func.id not in bindings.getattr_builtins_fold_aliases:
+            return False, False
     getattr_name = node.func.id if isinstance(node.func, ast.Name) else "getattr"
     if isinstance(node.args[0], ast.Name) and node.args[0].id in bindings.typed_module_aliases:
         return False, False
@@ -237,6 +242,8 @@ def _getattr_call_reference(
         isinstance(node.func, ast.Name)
         and node.func.id in bindings.getattr_import_aliases
         and node.func.id not in bindings.getattr_assigned_aliases
+    ) or (
+        isinstance(node.func, ast.Name) and node.func.id in bindings.getattr_builtins_fold_aliases
     )
     if getattr_name == "getattr" or not allow_fold:
         if not isinstance(attribute_node, ast.Constant) or not isinstance(
@@ -264,9 +271,43 @@ def _call_is_methodcaller_factory(func: ast.expr, bindings: _ImportBindingState)
     return False
 
 
+def _methodcaller_factory_attribute(
+    factory: ast.Call, bindings: _ImportBindingState
+) -> str | None | bool:
+    if not _call_is_methodcaller_factory(factory.func, bindings):
+        return False
+    allow_fold = isinstance(factory.func, ast.Attribute) or (
+        isinstance(factory.func, ast.Name)
+        and factory.func.id in bindings.methodcaller_import_aliases
+    )
+    if not factory.args:
+        return None
+    if len(factory.args) > 1:
+        return None
+    if allow_fold:
+        return _constant_string(factory.args[0])
+    attribute_node = factory.args[0]
+    if not isinstance(attribute_node, ast.Constant) or not isinstance(attribute_node.value, str):
+        return None
+    return attribute_node.value
+
+
 def _methodcaller_call_reference(
     node: ast.Call, bindings: _ImportBindingState, symbol: str
 ) -> tuple[bool, bool] | None:
+    if isinstance(node.func, ast.Call):
+        inner = node.func
+        if _call_is_methodcaller_factory(inner.func, bindings):
+            if not node.args or not _bound_module_expr(node.args[0], bindings):
+                return None
+            attribute = _methodcaller_factory_attribute(inner, bindings)
+            if attribute is False:
+                return None
+            if attribute is None:
+                return False, False
+            if attribute == symbol:
+                return True, True
+            return None
     if not isinstance(node.func, ast.Call):
         return None
     bound_call = node.func
@@ -277,23 +318,9 @@ def _methodcaller_call_reference(
         return None
     if not bound_call.args or not _bound_module_expr(bound_call.args[0], bindings):
         return None
-    allow_fold = isinstance(factory.func, ast.Attribute) or (
-        isinstance(factory.func, ast.Name)
-        and factory.func.id in bindings.methodcaller_import_aliases
-    )
-    if not factory.args:
-        return False, False
-    if len(factory.args) > 1:
-        return False, False
-    if allow_fold:
-        attribute = _constant_string(factory.args[0])
-    else:
-        attribute_node = factory.args[0]
-        if not isinstance(attribute_node, ast.Constant) or not isinstance(
-            attribute_node.value, str
-        ):
-            return False, False
-        attribute = attribute_node.value
+    attribute = _methodcaller_factory_attribute(factory, bindings)
+    if attribute is False:
+        return None
     if attribute is None:
         return False, False
     if attribute == symbol:
@@ -627,6 +654,10 @@ def _python_import_reference(
                         if isinstance(target, ast.Name):
                             bindings.getattr_aliases.add(target.id)
                             bindings.getattr_assigned_aliases.add(target.id)
+                elif isinstance(node.value, ast.Name) and node.value.id == "vars":
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.vars_aliases.add(target.id)
                 elif isinstance(node.value, ast.Name) and node.value.id in bindings.getattr_aliases:
                     for target in node.targets:
                         if isinstance(target, ast.Name):
@@ -694,6 +725,7 @@ def _python_import_reference(
                     bindings.getattr_assigned_aliases.add(node.target.id)
                     if node.annotation is not None:
                         bindings.typed_getattr_aliases.add(node.target.id)
+                        bindings.getattr_builtins_fold_aliases.add(node.target.id)
                 elif isinstance(node.value, ast.Call) and _call_is_attrgetter_factory(
                     node.value.func, bindings
                 ):
@@ -717,14 +749,14 @@ def _python_import_reference(
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id == "vars" and len(node.args) == 1:
+                if node.func.id in bindings.vars_aliases and len(node.args) == 1:
                     if bindings.expr_binding_path(node.args[0]) is not None:
                         return False, False
             if (
                 isinstance(node, ast.Subscript)
                 and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "vars"
+                and node.value.func.id in bindings.vars_aliases
                 and len(node.value.args) == 1
                 and bindings.expr_binding_path(node.value.args[0]) is not None
             ):
@@ -758,6 +790,13 @@ def _python_import_reference(
                 ):
                     return False, False
             if isinstance(node, ast.Call):
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in bindings.container_holders
+                ):
+                    return False, False
                 if _uses_module_dict_surface(node.func, bindings):
                     return False, False
                 ref = _import_alias_call_reference(node, bindings, symbol, origin_modules)
