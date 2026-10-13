@@ -124,6 +124,7 @@ def _uses_module_dict_surface(callee: ast.expr, bindings: _ImportBindingState) -
 class _ImportBindingState:
     __slots__ = (
         "binding_paths",
+        "builtin_module_aliases",
         "container_holders",
         "getattr_aliases",
         "name_bindings",
@@ -134,6 +135,7 @@ class _ImportBindingState:
         self.name_bindings: dict[str, tuple[str, ...]] = {}
         self.binding_paths: set[tuple[str, ...]] = set()
         self.getattr_aliases: set[str] = {"getattr"}
+        self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
         self.container_holders: set[str] = set()
 
@@ -188,7 +190,7 @@ def _call_is_getattr(func: ast.expr, bindings: _ImportBindingState) -> bool:
     if isinstance(func, ast.Name):
         return func.id in bindings.getattr_aliases
     if isinstance(func, ast.Attribute) and func.attr == "getattr":
-        return isinstance(func.value, ast.Name) and func.value.id == "builtins"
+        return isinstance(func.value, ast.Name) and func.value.id in bindings.builtin_module_aliases
     return False
 
 
@@ -276,6 +278,8 @@ def _python_import_reference(
         for node in ordered_nodes:
             if isinstance(node, ast.Import):
                 for alias in node.names:
+                    if alias.name == "builtins":
+                        bindings.builtin_module_aliases.add(alias.asname or "builtins")
                     if alias.name not in origin_modules:
                         continue
                     module_path = tuple(alias.name.split("."))
@@ -314,6 +318,13 @@ def _python_import_reference(
                     for target in node.targets:
                         if isinstance(target, ast.Name):
                             bindings.container_holders.add(target.id)
+                if isinstance(node.value, ast.Dict) and any(
+                    value is not None and _bound_module_expr(value, bindings)
+                    for value in node.value.values
+                ):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.container_holders.add(target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is None:
                     continue
@@ -321,6 +332,9 @@ def _python_import_reference(
                     if isinstance(target, (ast.Name, ast.Tuple)):
                         _register_module_alias_target(target, source, bindings)
             elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                if isinstance(node.value, ast.Name) and node.value.id == "getattr":
+                    if isinstance(node.target, ast.Name):
+                        bindings.getattr_aliases.add(node.target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
                     _register_module_alias_target(node.target, source, bindings)
