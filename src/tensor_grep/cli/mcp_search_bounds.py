@@ -13,7 +13,7 @@ import itertools
 import json
 from typing import Any
 
-from tensor_grep.cli.incompleteness import unified_incomplete_envelope
+from tensor_grep.cli.incompleteness import disclosed_incomplete, unified_incomplete_envelope
 
 _MCP_MATCH_TEXT_MAX_CHARS = 400
 _MCP_MATCH_WINDOW_LEAD_CHARS = 100
@@ -22,6 +22,35 @@ _MCP_OUTPUT_TRUNCATED_NOTICE = (
     f"... output truncated at {_MCP_MATCHES_MAX_BYTES} bytes; "
     "narrow the search or lower max_results"
 )
+
+
+def emit_mcp_plain_search_output(
+    lines: list[str],
+    *,
+    result_incomplete: bool,
+    incomplete_reason: str | None,
+) -> str:
+    if (
+        result_incomplete
+        and incomplete_reason
+        and not any(incomplete_reason in line for line in lines)
+    ):
+        lines.append(f"\n{incomplete_reason}")
+    return "\n".join(_cap_output_lines(lines))
+
+
+def mcp_plain_search_output_is_incomplete(output: str) -> bool:
+    if disclosed_incomplete(output, None):
+        return True
+    return any(
+        line.startswith(("... output truncated", "Scan capped at "))
+        or line == _MCP_OUTPUT_TRUNCATED_NOTICE
+        or (line.startswith("... and ") and line.endswith(" more files."))
+        or "exceeded the wall-clock deadline" in line
+        or "timeout and was stopped" in line
+        or ("rg exit 2" in line and "partial results" in line)
+        for line in output.splitlines()
+    )
 
 
 _MCP_MAX_SUBMATCHES_EXAMINED = 1000

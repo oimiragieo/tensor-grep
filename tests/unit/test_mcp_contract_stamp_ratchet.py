@@ -543,7 +543,15 @@ def _mcp_census_run(
                     f"{tool.name}[{family_key}] JSON is not an object: {type(payload).__name__}"
                 )
                 continue
-            family = "error" if isinstance(payload.get("error"), dict) else "success"
+            nested_batch_error = tool.name == "tg_batch" and any(
+                isinstance(item, dict) and isinstance(item.get("error"), dict)
+                for item in payload.get("results", [])
+            )
+            family = (
+                "error"
+                if isinstance(payload.get("error"), dict) or nested_batch_error
+                else "success"
+            )
             if payload.get("mcp_contract_version") != expected:
                 result.violations.append(
                     f"{tool.name}[{family_key}] {family}-family stamp="
