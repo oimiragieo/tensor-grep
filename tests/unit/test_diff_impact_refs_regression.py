@@ -173,6 +173,57 @@ def test_tuple_module_alias_dynamic_getattr_marks_cap_incomplete(
     assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
 
 
+def test_module_dict_get_dynamic_marks_cap_incomplete(tmp_path: Path, monkeypatch: Any) -> None:
+    (tmp_path / "app.py").write_text("def a():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        "import app\napp.__dict__.get(chr(97))()\n",
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def a():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+    monkeypatch.setattr(di, "build_diff_blast_radius", lambda **kwargs: payload)
+    assert CliRunner().invoke(app, ["diff-impact", "--fail-on-risk", "high"]).exit_code == 2
+
+
+def test_list_held_module_reference_disables_uncalled_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        "import app\n[app][0].changed()\n",
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_aliased_getattr_literal_reference_disables_uncalled_cap(tmp_path: Path) -> None:
+    diff = _dormant_diff(tmp_path)
+    (tmp_path / "test_core.py").write_text(
+        'from builtins import getattr as g\nimport pkg.core as alias\ng(alias, "dor" + "mant")()\n',
+        encoding="utf-8",
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 def test_module_dict_alias_access_marks_cap_incomplete(tmp_path: Path, monkeypatch: Any) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(

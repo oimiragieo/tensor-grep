@@ -97,12 +97,36 @@ def _constant_string(node: ast.expr) -> str | None:
     return "".join(parts)
 
 
+def _bound_module_expr(expr: ast.expr, bindings: _ImportBindingState) -> bool:
+    if bindings.expr_binding_path(expr) is not None:
+        return True
+    if isinstance(expr, ast.Attribute) and expr.attr == "__dict__":
+        return _bound_module_expr(expr.value, bindings)
+    if isinstance(expr, ast.Subscript):
+        return _bound_module_expr(expr.value, bindings)
+    if isinstance(expr, (ast.List, ast.Tuple)):
+        return any(_bound_module_expr(elt, bindings) for elt in expr.elts)
+    return False
+
+
+def _uses_module_dict_surface(callee: ast.expr, bindings: _ImportBindingState) -> bool:
+    if isinstance(callee, ast.Attribute):
+        if callee.attr == "__dict__" and _bound_module_expr(callee.value, bindings):
+            return True
+        return _uses_module_dict_surface(callee.value, bindings)
+    if isinstance(callee, ast.Call):
+        return _uses_module_dict_surface(callee.func, bindings)
+    return False
+
+
 class _ImportBindingState:
-    __slots__ = ("binding_paths", "name_bindings")
+    __slots__ = ("binding_paths", "getattr_aliases", "name_bindings", "typed_module_aliases")
 
     def __init__(self) -> None:
         self.name_bindings: dict[str, tuple[str, ...]] = {}
         self.binding_paths: set[tuple[str, ...]] = set()
+        self.getattr_aliases: set[str] = {"getattr"}
+        self.typed_module_aliases: set[str] = set()
 
     def register_name(self, name: str, binding: tuple[str, ...]) -> None:
         self.name_bindings[name] = binding
@@ -149,6 +173,35 @@ def _register_module_alias_target(
         for elt in target.elts:
             if isinstance(elt, ast.Name):
                 bindings.register_name(elt.id, source)
+
+
+def _getattr_call_reference(
+    node: ast.Call, bindings: _ImportBindingState, symbol: str
+) -> tuple[bool, bool] | None:
+    if len(node.args) < 2 or not isinstance(node.func, ast.Name):
+        return None
+    if node.func.id not in bindings.getattr_aliases:
+        return None
+    if isinstance(node.args[0], ast.Name) and node.args[0].id in bindings.typed_module_aliases:
+        return False, False
+    if not _bound_module_expr(node.args[0], bindings):
+        if isinstance(node.args[0], ast.Name):
+            return False, False
+        return None
+    attribute_node = node.args[1]
+    if node.func.id == "getattr":
+        if not isinstance(attribute_node, ast.Constant) or not isinstance(
+            attribute_node.value, str
+        ):
+            return False, False
+        attribute = attribute_node.value
+    else:
+        attribute = _constant_string(attribute_node)
+        if attribute is None:
+            return False, False
+    if attribute == symbol:
+        return True, True
+    return None
 
 
 def _python_import_reference(
@@ -220,6 +273,8 @@ def _python_import_reference(
                 ):
                     return True, True
                 for alias in node.names:
+                    if alias.name == "getattr":
+                        bindings.getattr_aliases.add(alias.asname or "getattr")
                     qualified = f"{module}.{alias.name}"
                     if qualified not in origin_modules:
                         continue
@@ -236,6 +291,13 @@ def _python_import_reference(
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is not None and isinstance(node.target, (ast.Name, ast.Tuple)):
                     _register_module_alias_target(node.target, source, bindings)
+                    if node.annotation is not None:
+                        if isinstance(node.target, ast.Name):
+                            bindings.typed_module_aliases.add(node.target.id)
+                        elif isinstance(node.target, ast.Tuple):
+                            for elt in node.target.elts:
+                                if isinstance(elt, ast.Name):
+                                    bindings.typed_module_aliases.add(elt.id)
 
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -253,48 +315,37 @@ def _python_import_reference(
                 return False, False
             if (
                 isinstance(node, ast.Attribute)
+                and node.attr == "__getattribute__"
+                and _bound_module_expr(node.value, bindings)
+            ):
+                return False, False
+            if (
+                isinstance(node, ast.Attribute)
                 and node.attr == symbol
-                and bindings.expr_binding_path(node.value) is not None
+                and _bound_module_expr(node.value, bindings)
             ):
                 return True, True
             if isinstance(node, ast.Subscript):
-                if bindings.expr_binding_path(node.value) is not None:
-                    return False, False
                 if (
                     isinstance(node.value, ast.Attribute)
                     and node.value.attr == "__dict__"
-                    and bindings.expr_binding_path(node.value.value) is not None
+                    and _bound_module_expr(node.value.value, bindings)
                 ):
                     return False, False
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id != "getattr" or len(node.args) < 2:
-                    continue
-                if bindings.expr_binding_path(node.args[0]) is None:
-                    if isinstance(node.args[0], ast.Name):
-                        return False, False
-                    continue
-                attribute_node = node.args[1]
-                if not isinstance(attribute_node, ast.Constant) or not isinstance(
-                    attribute_node.value, str
+                if _bound_module_expr(node.value, bindings) and not isinstance(
+                    node.slice, ast.Constant
                 ):
                     return False, False
-                if attribute_node.value == symbol:
-                    return True, True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Call):
-                inner = node.func
-                if (
-                    isinstance(inner.func, ast.Name)
-                    and inner.func.id == "getattr"
-                    and len(inner.args) >= 2
-                    and bindings.expr_binding_path(inner.args[0]) is not None
-                ):
-                    attribute_node = inner.args[1]
-                    if not isinstance(attribute_node, ast.Constant) or not isinstance(
-                        attribute_node.value, str
-                    ):
-                        return False, False
-                    if attribute_node.value == symbol:
-                        return True, True
+            if isinstance(node, ast.Call):
+                if _uses_module_dict_surface(node.func, bindings):
+                    return False, False
+                ref = _getattr_call_reference(node, bindings, symbol)
+                if ref is not None:
+                    return ref
+                if isinstance(node.func, ast.Call):
+                    ref = _getattr_call_reference(node.func, bindings, symbol)
+                    if ref is not None:
+                        return ref
     if unreadable_hit is not None and unreadable_hit.hit:
         return False, False
     return True, False
