@@ -18,7 +18,15 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import diff_impact_git as _dig
+from tensor_grep.cli import diff_impact_risk as _risk
 from tensor_grep.cli import lang_registry, repo_map
+from tensor_grep.cli.diff_impact_cap import (
+    apply_uncalled_symbol_cap,
+    collect_test_reference_evidence,
+    risk_cap_evidence_status,
+)
+from tensor_grep.cli.diff_impact_payload import _empty_payload
+from tensor_grep.cli.diff_impact_refs import _test_reference_evidence
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
     _scan_did_not_finish,
@@ -26,6 +34,7 @@ from tensor_grep.cli.repo_map import (
     build_symbol_blast_radius_from_map,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
+from tensor_grep.cli.repo_map_test_paths import _is_test_file
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
@@ -33,6 +42,9 @@ from tensor_grep.cli.subprocess_policy import (
     run_subprocess,
 )
 from tensor_grep.core.python_parse import parse_python
+
+_calculate_risk_tier = _risk._calculate_risk_tier
+_calculate_risk_tier_with_reasons = _risk._calculate_risk_tier_with_reasons
 
 # Re-exported under the historical private names (tests and callers patch them here).
 _ACTIVE_SESSIONS = _dig._ACTIVE_SESSIONS
@@ -1081,26 +1093,6 @@ def _is_test_path(path_str: str) -> bool:
     ))
 
 
-def _calculate_risk_tier(
-    blast_radius_score: float, affected_files_count: int, callers_count: int
-) -> str:
-    """Calculate risk tier based on blast radius score, affected file count, and callers count.
-
-    Tiers:
-    - critical: score >= 0.7 or affected_files >= 25 or callers >= 50
-    - high: score >= 0.4 or affected_files >= 10 or callers >= 20
-    - medium: score >= 0.15 or affected_files >= 3 or callers >= 5
-    - low: otherwise
-    """
-    if blast_radius_score >= 0.7 or affected_files_count >= 25 or callers_count >= 50:
-        return "critical"
-    if blast_radius_score >= 0.4 or affected_files_count >= 10 or callers_count >= 20:
-        return "high"
-    if blast_radius_score >= 0.15 or affected_files_count >= 3 or callers_count >= 5:
-        return "medium"
-    return "low"
-
-
 def _content_mode(ref: str | None, staged: bool, *, from_git: bool) -> str:
     """Where the new side of the diff lives: the index/a revision ("blob") or the working tree."""
     if not from_git:
@@ -1110,46 +1102,6 @@ def _content_mode(ref: str | None, staged: bool, *, from_git: bool) -> str:
     if ref is not None and (".." in ref or "^!" in ref or "^-" in ref):
         return "blob"  # `A..B` / `A...B` / `R^!`: the new side is a revision, not the working tree
     return "worktree"  # no ref, or a single rev compared with the working tree
-
-
-def _empty_payload(
-    root: Path,
-    ref: str | None,
-    staged: bool,
-    *,
-    partial: bool,
-    reason: str | None = None,
-    error: str | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "root": str(root).replace("\\", "/"),
-        "ref": ref,
-        "staged": staged,
-        "changed_files": [],
-        "changed_symbols": [],
-        "callers": [],
-        "affected_files": [],
-        "affected_tests": [],
-        "blast_radius_score": 0.0,
-        "risk_tier": "low",
-        "partial": partial,
-        "downgrade_reasons": [reason] if partial and reason else [],
-        "symbol_count": 0,
-        "caller_count": 0,
-        "file_count": 0,
-        "test_count": 0,
-        "deleted_files": [],
-        "not_analyzed_paths": [],
-        "unparsed_changed_files": [],
-        "binary_files": [],
-        "mode_changed_files": [],
-        "submodule_changed_files": [],
-        "result_incomplete": partial,
-        "incomplete_reason": reason if partial else None,
-    }
-    if partial:
-        payload["error"] = error
-    return payload
 
 
 def build_diff_blast_radius(
@@ -1254,15 +1206,29 @@ def build_diff_blast_radius(
     union_affected_files: set[str] = set(changed_files)
     union_tests: set[str] = set()
     per_symbol_scores: list[float] = []
+    cap_paths_analyzed = not (
+        not_analyzed_paths or deleted_files or binary_files or submodule_changed_files
+    )
+    symbol_evidence_complete = bool(changed_symbols) and cap_paths_analyzed
+    all_changed_symbols_uncalled = bool(changed_symbols)
+    reference_lookup_complete = (
+        bool(changed_symbols) and cap_paths_analyzed and not _scan_did_not_finish(repo_m)
+    )
+    symbol_analysis_complete = True
 
     for sym in changed_symbols:
         symbol_name = str(sym.get("name", ""))
         if not symbol_name:
+            symbol_evidence_complete = False
+            all_changed_symbols_uncalled = False
             continue
 
         # Check deadline before building symbol blast radius
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             partial = True
+            symbol_analysis_complete = False
+            symbol_evidence_complete = False
+            all_changed_symbols_uncalled = False
             if "deadline_exceeded" not in downgrade_reasons:
                 downgrade_reasons.append("deadline_exceeded")
                 partial_reasons.append("deadline_exceeded")
@@ -1274,6 +1240,25 @@ def build_diff_blast_radius(
             max_depth=max_depth,
             deadline_monotonic=deadline_monotonic,
         )
+
+        symbol_callers = sym_radius.get("callers")
+        if (
+            sym_radius.get("no_match")
+            or sym_radius.get("partial")
+            or sym_radius.get("result_incomplete")
+            or not isinstance(symbol_callers, list)
+        ):
+            symbol_evidence_complete = False
+            all_changed_symbols_uncalled = False
+        elif symbol_callers:
+            all_changed_symbols_uncalled = False
+        test_file_references = [
+            caller
+            for caller in symbol_callers or []
+            if isinstance(caller, dict) and _is_test_file(Path(str(caller.get("file", ""))))
+        ]
+        if test_file_references:
+            all_changed_symbols_uncalled = False
 
         if sym_radius.get("partial"):
             partial = True
@@ -1323,9 +1308,10 @@ def build_diff_blast_radius(
         # If files changed without recognized symbols (e.g. config or docs), estimate from files
         overall_score = round(min(1.0, len(changed_files) * 0.05), 3)
 
-    risk_tier = _calculate_risk_tier(overall_score, len(sorted_affected_files), len(union_callers))
-
-    return {
+    risk_tier, risk_reasons = _calculate_risk_tier_with_reasons(
+        overall_score, len(sorted_affected_files), len(union_callers)
+    )
+    payload = {
         "root": str(root).replace("\\", "/"),
         "ref": ref,
         "staged": staged,
@@ -1336,6 +1322,8 @@ def build_diff_blast_radius(
         "affected_tests": sorted_tests,
         "blast_radius_score": overall_score,
         "risk_tier": risk_tier,
+        "risk_reasons": risk_reasons,
+        "risk_cap_evidence": "incomplete",
         "partial": partial,
         "downgrade_reasons": downgrade_reasons,
         "symbol_count": len(changed_symbols),
@@ -1362,6 +1350,37 @@ def build_diff_blast_radius(
             else {}
         ),
     }
+
+    if partial:
+        reference_lookup_complete = False
+    reference_lookup_complete, has_test_reference = collect_test_reference_evidence(
+        changed_symbols,
+        repo_m,
+        _test_reference_evidence,
+        deadline_monotonic=deadline_monotonic,
+        max_repo_files=max_repo_files,
+        analysis_complete=symbol_analysis_complete,
+        initial_complete=reference_lookup_complete,
+    )
+    if has_test_reference:
+        all_changed_symbols_uncalled = False
+    risk_tier, risk_reasons = apply_uncalled_symbol_cap(
+        risk_tier,
+        risk_reasons,
+        symbol_evidence_complete=symbol_evidence_complete,
+        all_changed_symbols_uncalled=all_changed_symbols_uncalled,
+        test_reference_data_complete=reference_lookup_complete,
+        partial=partial,
+        not_analyzed_paths=not_analyzed_paths,
+        repo_map_payload=repo_m,
+        deadline_monotonic=deadline_monotonic,
+    )
+    payload["risk_tier"] = risk_tier
+    payload["risk_reasons"] = risk_reasons
+    payload["risk_cap_evidence"] = risk_cap_evidence_status(
+        changed_symbols, reference_lookup_complete
+    )
+    return payload
 
 
 def diff_impact_command(
@@ -1421,7 +1440,8 @@ def diff_impact_command(
         typer.echo(
             f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
             f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
-            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
+            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']} "
+            f"reasons={','.join(payload.get('risk_reasons', []))}"
         )
 
     if incomplete or breached:

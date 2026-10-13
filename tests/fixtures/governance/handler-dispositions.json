@@ -3408,5 +3408,15 @@
     "evidence": "Catches installer exceptions and re-raises BackendExecutionError with the original cause after TemporaryDirectory cleanup. tests/unit/test_cross_encoder_assets.py::test_fetch_failure_discards_partial_install verifies explicit error and no published or staging assets.",
     "reason": "The archive/network/filesystem installation boundary must disclose failures consistently and preserve cleanup ownership; unknown exceptions do not establish missing assets or permit a partial installation.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/diff_impact_refs.py",
+    "lineno": 926,
+    "enclosing_symbol": "_test_reference_evidence",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Catches exceptions raised by repo_map.build_symbol_refs_from_map during test-reference evidence collection. tests/unit/test_diff_impact_refs_regression.py::test_refs_lookup_failure_is_dispositioned_and_disables_cap injects RuntimeError and checks the public diff-impact risk fields.",
+    "reason": "A failed parser or refs scan cannot prove that a changed symbol has no test references. Returning incomplete evidence makes risk_cap_evidence incomplete and prevents the uncalled-symbol cap; the uncapped critical risk remains visible.",
+    "hardened_in": null
   }
 ]
