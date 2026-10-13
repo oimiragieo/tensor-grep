@@ -175,13 +175,20 @@ def _register_module_alias_target(
                 bindings.register_name(elt.id, source)
 
 
+def _call_is_getattr(func: ast.expr, bindings: _ImportBindingState) -> bool:
+    if isinstance(func, ast.Name):
+        return func.id in bindings.getattr_aliases
+    if isinstance(func, ast.Attribute) and func.attr == "getattr":
+        return isinstance(func.value, ast.Name) and func.value.id == "builtins"
+    return False
+
+
 def _getattr_call_reference(
     node: ast.Call, bindings: _ImportBindingState, symbol: str
 ) -> tuple[bool, bool] | None:
-    if len(node.args) < 2 or not isinstance(node.func, ast.Name):
+    if len(node.args) < 2 or not _call_is_getattr(node.func, bindings):
         return None
-    if node.func.id not in bindings.getattr_aliases:
-        return None
+    getattr_name = node.func.id if isinstance(node.func, ast.Name) else "getattr"
     if isinstance(node.args[0], ast.Name) and node.args[0].id in bindings.typed_module_aliases:
         return False, False
     if not _bound_module_expr(node.args[0], bindings):
@@ -189,7 +196,7 @@ def _getattr_call_reference(
             return False, False
         return None
     attribute_node = node.args[1]
-    if node.func.id == "getattr":
+    if getattr_name == "getattr":
         if not isinstance(attribute_node, ast.Constant) or not isinstance(
             attribute_node.value, str
         ):
@@ -282,6 +289,10 @@ def _python_import_reference(
                     binding = tuple(qualified.split("."))
                     bindings.register_name(alias.asname or alias.name, binding)
             elif isinstance(node, ast.Assign):
+                if isinstance(node.value, ast.Name) and node.value.id == "getattr":
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            bindings.getattr_aliases.add(target.id)
                 source = _module_binding_from_expr(node.value, bindings)
                 if source is None:
                     continue
