@@ -483,6 +483,62 @@ def test_saved_module_dict_subscript_marks_cap_incomplete(tmp_path: Path) -> Non
     assert "capped_uncalled_symbols" not in payload["risk_reasons"]
 
 
+def test_saved_methodcaller_invoke_disables_uncalled_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'from operator import methodcaller\nimport app\n'
+        'invoke = methodcaller("chan" + "ged")\ninvoke(app)\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_callable_attrgetter_bound_reference_disables_uncalled_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'import operator\nimport app\n'
+        'callable(operator.attrgetter("chan" + "ged")(app))\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "complete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
+def test_getattr_starred_args_marks_cap_incomplete(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "test_app.py").write_text(
+        'import app\ngetattr(*(app, "chan" + "ged"))()\n',
+        encoding="utf-8",
+    )
+    diff = (
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n"
+        "@@ -1,2 +1,2 @@\n def changed():\n-    return 1\n+    return 2\n"
+    )
+    payload = di.build_diff_blast_radius(root=tmp_path, diff_text=diff)
+
+    assert payload["risk_cap_evidence"] == "incomplete"
+    assert payload["risk_tier"] == "critical"
+    assert "capped_uncalled_symbols" not in payload["risk_reasons"]
+
+
 def test_operator_methodcaller_concat_reference_disables_uncalled_cap(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
     (tmp_path / "test_app.py").write_text(

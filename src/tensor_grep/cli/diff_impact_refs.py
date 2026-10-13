@@ -128,6 +128,7 @@ class _ImportBindingState:
         "binding_paths",
         "bound_attrgetter_targets",
         "bound_getter_results",
+        "bound_methodcaller_targets",
         "builtin_module_aliases",
         "container_holders",
         "getattr_aliases",
@@ -159,6 +160,7 @@ class _ImportBindingState:
         self.operator_methodcaller_aliases: set[str] = {"methodcaller"}
         self.methodcaller_import_aliases: set[str] = set()
         self.bound_attrgetter_targets: dict[str, str | None] = {}
+        self.bound_methodcaller_targets: dict[str, str | None] = {}
         self.bound_getter_results: dict[str, str | None] = {}
         self.builtin_module_aliases: set[str] = {"builtins"}
         self.typed_module_aliases: set[str] = set()
@@ -225,7 +227,11 @@ def _call_is_getattr(func: ast.expr, bindings: _ImportBindingState) -> bool:
 def _getattr_call_reference(
     node: ast.Call, bindings: _ImportBindingState, symbol: str
 ) -> tuple[bool, bool] | None:
-    if len(node.args) < 2 or not _call_is_getattr(node.func, bindings):
+    if not _call_is_getattr(node.func, bindings):
+        return None
+    if any(isinstance(arg, ast.Starred) for arg in node.args):
+        return False, False
+    if len(node.args) < 2:
         return None
     if isinstance(node.func, ast.Name) and node.func.id in bindings.typed_getattr_aliases:
         if node.func.id not in bindings.getattr_builtins_fold_aliases:
@@ -358,6 +364,41 @@ def _attrgetter_factory_attribute(
     if not isinstance(attribute_node, ast.Constant) or not isinstance(attribute_node.value, str):
         return None
     return attribute_node.value
+
+
+def _register_bound_methodcaller_target(
+    target: ast.expr, factory: ast.Call, bindings: _ImportBindingState
+) -> None:
+    attribute = _methodcaller_factory_attribute(factory, bindings)
+    if attribute is False:
+        return
+    if isinstance(target, ast.Name):
+        bindings.bound_methodcaller_targets[target.id] = (
+            None if attribute is None else str(attribute)
+        )
+    elif isinstance(target, ast.Tuple):
+        for elt in target.elts:
+            if isinstance(elt, ast.Name):
+                bindings.bound_methodcaller_targets[elt.id] = (
+                    None if attribute is None else str(attribute)
+                )
+
+
+def _bound_methodcaller_call_reference(
+    node: ast.Call, bindings: _ImportBindingState, symbol: str
+) -> tuple[bool, bool] | None:
+    if not isinstance(node.func, ast.Name):
+        return None
+    attribute = bindings.bound_methodcaller_targets.get(node.func.id)
+    if attribute is None and node.func.id not in bindings.bound_methodcaller_targets:
+        return None
+    if not node.args or not _bound_module_expr(node.args[0], bindings):
+        return None
+    if attribute is None:
+        return False, False
+    if attribute == symbol:
+        return True, True
+    return None
 
 
 def _register_bound_attrgetter_target(
@@ -676,6 +717,11 @@ def _python_import_reference(
                 ):
                     for target in node.targets:
                         _register_bound_attrgetter_target(target, node.value, bindings)
+                elif isinstance(node.value, ast.Call) and _call_is_methodcaller_factory(
+                    node.value.func, bindings
+                ):
+                    for target in node.targets:
+                        _register_bound_methodcaller_target(target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
                     for target in node.targets:
                         if _register_bound_getter_result(target, node.value, bindings, symbol):
@@ -730,6 +776,10 @@ def _python_import_reference(
                     node.value.func, bindings
                 ):
                     _register_bound_attrgetter_target(node.target, node.value, bindings)
+                elif isinstance(node.value, ast.Call) and _call_is_methodcaller_factory(
+                    node.value.func, bindings
+                ):
+                    _register_bound_methodcaller_target(node.target, node.value, bindings)
                 elif isinstance(node.value, ast.Call):
                     if _register_bound_getter_result(node.target, node.value, bindings, symbol):
                         bound_getter_symbol_reference = True
@@ -799,6 +849,15 @@ def _python_import_reference(
                     return False, False
                 if _uses_module_dict_surface(node.func, bindings):
                     return False, False
+                for arg in node.args:
+                    if not isinstance(arg, ast.Call):
+                        continue
+                    bound = _attrgetter_bound_module_call(arg, bindings)
+                    if isinstance(bound, str) and bound == symbol:
+                        return True, True
+                    nested = _methodcaller_call_reference(arg, bindings, symbol)
+                    if nested is not None:
+                        return nested
                 ref = _import_alias_call_reference(node, bindings, symbol, origin_modules)
                 if ref is not None:
                     return ref
@@ -809,6 +868,9 @@ def _python_import_reference(
                 if ref is not None:
                     return ref
                 ref = _methodcaller_call_reference(node, bindings, symbol)
+                if ref is not None:
+                    return ref
+                ref = _bound_methodcaller_call_reference(node, bindings, symbol)
                 if ref is not None:
                     return ref
                 ref = _bound_attrgetter_call_reference(node, bindings, symbol)
