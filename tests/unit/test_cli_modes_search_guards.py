@@ -1487,6 +1487,25 @@ def test_new_rule_should_respect_base_dir_and_requested_name(tmp_path: Path) -> 
     assert not (base_dir / "rules" / "sample-rule.yml").exists()
 
 
+def test_new_rule_and_test_scaffolds_have_matching_placeholder_cases(tmp_path: Path) -> None:
+    runner = CliRunner()
+
+    rule = runner.invoke(
+        app,
+        ["new", "rule", "no-eval2", "--lang", "python", "--yes", "--base-dir", str(tmp_path)],
+    )
+    test = runner.invoke(app, ["new", "test", "no-eval2", "--yes", "--base-dir", str(tmp_path)])
+
+    assert rule.exit_code == 0, rule.output
+    assert test.exit_code == 0, test.output
+    assert (tmp_path / "rules" / "no-eval2.yml").read_bytes() == (
+        b'id: "no-eval2"\nlanguage: python\nrule:\n  pattern: "TODO_REPLACE_ME($$$ARGS)"\n'
+    )
+    assert (tmp_path / "tests" / "no-eval2.yml").read_bytes() == (
+        b'id: "no-eval2"\nruleId: "no-eval2"\nvalid:\n  - "other(1)"\ninvalid:\n  - "TODO_REPLACE_ME(1)"\n'
+    )
+
+
 def test_new_project_name_should_scaffold_named_directory() -> None:
     runner = CliRunner()
 
@@ -1514,23 +1533,31 @@ def test_new_project_name_with_base_dir_should_scaffold_under_named_directory(
     assert not (tmp_path / "sgconfig.yml").exists()
 
 
-def test_new_project_scaffold_refuses_symlinked_sgconfig(tmp_path: Path) -> None:
+@pytest.mark.parametrize("target_exists", [False, True], ids=["dangling", "existing"])
+def test_new_project_scaffold_refuses_symlinked_sgconfig(
+    tmp_path: Path, target_exists: bool
+) -> None:
     runner = CliRunner()
     project_dir = tmp_path / "demo"
     project_dir.mkdir()
 
     real_target = tmp_path / "outside-missing-sgconfig.yml"
+    original_bytes = b"existing configuration\n" if target_exists else None
+    if original_bytes is not None:
+        real_target.write_bytes(original_bytes)
     symlink_path = project_dir / "sgconfig.yml"
     _symlink_or_skip(symlink_path, real_target)
+    original_paths = set(tmp_path.rglob("*"))
 
     result = runner.invoke(app, ["new", "project", "demo", "--base-dir", str(tmp_path)])
 
     assert result.exit_code == 1, result.output
-    assert "Refusing to write through a symlink" in (result.stdout + result.stderr)
+    assert f"Project already initialized ({symlink_path} exists)." in (
+        result.stdout + result.stderr
+    )
     assert symlink_path.is_symlink()
-    assert not real_target.exists()
-    assert not (project_dir / "rules" / "sample-rule.yml").exists()
-    assert not (project_dir / "tests" / "sample-test.yml").exists()
+    assert (real_target.read_bytes() if real_target.exists() else None) == original_bytes
+    assert set(tmp_path.rglob("*")) == original_paths
 
 
 def test_new_rule_scaffold_refuses_symlinked_destination(tmp_path: Path) -> None:
@@ -1547,7 +1574,7 @@ def test_new_rule_scaffold_refuses_symlinked_destination(tmp_path: Path) -> None
     )
 
     assert result.exit_code == 1, result.output
-    assert "Refusing to write through a symlink" in (result.stdout + result.stderr)
+    assert "Scaffold target already exists" in (result.stdout + result.stderr)
     assert symlink_path.is_symlink()
     assert not symlink_target.exists()
 

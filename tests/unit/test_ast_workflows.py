@@ -247,6 +247,75 @@ def test_test_command_reports_unsupported_case_language_without_traceback(tmp_pa
     assert "Traceback" not in captured.err
 
 
+def test_test_command_distinguishes_linked_rule_with_empty_pattern(tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import test_command
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "empty.yml").write_text(
+        "id: empty-rule\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "empty.yml").write_text(
+        "id: empty-test\nruleId: empty-rule\nvalid: [other(1)]\ninvalid: [TODO_REPLACE_ME(1)]\n",
+        encoding="utf-8",
+    )
+
+    exit_code = test_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "empty.yml:empty-test: rule empty-rule has an empty pattern" in captured.err
+    assert "missing pattern or ruleId" not in captured.err
+
+
+def test_scan_ignores_unused_empty_pattern_rule(tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import scan_command
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "valid.yml").write_text(
+        "id: valid-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    )
+    (tmp_path / "rules" / "unused-empty.yml").write_text(
+        "id: unused-empty\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+    )
+    (tmp_path / "source.py").write_text("ERROR\n", encoding="utf-8")
+
+    exit_code = scan_command(str(tmp_path / "sgconfig.yml"), json_mode=True)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "valid-rule" in captured.out
+    assert "unused-empty" not in captured.out
+
+
+def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import test_command
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "linked.yml").write_text(
+        "id: linked-empty-case\nruleId: error-rule\npattern: ''\nvalid: [PASS]\ninvalid: [ERROR]\n",
+        encoding="utf-8",
+    )
+
+    exit_code = test_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+
+
 def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
     import time
 

@@ -10,6 +10,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+# Scenarios emitted only on non-Windows runners (see matching skipif in the test module).
+_LINUX_ONLY_SCENARIO_IDS = frozenset({
+    "tests/unit/test_diff_impact.py::test_real_repo_binary_named_like_the_deletion_suffix#1",
+})
+
 _CHANGED_TIERS = {
     "tests/unit/test_diff_impact.py::test_diff_impact_scenario_risk_pins#3": ("critical", "medium"),
     "tests/unit/test_diff_impact.py::test_real_repo_spaces_nonascii_and_deleted#1": (
@@ -194,5 +199,13 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
             new_tier,
             pin["blast_radius_score"],
         ), scenario_id
-    assert actual.keys() == expected.keys()
+    missing = expected.keys() - actual.keys()
+    extra = actual.keys() - expected.keys()
+    assert not missing, f"missing captured scenarios: {sorted(missing)[:8]}"
+    if sys.platform == "win32":
+        assert not extra, f"unexpected extra scenarios on Windows: {sorted(extra)[:8]}"
+    else:
+        assert extra <= _LINUX_ONLY_SCENARIO_IDS, (
+            f"unexpected extra scenarios on Linux: {sorted(extra - _LINUX_ONLY_SCENARIO_IDS)[:8]}"
+        )
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]

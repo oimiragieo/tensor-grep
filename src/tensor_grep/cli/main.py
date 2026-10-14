@@ -10398,8 +10398,15 @@ def test(
 
 
 def _validate_ast_new_name(name: str) -> None:
-    if not name.strip() or name in {".", ".."} or "/" in name or "\\" in name:
-        raise ValueError(f"Invalid item name {name!r}; use a bare scaffold identifier.")
+    if (
+        name in {".", ".."}
+        or not name
+        or any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~#-"
+            for c in name
+        )
+    ):
+        raise ValueError(f"Invalid item name {name!r}; use letters, digits, _, ., ~, #, or -.")
 
 
 @app.command()
@@ -10409,7 +10416,7 @@ def new(
         help="Scaffold kind for tensor-grep's bounded AST workflow: project, rule, test, or util.",
     ),
     name: str | None = typer.Argument(None, help="Name for project/rule/test/util scaffolds."),
-    lang: str = typer.Option("python", "--lang", "-l", help="Language for generated items."),
+    lang: str | None = typer.Option(None, "--lang", "-l", help="Language for generated items."),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Accept default scaffold choices without prompting."
     ),
@@ -10427,6 +10434,8 @@ def new(
     _ = yes
     scaffold_kind = command or "project"
     try:
+        if lang is not None and not lang.strip():
+            raise ValueError(f"Error: Invalid --lang {json.dumps(lang)}; use a bare language name.")
         if scaffold_kind == "project":
             project_dir = base_dir
             if name is not None:
@@ -10434,7 +10443,7 @@ def new(
                 project_dir = base_dir / name
             from tensor_grep.cli.ast_scaffold import _write_ast_project_scaffold
 
-            config_path = _write_ast_project_scaffold(project_dir, lang)
+            config_path = _write_ast_project_scaffold(project_dir, lang or "python")
             typer.echo(f"Initialized new tensor-grep structural search project in {config_path}.")
             return
 
@@ -10449,24 +10458,25 @@ def new(
 
         project_cfg: dict[str, object] | None = None
         if config is not None:
-            project_cfg = _load_sg_project_config(config)
+            from tensor_grep.cli.ast_scaffold_resolve import load_ast_scaffold_config
+
+            project_cfg = load_ast_scaffold_config(config, scaffold_kind)
 
         if scaffold_kind == "rule":
+            from tensor_grep.cli.ast_scaffold import _ast_rule_scaffold_contents
+
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["rule_dirs"])[0]
                 if project_cfg is not None
                 else base_dir / "rules"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\nlanguage: {lang}\nrule:\n  pattern: ''\n"
+            contents = _ast_rule_scaffold_contents(name, lang or "python")
         elif scaffold_kind == "test":
-            target_dir = (
-                cast(Path, project_cfg["root_dir"]) / cast(list[str], project_cfg["test_dirs"])[0]
-                if project_cfg is not None
-                else base_dir / "tests"
-            )
-            target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\nruleId: {name}\nvalid:\n  - ''\ninvalid: []\n"
+            from tensor_grep.cli.ast_scaffold_resolve import resolve_ast_test_scaffold
+
+            target_path, contents = resolve_ast_test_scaffold(base_dir, project_cfg, name, lang)
+            target_dir = target_path.parent
         else:
             target_dir = (
                 cast(Path, project_cfg["root_dir"]) / cast(str, project_cfg["utils_dir"])
@@ -10474,16 +10484,19 @@ def new(
                 else base_dir / "utils"
             )
             target_path = target_dir / f"{name}.yml"
-            contents = f"id: {name}\npattern: ''\n"
+            contents = f"id: {json.dumps(name, ensure_ascii=False)}\npattern: ''\n"
 
-        if target_path.exists():
+        if os.path.lexists(target_path):
             raise FileExistsError(f"Scaffold target already exists: {target_path}")
         target_dir.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes_anchored(
             target_path, contents.encode("utf-8"), mode=0o644, replace=False
         )
     except (FileExistsError, ValueError, OSError) as exc:
-        typer.echo(str(exc), err=True)
+        message = str(exc)
+        if scaffold_kind == "test" and not message.startswith("Error:"):
+            message = f"Error: {message}"
+        typer.echo(message, err=True)
         raise typer.Exit(1) from exc
 
     typer.echo(f"Created {scaffold_kind} scaffold in {target_path}.")

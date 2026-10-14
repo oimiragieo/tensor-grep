@@ -11,7 +11,9 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
+from tensor_grep.backends.ast_backend import get_supported_languages
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
@@ -189,6 +191,780 @@ def run_command(
         raise ValueError(f"Unknown launcher {launcher}")
 
     return _run_and_decode(cmd, cwd=cwd)
+
+
+def test_new_rule_and_test_scaffolds_match_and_pass_test_across_front_doors(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    generated: dict[str, tuple[bytes, bytes]] = {}
+
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        for args in (
+            ["new", "project", "--yes"],
+            ["new", "rule", "no-eval2", "--lang", "python", "--yes"],
+            ["new", "test", "no-eval2", "--yes"],
+        ):
+            result = run_command(launcher, args, cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+        generated[launcher] = (
+            (project_dir / "rules" / "no-eval2.yml").read_bytes(),
+            (project_dir / "tests" / "no-eval2.yml").read_bytes(),
+        )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        (project_dir / "rules" / "no-eval2.yml").write_text(
+            "id: no-eval2\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+        )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 1
+        assert "no-eval2: rule no-eval2 has an empty pattern" in (result.stdout + result.stderr)
+
+    assert generated["python-m"] == generated["native"]
+
+
+@pytest.mark.parametrize("language", get_supported_languages())
+def test_new_test_uses_linked_rule_language_across_front_doors(tmp_path: Path, language: str):
+    _skip_if_native_binary_missing("native")
+    generated = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        for args in (
+            ["new", "project", "--yes"],
+            ["new", "rule", "linked", "--lang", language, "--yes"],
+            ["new", "test", "linked", "--yes"],
+        ):
+            result = run_command(launcher, args, cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+        generated[launcher] = (
+            (project_dir / "rules" / "linked.yml").read_bytes(),
+            (project_dir / "tests" / "linked.yml").read_bytes(),
+        )
+    assert generated["python-m"] == generated["native"]
+
+
+@pytest.mark.parametrize(
+    ("case", "rule_yaml", "args", "expected_code", "expected_message", "expected_valid"),
+    [
+        ("project_default", None, [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
+        ("no_config", None, [], 0, "Created test scaffold", "other(1)"),
+        ("linked_language", "language:  RuSt  \n", [], 0, "Created test scaffold", "other(1)"),
+        (
+            "linked_merge_block",
+            "defaults: &defaults\n  severity: warning\n<<: *defaults\nlanguage: json\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "linked_merge_inline",
+            "defaults: &defaults {severity: warning}\n<<: *defaults\nlanguage: json\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        ("config_merge", None, [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
+        ("missing_language", "id: probe\n", [], 0, "Created test scaffold", '"OTHER_IDENTIFIER"'),
+        (
+            "blank_language",
+            "language: '   '\n",
+            [],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "explicit_over_linked",
+            "language: json\n",
+            ["--lang", " Python "],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+        (
+            "explicit_over_malformed",
+            "language: [\n",
+            ["--lang", "python"],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+        ("malformed", "language: [\n", [], 1, "cannot parse linked rule rules/probe.yml:", None),
+        (
+            "duplicate_language",
+            "language: json\nlanguage: python\n",
+            [],
+            1,
+            "cannot parse linked rule rules/probe.yml: duplicate key 'language'",
+            None,
+        ),
+        (
+            "malformed_config_fallback",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml:",
+            None,
+        ),
+        (
+            "duplicate_config_language",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml: duplicate key 'language'",
+            None,
+        ),
+        (
+            "duplicate_config_rule_dirs",
+            None,
+            [],
+            1,
+            "cannot parse sgconfig.yml: duplicate key 'ruleDirs'",
+            None,
+        ),
+        (
+            "directory_config",
+            None,
+            [],
+            1,
+            "sgconfig.yml must be a regular file",
+            None,
+        ),
+        (
+            "unsupported",
+            "language: unknown-language\n",
+            [],
+            1,
+            "Cannot scaffold AST rule for language",
+            None,
+        ),
+        ("blank_explicit", "language: rust\n", ["--lang", "   "], 1, "Invalid --lang", None),
+        ("symlink", "language: rust\n", [], 1, "linked rule must be a regular file", None),
+        ("dangling_symlink", None, [], 1, "linked rule must be a regular file", None),
+        (
+            "explicit_over_symlink",
+            "language: rust\n",
+            ["--lang", "json"],
+            0,
+            "Created test scaffold",
+            '"OTHER_IDENTIFIER"',
+        ),
+        (
+            "explicit_over_malformed_config",
+            "language: rust\n",
+            ["--lang", "python"],
+            0,
+            "Created test scaffold",
+            "other(1)",
+        ),
+    ],
+    ids=[
+        "project_default",
+        "no_config",
+        "linked_language",
+        "linked_merge_block",
+        "linked_merge_inline",
+        "config_merge",
+        "missing_language",
+        "blank_language",
+        "explicit_over_linked",
+        "explicit_over_malformed",
+        "malformed",
+        "duplicate_language",
+        "malformed_config_fallback",
+        "duplicate_config_language",
+        "duplicate_config_rule_dirs",
+        "directory_config",
+        "unsupported",
+        "blank_explicit",
+        "symlink",
+        "dangling_symlink",
+        "explicit_over_symlink",
+        "explicit_over_malformed_config",
+    ],
+)
+def test_new_test_language_resolution_parity(
+    tmp_path: Path,
+    case: str,
+    rule_yaml: str | None,
+    args: list[str],
+    expected_code: int,
+    expected_message: str,
+    expected_valid: str | None,
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes: dict[str, tuple[int, str, dict[str, bytes]]] = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if case != "no_config":
+            config_path = project_dir / "sgconfig.yml"
+            if case == "directory_config":
+                config_path.mkdir()
+            else:
+                config_yaml = {
+                    "explicit_over_malformed_config": "language: [\n",
+                    "malformed_config_fallback": "language: [\n",
+                    "duplicate_config_language": "language: json\nlanguage: python\n",
+                    "duplicate_config_rule_dirs": "ruleDirs: [rules]\nruleDirs: [other]\n",
+                    "config_merge": "defaults: &defaults {severity: warning}\n<<: *defaults\nlanguage: json\n",
+                }.get(case, "language: json\n")
+                config_path.write_text(config_yaml, encoding="utf-8")
+        rule_path = rules_dir / "probe.yml"
+        if case in {"symlink", "dangling_symlink", "explicit_over_symlink"}:
+            target = project_dir / "target.yml"
+            if rule_yaml is not None:
+                target.write_text(rule_yaml, encoding="utf-8")
+            try:
+                rule_path.symlink_to(target)
+            except OSError as exc:
+                pytest.skip(f"cannot create symlink on this host: {exc}")
+        elif rule_yaml is not None:
+            rule_path.write_text(rule_yaml, encoding="utf-8")
+
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        result = run_command(launcher, ["new", "test", "probe", *args, "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip().replace("tg.exe", "tg")
+        written = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        outcomes[launcher] = (result.returncode, message, written)
+        assert result.returncode == expected_code, message
+        assert expected_message in message
+        if case == "duplicate_language":
+            assert message == f"Error: {expected_message}"
+        if case == "malformed_config_fallback":
+            assert message == "Error: cannot parse sgconfig.yml: invalid YAML syntax"
+        if case in {"duplicate_config_language", "duplicate_config_rule_dirs", "directory_config"}:
+            assert message == f"Error: {expected_message}"
+        assert (project_dir / "tests" / "probe.yml").exists() == (expected_code == 0)
+        if expected_code == 1:
+            assert written == before
+            assert not (project_dir / "tests").exists()
+            assert "Traceback" not in message
+        if expected_valid is not None:
+            generated_test = yaml.safe_load(
+                (project_dir / "tests" / "probe.yml").read_text(encoding="utf-8")
+            )
+            assert generated_test["valid"] == [expected_valid]
+
+    assert outcomes["python-m"] == outcomes["native"]
+
+
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+@pytest.mark.parametrize("merge_form", ["block", "inline"])
+def test_new_test_inherits_merged_yaml_language_across_front_doors(
+    tmp_path: Path, location: str, merge_form: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    defaults = (
+        "defaults: &d\n  language: json\n"
+        if merge_form == "block"
+        else "defaults: &d {language: json}\n"
+    )
+    generated: dict[str, bytes] = {}
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        config = "ruleDirs: [rules]\ntestDirs: [tests]\n"
+        if location == "config":
+            config += defaults + "<<: *d\n"
+        else:
+            config += "language: python\n"
+            (rules_dir / "probe.yml").write_text(
+                defaults + '<<: *d\nid: probe\nrule:\n  pattern: "\\"TODO_REPLACE_ME\\""\n',
+                encoding="utf-8",
+            )
+        (project_dir / "sgconfig.yml").write_text(config, encoding="utf-8")
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+        scaffold = project_dir / "tests" / "probe.yml"
+        generated[launcher] = scaffold.read_bytes()
+        assert yaml.safe_load(generated[launcher])["valid"] == ['"OTHER_IDENTIFIER"'], launcher
+
+        if location == "config":
+            (rules_dir / "probe.yml").write_text(
+                'id: probe\nrule:\n  pattern: "\\"TODO_REPLACE_ME\\""\n',
+                encoding="utf-8",
+            )
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    assert generated["python-m"] == generated["native"]
+
+
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_duplicate_merge_keys_across_front_doors(
+    tmp_path: Path, location: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        duplicate_merges = "first: &first {language: json}\nsecond: &second {severity: warning}\n<<: *first\n<<: *second\n"
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text(duplicate_merges, encoding="utf-8")
+            expected = "cannot parse linked rule rules/probe.yml: duplicate key '<<'"
+        else:
+            (project_dir / "sgconfig.yml").write_text(duplicate_merges, encoding="utf-8")
+            expected = "cannot parse sgconfig.yml: duplicate key '<<'"
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message, after))
+
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_boolean_yaml_language_across_front_doors(
+    tmp_path: Path, location: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text("language: on\n", encoding="utf-8")
+        else:
+            (project_dir / "sgconfig.yml").write_text("language: on\n", encoding="utf-8")
+        expected = (
+            'Cannot scaffold AST rule for language "on"; run `tg ast-info` for supported languages.'
+        )
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message, after))
+
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("location", ["linked_rule", "config"])
+def test_new_test_refuses_deep_yaml_without_recursion_crash(tmp_path: Path, location: str) -> None:
+    _skip_if_native_binary_missing("native")
+    deep_yaml = "extra: " + "[" * 600 + "0" + "]" * 600 + "\nlanguage: python\n"
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        rules_dir = project_dir / "rules"
+        rules_dir.mkdir(parents=True)
+        if location == "linked_rule":
+            (project_dir / "sgconfig.yml").write_text("language: python\n", encoding="utf-8")
+            (rules_dir / "probe.yml").write_text(deep_yaml, encoding="utf-8")
+            expected = "cannot parse linked rule rules/probe.yml: invalid YAML syntax"
+        else:
+            (project_dir / "sgconfig.yml").write_text(deep_yaml, encoding="utf-8")
+            expected = "cannot parse sgconfig.yml: invalid YAML syntax"
+        before = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+
+        result = run_command(launcher, ["new", "test", "probe", "--yes"], cwd=project_dir)
+        message = (result.stdout + result.stderr).strip()
+        after = {
+            str(path.relative_to(project_dir)): path.read_bytes()
+            for path in project_dir.rglob("*")
+            if path.is_file()
+        }
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert after == before
+        assert not (project_dir / "tests").exists()
+
+
+@pytest.mark.parametrize(
+    ("config_text", "expected"),
+    [
+        (
+            "language: python\nlanguage: json\n",
+            "cannot parse sgconfig.yml: duplicate key 'language'",
+        ),
+        (
+            "first: &first {language: json}\nsecond: &second {severity: warning}\n"
+            "<<: *first\n<<: *second\n",
+            "cannot parse sgconfig.yml: duplicate key '<<'",
+        ),
+        (
+            "extra: " + "[" * 600 + "0" + "]" * 600 + "\nlanguage: python\n",
+            "cannot parse sgconfig.yml: invalid YAML syntax",
+        ),
+        (
+            "language: on\n",
+            'Cannot scaffold AST rule for language "on"; run `tg ast-info` for supported languages.',
+        ),
+    ],
+    ids=["duplicate-key", "duplicate-merge", "deep-nesting", "boolean-language"],
+)
+def test_new_test_explicit_config_yaml_validation_parity(
+    tmp_path: Path, config_text: str, expected: str
+) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        config_path = project_dir / "sgconfig.yml"
+        config_path.write_text(config_text, encoding="utf-8")
+
+        result = run_command(
+            launcher,
+            ["new", "test", "probe", "--config", str(config_path), "--yes"],
+            cwd=project_dir,
+        )
+        message = (result.stdout + result.stderr).strip()
+        assert result.returncode == 1, message
+        assert message == f"Error: {expected}"
+        assert not (project_dir / "tests").exists()
+        outcomes.append((result.returncode, message))
+
+    assert outcomes[0] == outcomes[1]
+
+
+@pytest.mark.parametrize("kind", ["project", "rule", "test"])
+def test_new_refuses_blank_language_identically_across_front_doors(tmp_path: Path, kind: str):
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir()
+        args = ["new", kind, *([] if kind == "project" else ["blank"]), "--lang", "   ", "--yes"]
+        result = run_command(launcher, args, cwd=project_dir)
+        outcomes.append((result.returncode, result.stdout + result.stderr))
+        assert list(project_dir.iterdir()) == []
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0] != 0
+
+
+@pytest.mark.parametrize("launcher", ["python-m", "native"])
+def test_run_java_rewrite_keeps_baseline_refusal(tmp_path: Path, launcher: str):
+    _skip_if_native_binary_missing(launcher)
+    (tmp_path / "Test.java").write_text("x", encoding="utf-8")
+    result = run_command(launcher, ["run", "--lang", "java", "-p", "x", str(tmp_path), "-r", "y"])
+    assert result.returncode == 2
+    assert "Unsupported language: java" in (result.stdout + result.stderr)
+
+
+@pytest.mark.parametrize("language", [" Python ", "PY", "c++"])
+def test_new_scaffold_normalizes_language_across_front_doors(tmp_path: Path, language: str):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        result = run_command(
+            launcher, ["new", "rule", "normalized", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        rule = yaml.safe_load(
+            (project_dir / "rules" / "normalized.yml").read_text(encoding="utf-8")
+        )
+        assert rule["language"] == {" Python ": "python", "PY": "python", "c++": "cpp"}[language]
+
+
+@pytest.mark.parametrize("name", ["null", "true", "1", "~", "a#b"])
+def test_new_scaffold_names_round_trip_across_front_doors(tmp_path: Path, name: str):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        project_dir.mkdir(exist_ok=True)
+        for kind in ("rule", "test"):
+            result = run_command(
+                launcher, ["new", kind, name, "--lang", "python", "--yes"], cwd=project_dir
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+        rule = yaml.safe_load((project_dir / "rules" / f"{name}.yml").read_text(encoding="utf-8"))
+        case = yaml.safe_load((project_dir / "tests" / f"{name}.yml").read_text(encoding="utf-8"))
+        assert rule["id"] == case["id"] == case["ruleId"] == name
+        if name == "null":
+            (project_dir / "sgconfig.yml").write_text(
+                "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+            )
+            result = run_command(launcher, ["test"], cwd=project_dir)
+            assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("name", ["a:b", "a b", "a/b", "a\\b"])
+def test_new_scaffold_refuses_names_outside_allowed_set_across_front_doors(
+    tmp_path: Path, name: str
+):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        result = run_command(
+            launcher, ["new", "rule", name, "--lang", "python", "--yes"], cwd=tmp_path
+        )
+        assert result.returncode != 0
+        assert "Invalid item name" in (result.stdout + result.stderr)
+        assert not (tmp_path / "rules" / f"{name}.yml").exists()
+
+
+@pytest.mark.parametrize("launcher", ["python-m", "native"])
+@pytest.mark.parametrize("kind", ["rule", "test", "project"])
+def test_new_scaffold_refuses_dangling_symlink_across_front_doors(
+    tmp_path: Path, launcher: str, kind: str
+):
+    _skip_if_native_binary_missing(launcher)
+    project_dir = tmp_path / launcher
+    directory_name = {"rule": "rules", "test": "tests", "project": ""}[kind]
+    target_dir = project_dir / directory_name
+    target_dir.mkdir(parents=True)
+    target = tmp_path / f"outside-{launcher}.yml"
+    destination = target_dir / ("sgconfig.yml" if kind == "project" else "escape.yml")
+    try:
+        destination.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"cannot create symlink on this host: {exc}")
+
+    result = run_command(
+        launcher,
+        (
+            ["new", "rule", "escape", "--lang", "python", "--yes"]
+            if kind == "rule"
+            else ["new", "test", "escape", "--yes"]
+            if kind == "test"
+            else ["new", "project", "--yes"]
+        ),
+        cwd=project_dir,
+    )
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert destination.is_symlink()
+    assert not target.exists()
+
+
+def test_rule_scaffolds_pass_for_every_ast_info_language_and_match_across_front_doors(
+    tmp_path: Path,
+):
+    _skip_if_native_binary_missing("native")
+    language_result = run_command("native", ["ast-info", "--json"])
+    assert language_result.returncode == 0, language_result.stdout + language_result.stderr
+    languages = json.loads(language_result.stdout)["languages"]
+    documented_refusals: dict[str, str] = {}
+    docs = (Path(__file__).parents[2] / "docs" / "CONTRACTS.md").read_text(encoding="utf-8")
+    assert set(documented_refusals) <= set(languages)
+    assert all(
+        reason and f"`{language}`" in docs and reason in docs
+        for language, reason in documented_refusals.items()
+    )
+    generated: dict[str, dict[str, tuple[bytes, bytes]]] = {"python-m": {}, "native": {}}
+    failures = []
+
+    for language in languages:
+        for launcher in ("python-m", "native"):
+            project_dir = tmp_path / launcher / language
+            project_dir.mkdir(parents=True)
+            result = run_command(launcher, ["new", "project", "--yes"], cwd=project_dir)
+            if result.returncode != 0:
+                failures.append(
+                    f"{launcher} {language} new project: {result.stdout}{result.stderr}"
+                )
+                continue
+            result = run_command(
+                launcher,
+                ["new", "rule", "scaffold-check", "--lang", language, "--yes"],
+                cwd=project_dir,
+            )
+            if result.returncode != 0:
+                if language not in documented_refusals or (
+                    "no validated pattern example is available for `tg test` on both front doors"
+                    not in (result.stdout + result.stderr)
+                ):
+                    failures.append(
+                        f"{launcher} {language} new rule refusal: {result.stdout}{result.stderr}"
+                    )
+                if (project_dir / "rules" / "scaffold-check.yml").exists():
+                    failures.append(f"{launcher} {language} wrote a refused rule scaffold")
+                continue
+            if language in documented_refusals:
+                failures.append(
+                    f"{launcher} {language} unexpectedly scaffolded despite documented refusal"
+                )
+            result = run_command(
+                launcher,
+                ["new", "test", "scaffold-check", "--lang", language, "--yes"],
+                cwd=project_dir,
+            )
+            if result.returncode != 0:
+                failures.append(f"{launcher} {language} new test: {result.stdout}{result.stderr}")
+                continue
+            result = run_command(launcher, ["test"], cwd=project_dir)
+            if result.returncode != 0:
+                failures.append(f"{launcher} {language} test: {result.stdout}{result.stderr}")
+                continue
+            generated[launcher][language] = (
+                (project_dir / "rules" / "scaffold-check.yml").read_bytes(),
+                (project_dir / "tests" / "scaffold-check.yml").read_bytes(),
+            )
+
+    assert not failures, "\n".join(failures)
+    assert generated["python-m"] == generated["native"]
+
+
+def test_native_run_matches_each_scaffold_invalid_snippet_only(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    result = run_command("native", ["ast-info", "--json"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    for language in json.loads(result.stdout)["languages"]:
+        project_dir = tmp_path / language
+        project_dir.mkdir()
+        result = run_command(
+            "native", ["new", "rule", "probe", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, f"{language}: {result.stdout}{result.stderr}"
+        result = run_command(
+            "native", ["new", "test", "probe", "--lang", language, "--yes"], cwd=project_dir
+        )
+        assert result.returncode == 0, f"{language}: {result.stdout}{result.stderr}"
+        pattern = yaml.safe_load((project_dir / "rules" / "probe.yml").read_text(encoding="utf-8"))[
+            "rule"
+        ]["pattern"]
+        cases = yaml.safe_load((project_dir / "tests" / "probe.yml").read_text(encoding="utf-8"))
+        for snippet, expected in ((cases["invalid"][0], 1), (cases["valid"][0], 0)):
+            fixture = project_dir / "probe.txt"
+            fixture.write_text(snippet, encoding="utf-8")
+            result = run_command(
+                "native", ["run", "--lang", language, "-p", pattern, str(fixture), "--json"]
+            )
+            if language not in {"python", "javascript", "typescript", "rust"}:
+                assert result.returncode == 2
+                assert result.stdout == ""
+                assert result.stderr == f"Error: Unsupported language: {language}\n"
+                continue
+            assert result.returncode == (0 if expected else 1), (
+                f"{language} {snippet!r}: {result.stdout}{result.stderr}"
+            )
+            assert json.loads(result.stdout)["total_matches"] == expected
+
+
+def test_scan_ignores_unused_empty_rule_with_identical_json_across_front_doors(
+    tmp_path: Path,
+):
+    _skip_if_native_binary_missing("native")
+    project_dir = tmp_path / "project"
+    rules_dir = project_dir / "rules"
+    rules_dir.mkdir(parents=True)
+    (project_dir / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\nlanguage: python\n", encoding="utf-8"
+    )
+    (rules_dir / "valid.yml").write_text(
+        "id: valid-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    )
+    (rules_dir / "unused-empty.yml").write_text(
+        "id: unused-empty\nlanguage: python\nrule:\n  pattern: ''\n", encoding="utf-8"
+    )
+    (project_dir / "source.py").write_text("ERROR\n", encoding="utf-8")
+
+    outputs = []
+    for launcher in ("python-m", "native"):
+        result = run_command(launcher, ["scan", "--json"], cwd=project_dir)
+
+        assert result.returncode == 0, result.stdout + result.stderr
+        output = json.loads(result.stdout)
+        outputs.append(output)
+        assert output["rule_count"] == 1
+        assert [finding["rule_id"] for finding in output["findings"]] == ["valid-rule"]
+
+    assert outputs[0] == outputs[1]
+
+
+def test_test_empty_case_pattern_resolves_linked_rule_across_front_doors(tmp_path: Path):
+    _skip_if_native_binary_missing("native")
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        (project_dir / "rules").mkdir(parents=True)
+        (project_dir / "tests").mkdir()
+        (project_dir / "sgconfig.yml").write_text(
+            "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+        )
+        rule_path = project_dir / "rules" / "linked.yml"
+        rule_path.write_text(
+            "id: linked-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+        )
+        test_path = project_dir / "tests" / "linked.yml"
+        test_path.write_text(
+            "id: linked-test\nruleId: linked-rule\npattern: ''\nvalid: [PASS]\ninvalid: [ERROR]\n",
+            encoding="utf-8",
+        )
+
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_test_merged_empty_linked_rule_pattern_across_front_doors(tmp_path: Path) -> None:
+    _skip_if_native_binary_missing("native")
+    outcomes = []
+    for launcher in ("python-m", "native"):
+        project_dir = tmp_path / launcher
+        (project_dir / "rules").mkdir(parents=True)
+        (project_dir / "tests").mkdir()
+        (project_dir / "sgconfig.yml").write_text(
+            "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+        )
+        (project_dir / "rules" / "probe.yml").write_text(
+            "defaults: &defaults {pattern: ''}\nid: probe\nlanguage: python\nrule:\n  <<: *defaults\n",
+            encoding="utf-8",
+        )
+        (project_dir / "tests" / "probe.yml").write_text(
+            "id: probe\nruleId: probe\nvalid: [PASS]\ninvalid: [ERROR]\n", encoding="utf-8"
+        )
+
+        result = run_command(launcher, ["test"], cwd=project_dir)
+        message = result.stdout + result.stderr
+        assert result.returncode == 1, message
+        assert "probe: rule probe has an empty pattern" in message
+        assert "missing pattern or ruleId" not in message
+        outcomes.append(message.replace(str(project_dir), "<project>"))
+
+    assert outcomes[0] == outcomes[1]
 
 
 LAUNCHERS = ["python-m", "native", "bootstrap"]

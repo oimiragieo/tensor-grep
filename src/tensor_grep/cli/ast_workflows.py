@@ -12,6 +12,23 @@ from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
 from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.cli.ast_language_suffixes import _SUFFIX_CACHE as _SUFFIX_CACHE
+from tensor_grep.cli.ast_workflow_rules import (
+    _append_test_pattern_failure,
+    _batch_search_snippets,
+    _collect_candidate_files,
+    _describe_ast_backend_mode,
+    _describe_ast_backend_modes,
+    _emit_ast_run_remediation,
+    _extract_rule_pattern,
+    _inject_run_json_fields,
+    _load_test_rule_index,
+    _rule_needs_ast_grep_wrapper,
+    _safe_stdout_line,
+    _stamp_ast_scan_incompleteness,
+    _suffix_for_language,
+    _warn_windows_single_quote_pattern,
+)
 
 # NOTE: several names below are re-exported (used only via `ast_workflows.X` from
 # tests/other modules, not by any remaining code in this file) rather than
@@ -20,20 +37,6 @@ from tensor_grep.backends.base import BackendExecutionError
 # silently break every `ast_workflows._name` qualified test access).
 from tensor_grep.cli.ast_workflow_rules import (
     _ast_run_remediation_lines as _ast_run_remediation_lines,
-)
-from tensor_grep.cli.ast_workflow_rules import (
-    _batch_search_snippets,
-    _collect_candidate_files,
-    _describe_ast_backend_mode,
-    _describe_ast_backend_modes,
-    _emit_ast_run_remediation,
-    _extract_rule_pattern,
-    _inject_run_json_fields,
-    _rule_needs_ast_grep_wrapper,
-    _safe_stdout_line,
-    _stamp_ast_scan_incompleteness,
-    _suffix_for_language,
-    _warn_windows_single_quote_pattern,
 )
 from tensor_grep.cli.ast_workflow_rules import (
     _build_ast_run_search_payload as _build_ast_run_search_payload,
@@ -92,17 +95,6 @@ _BACKEND_AVAILABILITY: dict[tuple[str, type[Any], str], bool] = {}
 _SUPPORTED_NATIVE_PATTERN_RE = None
 _CACHED_BACKENDS: dict[tuple[str, type[Any]], Any] = {}
 _NORM_CACHE: dict[str, str] = {}
-
-_SUFFIX_CACHE = {
-    "python": ".py",
-    "py": ".py",
-    "javascript": ".js",
-    "js": ".js",
-    "typescript": ".ts",
-    "ts": ".ts",
-    "rust": ".rs",
-    "rs": ".rs",
-}
 
 
 _AST_GREP_REMEDIATION = (
@@ -1205,10 +1197,9 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    if not rules:
-        print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
+    rules_by_id = _load_test_rule_index(project_cfg, rules)
+    if rules_by_id is None:
         return 1
-    rules_by_id = {rule["id"]: rule for rule in rules}
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_names_used: set[str] = set()
@@ -1244,9 +1235,10 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                     failures.append(f"{test_file}:{case_id}: {exc}")
                     continue
                 if not pattern:
-                    failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
+                    _append_test_pattern_failure(
+                        linked_rule, rules_by_id, test_file, case_id, failures
+                    )
                     continue
-
                 valid_snippets = _normalize_string_list(case.get("valid"), [])
                 invalid_snippets = _normalize_string_list(case.get("invalid"), [])
                 if not valid_snippets and not invalid_snippets:
@@ -1255,7 +1247,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
 
                 total_cases += len(valid_snippets) + len(invalid_snippets)
                 case_cfg = cfg if language == cfg.lang else replace(cfg, lang=language)
-
                 # Use orchestration hint if available
                 backend = _select_ast_backend_for_pattern(
                     case_cfg, pattern, backend_cache=backend_cache

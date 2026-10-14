@@ -361,6 +361,21 @@ def _load_rule_specs_and_meta(
     return specs, meta
 
 
+def _append_test_pattern_failure(
+    linked_rule: object,
+    rules_by_id: Mapping[str, Mapping[str, Any]],
+    test_file: str,
+    case_id: str,
+    failures: list[str],
+) -> bool:
+    if isinstance(linked_rule, str) and linked_rule in rules_by_id:
+        failure = f"{test_file}:{case_id}: rule {linked_rule} has an empty pattern"
+    else:
+        failure = f"{test_file}:{case_id}: missing pattern or ruleId"
+    failures.append(failure)
+    return True
+
+
 def _load_test_data_and_meta(
     project_cfg: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -470,6 +485,48 @@ def _extract_rule_member_patterns(rule_data: dict[str, object]) -> list[str] | N
             if members:
                 return members
     return None
+
+
+def _empty_rule_ids(project_cfg: dict[str, Any]) -> set[str]:
+    from tensor_grep.cli import ast_workflows
+
+    root_dir = Path(project_cfg["root_dir"])
+    rule_dirs = cast("list[str]", project_cfg["rule_dirs"])
+    empty_ids: set[str] = set()
+
+    for rule_file in _iter_yaml_files(root_dir, rule_dirs):
+        payload = ast_workflows._load_yaml_dict(rule_file)
+        raw_rules = payload.get("rules")
+        items = raw_rules if isinstance(raw_rules, list) else [payload]
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict) or _extract_rule_member_patterns(item) is not None:
+                continue
+            raw_pattern = item.get("pattern")
+            rule_node = item.get("rule")
+            if raw_pattern is None and isinstance(rule_node, dict):
+                raw_pattern = rule_node.get("pattern")
+            if not isinstance(raw_pattern, str) or raw_pattern.strip():
+                continue
+            rule_id = str(
+                item.get("id") or (f"{rule_file.stem}-{idx + 1}" if raw_rules else rule_file.stem)
+            )
+            empty_ids.add(rule_id)
+    return empty_ids
+
+
+def _load_test_rule_index(
+    project_cfg: dict[str, Any], rules: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]] | None:
+    rule_index = {rule["id"]: rule for rule in rules}
+    for rule_id in _empty_rule_ids(project_cfg):
+        rule_index.setdefault(
+            rule_id,
+            {"id": rule_id, "pattern": "", "language": project_cfg["language"]},
+        )
+    if not rule_index:
+        print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
+        return None
+    return rule_index
 
 
 def _rule_member_patterns(rule: Mapping[str, object]) -> list[str]:

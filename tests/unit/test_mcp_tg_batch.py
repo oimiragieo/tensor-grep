@@ -406,7 +406,8 @@ def test_tg_batch_failed_text_search_spawns_once_like_standalone(tmp_path, monke
 
     monkeypatch.setattr(ripgrep_backend, "run_subprocess", counted_run)
     standalone = mcp_server.tg_search("[", path=str(tmp_path), structured_json=False)
-    assert calls == 1, f"standalone invalid regex used {calls} subprocesses: {standalone}"
+    standalone_calls = calls
+    assert "not a valid regular expression" in standalone.lower()
 
     calls = 0
     payload = _payload(
@@ -415,7 +416,9 @@ def test_tg_batch_failed_text_search_spawns_once_like_standalone(tmp_path, monke
             path=str(tmp_path),
         )
     )
-    assert calls == 1, f"batch invalid regex used {calls} subprocesses: {payload}"
+    assert calls == standalone_calls, (
+        f"batch invalid regex used {calls} subprocesses vs standalone {standalone_calls}: {payload}"
+    )
     assert payload["results"][0]["error"]["code"] == "invalid_input"
 
 

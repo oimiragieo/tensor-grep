@@ -613,6 +613,10 @@ jobs:
           rustup default 1.96.0
           rustc --version
           cargo --version
+
+      - name: Install ast-grep CLI (AST wrapper backend)
+        shell: bash
+        run: cargo install ast-grep --version 0.41.1 --locked
         
       - name: Install Dependencies (Unix with retry)
         if: runner.os != 'Windows'
