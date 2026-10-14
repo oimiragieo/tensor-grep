@@ -122,7 +122,7 @@ def test_parser_backed_citation_enrichment_respects_parse_cap(tmp_path: Path, mo
 def test_search_context_cites_only_matching_lines(tmp_path: Path) -> None:
     (tmp_path / "sample.txt").write_text("before\nneedle\nneedle\nafter\n", encoding="utf-8")
     result = CliRunner().invoke(
-        app, ["search", "needle", str(tmp_path), "--json", "--citations", "-C", "1"]
+        app, ["search", "needle", str(tmp_path), "--json", "--citations", "-C", "1", "--cpu"]
     )
     assert result.exit_code == 0, result.output
     assert _assert_citation_envelope(result.stdout)["citations"] == [
@@ -224,7 +224,7 @@ def test_find_citations_refuse_ndjson_before_repo_scan(tmp_path: Path, monkeypat
     def fail_if_called(*_args, **_kwargs):
         raise AssertionError("_execute_find must not run for incompatible citation modes")
 
-    monkeypatch.setattr("tensor_grep.cli.main._execute_find", fail_if_called)
+    monkeypatch.setattr("tensor_grep.cli.main._self._execute_find", fail_if_called)
     (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
     result = CliRunner().invoke(app, ["find", "needle", str(tmp_path), "--citations", "--ndjson"])
     assert result.exit_code == 2, result.output
