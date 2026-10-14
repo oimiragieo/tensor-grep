@@ -301,12 +301,12 @@ def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
         "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
     )
     (tmp_path / "rules").mkdir()
-    (tmp_path / "rules" / "error.yml").write_text(
-        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    (tmp_path / "rules" / "pass-rule.yml").write_text(
+        "id: pass-rule\nlanguage: python\nrule:\n  pattern: pass\n", encoding="utf-8"
     )
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "linked.yml").write_text(
-        "id: linked-empty-case\nruleId: error-rule\npattern: ''\nvalid: [PASS]\ninvalid: [ERROR]\n",
+        "id: linked-empty-case\nruleId: pass-rule\npattern: ''\nvalid: [PASS]\ninvalid: [pass]\n",
         encoding="utf-8",
     )
 

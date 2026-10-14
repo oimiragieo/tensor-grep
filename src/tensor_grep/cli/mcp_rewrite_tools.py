@@ -505,6 +505,14 @@ def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
     lang_error = unsupported_ast_language_message(lang)
     if lang_error is not None:
         return lang_error
+    from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+
+    try:
+        normalized = normalize_ast_language(lang)
+    except ValueError as exc:
+        return str(exc)
+    if not is_native_ast_language(normalized):
+        return f"Unsupported language: {normalized}"
     if not path.strip():
         return "Path must not be empty."
     if not Path(path).expanduser().exists():
@@ -848,7 +856,8 @@ def execute_rewrite_plan_json(
     try:
         validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
         if validation_error:
-            return _rewrite_error(validation_error, code="invalid_input"), 1
+            exit_code = 2 if validation_error.startswith("Unsupported language:") else 1
+            return _rewrite_error(validation_error, code="invalid_input"), exit_code
         pattern = _restore_variadic_metavar_escaping(pattern)
         replacement = _restore_variadic_metavar_escaping(replacement)
 
