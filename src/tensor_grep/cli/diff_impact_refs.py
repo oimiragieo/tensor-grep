@@ -29,11 +29,12 @@ def _opened_file_path(fd: int, path: Path) -> Path:
         import ctypes
         import msvcrt
 
-        get_name = ctypes.windll.kernel32.GetFinalPathNameByHandleW
+        get_name = ctypes.windll.kernel32.GetFinalPathNameByHandleW  # type: ignore[attr-defined]
         get_name.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32]
         get_name.restype = ctypes.c_uint32
         buffer = ctypes.create_unicode_buffer(32768)
-        length = get_name(msvcrt.get_osfhandle(fd), buffer, len(buffer), 0)
+        osfhandle = msvcrt.get_osfhandle(fd)  # type: ignore[attr-defined]
+        length = get_name(osfhandle, buffer, len(buffer), 0)
         if not length or length >= len(buffer):
             raise OSError("opened file path unavailable")
         name = buffer.value
