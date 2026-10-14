@@ -509,8 +509,8 @@ def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
 
     try:
         normalized = normalize_ast_language(lang)
-    except ValueError as exc:
-        return str(exc)
+    except ValueError:
+        return unsupported_ast_language_message(lang)
     if not is_native_ast_language(normalized):
         return f"Unsupported language: {normalized}"
     if not path.strip():
