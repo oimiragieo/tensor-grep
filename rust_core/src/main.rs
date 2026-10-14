@@ -1269,18 +1269,18 @@ fn main_inner() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if let Some(exit_code) = try_default_search_frontdoor_passthrough(&raw_args)? {
+    if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
+        let exit_code = match execute_python_passthrough_command("search", search_args) {
+            Ok(exit_code) => exit_code,
+            Err(err) => return exit_with_sidecar_error(err),
+        };
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }
         return Ok(());
     }
 
-    if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
-        let exit_code = match execute_python_passthrough_command("search", search_args) {
-            Ok(exit_code) => exit_code,
-            Err(err) => return exit_with_sidecar_error(err),
-        };
+    if let Some(exit_code) = try_default_search_frontdoor_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }
