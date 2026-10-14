@@ -5,7 +5,7 @@ use std::path::Path;
 
 pub(super) fn empty_rule_ids(data: &ProjectDataV6) -> HashSet<String> {
     let mut ids = HashSet::new();
-    for (path, _) in &data.validation_metadata.rule_files {
+    for path in data.validation_metadata.rule_files.keys() {
         let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
