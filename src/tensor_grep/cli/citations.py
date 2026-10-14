@@ -46,6 +46,20 @@ def validate_find_citation_modes(citations: bool, ndjson: bool) -> None:
         raise typer.Exit(2)
 
 
+def exit_if_find_citations(
+    result: Any, path: str | Path, citations: bool, json_output: bool, ndjson: bool
+) -> None:
+    if citations:
+        raise typer.Exit(emit_find_citations(result, path, json_output, ndjson))
+
+
+def exit_if_search_citations(
+    result: Any, paths: Sequence[str | Path], citations: bool, json_output: bool
+) -> None:
+    if citations:
+        sys.exit(emit_search_citations(result, paths, json_output))
+
+
 def validate_search_citation_modes(
     citations: bool,
     ndjson: bool,
@@ -53,6 +67,7 @@ def validate_search_citation_modes(
     *,
     files: bool = False,
     files_without_match: bool = False,
+    files_with_matches: bool = False,
     debug: bool = False,
     stats: bool = False,
     trace: bool = False,
@@ -67,6 +82,7 @@ def validate_search_citation_modes(
         for present, flag in (
             (files, "--files"),
             (files_without_match, "--files-without-match"),
+            (files_with_matches, "--files-with-matches"),
             (debug, "--debug"),
             (stats, "--stats"),
             (trace, "--trace"),
@@ -78,6 +94,55 @@ def validate_search_citation_modes(
     if citations and incompatible:
         typer.echo(f"--citations cannot be combined with {', '.join(incompatible)}", err=True)
         raise typer.Exit(2)
+
+
+def validate_search_citation_cli(
+    citations: bool,
+    ndjson: bool,
+    *,
+    format_type: str | None,
+    files: bool = False,
+    files_without_match: bool = False,
+    files_with_matches: bool = False,
+    debug: bool = False,
+    stats: bool = False,
+    trace: bool = False,
+    count: bool = False,
+    count_matches: bool = False,
+) -> bool:
+    """Return whether an explicit ``--format rg`` was requested (for downstream search routing)."""
+    explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
+    validate_search_citation_modes(
+        citations,
+        ndjson,
+        explicit_rg_format or (citations and _explicit_rg_format_requested(any_occurrence=True)),
+        files=files,
+        files_without_match=files_without_match,
+        files_with_matches=files_with_matches,
+        debug=debug,
+        stats=stats,
+        trace=trace,
+        count=count,
+        count_matches=count_matches,
+    )
+    return explicit_rg_format
+
+
+def validate_search_citation_from_locals(scope: dict[str, Any]) -> bool:
+    """Search-command wrapper so ``main.py`` stays one physical line for the size ratchet."""
+    return validate_search_citation_cli(
+        bool(scope["citations"]),
+        bool(scope["ndjson"]),
+        format_type=scope.get("format_type"),
+        files=bool(scope.get("files")),
+        files_without_match=bool(scope.get("files_without_match")),
+        files_with_matches=bool(scope.get("files_with_matches")),
+        debug=bool(scope.get("debug")),
+        stats=bool(scope.get("stats")),
+        trace=bool(scope.get("trace")),
+        count=bool(scope.get("count")),
+        count_matches=bool(scope.get("count_matches")),
+    )
 
 
 _MCP_BUILDER_VALUE_NAMES = (
@@ -123,7 +188,9 @@ def citation_envelope(
     if scope_path.is_file():
         scope_path = scope_path.parent
     root_path = _repository_root(scope_path)
-    anchor_path = Path(path_anchor).expanduser().resolve() if path_anchor is not None else scope_path
+    anchor_path = (
+        Path(path_anchor).expanduser().resolve() if path_anchor is not None else scope_path
+    )
     if anchor_path.is_file():
         anchor_path = anchor_path.parent
     merged: list[dict[str, Any]] = []
@@ -482,6 +549,30 @@ def invoke_mcp_payload_builder(
         root,
         citations=citations,
         inject_contract_fields=inject_contract_fields,
+    )
+
+
+def mcp_context_render_call(_self: Any, scope: dict[str, Any], path: str, citations: bool) -> str:
+    return invoke_mcp_payload_builder(
+        _self.build_context_render,
+        scope,
+        path,
+        citations=citations,
+        inject_contract_fields=_self._inject_mcp_contract_fields,
+        aliases={"semantic_provider": "provider"},
+    )
+
+
+def mcp_agent_capsule_call(
+    build_agent_capsule: Any, _self: Any, scope: dict[str, Any], path: str, citations: bool
+) -> str:
+    return invoke_mcp_payload_builder(
+        build_agent_capsule,
+        scope,
+        path,
+        citations=citations,
+        inject_contract_fields=_self._inject_mcp_contract_fields,
+        aliases={"semantic_provider": "provider", "deadline_seconds": "deadline"},
     )
 
 

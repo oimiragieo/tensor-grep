@@ -70,12 +70,19 @@ fn scaffold_language_json(value: &serde_yaml::Value) -> String {
 }
 
 fn coerce_scaffold_language(value: Option<&serde_yaml::Value>) -> Result<String> {
+    coerce_scaffold_language_with_default(value, "python")
+}
+
+fn coerce_scaffold_language_with_default(
+    value: Option<&serde_yaml::Value>,
+    default: &str,
+) -> Result<String> {
     match value {
-        None => Ok("python".to_string()),
+        None => Ok(default.to_string()),
         Some(serde_yaml::Value::String(raw)) => {
             let stripped = raw.trim();
             if stripped.is_empty() {
-                return Ok("python".to_string());
+                return Ok(default.to_string());
             }
             normalize_language(stripped).map(str::to_string)
         }
@@ -169,7 +176,8 @@ pub(super) fn write_test(
                     anyhow::bail!("cannot parse linked rule {label}: expected a YAML mapping")
                 }
                 if rule.get("language").is_some() {
-                    coerce_scaffold_language(rule.get("language"))?
+                    let fallback = project_default_language(base_dir)?;
+                    coerce_scaffold_language_with_default(rule.get("language"), &fallback)?
                 } else {
                     project_default_language(base_dir)?
                 }

@@ -1880,8 +1880,7 @@ def find(
             typer.echo(f"tg: {exc}", err=True)
         sys.exit(2)
 
-    if citations:
-        raise typer.Exit(_citations.emit_find_citations(result, path, json_output, ndjson))
+    _citations.exit_if_find_citations(result, path, citations, json_output, ndjson)
 
     if result.is_empty:
         if json_output:
@@ -2536,9 +2535,6 @@ def _can_passthrough_rg(
         and not (rg_json_passthrough and config.passthru)
         and not (files_with_matches and (config.count or config.count_matches))
     )
-
-
-_explicit_rg_format_requested = _citations._explicit_rg_format_requested
 
 
 # Render-only ripgrep flags that shape *text* output. The tensor-grep aggregate
@@ -3711,23 +3707,7 @@ def search_command(
         )
         raise typer.Exit(2)
 
-    explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
-    _citations.validate_search_citation_modes(
-        citations,
-        ndjson,
-        explicit_rg_format
-        or (citations and _citations._explicit_rg_format_requested(any_occurrence=True)),
-        files=files,
-        files_without_match=files_without_match,
-        debug=debug,
-        stats=stats,
-        trace=trace,
-        count=count,
-        count_matches=count_matches,
-    )
-    if citations and files_with_matches:
-        typer.echo("--citations cannot be combined with --files-with-matches", err=True)
-        raise typer.Exit(2)
+    explicit_rg_format = _citations.validate_search_citation_from_locals(locals())
     # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
     # text-shaping flags. Honoring them is impossible and silently dropping them is a
     # footgun that also lets the front-door launcher spawn an undrained text-render
@@ -4439,12 +4419,9 @@ def search_command(
         _emit_stats()
         sys.exit(2 if exit_incomplete else 1)
 
-    if citations:
-        sys.exit(
-            _citations.emit_search_citations(
-                all_results, paths_to_search, json or format_type == "json"
-            )
-        )
+    _citations.exit_if_search_citations(
+        all_results, paths_to_search, citations, json or format_type == "json"
+    )
 
     if all_results.is_empty:
         _emit_stats()

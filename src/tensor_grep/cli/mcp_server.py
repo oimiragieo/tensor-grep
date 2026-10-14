@@ -37,6 +37,13 @@ from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli import mcp_search_scope as _search_scope
 from tensor_grep.cli import mcp_serial_execution as _serial_execution
 from tensor_grep.cli import mcp_tool_contract as _tool_contract
+from tensor_grep.cli.citations import (
+    mcp_agent_capsule_call,
+    mcp_context_render_call,
+    result_citations_json,
+    serialize_mcp_find_result,
+    serialize_workspace_citations,
+)
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -2012,16 +2019,7 @@ def tg_context_render(
             return json.dumps(payload, indent=2)
 
         try:
-            from tensor_grep.cli.citations import invoke_mcp_payload_builder
-
-            return invoke_mcp_payload_builder(
-                _self.build_context_render,
-                locals(),
-                path,
-                citations=citations,
-                inject_contract_fields=_self._inject_mcp_contract_fields,
-                aliases={"semantic_provider": "provider"},
-            )
+            return mcp_context_render_call(_self, locals(), path, citations)
         except FileNotFoundError as exc:
             _log_tool_exception("tg_context_render", exc)
             payload = _envelope_base(
@@ -2114,16 +2112,8 @@ def tg_agent_capsule(
 
         try:
             from tensor_grep.cli.agent_capsule import build_agent_capsule
-            from tensor_grep.cli.citations import invoke_mcp_payload_builder
 
-            return invoke_mcp_payload_builder(
-                build_agent_capsule,
-                locals(),
-                path,
-                citations=citations,
-                inject_contract_fields=_self._inject_mcp_contract_fields,
-                aliases={"semantic_provider": "provider", "deadline_seconds": "deadline"},
-            )
+            return mcp_agent_capsule_call(build_agent_capsule, _self, locals(), path, citations)
         except FileNotFoundError as exc:
             _log_tool_exception("tg_agent_capsule", exc)
             return _agent_capsule_error(
@@ -2908,8 +2898,6 @@ def tg_find(
         result.routing_backend = _FIND_ROUTING_BACKEND
         result.routing_reason = _FIND_ROUTING_REASON
 
-        from tensor_grep.cli.citations import serialize_mcp_find_result
-
         return serialize_mcp_find_result(
             result,
             path,
@@ -3203,8 +3191,6 @@ def tg_search(
                 )
 
             if citations:
-                from tensor_grep.cli.citations import result_citations_json
-
                 return result_citations_json(
                     all_results,
                     path,
@@ -4747,8 +4733,6 @@ def tg_query(
                     results_by_root[root] = single_text
 
             if citations and action in {"text", "search", "find"}:
-                from tensor_grep.cli.citations import serialize_workspace_citations
-
                 return serialize_workspace_citations(results_by_root, omitted_roots, _mcp_root())
 
             extra: dict[str, Any] = {
