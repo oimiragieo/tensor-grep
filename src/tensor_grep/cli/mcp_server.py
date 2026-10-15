@@ -1665,7 +1665,11 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
 @_register_tool  # type: ignore
 def tg_coverage(path: str = ".") -> str:
     """Report repo-map session and AST-cache coverage for PATH without writing state."""
-    return coverage_tool(path)
+    try:
+        return coverage_tool(path)
+    except Exception as exc:
+        _log_tool_exception("tg_coverage", exc)
+        return _sanitized_tool_error_text("tg_coverage", exc)
 
 
 @_register_legacy_tool  # type: ignore

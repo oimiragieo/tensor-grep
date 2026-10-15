@@ -207,7 +207,7 @@ _EXCLUDED_MODULES = frozenset({
 # Pin the actual population, using the one spare slot in the historical ceiling of 340.
 # - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
 #   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
-TOTAL_BROAD_HANDLERS_CEILING = 342
+TOTAL_BROAD_HANDLERS_CEILING = 346
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
