@@ -557,17 +557,32 @@ def test_natural_query_cites_parser_backed_symbol_range(tmp_path: Path, command:
     assert payload["result_incomplete"] is False
 
 
-@pytest.mark.parametrize(
-    ("command", "expected_digest"),
-    [
-        ("search", "6d55c4304269f9658ffb85acc6074cebabf236524c1349817369590f97844c2c"),
-        ("find", "9676606f2982f1e886b4d3da5731e9a48e182bd799e2b1088004cbe0897cd997"),
-        ("agent", "774d18b5674350c1289c573caa380438e87942e4ca08aa7fd496aa6bcaed6c1b"),
-    ],
-)
+# SHA-256 of default JSON stdout (ROOT path substitution only) recorded from origin/main
+# without --citations. Windows and Linux differ on search CPU match cardinality; keep both.
+_ORIGIN_MAIN_NO_FLAG_GOLDEN: dict[str, dict[str, str]] = {
+    "win32": {
+        "search": "6d55c4304269f9658ffb85acc6074cebabf236524c1349817369590f97844c2c",
+        "find": "9676606f2982f1e886b4d3da5731e9a48e182bd799e2b1088004cbe0897cd997",
+        "agent": "774d18b5674350c1289c573caa380438e87942e4ca08aa7fd496aa6bcaed6c1b",
+    },
+    "linux": {
+        "search": "6d147ba5066faaa1d4dc073e5d013ad56e15949360c52677364da45993ac7ed4",
+        "find": "20eff7a817867d4356f1dfb70eba23ab25b10a2e94f15b0d2568a857ce0d8d3e",
+        "agent": "c63f3527697f047686a2856d8cd3990a6aa2b9ac98713ce0877f71a2dcc62289",
+    },
+}
+
+
+def _origin_main_no_flag_golden_digest(command: str) -> str:
+    platform_key = "win32" if sys.platform == "win32" else "linux"
+    return _ORIGIN_MAIN_NO_FLAG_GOLDEN[platform_key][command]
+
+
+@pytest.mark.parametrize("command", ["search", "find", "agent"])
 def test_no_flag_json_output_matches_origin_main_golden(
-    tmp_path: Path, monkeypatch, command: str, expected_digest: str
+    tmp_path: Path, monkeypatch, command: str
 ) -> None:
+    expected_digest = _origin_main_no_flag_golden_digest(command)
     (tmp_path / "sample.py").write_text(
         "def needle_function():\n    value = 'needle'\n    return value\n", encoding="utf-8"
     )
@@ -597,9 +612,17 @@ def test_no_flag_golden_hash_preserves_raw_newline_bytes(tmp_path: Path, monkeyp
         return subprocess.CompletedProcess(args, 0, b"line\r\n", b"")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    test_no_flag_json_output_matches_origin_main_golden(
-        tmp_path, monkeypatch, "search", hashlib.sha256(b"line\r\n").hexdigest()
+    (tmp_path / "sample.py").write_text("needle\n", encoding="utf-8")
+    monkeypatch.setenv("TG_DISABLE_SESSION_DAEMON", "1")
+    completed = subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "search", "needle", str(tmp_path), "--json", "--cpu"],
+        capture_output=True,
+        text=False,
+        env=os.environ.copy(),
+        check=False,
     )
+    output = completed.stdout.replace(str(tmp_path).replace("\\", "\\\\").encode("utf-8"), b"ROOT")
+    assert hashlib.sha256(output).hexdigest() == hashlib.sha256(b"line\r\n").hexdigest()
 
 
 def test_native_front_doors_route_citations_away_from_ripgrep() -> None:

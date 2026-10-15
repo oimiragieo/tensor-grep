@@ -54,10 +54,24 @@ def exit_if_find_citations(
 
 
 def exit_if_search_citations(
-    result: Any, paths: Sequence[str | Path], citations: bool, json_output: bool
+    result: Any,
+    paths: Sequence[str | Path],
+    citations: bool,
+    json_output: bool,
+    *,
+    query_pattern: str | None = None,
+    fixed_strings: bool = False,
 ) -> None:
     if citations:
-        sys.exit(emit_search_citations(result, paths, json_output))
+        sys.exit(
+            emit_search_citations(
+                result,
+                paths,
+                json_output,
+                query_pattern=query_pattern,
+                fixed_strings=fixed_strings,
+            )
+        )
 
 
 def validate_search_citation_modes(
@@ -238,6 +252,22 @@ def citation_envelope(
     }
 
 
+def _match_line_is_citable(match: Any, *, query_pattern: str | None, fixed_strings: bool) -> bool:
+    kind = getattr(match, "rg_kind", None)
+    if kind == "context":
+        return False
+    if kind in ("match", "inverted"):
+        return True
+    if getattr(match, "submatches", None):
+        return True
+    if not query_pattern:
+        return True
+    text = str(getattr(match, "text", ""))
+    if fixed_strings:
+        return query_pattern in text
+    return query_pattern.casefold() in text.casefold()
+
+
 def result_citations(
     result: Any,
     root: str | Path,
@@ -246,11 +276,15 @@ def result_citations(
     symbols: bool = False,
     max_results: int | None = None,
     max_files: int | None = None,
+    query_pattern: str | None = None,
+    fixed_strings: bool = False,
 ) -> dict[str, Any]:
     citations: list[dict[str, Any]] = []
     seen_files: set[str] = set()
     for match in getattr(result, "matches", ()):
-        if getattr(match, "rg_kind", None) == "context":
+        if not _match_line_is_citable(
+            match, query_pattern=query_pattern, fixed_strings=fixed_strings
+        ):
             continue
         path = getattr(match, "file", None)
         if not path:
@@ -328,7 +362,14 @@ def emit_find_citations(result: Any, path: str | Path, json_output: bool, ndjson
     return emit_result_citations(result, path, json_output=json_output, symbols=True)
 
 
-def emit_search_citations(result: Any, paths: Sequence[str | Path], json_output: bool) -> int:
+def emit_search_citations(
+    result: Any,
+    paths: Sequence[str | Path],
+    json_output: bool,
+    *,
+    query_pattern: str | None = None,
+    fixed_strings: bool = False,
+) -> int:
     roots = [Path(item).expanduser().resolve() for item in paths]
     roots = [item.parent if item.is_file() else item for item in roots]
     try:
@@ -338,7 +379,13 @@ def emit_search_citations(result: Any, paths: Sequence[str | Path], json_output:
     repo_root = _repository_root(path_anchor)
     typer.echo(
         render_citations(
-            result_citations(result, repo_root, path_anchor=path_anchor),
+            result_citations(
+                result,
+                repo_root,
+                path_anchor=path_anchor,
+                query_pattern=query_pattern,
+                fixed_strings=fixed_strings,
+            ),
             json_output=json_output,
         ),
         nl=json_output,

@@ -60,6 +60,7 @@ use tensor_grep_rs::routing::{
 };
 mod ast_run_remediation;
 mod main_env;
+mod search_citations_routing;
 mod search_flag_registry;
 use main_env::env_flag_enabled;
 use search_flag_registry::{
@@ -1262,15 +1263,36 @@ fn main_inner() -> anyhow::Result<()> {
         std::process::exit(2);
     }
 
-    if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
-        let exit_code = match execute_python_passthrough_command("search", search_args) {
-            Ok(exit_code) => exit_code,
-            Err(err) => return exit_with_sidecar_error(err),
-        };
-        if exit_code != 0 {
-            std::process::exit(exit_code.max(1));
+    let normalized_search_tokens = normalize_top_level_search_args(&raw_args).map(|search_args| {
+        search_args
+            .iter()
+            .skip(2)
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    });
+
+    if search_citations_routing::search_citations_flag_conflicts(
+        &raw_args,
+        normalized_search_tokens.clone(),
+    ) {
+        eprintln!("--citations cannot be combined with --ndjson or --format rg");
+        std::process::exit(2);
+    }
+
+    if search_citations_routing::search_invocation_requests_citations(
+        &raw_args,
+        normalized_search_tokens,
+    ) {
+        if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
+            let exit_code = match execute_python_passthrough_command("search", search_args) {
+                Ok(exit_code) => exit_code,
+                Err(err) => return exit_with_sidecar_error(err),
+            };
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            return Ok(());
         }
-        return Ok(());
     }
 
     if let Some(exit_code) = try_early_ripgrep_passthrough(&raw_args)? {
@@ -1281,6 +1303,17 @@ fn main_inner() -> anyhow::Result<()> {
     }
 
     if let Some(exit_code) = try_default_search_frontdoor_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
+    if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
+        let exit_code = match execute_python_passthrough_command("search", search_args) {
+            Ok(exit_code) => exit_code,
+            Err(err) => return exit_with_sidecar_error(err),
+        };
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }

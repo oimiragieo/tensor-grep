@@ -4420,7 +4420,12 @@ def search_command(
         sys.exit(2 if exit_incomplete else 1)
 
     _citations.exit_if_search_citations(
-        all_results, paths_to_search, citations, json or format_type == "json"
+        all_results,
+        paths_to_search,
+        citations,
+        json or format_type == "json",
+        query_pattern=pattern,
+        fixed_strings=bool(config.fixed_strings),
     )
 
     if all_results.is_empty:
