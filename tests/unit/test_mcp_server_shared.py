@@ -925,7 +925,12 @@ _EXPECTED_META_TOOL_NAMES = {
     "tg_checkpoint",
     "tg_rewrite",
 }
-_EXPECTED_SINGLETON_TOOL_NAMES = {"tg_mcp_capabilities", "tg_classify_logs", "tg_batch"}
+_EXPECTED_SINGLETON_TOOL_NAMES = {
+    "tg_mcp_capabilities",
+    "tg_classify_logs",
+    "tg_batch",
+    "tg_coverage",
+}
 
 
 def _run_mcp_flag_probe_subprocess(env_overrides: dict[str, str]) -> dict[str, object]:

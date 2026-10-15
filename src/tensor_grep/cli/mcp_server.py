@@ -256,12 +256,11 @@ _DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000
 # test_cli_default_max_files_matches_module_constant pattern.
 _DEFAULT_MCP_FIND_MAX_TOKENS = 4000
 
-# The 47 legacy (pre-consolidation) tool names, gated on `_legacy_tools_enabled()` (#98) --
-# `tg_mcp_capabilities`/`tg_classify_logs` are carved OUT into `_SINGLETON_MCP_TOOLS` below
-# (build-precision must-fix: they are ALWAYS registered/advertised, never gated, so they must
-# never sit in a tuple this module treats as conditional).
+# The 46 legacy (pre-consolidation) tool names, gated on `_legacy_tools_enabled()` (#98) --
+# `tg_mcp_capabilities`/`tg_classify_logs`/`tg_batch`/`tg_coverage` are carved OUT into
+# `_SINGLETON_MCP_TOOLS` below (build-precision must-fix: they are ALWAYS registered/advertised,
+# never gated, so they must never sit in a tuple this module treats as conditional).
 _PYTHON_LOCAL_MCP_TOOLS = (
-    "tg_coverage",
     "tg_rulesets",
     "tg_ruleset_scan",
     "tg_repo_map",
@@ -311,7 +310,7 @@ _NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
 # `TG_MCP_LEGACY_TOOLS` -- `tg_mcp_capabilities` is the discovery entrypoint an agent needs
 # even when every legacy name is de-advertised, and `tg_classify_logs` is a standalone-family
 # tool with no meta-tool home (niche, no sibling family to compose into).
-_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs", "tg_batch")
+_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs", "tg_batch", "tg_coverage")
 # The 10 additive task-shaped meta-tools (#98, Phase-1): ALWAYS registered/advertised
 # regardless of `TG_MCP_LEGACY_TOOLS`, since they are the additive surface this flag exists to
 # let an operator eventually rely on ALONE. Each composes several of the 47 legacy tools by an
@@ -1663,7 +1662,7 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
         return _sanitized_tool_error_text("tg_repo_map", exc)
 
 
-@_register_legacy_tool  # type: ignore
+@_register_tool  # type: ignore
 def tg_coverage(path: str = ".") -> str:
     """Report repo-map session and AST-cache coverage for PATH without writing state."""
     return coverage_tool(path)
