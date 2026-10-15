@@ -30,6 +30,7 @@ from typer.core import TyperGroup
 
 from tensor_grep.cli import ast_scan as _ast_scan
 from tensor_grep.cli import backend_fallback as _backend_fallback
+from tensor_grep.cli import citations as _citations
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
@@ -1832,6 +1833,7 @@ def find(
     ndjson: bool = typer.Option(
         False, "--ndjson", help="Emit newline-delimited JSON, one object per match."
     ),
+    citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
 ) -> None:
     """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
     relevance, RRF-fused), ranked file:line results.
@@ -1852,8 +1854,9 @@ def find(
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.core.pipeline import ConfigurationError
 
+    _citations.validate_find_citation_modes(citations, ndjson)
     try:
-        result = _execute_find(
+        result = _self._execute_find(
             query,
             path,
             limit=limit,
@@ -1876,6 +1879,8 @@ def find(
         else:
             typer.echo(f"tg: {exc}", err=True)
         sys.exit(2)
+
+    _citations.exit_if_find_citations(result, path, citations, json_output, ndjson)
 
     if result.is_empty:
         if json_output:
@@ -2530,31 +2535,6 @@ def _can_passthrough_rg(
         and not (rg_json_passthrough and config.passthru)
         and not (files_with_matches and (config.count or config.count_matches))
     )
-
-
-def _explicit_rg_format_requested(
-    argv: list[str] | None = None,
-    *,
-    format_value: str | None = None,
-) -> bool:
-    del format_value
-    tokens = list(sys.argv[1:] if argv is None else argv)
-    if argv is None:
-        if not tokens or tokens[0] != "search":
-            return False
-        tokens = tokens[1:]
-    elif tokens and tokens[0] == "search":
-        tokens = tokens[1:]
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token == "--format":
-            index += 1
-            return index < len(tokens) and tokens[index] == "rg"
-        if token.startswith("--format="):
-            return token.split("=", 1)[1] == "rg"
-        index += 1
-    return False
 
 
 # Render-only ripgrep flags that shape *text* output. The tensor-grep aggregate
@@ -3212,6 +3192,7 @@ def search_command(
         "--ndjson",
         help="Print tensor-grep newline-delimited JSON rows, not the rg event schema.",
     ),
+    citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
     # LOGGING OPTIONS
     debug: bool = typer.Option(False, "--debug", help="Show debug messages."),
     no_ignore_messages: bool = typer.Option(
@@ -3726,7 +3707,7 @@ def search_command(
         )
         raise typer.Exit(2)
 
-    explicit_rg_format = _explicit_rg_format_requested(format_value=format_type)
+    explicit_rg_format = _citations.validate_search_citation_from_locals(locals())
     # C3: plain `--json` emits one aggregate object and cannot render ripgrep's
     # text-shaping flags. Honoring them is impossible and silently dropping them is a
     # footgun that also lets the front-door launcher spawn an undrained text-render
@@ -3771,6 +3752,7 @@ def search_command(
         native_tg_binary = None
     if (
         native_tg_binary is not None
+        and not citations
         and not guarded_broad_root
         and not explicit_hidden_search_root
         and not (json and explicit_rg_format)
@@ -3867,7 +3849,8 @@ def search_command(
             json_mode=json,
         )
     can_passthrough_rg = (
-        not guarded_broad_root
+        not citations
+        and not guarded_broad_root
         and not explicit_hidden_search_root
         and rg_is_available
         and _can_passthrough_rg(
@@ -4435,6 +4418,15 @@ def search_command(
             sys.exit(2 if exit_incomplete else 0)
         _emit_stats()
         sys.exit(2 if exit_incomplete else 1)
+
+    _citations.exit_if_search_citations(
+        all_results,
+        paths_to_search,
+        citations,
+        json or format_type == "json",
+        query_pattern=pattern,
+        fixed_strings=bool(config.fixed_strings),
+    )
 
     if all_results.is_empty:
         _emit_stats()
@@ -5623,6 +5615,7 @@ def context_render(
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
+    citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
     deadline: float | None = _deadline_option(
         "Stop after N seconds, measured from CLI command entry (not just the underlying repo scan -- excludes only the ~100-200ms interpreter-startup/dispatch prefix before this command body runs), and return a partial bundle (partial=true, deadline_limit) with whatever was found so far, instead of running unbounded. Pass --no-deadline to keep the (already default) unbounded behavior explicit."
     ),
@@ -5672,7 +5665,7 @@ def context_render(
                 provider=provider,
                 profile=profile,
             )
-            if effective_deadline is None
+            if effective_deadline is None and not citations
             else None
         )
         if daemon_payload is not None:
@@ -5716,7 +5709,9 @@ def context_render(
     # the old build_context_render_json helper: separators=(",", ":") for an "llm" render profile,
     # else indent=2) so both json and text branches share the same scan-truncation gate below --
     # output the full payload FIRST, then exit 2 if the scan itself (not just the output) was capped.
-    if json_output:
+    if citations:
+        _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
+    elif json_output:
         if payload.get("render_profile") == "llm":
             typer.echo(json.dumps(payload, separators=(",", ":")))
         else:
@@ -5881,6 +5876,7 @@ def agent(
         "off", "--rerank", help="Native advisory snippet reranking: off, auto, cross-encoder."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
 ) -> None:
     """Return an actionable context capsule for agents before editing."""
     # Anchor explicit deadlines before lazy imports and daemon lookup; the cold default starts
@@ -5925,6 +5921,7 @@ def agent(
             and not plan_hops
             and rerank == "off"
             and grounding != "registry"
+            and not citations
             else None
         )
         if daemon_payload is not None:
@@ -6001,7 +5998,9 @@ def agent(
         raise typer.Exit(1) from exc
 
     # Emit the full capsule before applying the scan-truncation exit contract.
-    if json_output:
+    if citations:
+        _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
+    elif json_output:
         typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         _emit_scan_incompleteness_banner(payload)

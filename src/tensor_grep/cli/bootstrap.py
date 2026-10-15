@@ -65,6 +65,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--gpu-device-ids",
     "--allow-broad-generated-scan",
     "--json",
+    "--citations",
     "--ndjson",
     "--pcre2-version",
     "--lang",

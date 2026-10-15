@@ -45,6 +45,7 @@ _TG_DECLARED_LONG_FLAG_NAMES: frozenset[str] = frozenset({
     "bm25",
     "byte-offset",
     "case-sensitive",
+    "citations",
     "color",
     "colors",
     "column",

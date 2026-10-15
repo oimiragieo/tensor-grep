@@ -231,6 +231,7 @@ pub(crate) const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "--no-ignore-messages",
     "--no-messages",
     "--generate",
+    "--citations",
     "--lang",
     // BM25 re-ranking is a Python-side post-process; route --rank/--bm25 searches to the sidecar
     // so the native front door does not clap-reject the unknown flag.
