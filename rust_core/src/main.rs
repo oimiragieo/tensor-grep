@@ -1271,10 +1271,8 @@ fn main_inner() -> anyhow::Result<()> {
             .collect::<Vec<_>>()
     });
 
-    if search_citations_routing::search_citations_flag_conflicts(
-        &raw_args,
-        normalized_search_tokens.clone(),
-    ) {
+    if search_citations_routing::search_citations_flag_conflicts(normalized_search_tokens.clone())
+    {
         eprintln!("--citations cannot be combined with --ndjson or --format rg");
         std::process::exit(2);
     }

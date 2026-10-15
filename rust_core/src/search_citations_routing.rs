@@ -3,7 +3,6 @@ use std::ffi::OsString;
 use crate::search_flag_registry::{raw_args_contain_any_flag, search_args_contain_any_flag};
 
 pub(crate) fn search_citations_flag_conflicts(
-    raw_args: &[OsString],
     normalized_search_flag_tokens: Option<Vec<String>>,
 ) -> bool {
     let Some(args) = normalized_search_flag_tokens else {
