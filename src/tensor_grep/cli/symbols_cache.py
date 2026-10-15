@@ -120,6 +120,59 @@ def _receipt(secret: bytes, key: str, payload: str) -> str:
     ).hexdigest()
 
 
+def _parser_versions() -> dict[str, str]:
+    versions: dict[str, str] = {"python": sys.version.split()[0]}
+    for spec in lang_registry.LANGUAGE_REGISTRY.values():
+        for module in spec.grammar_modules:
+            try:
+                versions[module] = importlib.metadata.version(module.replace("_", "-"))
+            except importlib.metadata.PackageNotFoundError:
+                versions[module] = "unavailable"
+    return versions
+
+
+def entry_key_for_digest(
+    root: Path,
+    path: Path,
+    content_digest: str,
+    *,
+    scope: Path,
+    max_bytes: int,
+    ignore_policy: list[str],
+    parser_versions: dict[str, str] | None = None,
+) -> str:
+    """Recompute the content- and ignore-policy-bound cache key for one file digest."""
+    ignores: list[tuple[str, str]] = []
+    directory = path.parent
+    while True:
+        ignore_file = directory / ".gitignore"
+        if ignore_file.exists():
+            ignores.append((
+                str(ignore_file.relative_to(root)),
+                _digest(read_confined(root, ignore_file, 128 * 1024)),
+            ))
+        if directory == root:
+            break
+        directory = directory.parent
+    spec = lang_registry.spec_for_path(path)
+    available = (
+        spec.parser_for_path(path) is not None
+        if spec is not None and spec.parser_for_path is not None
+        else True
+    )
+    options = {
+        "schema": _SCHEMA,
+        "parser_versions": parser_versions or _parser_versions(),
+        "scope": str(scope),
+        "suffix": path.suffix.lower(),
+        "max_parse_bytes": max_bytes,
+        "ignore_policy": ignore_policy,
+        "ignore_configuration": ignores,
+        "parser_available": available,
+    }
+    return _digest(_json({"content": content_digest, **options}).encode())
+
+
 def _decode_product(payload: str, receipt: str, path: Path, secret: bytes, key: str) -> Product:
     if len(payload) > _ENTRY_LIMIT or not hmac.compare_digest(
         _receipt(secret, key, payload), receipt

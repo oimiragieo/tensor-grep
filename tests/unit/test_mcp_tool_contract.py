@@ -103,7 +103,12 @@ def test_unknown_meta_action_sets_is_error_and_keeps_envelope() -> None:
 
 
 def test_successful_search_stays_non_error() -> None:
-    result = _call_tool("tg_search", {"pattern": "KNOWN_COMMANDS", "path": "."})
+    # Scope to a single source file so CI without a native rg binary does not hit the
+    # implicit broad-root scan refusal on the full checkout.
+    result = _call_tool(
+        "tg_search",
+        {"pattern": "KNOWN_COMMANDS", "path": "src/tensor_grep/cli/commands.py"},
+    )
 
     assert result.isError is False
     assert "error" not in json.loads(result.content[0].text)

@@ -369,7 +369,7 @@ def test_search_citation_wiring_stays_within_main_size_pin(tmp_path: Path) -> No
 
     main_path = Path(__file__).resolve().parents[2] / "src/tensor_grep/cli/main.py"
     lines = len(main_path.read_bytes().splitlines())
-    assert lines <= 13523, f"citation CLI wiring grew main.py to {lines} lines above pin 13523"
+    assert lines <= 13535, f"citation CLI wiring grew main.py to {lines} lines above pin 13535"
 
 
 @pytest.mark.parametrize(

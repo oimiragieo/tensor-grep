@@ -632,6 +632,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
 _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
     "tg_batch": {"queries": [{"id": "q", "kind": "search", "pattern": "x"}], "path": "."},
     "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
+    "tg_coverage": {"path": "."},
     "tg_repo_map": {"path": "."},
     "tg_orient": {"path": "."},
     "tg_doctor": {"path": "."},
@@ -924,7 +925,12 @@ _EXPECTED_META_TOOL_NAMES = {
     "tg_checkpoint",
     "tg_rewrite",
 }
-_EXPECTED_SINGLETON_TOOL_NAMES = {"tg_mcp_capabilities", "tg_classify_logs", "tg_batch"}
+_EXPECTED_SINGLETON_TOOL_NAMES = {
+    "tg_mcp_capabilities",
+    "tg_classify_logs",
+    "tg_batch",
+    "tg_coverage",
+}
 
 
 def _run_mcp_flag_probe_subprocess(env_overrides: dict[str, str]) -> dict[str, object]:

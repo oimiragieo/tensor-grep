@@ -58,6 +58,7 @@ KNOWN_COMMANDS = {
     "codemap",
     "file-api",
     "freshness",
+    "coverage",
     "inventory",
     "docs-coverage",
     "session",
