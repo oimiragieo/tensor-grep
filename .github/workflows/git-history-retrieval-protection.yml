@@ -1,0 +1,51 @@
+name: Git history retrieval protection
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+jobs:
+  protected-change-label:
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: read
+      contents: read
+    steps:
+      - name: Require baseline update label for protected files
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.issue.number;
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: number, per_page: 100
+            });
+            const protectedFile = (path) =>
+              path.startsWith('benchmarks/git_history_retrieval/') ||
+              path === 'tests/eval/test_git_history_retrieval_gate.py' ||
+              path === 'src/tensor_grep/core/retrieval_scoring.py' ||
+              path === '.github/workflows/git-history-retrieval.yml' ||
+              path === '.github/workflows/git-history-retrieval-protection.yml' ||
+              path === 'docs/benchmarks.md' ||
+              path === '.gitattributes';
+            const changed = files.filter((file) =>
+              protectedFile(file.filename) ||
+              (file.status === 'renamed' && protectedFile(file.previous_filename || '')));
+            const labels = context.payload.pull_request.labels.map((label) => label.name);
+            if (changed.length && !labels.includes('eval-baseline-update')) {
+              core.setFailed('protected_change_unlabelled: ' +
+                changed.map((file) => file.filename).join(', '));
+              return;
+            }
+            const {data: branch} = await github.rest.repos.getBranch({owner, repo, branch: 'main'});
+            if (!branch.protected) {
+              core.setFailed('main_protection_unenforced: main is unprotected');
+              return;
+            }
+            const {data: required} = await github.rest.repos.getRequiredStatusChecks({
+              owner, repo, branch: 'main'
+            });
+            const expected = 'Git history retrieval protection / protected-change-label';
+            const contexts = required.contexts || [];
+            const checks = required.checks || [];
+            if (!contexts.includes(expected) && !checks.some((check) => check.context === expected)) {
+              core.setFailed('main_protection_unenforced: required check absent');
+            }
