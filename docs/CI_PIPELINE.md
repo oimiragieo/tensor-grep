@@ -115,10 +115,12 @@ The Python audit exports the fully locked `uv.lock` dependency graph to a hashed
 under `$RUNNER_TEMP`, then runs `pip-audit` with `--require-hashes` and `--disable-pip` against that
 file. This keeps the scanner/runtime environment out of the audited dependency set, while still
 checking all extras from the resolved lock.
-The repo also owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for audited
-transitive packages. When `pip-audit` reports a vulnerable transitive dependency, update those
-constraints, refresh `uv.lock`, and extend the validator-backed tests instead of silently pinning
-the package as a new top-level runtime dependency.
+The repo owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for local resolution.
+These constraints do not enter published package metadata. A security floor for a package
+reachable from customer installations must also appear in the appropriate core dependency or
+extra, with a matching lock update and validator-backed tests. The core `certifi>=2026.10.19`
+floor removes the affected emSign trust roots; see the
+[upstream advisory](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2).
 The validator also treats `pytest>=9.0.3` in both `dev` and `bench` extras as audit parity
 surface, because those extras are included in the locked Python audit graph.
 Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's

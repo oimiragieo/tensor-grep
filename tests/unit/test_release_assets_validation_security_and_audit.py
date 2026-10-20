@@ -525,6 +525,8 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     assert "starlette>=1.3.1" in joined_errors
     assert "pydantic-settings>=2.14.2" in joined_errors
     assert "urllib3>=2.8.0" in joined_errors
+    assert "certifi>=2026.10.19" in joined_errors
+    assert "missing direct security floor: certifi>=2026.10.19" in joined_errors
 
 
 def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
@@ -540,7 +542,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
+    dependencies = ["certifi>=2026.10.19", "cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
     nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
@@ -553,6 +555,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.14.4",
+      "certifi>=2026.10.19",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -563,7 +566,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     assert errors == []
 
 
-def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_secure():
+def test_ValidateSecurityFloors_StaleDirectRequirements_RejectsDespiteSecureConstraints() -> None:
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -576,7 +579,7 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=48.0.1", "pyjwt>=2.15.0"]
+    dependencies = ["certifi>=2026.2.25", "cryptography>=48.0.1", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
     nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
@@ -589,6 +592,7 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.14.4",
+      "certifi>=2026.10.19",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -597,7 +601,8 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == [
-        "pyproject.toml [project].dependencies missing direct security floor: cryptography>=50.0.0"
+        "pyproject.toml [project].dependencies missing direct security floor: certifi>=2026.10.19",
+        "pyproject.toml [project].dependencies missing direct security floor: cryptography>=50.0.0",
     ]
 
 
@@ -622,7 +627,7 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
+    dependencies = ["certifi>=2026.10.19", "cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
     nlp = ["tritonclient[http]", "urllib3>=2.8.0"]
@@ -635,6 +640,7 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.14.4",
+      "certifi>=2026.10.19",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -665,7 +671,7 @@ def test_should_reject_lock_only_pyjwt_floor_absent_from_the_published_base_depe
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0"]
+    dependencies = ["certifi>=2026.10.19", "cryptography>=50.0.0"]
 
     [project.optional-dependencies]
     nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
@@ -678,6 +684,7 @@ def test_should_reject_lock_only_pyjwt_floor_absent_from_the_published_base_depe
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.14.4",
+      "certifi>=2026.10.19",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -704,7 +711,7 @@ def test_should_reject_lock_only_urllib3_floor_absent_from_the_published_nlp_ext
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
+    dependencies = ["certifi>=2026.10.19", "cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
     nlp = ["tritonclient[http]", "aiohttp>=3.14.4"]
@@ -717,6 +724,7 @@ def test_should_reject_lock_only_urllib3_floor_absent_from_the_published_nlp_ext
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.14.4",
+      "certifi>=2026.10.19",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",

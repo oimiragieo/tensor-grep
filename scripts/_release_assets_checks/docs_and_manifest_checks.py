@@ -545,6 +545,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
 
     expected_constraints = {
         "aiohttp>=3.14.4",
+        "certifi>=2026.10.19",
         "cryptography>=50.0.0",
         "pyjwt>=2.15.0",
         "pygments>=2.20.0",
@@ -569,7 +570,11 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         project_config = {}
     project_dependencies = project_config.get("dependencies", [])
     # PyJWT is reachable from the BASE install (mcp[crypto] -> pyjwt), exactly like cryptography.
-    required_direct_dependencies = ("cryptography>=50.0.0", "pyjwt>=2.15.0")
+    required_direct_dependencies = (
+        "certifi>=2026.10.19",
+        "cryptography>=50.0.0",
+        "pyjwt>=2.15.0",
+    )
     published_direct = (
         {str(entry) for entry in project_dependencies}
         if isinstance(project_dependencies, list)

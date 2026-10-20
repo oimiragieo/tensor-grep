@@ -40,6 +40,7 @@ cache-keys = [
 ]
 constraint-dependencies = [
     "aiohttp>=3.14.4",
+    "certifi>=2026.10.19",
     "cryptography>=50.0.0",
     "pyjwt>=2.15.0",
     "pygments>=2.20.0",
@@ -194,6 +195,8 @@ dependencies = [
     # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
     "typer>=0.12,<0.26",
     "rich>=13.0",
+    # GHSA-6q48-6c7w-9gw2: publish the patched CA bundle floor to core installers.
+    "certifi>=2026.10.19",
     # >=1.30.0: CVE-2026-59951 is fixed in this maintained 1.x release. Publish the floor
     # here as well as updating uv.lock so fresh customer installs receive the security fix.
     #
