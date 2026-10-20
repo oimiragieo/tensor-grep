@@ -27,6 +27,8 @@ Primary responsibilities:
 - `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version. Wheel and sdist jobs prefetch Rust dependencies with a longer Cargo retry window before `maturin` so transient crates.io DNS failures do not prematurely cancel publication.
 
+The `agent-capsule-hardcases` readiness check runs the full 22-test module with a 240-second subprocess ceiling on Linux and Windows. That budget covers three live-checkout capsules at their 60-second CLI deadline plus a 60-second startup/fixture margin; an inner deadline skip remains visible and does not mean the case passed.
+
 The `test-gpu-linux` cuDF lane runs the full Python suite, including linked AST-rule tests. It installs the pinned ast-grep CLI (`0.41.1`) and verifies that the Python wrapper can find it before pytest starts. Linked test cases with an empty pattern inherit the rule's pattern from `ruleId`; the wrapper interprets `ERROR` as ast-grep literal matching, while tree-sitter treats it as a node query and can match an `ERROR` node in malformed source. The lane runs on a CPU-only GitHub runner, so it verifies dependency and fallback compatibility rather than physical GPU execution.
 
 To reproduce the bounded checks locally, install the `.[dev,ast]` extra and ast-grep `0.41.1`, then run:
