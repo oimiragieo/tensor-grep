@@ -26,6 +26,16 @@ Primary responsibilities:
 - `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version. Wheel and sdist jobs prefetch Rust dependencies with a longer Cargo retry window before `maturin` so transient crates.io DNS failures do not prematurely cancel publication.
 
+The `test-gpu-linux` cuDF lane runs the full Python suite, including linked AST-rule tests. It installs the pinned ast-grep CLI (`0.41.1`) and verifies that the Python wrapper can find it before pytest starts. Linked test cases with an empty pattern inherit the rule's pattern from `ruleId`; the wrapper interprets `ERROR` as ast-grep literal matching, while tree-sitter treats it as a node query and can match an `ERROR` node in malformed source. The lane runs on a CPU-only GitHub runner, so it verifies dependency and fallback compatibility rather than physical GPU execution.
+
+To reproduce the bounded checks locally, install the `.[dev,ast]` extra and ast-grep `0.41.1`, then run:
+
+```bash
+uv run --no-sync python -c "import subprocess, sys, tempfile; p = tempfile.TemporaryDirectory(prefix='tg-ast-'); subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/unit/test_ast_workflows.py', 'tests/unit/test_release_assets_validation_ci_release_gates.py', '-k', 'LinkedRule_EmptyCasePattern or AstSelection_WrapperAbsent or NativeAstQuery_ErrorNodeCounts or CiAstLane_FullAstSuite', '--basetemp', p.name], timeout=180, check=True)"
+```
+
+The wrapper-present case skips with an explicit reason when the optional CLI is absent; the wrapper-absent case forces only wrapper availability off and checks the real tree-sitter behavior on valid `ERROR` and malformed `ERROR (` snippets.
+
 Release behavior:
 
 - Conventional commit subjects drive semantic-release intent.

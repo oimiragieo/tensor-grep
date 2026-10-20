@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from tensor_grep.backends.ast_backend import AstBackend as RealAstBackend
 from tensor_grep.backends.ast_wrapper_backend import (
     AstGrepWrapperBackend as RealAstGrepWrapperBackend,
 )
@@ -91,6 +92,22 @@ def clear_ast_caches():
     yield
     ast_workflows._BACKEND_AVAILABILITY.clear()
     ast_workflows._CACHED_BACKENDS.clear()
+
+
+@pytest.fixture
+def real_wrapper_backend() -> RealAstGrepWrapperBackend:
+    backend = RealAstGrepWrapperBackend()
+    if not backend.is_available():
+        pytest.skip("the optional ast-grep wrapper CLI is not installed")
+    return backend
+
+
+@pytest.fixture
+def real_native_backend() -> RealAstBackend:
+    backend = RealAstBackend()
+    if not backend.is_available():
+        pytest.skip("the optional tree-sitter AST backend is not available")
+    return backend
 
 
 def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_path, capsys):
@@ -294,9 +311,12 @@ def test_scan_ignores_unused_empty_pattern_rule(tmp_path, capsys):
     assert "unused-empty" not in captured.out
 
 
-def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
+def test_LinkedRule_EmptyCasePattern_UsesLinkedWrapperPattern(
+    tmp_path, capsys, real_wrapper_backend
+) -> None:
     from tensor_grep.cli.ast_workflows import test_command
 
+    _ = real_wrapper_backend
     (tmp_path / "sgconfig.yml").write_text(
         "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
     )
@@ -314,6 +334,63 @@ def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
+    assert "cases=2" in captured.out
+    assert "ast-grep structural matching" in captured.out
+
+
+def test_AstSelection_WrapperAbsent_PreservesNativeQuerySemantics(
+    tmp_path, monkeypatch, capsys, real_native_backend
+) -> None:
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.cli.ast_workflows import test_command
+
+    _ = real_native_backend
+    original_check = ast_workflows._check_backend_available
+    monkeypatch.setattr(
+        ast_workflows,
+        "_check_backend_available",
+        lambda name: False if name == "AstGrepWrapperBackend" else original_check(name),
+    )
+    assert not ast_workflows._check_backend_available("AstGrepWrapperBackend")
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n", encoding="utf-8"
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "linked.yml").write_text(
+        "id: linked-empty-case\nruleId: error-rule\npattern: ''\n"
+        "valid: [ERROR]\ninvalid: ['ERROR (']\n",
+        encoding="utf-8",
+    )
+    exit_code = test_command(str(tmp_path / "sgconfig.yml"))
+
+    captured = capsys.readouterr()
+    assert isinstance(real_native_backend, RealAstBackend)
+    assert exit_code == 0, captured.err
+    assert "cases=2" in captured.out
+    assert "native AST matching" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("snippet", "expected_matches"),
+    [("ERROR\n", 0), ("ERROR (\n", 1)],
+)
+def test_NativeAstQuery_ErrorNodeCounts(
+    snippet: str,
+    expected_matches: int,
+    tmp_path,
+    real_native_backend: RealAstBackend,
+) -> None:
+    source_path = tmp_path / "source.py"
+    source_path.write_text(snippet, encoding="utf-8")
+    config = SearchConfig(ast=True, lang="python", query_pattern="ERROR", ast_prefer_native=True)
+
+    result = real_native_backend.search(str(source_path), "ERROR", config=config)
+
+    assert result.total_matches == expected_matches
 
 
 def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):

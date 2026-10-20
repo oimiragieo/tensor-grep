@@ -1113,6 +1113,12 @@ jobs:
           done
           echo "GPU dependency install failed after 5 attempts."
           exit 1
+
+      - name: Install pinned ast-grep CLI
+        run: cargo install ast-grep --version 0.41.1 --locked
+
+      - name: Verify ast-grep wrapper availability
+        run: uv run --no-sync python -c "from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend; assert AstGrepWrapperBackend().is_available()"
           
       # Since standard GitHub Action runners don't have physical GPUs,
       # we run pytest but rely on our test suites dynamic `@pytest.mark.skipif`
