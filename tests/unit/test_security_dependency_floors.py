@@ -52,3 +52,21 @@ def test_published_metadata_carries_the_pyjwt_and_urllib3_security_floors() -> N
 
     assert "pyjwt>=2.15.0" in project["dependencies"]
     assert "urllib3>=2.8.0" in project["optional-dependencies"]["nlp"]
+
+
+def test_Lock_AiohttpAdvisories_ExcludesAffectedReleases() -> None:
+    uv_lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+
+    package = next(pkg for pkg in uv_lock["package"] if pkg["name"] == "aiohttp")
+
+    assert Version(package["version"]) >= Version("3.14.4")
+
+
+def test_Metadata_AiohttpAdvisories_PublishesSecurityFloor() -> None:
+    metadata = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    nlp = metadata["project"]["optional-dependencies"]["nlp"]
+    constraints = metadata["tool"]["uv"]["constraint-dependencies"]
+
+    assert "aiohttp>=3.14.4" in nlp
+    assert "aiohttp>=3.14.4" in constraints
