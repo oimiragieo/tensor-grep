@@ -34,6 +34,15 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     assert any("--pypi-poll-interval-seconds" in err for err in errors)
 
 
+def test_PublicGpuProof_SetupPythonBeforeUvBootstrap_UsesManagedPython() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = (root / ".github/workflows/public-gpu-proof.yml").read_text(encoding="utf-8")
+    setup_python = workflow.index("      - name: Setup Python")
+    install_uv = workflow.index("      - name: Install uv")
+
+    assert setup_python < install_uv
+
+
 def test_should_reject_unpinned_uv_bootstrap_in_ci():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
