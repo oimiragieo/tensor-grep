@@ -13,7 +13,8 @@ Runs on pushes to `main`, pull requests targeting `main`, and a weekly schedule.
 
 Primary responsibilities:
 
-- `release-readiness`: strict docs build plus workflow/package-manager validator checks
+- `repo-hygiene`: isolated source release-asset validation before the Rust build
+- `release-readiness`: strict docs build plus final workflow/package-manager validator checks
 - `Formatting & Linting`: Rust formatting/clippy plus Python Ruff and mypy
 - `test-python`: cross-platform Python test matrix
 - `test-rust-core`: cross-platform Rust test matrix

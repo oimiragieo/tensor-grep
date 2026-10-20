@@ -194,6 +194,10 @@ jobs:
           uv pip install --python "$publication_env/bin/python" python-semantic-release==9.21.1 maturin==1.15.0 mkdocs==1.6.1 pytest
           timeout 180 "$publication_env/bin/python" -m pytest --confcutdir=tests/unit tests/unit/test_release_publication_boundary.py -q
 
+      - name: Validate source release assets before builds
+        timeout-minutes: 2
+        run: timeout 120 uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/validate_release_assets.py
+
       - name: Scan tracked publication files for secrets
         timeout-minutes: 5
         env:

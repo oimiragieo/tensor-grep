@@ -81,6 +81,34 @@ def test_should_require_release_checklist_to_document_semantic_pr_title_contract
     assert any("Squash and merge" in err for err in errors)
 
 
+def test_CiSourceReleasePreflight_BeforeRustBuild_UsesPinnedIsolatedPython() -> None:
+    import yaml
+
+    repo_hygiene_steps, step = _ci_job_step(
+        "repo-hygiene", "Validate source release assets before builds"
+    )
+    _, publication_boundary = _ci_job_step("repo-hygiene", "Release publication boundary")
+    workflow = yaml.safe_load(
+        _detag(
+            (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    assert step["timeout-minutes"] == 2
+    assert step["run"] == (
+        "timeout 120 uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- "
+        "python scripts/validate_release_assets.py"
+    )
+    assert repo_hygiene_steps.index(step) > repo_hygiene_steps.index(publication_boundary)
+    assert workflow["jobs"]["smoke"]["needs"] == "repo-hygiene"
+    _, final_validation = _ci_job_step(
+        "release-readiness", "Validate release/package asset consistency"
+    )
+    assert final_validation["run"] == "uv run python scripts/validate_release_assets.py"
+
+
 def test_should_require_ci_terminal_publish_success_gate():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
