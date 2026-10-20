@@ -520,7 +520,7 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     assert "pygments>=2.20.0" in joined_errors
     assert "python-multipart>=0.0.31" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
-    assert "aiohttp>=3.14.3" in joined_errors
+    assert "aiohttp>=3.14.4" in joined_errors
     assert "pyjwt>=2.15.0" in joined_errors
     assert "starlette>=1.3.1" in joined_errors
     assert "pydantic-settings>=2.14.2" in joined_errors
@@ -543,7 +543,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -552,7 +552,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.3",
+      "aiohttp>=3.14.4",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -579,7 +579,7 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     dependencies = ["cryptography>=48.0.1", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -588,7 +588,7 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.3",
+      "aiohttp>=3.14.4",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -634,7 +634,7 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.3",
+      "aiohttp>=3.14.4",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -644,7 +644,7 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == [
         "pyproject.toml [project.optional-dependencies].nlp missing published security floor: "
-        "aiohttp>=3.14.3 (a [tool.uv] constraint is lock-only and does not reach a PyPI installer)"
+        "aiohttp>=3.14.4 (a [tool.uv] constraint is lock-only and does not reach a PyPI installer)"
     ]
 
 
@@ -668,7 +668,7 @@ def test_should_reject_lock_only_pyjwt_floor_absent_from_the_published_base_depe
     dependencies = ["cryptography>=50.0.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -677,7 +677,7 @@ def test_should_reject_lock_only_pyjwt_floor_absent_from_the_published_base_depe
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.3",
+      "aiohttp>=3.14.4",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",
@@ -707,7 +707,7 @@ def test_should_reject_lock_only_urllib3_floor_absent_from_the_published_nlp_ext
     dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.4"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -716,7 +716,7 @@ def test_should_reject_lock_only_urllib3_floor_absent_from_the_published_nlp_ext
       "python-multipart>=0.0.31",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
-      "aiohttp>=3.14.3",
+      "aiohttp>=3.14.4",
       "pyjwt>=2.15.0",
       "starlette>=1.3.1",
       "pydantic-settings>=2.14.2",

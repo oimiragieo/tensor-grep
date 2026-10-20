@@ -544,7 +544,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
-        "aiohttp>=3.14.3",
+        "aiohttp>=3.14.4",
         "cryptography>=50.0.0",
         "pyjwt>=2.15.0",
         "pygments>=2.20.0",
@@ -588,7 +588,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
     # that extra, or the floor silently fails to reach users while every gate still reports green.
     # `nlp` pulls `tritonclient[http]`, whose own metadata permits `aiohttp>=3.8.1,<4`.
     # urllib3 is reachable only through nlp (tritonclient[http] -> geventhttpclient).
-    required_extra_floors = {"nlp": ("aiohttp>=3.14.3", "urllib3>=2.8.0")}
+    required_extra_floors = {"nlp": ("aiohttp>=3.14.4", "urllib3>=2.8.0")}
     optional_dependencies = project_config.get("optional-dependencies", {})
     if not isinstance(optional_dependencies, dict):
         optional_dependencies = {}
