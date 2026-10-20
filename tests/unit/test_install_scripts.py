@@ -509,7 +509,7 @@ def test_install_sh_pins_uv_version():
     content = _read_script("scripts/install.sh")
     assert "astral.sh/uv/install.sh" not in content
     assert "astral.sh/uv/${UV_VERSION}/install.sh" not in content
-    assert 'UV_VERSION="' in content
+    assert 'UV_VERSION="0.13.4"' in content
     assert "github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-" in content
     for triple in (
         "x86_64-unknown-linux-gnu",
@@ -537,7 +537,7 @@ def test_install_ps1_pins_uv_version():
     content = _read_script("scripts/install.ps1")
     assert "astral.sh/uv/install.ps1" not in content
     assert "astral.sh/uv/$uvVersion/install.ps1" not in content
-    assert '$uvVersion = "' in content
+    assert '$uvVersion = "0.13.4"' in content
     assert "github.com/astral-sh/uv/releases/download/$uvVersion" in content
     # The artifact name is arch-templated (uv-$uvArch-pc-windows-msvc) with both Windows arches.
     assert "uv-$uvArch-pc-windows-msvc" in content
@@ -582,7 +582,7 @@ def test_install_sh_should_refresh_managed_lsp_providers_via_frontdoor():
 def test_uv_checksums_json_has_both_arch_shas_with_64_hex_digits():
     """Both committed SHAs must be present and be valid 64-character lowercase hex strings.
 
-    These are the SHA-256 digests of uv-<triple>-pc-windows-msvc.zip for uv 0.11.25,
+    These are the SHA-256 digests of uv-<triple>-pc-windows-msvc.zip for uv 0.13.4,
     fetched from the official GitHub release sidecar files (.zip.sha256).  They are
     used by install.ps1 to verify the downloaded zip BEFORE extracting or running uv.
     """
@@ -591,7 +591,7 @@ def test_uv_checksums_json_has_both_arch_shas_with_64_hex_digits():
     data = json.loads(checksums_path.read_text(encoding="utf-8"))
 
     for arch in ("x86_64", "aarch64"):
-        key = f"0.11.25/{arch}"
+        key = f"0.13.4/{arch}"
         assert key in data, f"Missing key '{key}' in uv_checksums.json"
         sha = data[key]
         assert isinstance(sha, str), f"SHA for '{key}' must be a string, got {type(sha)}"
@@ -613,11 +613,26 @@ def test_install_ps1_uv_embedded_shas_match_checksums_json():
     content = _read_script("scripts/install.ps1")
 
     for arch in ("x86_64", "aarch64"):
-        sha = data[f"0.11.25/{arch}"]
+        sha = data[f"0.13.4/{arch}"]
         assert sha in content, (
-            f"SHA for uv 0.11.25/{arch} ({sha}) is in uv_checksums.json but not embedded in "
+            f"SHA for uv 0.13.4/{arch} ({sha}) is in uv_checksums.json but not embedded in "
             f"install.ps1. Update the $uvKnownSha256 table in install.ps1."
         )
+
+
+def test_ValidateUvChecksums_AllSupportedPlatforms_HasExactSixFixedVersionEntries() -> None:
+    checksums_path = ROOT / "scripts" / "uv_checksums.json"
+
+    data = json.loads(checksums_path.read_text(encoding="utf-8"))
+
+    assert data == {
+        "0.13.4/x86_64": "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225",
+        "0.13.4/aarch64": "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5",
+        "0.13.4/x86_64-unknown-linux-gnu": "2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f",
+        "0.13.4/aarch64-unknown-linux-gnu": "1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab",
+        "0.13.4/x86_64-apple-darwin": "7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6",
+        "0.13.4/aarch64-apple-darwin": "e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1",
+    }
 
 
 def test_install_ps1_downloads_uv_binary_directly_and_verifies_checksum():
@@ -679,7 +694,7 @@ def test_install_ps1_verifies_path_uv_version_before_trusting_it():
     assert "$uvTrusted" in branch  # fail-closed marker gating reuse vs download
     # The bare unconditional "Found existing uv installation." trust message must be gone.
     assert "Found existing uv installation." not in content
-    # Exact regex-captured comparison (never -like/substring), so 0.11.253 cannot match 0.11.25.
+    # Exact regex-captured comparison (never -like/substring), so 0.13.43 cannot match 0.13.4.
     assert "-eq $uvVersion" in branch
 
 

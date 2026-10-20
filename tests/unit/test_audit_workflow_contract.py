@@ -30,7 +30,7 @@ def test_audit_workflow_checks_out_pull_request_head_ref() -> None:
     ) in workflow
 
 
-def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool() -> None:
+def test_AuditWorkflow_PatchedIsolatedTool_AuditsLockedRequirements() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
 
@@ -39,7 +39,10 @@ def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool()
         "uv export --format requirements.txt --all-extras --no-emit-project --output-file "
         '"$RUNNER_TEMP/python-audit-requirements.txt" --locked'
     )
-    run_audit = "uv run --no-project --python 3.12 --with pip-audit -- pip-audit"
+    run_audit = (
+        "uv run --no-project --python 3.12 --with pip-audit "
+        "--with 'certifi>=2026.10.19' -- pip-audit"
+    )
 
     assert setup_python in workflow
     assert export_requirements in workflow
@@ -49,14 +52,13 @@ def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool()
     assert "--progress-spinner off" in workflow
     assert '-r "$RUNNER_TEMP/python-audit-requirements.txt"' in workflow
     assert "upstream no-fixed-version advisories" in workflow
-    for ignored_id in [
+    assert {
         "PYSEC-2025-183",
         "PYSEC-2025-189",
         "PYSEC-2025-210",
         "PYSEC-2025-218",
         "PYSEC-2026-139",
-    ]:
-        assert f"--ignore-vuln {ignored_id}" in workflow
+    }.issubset(set(re.findall(r"--ignore-vuln\s+(\S+)", workflow)))
     assert (
         workflow.index(setup_python)
         < workflow.index(export_requirements)

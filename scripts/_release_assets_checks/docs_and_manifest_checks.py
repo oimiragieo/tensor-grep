@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
 from .constants import _AST_GREP_VERSION_PIN_RE, RELEASE_DOC_PATHS, WINGET_SINGLETON_SCHEMA_HEADER
+from .helpers import _validate_uv_security_pins
 
 
 def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
@@ -544,7 +545,8 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
-        "aiohttp>=3.14.3",
+        "aiohttp>=3.14.4",
+        "certifi>=2026.10.19",
         "cryptography>=50.0.0",
         "pyjwt>=2.15.0",
         "pygments>=2.20.0",
@@ -569,7 +571,11 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         project_config = {}
     project_dependencies = project_config.get("dependencies", [])
     # PyJWT is reachable from the BASE install (mcp[crypto] -> pyjwt), exactly like cryptography.
-    required_direct_dependencies = ("cryptography>=50.0.0", "pyjwt>=2.15.0")
+    required_direct_dependencies = (
+        "certifi>=2026.10.19",
+        "cryptography>=50.0.0",
+        "pyjwt>=2.15.0",
+    )
     published_direct = (
         {str(entry) for entry in project_dependencies}
         if isinstance(project_dependencies, list)
@@ -588,7 +594,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
     # that extra, or the floor silently fails to reach users while every gate still reports green.
     # `nlp` pulls `tritonclient[http]`, whose own metadata permits `aiohttp>=3.8.1,<4`.
     # urllib3 is reachable only through nlp (tritonclient[http] -> geventhttpclient).
-    required_extra_floors = {"nlp": ("aiohttp>=3.14.3", "urllib3>=2.8.0")}
+    required_extra_floors = {"nlp": ("aiohttp>=3.14.4", "urllib3>=2.8.0")}
     optional_dependencies = project_config.get("optional-dependencies", {})
     if not isinstance(optional_dependencies, dict):
         optional_dependencies = {}
@@ -657,6 +663,7 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
 
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
+    errors.extend(_validate_uv_security_pins(build_command))
     stamp_position = build_command.find("scripts/stamp_release_assets.py")
     if stamp_position < 0:
         errors.append(

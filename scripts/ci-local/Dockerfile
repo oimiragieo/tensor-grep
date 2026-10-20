@@ -13,7 +13,7 @@
 #                           the PyO3 build needs a python to link against. Mirrored below.
 #   * Python install      : `uv pip install -e ".[dev,ast]"` (ci.yml test-python).
 #   * Pytest command      : `pytest tests -v --tb=short -m "not eval"` (ci.yml test-python).
-#   * uv version          : pinned 0.11.25, matching ci.yml. An unpinned tool install is how this
+#   * uv version          : pinned 0.13.4, matching ci.yml. An unpinned tool install is how this
 #                           repo reddened main once already (a same-day ruff release).
 #
 # This mirrors the ubuntu-latest lane only. It does NOT reproduce windows-latest or macos-latest,
@@ -72,7 +72,8 @@ RUN CARGO_HOME=/usr/local/cargo curl --proto '=https' --tlsv1.2 --retry 10 --ret
     && rm -f /tmp/rustup-init.sh
 ENV PATH="/usr/local/cargo/bin:${PATH}"
 
-RUN python3.12 -m pip install --break-system-packages uv==0.11.25
+RUN python3.12 -m pip install --break-system-packages --no-deps "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70" \
+    && python3.12 -m pip install --break-system-packages uv==0.13.4
 
 # RUN AS NON-ROOT. This is not hygiene, it is CORRECTNESS for this suite.
 #

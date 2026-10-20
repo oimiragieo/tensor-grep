@@ -41,7 +41,7 @@ MIRRORED_VALUES = (
     ("cargo test invocation", "cargo test --verbose --no-default-features", _ENTRYPOINT),
     ("cuda check invocation", "cargo check --features cuda --all-targets", _ENTRYPOINT),
     ("pytest invocation", 'pytest tests -v --tb=short -m "not eval"', _ENTRYPOINT),
-    ("pinned uv version", "uv==0.11.25", _DOCKERFILE),
+    ("pinned uv version", "uv==0.13.4", _DOCKERFILE),
     ("symlink-tests env var", "TG_REQUIRE_SYMLINK_TESTS", _DOCKERFILE),
     ("editable install extras", '-e ".[dev,ast]"', _ENTRYPOINT),
 )

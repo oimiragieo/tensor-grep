@@ -1180,7 +1180,9 @@ def build_check_plan(
                 "Verify polyglot monorepo, generated-noise, and Rust/Python/JS/TS "
                 "agent capsule hardcases."
             ),
-            timeout_s=240 if IS_WINDOWS else 120,
+            # Three live-checkout capsules can each use the 60s cold CLI deadline; reserve
+            # another 60s for process startup and fixture cases on either platform.
+            timeout_s=240,
         ),
         Check(
             name="docs-claim-check",

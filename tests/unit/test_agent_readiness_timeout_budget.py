@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tensor_grep.cli.agent_capsule_constants import DEFAULT_AGENT_CLI_DEADLINE_SECONDS
+
 
 def _load_script_module():
     root = Path(__file__).resolve().parents[2]
@@ -42,6 +44,13 @@ _VALIDATOR_ONLY_WORST_CASE = {
         * module._READINESS_SUBPROCESS_CASE_TIMEOUT_S
     ),
 }
+
+_HARDCASE_LIVE_CASE_COUNT = 3
+_HARDCASE_STARTUP_MARGIN_SECONDS = 60.0
+_HARDCASE_REQUIRED_BUDGET_SECONDS = (
+    DEFAULT_AGENT_CLI_DEADLINE_SECONDS * _HARDCASE_LIVE_CASE_COUNT
+    + _HARDCASE_STARTUP_MARGIN_SECONDS
+)
 
 
 @pytest.mark.parametrize("is_windows", [True, False])
@@ -100,7 +109,7 @@ def test_total_timeout_budget_covers_the_full_check_plan(monkeypatch, tmp_path, 
     assert module.total_timeout_budget_s(checks) >= _plan_sum(module, checks)
 
 
-@pytest.mark.parametrize("is_windows,expected_timeout", [(True, 240), (False, 120)])
+@pytest.mark.parametrize("is_windows,expected_timeout", [(True, 240), (False, 240)])
 def test_hardcase_timeout_matches_platform_workload(
     monkeypatch, tmp_path, is_windows, expected_timeout
 ) -> None:
@@ -115,6 +124,26 @@ def test_hardcase_timeout_matches_platform_workload(
     hardcase = next(check for check in checks if check.name == "agent-capsule-hardcases")
     assert hardcase.timeout_s == expected_timeout
     assert module.effective_budget_s(hardcase) == expected_timeout
+
+
+@pytest.mark.parametrize("is_windows", [True, False])
+def test_BuildCheckPlan_ThreeLiveDeadlines_ReservesStartupMargin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, is_windows: bool
+) -> None:
+    module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", is_windows)
+
+    checks = module.build_check_plan(
+        repo_root=tmp_path,
+        expected_version="1.122.1",
+        include_shell_probes=False,
+        include_wsl_probe=False,
+    )
+    hardcase = next(check for check in checks if check.name == "agent-capsule-hardcases")
+
+    assert _HARDCASE_REQUIRED_BUDGET_SECONDS > 120.0
+    assert 240.0 >= _HARDCASE_REQUIRED_BUDGET_SECONDS
+    assert hardcase.timeout_s >= _HARDCASE_REQUIRED_BUDGET_SECONDS
 
 
 @pytest.mark.parametrize("is_windows", [True, False])

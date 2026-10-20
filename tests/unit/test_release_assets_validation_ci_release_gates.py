@@ -2,8 +2,22 @@
 
 import importlib.util
 from pathlib import Path
+from typing import Any
 
 from tests.unit.test_release_assets_validation_shared import _detag
+
+
+def _ci_job_step(job_name: str, step_name: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    import yaml
+
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.safe_load(
+        _detag((root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
+    )
+    steps = workflow["jobs"][job_name]["steps"]
+    step = next((step for step in steps if step.get("name") == step_name), None)
+    assert step is not None, f"{job_name} is missing step {step_name!r}"
+    return steps, step
 
 
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
@@ -65,6 +79,34 @@ def test_should_require_release_checklist_to_document_semantic_pr_title_contract
     )
     assert any("feat: ...` -> minor" in err for err in errors)
     assert any("Squash and merge" in err for err in errors)
+
+
+def test_CiSourceReleasePreflight_BeforeRustBuild_UsesPinnedIsolatedPython() -> None:
+    import yaml
+
+    repo_hygiene_steps, step = _ci_job_step(
+        "repo-hygiene", "Validate source release assets before builds"
+    )
+    _, publication_boundary = _ci_job_step("repo-hygiene", "Release publication boundary")
+    workflow = yaml.safe_load(
+        _detag(
+            (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    assert step["timeout-minutes"] == 2
+    assert step["run"] == (
+        "timeout 120 uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- "
+        "python scripts/validate_release_assets.py"
+    )
+    assert repo_hygiene_steps.index(step) > repo_hygiene_steps.index(publication_boundary)
+    assert workflow["jobs"]["smoke"]["needs"] == "repo-hygiene"
+    _, final_validation = _ci_job_step(
+        "release-readiness", "Validate release/package asset consistency"
+    )
+    assert final_validation["run"] == "uv run python scripts/validate_release_assets.py"
 
 
 def test_should_require_ci_terminal_publish_success_gate():
@@ -1306,3 +1348,23 @@ def test_should_require_pypi_publish_to_wait_for_github_release_assets():
         "CI workflow publish-pypi job must depend on publish-github-release-assets so PyPI cannot publish before GitHub release assets are verified"
         in joined_errors
     )
+
+
+def test_CiAstLane_FullAstSuite_InstallsPinnedWrapper() -> None:
+    gpu_steps, dependency_setup = _ci_job_step(
+        "test-gpu-linux", "Verify cuDF / RAPIDS Configuration (with retry)"
+    )
+    _, install_ast_grep = _ci_job_step("test-gpu-linux", "Install pinned ast-grep CLI")
+    _, verify_ast_grep = _ci_job_step("test-gpu-linux", "Verify ast-grep wrapper availability")
+    _, run_pytest = _ci_job_step("test-gpu-linux", "Run Pytest with GPU Hooks")
+
+    assert 'uv pip install -e ".[dev,nlp,ast]"' in dependency_setup["run"]
+    assert install_ast_grep["run"] == "cargo install ast-grep --version 0.41.1 --locked"
+    assert verify_ast_grep["run"] == (
+        'uv run --no-sync python -c "from tensor_grep.backends.ast_wrapper_backend import '
+        'AstGrepWrapperBackend; assert AstGrepWrapperBackend().is_available()"'
+    )
+    assert run_pytest["run"] == 'uv run pytest tests -v -m "not slow" --maxfail=0'
+    assert gpu_steps.index(dependency_setup) < gpu_steps.index(install_ast_grep)
+    assert gpu_steps.index(install_ast_grep) < gpu_steps.index(verify_ast_grep)
+    assert gpu_steps.index(verify_ast_grep) < gpu_steps.index(run_pytest)

@@ -13,7 +13,8 @@ Runs on pushes to `main`, pull requests targeting `main`, and a weekly schedule.
 
 Primary responsibilities:
 
-- `release-readiness`: strict docs build plus workflow/package-manager validator checks
+- `repo-hygiene`: isolated source release-asset validation before the Rust build
+- `release-readiness`: strict docs build plus final workflow/package-manager validator checks
 - `Formatting & Linting`: Rust formatting/clippy plus Python Ruff and mypy
 - `test-python`: cross-platform Python test matrix
 - `test-rust-core`: cross-platform Rust test matrix
@@ -25,6 +26,18 @@ Primary responsibilities:
 - `build-release-native-assets`: builds release-native CPU front doors from the semantic-release tag when `steps.release.outputs.released == 'true'`; the macOS amd64 asset is built on an Intel macOS runner label. The default release-native asset profile remains CPU-only `native-frontdoor`. Setting repository variable `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` additionally enables opt-in Linux/Windows NVIDIA front-door assets built with CUDA features.
 - `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version. Wheel and sdist jobs prefetch Rust dependencies with a longer Cargo retry window before `maturin` so transient crates.io DNS failures do not prematurely cancel publication.
+
+The `agent-capsule-hardcases` readiness check runs the full 22-test module with a 240-second subprocess ceiling on Linux and Windows. That budget covers three live-checkout capsules at their 60-second CLI deadline plus a 60-second startup/fixture margin; an inner deadline skip remains visible and does not mean the case passed.
+
+The `test-gpu-linux` cuDF lane runs the full Python suite, including linked AST-rule tests. It installs the pinned ast-grep CLI (`0.41.1`) and verifies that the Python wrapper can find it before pytest starts. Linked test cases with an empty pattern inherit the rule's pattern from `ruleId`; the wrapper interprets `ERROR` as ast-grep literal matching, while tree-sitter treats it as a node query and can match an `ERROR` node in malformed source. The lane runs on a CPU-only GitHub runner, so it verifies dependency and fallback compatibility rather than physical GPU execution.
+
+To reproduce the bounded checks locally, install the `.[dev,ast]` extra and ast-grep `0.41.1`, then run:
+
+```bash
+uv run --no-sync python -c "import subprocess, sys, tempfile; p = tempfile.TemporaryDirectory(prefix='tg-ast-'); subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/unit/test_ast_workflows.py', 'tests/unit/test_release_assets_validation_ci_release_gates.py', '-k', 'LinkedRule_EmptyCasePattern or AstSelection_WrapperAbsent or NativeAstQuery_ErrorNodeCounts or CiAstLane_FullAstSuite', '--basetemp', p.name], timeout=180, check=True)"
+```
+
+The wrapper-present case skips with an explicit reason when the optional CLI is absent; the wrapper-absent case forces only wrapper availability off and checks the real tree-sitter behavior on valid `ERROR` and malformed `ERROR (` snippets.
 
 Release behavior:
 
@@ -102,15 +115,26 @@ The Python audit exports the fully locked `uv.lock` dependency graph to a hashed
 under `$RUNNER_TEMP`, then runs `pip-audit` with `--require-hashes` and `--disable-pip` against that
 file. This keeps the scanner/runtime environment out of the audited dependency set, while still
 checking all extras from the resolved lock.
-The repo also owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for audited
-transitive packages. When `pip-audit` reports a vulnerable transitive dependency, update those
-constraints, refresh `uv.lock`, and extend the validator-backed tests instead of silently pinning
-the package as a new top-level runtime dependency.
+The repo owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for local resolution.
+These constraints do not enter published package metadata. A security floor for a package
+reachable from customer installations must also appear in the appropriate core dependency or
+extra, with a matching lock update and validator-backed tests. The core `certifi>=2026.10.19`
+floor removes the affected emSign trust roots; see the
+[upstream advisory](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2).
+
+CI and semantic-release bootstrap pip 26.2.2 from an official SHA-256-pinned wheel before
+installing uv 0.13.4 or later dependencies. The pinned first download protects artifact
+integrity while replacing the old tool's bundled CA trust. The local CI Docker image and
+public GPU proof use the same versions; the isolated audit client also requires patched
+certifi. Keep bootstrap versions, wheel digest, validator checks and harness parity tests
+in sync. Refreshing the application dependency alone does not update tools' vendored CAs;
+see the [Python security announcement](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576).
+
 The validator also treats `pytest>=9.0.3` in both `dev` and `bench` extras as audit parity
 surface, because those extras are included in the locked Python audit graph.
 Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's
 versioning allows formatter behavior to change across releases, so keep the repo-owned
-`ruff==0.15.11` pin and the validator tests in sync when intentionally upgrading the formatter.
+`ruff==0.15.20` pin and the validator tests in sync when intentionally upgrading the formatter.
 Operationally, local release gates must run both `uv run ruff check .` and
 `uv run ruff format --check --preview .`. A non-preview local format pass is not sufficient,
 because preview formatting can reflow files differently and fail the `Formatting & Linting`

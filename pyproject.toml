@@ -39,7 +39,8 @@ cache-keys = [
     { file = "rust_core/paste-compat/src/**/*.rs" },
 ]
 constraint-dependencies = [
-    "aiohttp>=3.14.3",
+    "aiohttp>=3.14.4",
+    "certifi>=2026.10.19",
     "cryptography>=50.0.0",
     "pyjwt>=2.15.0",
     "pygments>=2.20.0",
@@ -158,7 +159,7 @@ version_toml = [
     "rust_core/Cargo.toml:package.version",
 ]
 branch = "main"
-build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && cargo generate-lockfile --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && pip install uv==0.11.25 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
+build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && cargo generate-lockfile --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && python -m pip install --no-deps \"pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70\" && python -m pip install uv==0.13.4 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
 upload_to_pypi = false
 upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"
@@ -194,14 +195,10 @@ dependencies = [
     # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
     "typer>=0.12,<0.26",
     "rich>=13.0",
-    # >=1.29.0: maintenance-policy floor bump (W2-b,
-    # docs/design/2026-08-20-mcp-2-0-exposure-decision.md). >=1.27.2 was the CVE-2026-52870 fix
-    # (mcp 1.26.0 advisory); no advisory is cited against 1.27.2 itself -- the `<2` cap below means
-    # this floor is the ONLY thing keeping a resolver from installing an old release off the v1.x
-    # branch that still receives security patches, so the floor tracks the maintained head
-    # (latest v1.x per PyPI as of 2026-08-20 is 1.29.0, uploaded 2026-07-28) rather than lag
-    # behind it. If an advisory is later cited against a version below this floor, it upgrades the
-    # justification; it is not the justification today.
+    # GHSA-6q48-6c7w-9gw2: publish the patched CA bundle floor to core installers.
+    "certifi>=2026.10.19",
+    # >=1.30.0: CVE-2026-59951 is fixed in this maintained 1.x release. Publish the floor
+    # here as well as updating uv.lock so fresh customer installs receive the security fix.
     #
     # <2: mcp 2.0.0 REMOVED `mcp.server.fastmcp`, which `cli/mcp_server.py:20` imports at module
     # scope. Because `tg run --rewrite` lazily imports `mcp_server` (ast_workflows.py:64 ->
@@ -216,7 +213,7 @@ dependencies = [
     # API is a real change that deserves its own PR and its own tests. Lifting this cap REQUIRES
     # porting `cli/mcp_server.py` off `mcp.server.fastmcp` first -- see the guard in
     # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
-    "mcp>=1.29.0,<2",
+    "mcp>=1.30.0,<2",
     "pathspec>=1.0.4",
     "packaging>=24.1",
     "pyyaml>=6.0",
@@ -256,7 +253,7 @@ gpu-win = ["torch>=2.0", "fsspec>=2026.6.0"]
 # pulls `tritonclient[http]`, whose own metadata permits `aiohttp>=3.8.1,<4`, so without this
 # direct floor the published extra can still resolve an advisory-affected aiohttp. Per AGENTS.md
 # A69, a fixable advisory is upgraded across BOTH the direct and the constraint floor.
-nlp = ["transformers>=5.3.0", "tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0", "fsspec>=2026.6.0", "multidict>=6.9.1"]
+nlp = ["transformers>=5.3.0", "tritonclient[http]", "aiohttp>=3.14.4", "urllib3>=2.8.0", "fsspec>=2026.6.0", "multidict>=6.9.1"]
 ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust", "tree-sitter-go", "tree-sitter-java", "tree-sitter-php", "tree-sitter-c-sharp", "tree-sitter-c", "tree-sitter-cpp", "pygls>=2.0"]
 # `tg scan --ruleset` / `--rule` / `--inline-rules` run through the ast-grep WRAPPER backend,
 # which shells out to an `ast-grep`/`sg` BINARY on PATH -- a different dependency from the

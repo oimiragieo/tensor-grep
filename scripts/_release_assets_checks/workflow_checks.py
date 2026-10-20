@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from .constants import ROOT
-from .helpers import _normalize_pinned_actions
+from .helpers import _normalize_pinned_actions, _validate_uv_security_pins
 
 
 def validate_actions_sha_pinned() -> list[str]:
@@ -127,6 +127,7 @@ def validate_public_gpu_proof_workflow_content(*, workflow_content: str) -> list
             "Public GPU proof workflow must pin uv (`pip install uv==<version>`); unpinned uv "
             "is not allowed"
         )
+    errors.extend(_validate_uv_security_pins(workflow_content))
 
     try:
         parsed = yaml.safe_load(workflow_content) or {}
@@ -490,6 +491,7 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
                     "uv run --no-project",
                     "--python 3.12",
                     "--with pip-audit",
+                    "certifi>=2026.10.19",
                     "-- pip-audit",
                     "--require-hashes",
                     "--disable-pip",
