@@ -113,7 +113,7 @@ echo "=========================================================="
 # scripts/uv_checksums.json) instead of piping the astral.sh remote installer *script* to a shell,
 # which executes an unverified remote script (audit: bring Linux/macOS to install.ps1 parity;
 # see https://github.com/astral-sh/uv/issues/13074). Bump UV_VERSION + every checksum together.
-UV_VERSION="0.11.25"
+UV_VERSION="0.13.4"
 # H6 hardening: trust a uv already on PATH ONLY if it reports EXACTLY the pinned version; any
 # mismatch/unparsable value falls CLOSED into the checksum-verified download below, so a stale or
 # hijacked PATH uv can no longer bypass the pinned-uv supply-chain gate. (Mirror of install.ps1.)
@@ -150,10 +150,10 @@ else
     # SHA-256 of uv-<triple>.tar.gz (source of truth: scripts/uv_checksums.json). Inlined so this
     # script self-verifies even when run via `curl ... | sh`.
     case "${uv_triple}" in
-        x86_64-unknown-linux-gnu)  uv_expected_sha="1db18b5e76fa645a7f3865773139bdec8e2d46adbdbb35e7410b34fa8015ccd2" ;;
-        aarch64-unknown-linux-gnu) uv_expected_sha="e0e9d73f74e06a7dcd53910d5962146ab48f0af9c92cc8df33a37baa0121014d" ;;
-        x86_64-apple-darwin)       uv_expected_sha="65ff85b33212f75d34d7c0f0724aba9a742c74f62559f67dc0d6c543dc2fc52f" ;;
-        aarch64-apple-darwin)      uv_expected_sha="5fc334bb25d19806262efd1f6e7d380155c7e817d89bf426df4ba7ae873c9471" ;;
+        x86_64-unknown-linux-gnu)  uv_expected_sha="2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f" ;;
+        aarch64-unknown-linux-gnu) uv_expected_sha="1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab" ;;
+        x86_64-apple-darwin)       uv_expected_sha="7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6" ;;
+        aarch64-apple-darwin)      uv_expected_sha="e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1" ;;
     esac
     uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_triple}.tar.gz"
     uv_tmp="$(mktemp -d)"

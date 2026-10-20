@@ -457,11 +457,11 @@ try {
     # (scripts/uv_checksums.json) instead of running the astral.sh remote installer, which lacks
     # binary checksum verification on Windows (see https://github.com/astral-sh/uv/issues/13074).
     # Bump both $uvVersion and the committed checksums together when upgrading.
-    $uvVersion = "0.11.25"
+    $uvVersion = "0.13.4"
     # SHA-256 of uv-<triple>-pc-windows-msvc.zip — source of truth: scripts/uv_checksums.json.
     $uvKnownSha256 = @{
-        "x86_64"  = "15bfd1423b7eaa7aae949922d4712ebaac2bb44a81af64ab59bbe007090cb0d0"
-        "aarch64" = "40d65c29c4d97db6a0993df665d3727700bb799b3618992ce9a4dc533c6d1a31"
+        "x86_64"  = "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
+        "aarch64" = "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5"
     }
     $uvPath = "uv"
     # H6 hardening: a uv already on PATH is trusted ONLY if it reports EXACTLY the pinned version.
