@@ -59,7 +59,7 @@ jobs:
           # between a vuln's aliases across data-source/version updates. List both the
           # PYSEC and CVE aliases for the same advisory when that happens (e.g. torch
           # PYSEC-2025-194 is now reported as CVE-2025-3000).
-          uv run --no-project --python 3.12 --with pip-audit -- pip-audit \
+          uv run --no-project --python 3.12 --with pip-audit --with 'certifi>=2026.10.19' -- pip-audit \
             --require-hashes \
             --disable-pip \
             --progress-spinner off \

@@ -7,7 +7,7 @@ import re
 import yaml
 
 from .constants import RELEASE_JOB_REQUIRED_GATES
-from .helpers import _normalize_pinned_actions
+from .helpers import _normalize_pinned_actions, _validate_uv_security_pins
 
 
 def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
@@ -89,6 +89,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "CI workflow must pin uv (`pip install uv==<version>`); unpinned `pip install uv` "
             "is not allowed in release-sensitive jobs"
         )
+    errors.extend(_validate_uv_security_pins(ci_workflow))
 
     if "--pypi-wait-seconds" not in ci_workflow:
         errors.append("CI workflow must pass --pypi-wait-seconds to release parity validation")

@@ -121,11 +121,20 @@ reachable from customer installations must also appear in the appropriate core d
 extra, with a matching lock update and validator-backed tests. The core `certifi>=2026.10.19`
 floor removes the affected emSign trust roots; see the
 [upstream advisory](https://github.com/certifi/python-certifi/security/advisories/GHSA-6q48-6c7w-9gw2).
+
+CI and semantic-release bootstrap pip 26.2.2 from an official SHA-256-pinned wheel before
+installing uv 0.13.4 or later dependencies. The pinned first download protects artifact
+integrity while replacing the old tool's bundled CA trust. The local CI Docker image and
+public GPU proof use the same versions; the isolated audit client also requires patched
+certifi. Keep bootstrap versions, wheel digest, validator checks and harness parity tests
+in sync. Refreshing the application dependency alone does not update tools' vendored CAs;
+see the [Python security announcement](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576).
+
 The validator also treats `pytest>=9.0.3` in both `dev` and `bench` extras as audit parity
 surface, because those extras are included in the locked Python audit graph.
 Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's
 versioning allows formatter behavior to change across releases, so keep the repo-owned
-`ruff==0.15.11` pin and the validator tests in sync when intentionally upgrading the formatter.
+`ruff==0.15.20` pin and the validator tests in sync when intentionally upgrading the formatter.
 Operationally, local release gates must run both `uv run ruff check .` and
 `uv run ruff format --check --preview .`. A non-preview local format pass is not sufficient,
 because preview formatting can reflow files differently and fail the `Formatting & Linting`

@@ -17,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib
 
 from .constants import _AST_GREP_VERSION_PIN_RE, RELEASE_DOC_PATHS, WINGET_SINGLETON_SCHEMA_HEADER
+from .helpers import _validate_uv_security_pins
 
 
 def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
@@ -662,6 +663,7 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
 
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
+    errors.extend(_validate_uv_security_pins(build_command))
     stamp_position = build_command.find("scripts/stamp_release_assets.py")
     if stamp_position < 0:
         errors.append(

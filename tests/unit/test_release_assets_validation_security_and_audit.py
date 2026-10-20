@@ -1,8 +1,12 @@
 """CI uv pins, Dependabot, audit.yml, and security-floor contracts."""
 
 import importlib.util
+import shlex
 import textwrap
+import tomllib
 from pathlib import Path
+
+import pytest
 
 from tests.unit.test_release_assets_validation_shared import _detag
 
@@ -53,8 +57,8 @@ def test_should_reject_unpinned_uv_bootstrap_in_ci():
     jobs:
       x:
         steps:
-          - run: python -m pip install uv==0.11.25
-          - run: python -m pip install uv==0.11.25
+          - run: python -m pip install uv==0.13.4
+          - run: python -m pip install uv==0.13.4
     """
     assert not any(
         "must pin uv" in err for err in module.validate_ci_workflow_content(ci_workflow=pinned)
@@ -74,11 +78,140 @@ def test_should_reject_unpinned_uv_in_public_gpu_proof_workflow():
         "pin uv" in err
         for err in module.validate_public_gpu_proof_workflow_content(workflow_content=unpinned)
     )
-    pinned = "steps:\n  - run: python -m pip install uv==0.11.25\n"
+    pinned = "steps:\n  - run: python -m pip install uv==0.13.4\n"
     assert not any(
         "pin uv" in err
         for err in module.validate_public_gpu_proof_workflow_content(workflow_content=pinned)
     )
+
+
+_UV_VALIDATOR_CASES = (
+    (
+        "validate_ci_workflow_content",
+        "ci_workflow",
+        "jobs:\n  x:\n    steps:\n      - run: python -m pip install uv=={version}\n      - run: python -m pip install uv=={version}\n",
+    ),
+    (
+        "validate_public_gpu_proof_workflow_content",
+        "workflow_content",
+        "steps:\n  - run: python -m pip install uv=={version}\n",
+    ),
+    (
+        "validate_semantic_release_config",
+        "pyproject_content",
+        '[tool.semantic_release]\nbuild_command = "python -m pip install uv=={version}"\n',
+    ),
+)
+
+
+def _validate_uv_surface(validator_name: str, argument_name: str, version: str) -> list[str]:
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    template = next(
+        body
+        for name, argument, body in _UV_VALIDATOR_CASES
+        if name == validator_name and argument == argument_name
+    )
+    validator = getattr(module, validator_name)
+    return validator(**{argument_name: template.format(version=version)})
+
+
+@pytest.mark.parametrize(("validator_name", "argument_name", "_template"), _UV_VALIDATOR_CASES)
+@pytest.mark.parametrize(
+    ("version", "expected_error"),
+    [
+        ("0.11.25", "uv bootstrap requires stable uv>=0.13.4; found 0.11.25"),
+        ("0.13.3", "uv bootstrap requires stable uv>=0.13.4; found 0.13.3"),
+    ],
+)
+def test_ValidateUvBootstrap_AffectedPin_ReportsSecurityError(
+    validator_name: str, argument_name: str, _template: str, version: str, expected_error: str
+) -> None:
+    errors = _validate_uv_surface(validator_name, argument_name, version)
+
+    assert expected_error in errors
+
+
+@pytest.mark.parametrize(("validator_name", "argument_name", "_template"), _UV_VALIDATOR_CASES)
+@pytest.mark.parametrize(
+    ("version", "unexpected_error"),
+    [
+        ("0.13.4", "uv bootstrap requires stable uv>=0.13.4; found 0.13.4"),
+        ("0.14.0", "uv bootstrap requires stable uv>=0.13.4; found 0.14.0"),
+    ],
+)
+def test_ValidateUvBootstrap_FixedStablePin_AcceptsSecurityFloor(
+    validator_name: str, argument_name: str, _template: str, version: str, unexpected_error: str
+) -> None:
+    errors = _validate_uv_surface(validator_name, argument_name, version)
+
+    assert unexpected_error not in errors
+
+
+@pytest.mark.parametrize(("validator_name", "argument_name", "_template"), _UV_VALIDATOR_CASES)
+@pytest.mark.parametrize(
+    ("version", "expected_error"),
+    [
+        ("0.13.4rc1", "uv bootstrap requires stable uv>=0.13.4; found 0.13.4rc1"),
+        ("broken", "uv bootstrap requires stable uv>=0.13.4; found broken"),
+    ],
+)
+def test_ValidateUvBootstrap_PrereleaseOrMalformedPin_ReportsSecurityError(
+    validator_name: str, argument_name: str, _template: str, version: str, expected_error: str
+) -> None:
+    errors = _validate_uv_surface(validator_name, argument_name, version)
+
+    assert expected_error in errors
+
+
+def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
+    root = Path(__file__).resolve().parents[2]
+    fixed_pip = (
+        'python -m pip install --no-deps "pip @ '
+        "https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/"
+        "pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+        '"'
+    )
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    native_e2e = ci_workflow.split("- name: Run native binary-dependent e2e suites", 1)[1].split(
+        "      - name:", 1
+    )[0]
+    gpu_workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(
+        encoding="utf-8"
+    )
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    dockerfile = (root / "scripts" / "ci-local" / "Dockerfile").read_text(encoding="utf-8")
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    audit_workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+
+    build_tokens = shlex.split(
+        tomllib.loads(pyproject)["tool"]["semantic_release"]["build_command"]
+    )
+
+    assert build_tokens[build_tokens.index("--no-deps") + 1] == (
+        "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/"
+        "pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+    )
+    assert ci_workflow.count(fixed_pip) == 13
+    assert ci_workflow.replace(native_e2e, "").count(fixed_pip) == 12
+    assert native_e2e.index(fixed_pip) < native_e2e.index(
+        "pip install --disable-pip-version-check pytest"
+    )
+    assert fixed_pip in gpu_workflow
+    assert release_workflow.index(fixed_pip) < release_workflow.index(
+        "run: pip install mkdocs-material"
+    )
+    assert dockerfile.index(
+        "python3.12 -m pip install --break-system-packages --no-deps"
+    ) < dockerfile.index("python3.12 -m pip install --break-system-packages uv==0.13.4")
+    assert pyproject.index('python -m pip install --no-deps \\"pip @') < pyproject.index(
+        "python -m pip install uv==0.13.4"
+    )
+    assert "--with 'certifi>=2026.10.19'" in audit_workflow
 
 
 def test_should_require_dependabot_config_targets_and_branch_separator():
@@ -352,6 +485,7 @@ def test_should_require_audit_workflow_isolated_pip_audit_tool_run():
     joined_errors = "\n".join(errors)
     assert "uv run --no-project" in joined_errors
     assert "--with pip-audit" in joined_errors
+    assert "certifi>=2026.10.19" in joined_errors
     assert "--progress-spinner off" in joined_errors
 
 
