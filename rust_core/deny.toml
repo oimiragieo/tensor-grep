@@ -24,3 +24,7 @@ allow = [
     "Unicode-3.0",
     "Unlicense",
 ]
+
+[[licenses.exceptions]]
+crate = "foldhash@0.2.0"
+allow = ["Zlib"]
