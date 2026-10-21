@@ -28,7 +28,7 @@
     "tests/unit/test_apply_policy.py": 2375,
     "tests/unit/test_cli_bootstrap.py": 2987,
     "tests/unit/test_file_deps.py": 2901,
-    "tests/unit/test_gpu_benchmark_scale_contracts.py": 2244,
+    "tests/unit/test_gpu_benchmark_scale_contracts.py": 2146,
     "tests/unit/test_semantic_provider_navigation.py": 2251,
     "tests/unit/test_session_cli.py": 3337,
     "tests/unit/test_mcp_error_sanitization.py": 2518
