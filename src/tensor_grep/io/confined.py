@@ -85,11 +85,23 @@ def _cleanup_owned_temp(parent_fd: int, name: str, descriptor: int) -> None:
     os.unlink(name, dir_fd=parent_fd)
 
 
+def _confined_relative_parts(
+    root: Path, path: Path, *, allow_root: bool = False
+) -> tuple[str, ...]:
+    """Validate lexical containment before observing any filesystem metadata."""
+    parts = path.relative_to(root).parts
+    if ".." in parts:
+        raise OSError("confined path contains parent traversal")
+    if not parts and not allow_root:
+        raise OSError("confined path must be below trusted root")
+    return parts
+
+
 def _real_components(root: Path, path: Path) -> list[tuple[Path, tuple[int, int]]]:
-    relative = path.relative_to(root)
+    relative_parts = _confined_relative_parts(root, path)
     components = [
         root,
-        *(root.joinpath(*relative.parts[:i]) for i in range(1, len(relative.parts))),
+        *(root.joinpath(*relative_parts[:i]) for i in range(1, len(relative_parts))),
     ]
     identities: list[tuple[Path, tuple[int, int]]] = []
     for component in components:
@@ -291,8 +303,9 @@ def publish_confined(
 
 def prepare_directory(root: Path, directory: Path) -> None:
     """Create only known cache components, refusing pre-existing links and junctions."""
-    for count in range(1, len(directory.relative_to(root).parts) + 1):
-        current = root.joinpath(*directory.relative_to(root).parts[:count])
+    relative_parts = _confined_relative_parts(root, directory, allow_root=True)
+    for count in range(1, len(relative_parts) + 1):
+        current = root.joinpath(*relative_parts[:count])
         _real_components(root, current)
         parents = _real_components(root, current)
         with _pin_windows_parents(parents):
