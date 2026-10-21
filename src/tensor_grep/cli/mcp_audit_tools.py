@@ -1343,44 +1343,38 @@ def _checkpoint_meta(
     path: str,
     label: str | None,
 ) -> str:
+    if label is not None and action in {"list", "undo"}:
+        payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
+        payload["error"] = {
+            "code": "invalid_input",
+            "message": "label is only accepted when action='create'.",
+        }
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     try:
-        if label is not None and action in {"list", "undo"}:
-            payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
-            payload["error"] = {
-                "code": "invalid_input",
-                "message": "label is only accepted when action='create'.",
-            }
-            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-        try:
-            path = str(_self._confine_mcp_path(path, label="path"))
-        except _self.PathConfinementError as exc:
-            return _self._inject_mcp_contract_fields(
-                _self._meta_confinement_error("tg_checkpoint", action, exc)
-            )
+        path = str(_self._confine_mcp_path(path, label="path"))
+    except _self.PathConfinementError as exc:
+        return _self._inject_mcp_contract_fields(
+            _self._meta_confinement_error("tg_checkpoint", action, exc)
+        )
 
-        try:
-            if action == "create":
-                return _self.tg_checkpoint_create(path=path, label=label)
-            if action == "list":
-                return _self.tg_checkpoint_list(path=path)
-            if action == "undo":
-                if checkpoint_id is None:
-                    return _self._inject_mcp_contract_fields(
-                        _self._meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
-                    )
-                return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
-            return _self._inject_mcp_contract_fields(
-                _self._meta_unknown_action_error(
-                    "tg_checkpoint", action, _self._TG_CHECKPOINT_ACTIONS
+    try:
+        if action == "create":
+            return _self.tg_checkpoint_create(path=path, label=label)
+        if action == "list":
+            return _self.tg_checkpoint_list(path=path)
+        if action == "undo":
+            if checkpoint_id is None:
+                return _self._inject_mcp_contract_fields(
+                    _self._meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
                 )
-            )
-        except Exception as exc:
-            payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
-            payload["error"] = _self._sanitized_tool_error("tg_checkpoint", exc)
-            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+            return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
+        return _self._inject_mcp_contract_fields(
+            _self._meta_unknown_action_error("tg_checkpoint", action, _self._TG_CHECKPOINT_ACTIONS)
+        )
     except Exception as exc:
-        _self._log_tool_exception("tg_checkpoint", exc)
-        return _self._sanitized_tool_error_text("tg_checkpoint", exc)
+        payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
+        payload["error"] = _self._sanitized_tool_error("tg_checkpoint", exc)
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore

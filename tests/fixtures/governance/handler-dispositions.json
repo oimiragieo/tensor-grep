@@ -340,18 +340,18 @@
     "hardened_in": null
   },
   {
-    "module": "cli/mcp_server.py",
-    "lineno": 5404,
-    "enclosing_symbol": "tg_checkpoint",
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1374,
+    "enclosing_symbol": "_checkpoint_meta",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_checkpoint] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
-    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "evidence": "MCP wire boundary: _checkpoint_meta catches exceptions from a delegated checkpoint action, logs full detail server-side through _sanitized_tool_error, and returns a structured sanitized error with completeness and contract fields. Characterized by tests/unit/test_mcp_passthrough_wire_surface.py::test_CheckpointMeta_ListFailure_ReturnsSanitizedJSONAndLogsDetail, which verifies internal_error, incomplete=false, contract 1.20.0, and secret detail only on captured stderr.",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: a delegated checkpoint failure ends in a client-visible structured error, never a success-shaped result. The raw exception remains server-side and the response retains the current MCP envelope contract.",
     "hardened_in": null
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5497,
+    "lineno": 5478,
     "enclosing_symbol": "tg_rewrite",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -361,7 +361,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5662,
+    "lineno": 5643,
     "enclosing_symbol": "stdin_reader",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -531,7 +531,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1274,
+    "lineno": 1257,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -541,7 +541,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1349,
+    "lineno": 1320,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2111,17 +2111,17 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5408,
+    "lineno": 5389,
     "enclosing_symbol": "tg_checkpoint",
-    "handler_index_within_symbol": 1,
+    "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_server.py:tg_checkpoint outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for tg_checkpoint preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_checkpoint outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized plain-text fallback on MCP wire. tests/unit/test_mcp_passthrough_wire_surface.py::test_CheckpointMeta_MissingDispatch_ReturnsSanitizedFailure removes the helper and verifies that this registered boundary contains the resulting AttributeError without creating checkpoint state.",
+    "reason": "Fail-closed registered-tool containment for failures before helper dispatch or outside its structured delegated-action catch, preventing internal exceptions and tracebacks from crossing the MCP wire.",
     "hardened_in": "SEC-007"
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5501,
+    "lineno": 5482,
     "enclosing_symbol": "tg_rewrite",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2371,7 +2371,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1230,
+    "lineno": 1219,
     "enclosing_symbol": "tg_checkpoint_create",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2381,7 +2381,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1293,
+    "lineno": 1270,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2391,7 +2391,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1370,
+    "lineno": 1335,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",

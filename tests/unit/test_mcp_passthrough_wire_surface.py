@@ -178,6 +178,52 @@ def test_CheckpointCall_ValidCreateListUndo_EmitsCompleteEnvelope(
     _assert_checkpoint_envelope(undone)
 
 
+def test_CheckpointMeta_HealthyList_ReturnsCompleteStructuredJSON(
+    checkpoint_roots: tuple[Path, Path],
+) -> None:
+    project, _outside = checkpoint_roots
+    created, create_error = _call_checkpoint(
+        "tg_checkpoint_create", {"path": str(project), "label": "listed checkpoint"}
+    )
+
+    listed, list_error = _call_checkpoint("tg_checkpoint", {"action": "list", "path": str(project)})
+
+    assert not create_error and not list_error
+    assert listed["checkpoints"][0]["checkpoint_id"] == created["checkpoint_id"]
+    _assert_checkpoint_envelope(listed)
+
+
+def test_CheckpointMeta_ListFailure_ReturnsSanitizedJSONAndLogsDetail(
+    checkpoint_roots: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project, _outside = checkpoint_roots
+    secret_detail = "private checkpoint backend detail"
+
+    def fail_list(*, path: str) -> str:
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(mcp_server, "tg_checkpoint_list", fail_list)
+
+    payload, is_error = _call_checkpoint("tg_checkpoint", {"action": "list", "path": str(project)})
+
+    error_output = json.dumps(payload)
+    captured = capsys.readouterr()
+
+    assert is_error
+    assert payload["error"]["code"] == "internal_error"
+    assert (
+        payload["error"]["message"]
+        == "tg_checkpoint failed due to an internal error (RuntimeError)."
+    )
+    assert payload["incomplete"] == {"status": False, "cause": None, "budget_remediable": False}
+    assert payload["mcp_contract_version"] == "1.20.0"
+    assert secret_detail not in error_output
+    assert secret_detail in captured.err
+    assert not (project / ".tensor-grep").exists()
+
+
 @pytest.mark.parametrize(
     ("tool", "action"),
     [
