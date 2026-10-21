@@ -140,6 +140,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/runbooks/gpu-troubleshooting.md",
     "docs/runbooks/resident-worker.md",
     "docs/session_daemon_protocol.md",
+    "docs/state-storage-limits.md",
     "docs/subprocess-output-policy-inventory.json",
     "docs/subprocess-output-policy-inventory.md",
     "docs/subprocess-output-policy.md",

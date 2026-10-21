@@ -12,8 +12,10 @@ import os
 import subprocess
 import sys
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -69,12 +71,34 @@ def _daemon(root: Path, *, metadata_pid: int, package_version: str | None = None
         server.server_close()
 
 
-def test_probe_returns_the_proven_pid_not_the_planted_one(tmp_path: Path) -> None:
+def test_probe_returns_the_proven_pid_not_the_planted_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path.resolve()
     with _daemon(root, metadata_pid=999_999):
+        trace = _ProbeTrace()
+        original_metadata = sd._read_daemon_metadata
+        original_request = sd._daemon_request
+        original_verify = sd._verify_ping_reply
+
+        def _read_metadata(*args: Any, **kwargs: Any) -> Any:
+            return trace.observe("metadata", original_metadata, *args, **kwargs)
+
+        def _request(*args: Any, **kwargs: Any) -> Any:
+            return trace.observe("request", original_request, *args, **kwargs)
+
+        def _verify(*args: Any, **kwargs: Any) -> Any:
+            return trace.observe("verify", original_verify, *args, **kwargs)
+
+        monkeypatch.setattr(sd, "_read_daemon_metadata", _read_metadata)
+        monkeypatch.setattr(sd, "_daemon_request", _request)
+        monkeypatch.setattr(sd, "_verify_ping_reply", _verify)
         proven = sd._probe_daemon(root)
-    assert proven is not None
+    assert proven is not None, f"sanitized probe stages: {trace.safe_summary()!r}"
     assert proven["pid"] == os.getpid()  # the in-process daemon's own pid, signed in the reply
+    assert trace.safe_summary()["metadata"]["called"] is True
+    assert trace.safe_summary()["request"]["called"] is True
+    assert trace.safe_summary()["verify"]["called"] is True
 
 
 def test_stop_never_signals_a_planted_pid_and_reports_an_unconfirmed_stop_honestly(
@@ -181,3 +205,187 @@ def test_cooperative_stop_control_still_succeeds(
         assert result["stop_method"] == "cooperative"
         assert calls == []
         assert sd._read_daemon_metadata(root) is None
+
+
+@dataclass
+class _ProbeTrace:
+    _steps: dict[str, dict[str, object]] = field(
+        default_factory=lambda: {
+            "metadata": {"called": False},
+            "request": {"called": False},
+            "verify": {"called": False},
+        }
+    )
+
+    def observe(self, stage: str, callback: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        entry = self._steps[stage]
+        entry["called"] = True
+        started = time.perf_counter()
+        try:
+            result = callback(*args, **kwargs)
+        except BaseException as exc:
+            entry["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
+            entry["exception_category"] = self._safe_exception_category(exc)
+            raise
+        entry["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
+        self._record_safe_result(stage, entry, result)
+        return result
+
+    @staticmethod
+    def _safe_type_category(value: object) -> str:
+        kind = type(value)
+        if kind is type(None):
+            return "none"
+        if kind is bool:
+            return "bool"
+        if kind is int:
+            return "int"
+        if kind is str:
+            return "str"
+        if kind is dict:
+            return "dict"
+        if kind is list:
+            return "list"
+        if kind is float:
+            return "float"
+        return "other"
+
+    @staticmethod
+    def _safe_exception_category(exc: BaseException) -> str:
+        kind = type(exc)
+        if kind is TimeoutError or kind is ConnectionError or kind is ConnectionRefusedError:
+            return "connection_or_timeout"
+        if kind is OSError:
+            return "os_error"
+        if kind is RuntimeError or kind is ValueError or kind is TypeError or kind is KeyError:
+            return "runtime_or_value_error"
+        return "other"
+
+    @staticmethod
+    def _record_safe_result(stage: str, entry: dict[str, object], result: object) -> None:
+        if stage == "metadata":
+            entry["metadata_is_dict"] = type(result) is dict
+            if type(result) is dict:
+                host = result.get("host")
+                port = result.get("port")
+                version = result.get("package_version")
+                entry["loopback_host"] = type(host) is str and host in {
+                    "127.0.0.1",
+                    "::1",
+                    "localhost",
+                }
+                entry["valid_port"] = type(port) is int and 1 <= port <= 65535
+                entry["package_version_matches"] = (
+                    type(version) is str and version == _expected_tg_version()
+                )
+        elif stage == "request":
+            entry["reply_is_dict"] = type(result) is dict
+            if type(result) is dict:
+                entry["reply_ok"] = result.get("ok") is True
+                entry["pid_type"] = _ProbeTrace._safe_type_category(result.get("pid"))
+                entry["root_type"] = _ProbeTrace._safe_type_category(result.get("root"))
+                entry["port_type"] = _ProbeTrace._safe_type_category(result.get("port"))
+                entry["proof_type"] = _ProbeTrace._safe_type_category(result.get("proof"))
+                entry["package_version_type"] = _ProbeTrace._safe_type_category(
+                    result.get("package_version")
+                )
+                entry["version_proof_type"] = _ProbeTrace._safe_type_category(
+                    result.get("version_proof")
+                )
+        elif stage == "verify":
+            entry["result_type"] = _ProbeTrace._safe_type_category(result)
+            entry["verified"] = result is True
+
+    def safe_summary(self) -> dict[str, dict[str, object]]:
+        return {stage: dict(values) for stage, values in self._steps.items()}
+
+
+def test_probe_trace_passes_arguments_and_result_through_without_retaining_values() -> None:
+    trace = _ProbeTrace()
+    marker = {"nonce": "synthetic-nonce", "token": "synthetic-token"}
+    result = {
+        "ok": True,
+        "pid": 55,
+        "root": "synthetic-root",
+        "port": 1234,
+        "proof": "synthetic-proof",
+        "package_version": "1.2",
+        "version_proof": "synthetic-version-proof",
+    }
+    received: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def _callback(*args: Any, **kwargs: Any) -> Any:
+        received.append((args, kwargs))
+        return result
+
+    observed = trace.observe("request", _callback, marker, token="synthetic-token")
+
+    assert len(received) == 1
+    assert received[0][0][0] is marker
+    assert received[0][1] == {"token": "synthetic-token"}
+    assert observed is result
+    assert "synthetic-nonce" not in repr(trace.safe_summary())
+    assert "synthetic-token" not in repr(trace.safe_summary())
+    assert "synthetic-proof" not in repr(trace.safe_summary())
+    assert trace.safe_summary()["request"]["reply_ok"] is True
+    assert trace.safe_summary()["request"]["pid_type"] == "int"
+
+
+def test_probe_trace_reraises_the_same_exception_and_records_only_its_class() -> None:
+    trace = _ProbeTrace()
+    failure = RuntimeError("synthetic private exception text")
+
+    def _callback() -> None:
+        raise failure
+
+    with pytest.raises(RuntimeError) as caught:
+        trace.observe("metadata", _callback)
+
+    assert caught.value is failure
+    assert trace.safe_summary()["metadata"]["exception_category"] == "runtime_or_value_error"
+    assert "synthetic private exception text" not in repr(trace.safe_summary())
+
+
+def test_ProbeTrace_UntrustedTypeNamesAndEndpointValues_AreRedacted() -> None:
+    trace = _ProbeTrace()
+    untrusted_name = "raw-root-987654321-private-class"
+    untrusted_type = type(untrusted_name, (), {})
+    result = {
+        "ok": True,
+        "pid": 987654321,
+        "root": "C:/private/root-canary",
+        "port": 45678,
+        "proof": "private-proof-canary",
+        "package_version": untrusted_type(),
+        "version_proof": "private-version-proof-canary",
+    }
+
+    observed = trace.observe("request", lambda: result)
+    summary = repr(trace.safe_summary())
+
+    assert observed is result
+    assert trace.safe_summary()["request"]["package_version_type"] == "other"
+    assert trace.safe_summary()["request"]["pid_type"] == "int"
+    assert trace.safe_summary()["request"]["root_type"] == "str"
+    assert untrusted_name not in summary
+    assert "987654321" not in summary
+    assert "C:/private/root-canary" not in summary
+    assert "private-proof-canary" not in summary
+    assert "private-version-proof-canary" not in summary
+
+
+def test_ProbeTrace_UntrustedExceptionNameAndMessage_AreRedacted() -> None:
+    trace = _ProbeTrace()
+    untrusted_name = "raw-root-987654321-private-exception"
+    untrusted_error = type(untrusted_name, (Exception,), {})
+    failure = untrusted_error("private exception message canary")
+
+    with pytest.raises(Exception) as caught:
+        trace.observe("verify", lambda: (_ for _ in ()).throw(failure))
+
+    summary = repr(trace.safe_summary())
+    assert caught.value is failure
+    assert trace.safe_summary()["verify"]["exception_category"] == "other"
+    assert untrusted_name not in summary
+    assert "987654321" not in summary
+    assert "private exception message canary" not in summary

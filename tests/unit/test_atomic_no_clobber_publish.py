@@ -64,9 +64,9 @@ def test_the_project_scaffold_caller_leaves_no_second_links(tmp_path: Path) -> N
 
 
 def test_a_first_secret_creation_leaves_no_temp_copy_and_one_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_daemon_secret_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = tmp_path / "secret"
+    secret_dir = trusted_daemon_secret_dir
     monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(secret_dir))
     assert trust._load_or_create_user_secret() is not None
     path = trust._daemon_secret_path()

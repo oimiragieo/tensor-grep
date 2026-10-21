@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+STATE_GUIDES = ("state-storage-limits.md",)
 
 
 def test_configured_release_generator_does_not_publish_commit_text(tmp_path):
@@ -278,6 +279,7 @@ def test_actual_mkdocs_site_excludes_untracked_private_documents(tmp_path):
     (docs / "index.md").write_text(
         "# Public documentation\nPUBLIC_FIXTURE_SENTINEL", encoding="utf-8"
     )
+    _copy_state_guides(docs)
     private_paths = [
         "superpowers/private.md",
         "audits/private.md",
@@ -291,6 +293,7 @@ def test_actual_mkdocs_site_excludes_untracked_private_documents(tmp_path):
         path.write_text("# Private notes\nPRIVATE_DOC_SENTINEL", encoding="utf-8")
     config = tmp_path / "mkdocs.yml"
     base = "site_name: Publication fixture\nnav:\n  - Home: index.md\n"
+    base += "".join(f"  - {name}: {name}\n" for name in STATE_GUIDES)
     config.write_text(
         base
         + "exclude_docs: |\n"
@@ -305,16 +308,19 @@ def test_actual_mkdocs_site_excludes_untracked_private_documents(tmp_path):
                 "-m",
                 "mkdocs",
                 "build",
+                "--strict",
                 "--config-file",
                 str(config),
                 "--site-dir",
                 str(destination),
             ],
             cwd=tmp_path,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
-            timeout=60,
+            timeout=120,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         assert result.returncode == 0, result.stderr
         return "\n".join(
@@ -325,7 +331,64 @@ def test_actual_mkdocs_site_excludes_untracked_private_documents(tmp_path):
 
     published = build(tmp_path / "site")
     assert "PUBLIC_FIXTURE_SENTINEL" in published
+    assert (tmp_path / "site" / "state-storage-limits" / "index.html").is_file()
     assert "PRIVATE_DOC_SENTINEL" not in published
     config.write_text(base, encoding="utf-8")
     control = build(tmp_path / "control")
     assert "PRIVATE_DOC_SENTINEL" in control
+
+
+def _copy_state_guides(docs: Path) -> None:
+    for name in STATE_GUIDES:
+        (docs / name).write_text(
+            (ROOT / "docs" / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+
+def _state_guide_source_links(name: str) -> list[str]:
+    import re
+
+    body = (ROOT / "docs" / name).read_text(encoding="utf-8")
+    links = re.findall(r"\]\(([^)]+)\)", body)
+    return [
+        target
+        for target in links
+        if any(part in target for part in ("src/", "tests/", "AGENTS.md"))
+    ]
+
+
+def _technical_reference_paths() -> set[str]:
+    import yaml
+
+    config = yaml.load((ROOT / "mkdocs.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    reference = next(
+        section["Technical Reference"]
+        for section in config["nav"]
+        if "Technical Reference" in section
+    )
+    return {target for item in reference for target in item.values()}
+
+
+@pytest.mark.parametrize("name", STATE_GUIDES)
+def test_StateGuide_ApprovedNavigationAndBudget_IsPublishable(name: str) -> None:
+    body = (ROOT / "docs" / name).read_text(encoding="utf-8")
+
+    reference_paths = _technical_reference_paths()
+    source_links = _state_guide_source_links(name)
+
+    assert name in reference_paths
+    assert len(body.split()) <= 750
+    assert source_links
+
+
+@pytest.mark.parametrize(
+    ("name", "target"),
+    [(name, target) for name in STATE_GUIDES for target in _state_guide_source_links(name)],
+)
+def test_StateGuide_SourceReference_UsesExistingRepositoryTarget(name: str, target: str) -> None:
+    prefix = "https://github.com/oimiragieo/tensor-grep/blob/main/"
+
+    repository_path = ROOT / target.removeprefix(prefix)
+
+    assert target.startswith(prefix), name
+    assert repository_path.is_file(), name

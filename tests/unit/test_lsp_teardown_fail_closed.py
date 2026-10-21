@@ -12,6 +12,7 @@ Every arm runs on a worker thread with a hard join, so a regression FAILS instea
 from __future__ import annotations
 
 import io
+import json
 import queue
 import subprocess
 import sys
@@ -500,36 +501,62 @@ def test_percent_encoded_workspace_uri_larger_than_the_pipe_buffer_is_bounded(
 class _SleepyWaitProcess(_FakeProcess):
     """First wait() burns its whole timeout then times out; later waits succeed."""
 
+    def __init__(self, phases: dict[str, float]) -> None:
+        super().__init__()
+        self._phases = phases
+
     def wait(self, timeout: float | None = None) -> int:
         if self._exited:
             return 0
         if self._timeout_first:
             self._timeout_first = False
+            started = time.monotonic()
+            self._phases["first_wait_requested_s"] = timeout or 0.0
             time.sleep(timeout or 0.0)
+            self._phases["first_wait_elapsed_s"] = time.monotonic() - started
             raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout or 0.0)
         self._exited = True
         return 0
 
 
 class _SlowCloseStream:
-    def __init__(self, delay: float) -> None:
+    def __init__(self, delay: float, phases: dict[str, float]) -> None:
         self._delay = delay
+        self._phases = phases
 
     def close(self) -> None:
+        started = time.monotonic()
+        self._phases["close_started_at"] = started
         time.sleep(self._delay)
+        self._phases["close_finished_at"] = time.monotonic()
+        self._phases["close_elapsed_s"] = time.monotonic() - started
 
 
-def test_slow_graceful_wait_does_not_starve_pipe_close_into_a_false_escape() -> None:
-    process = _SleepyWaitProcess()
-    process.stdout = _SlowCloseStream(0.02)  # type: ignore[assignment]
+def test_slow_graceful_wait_does_not_starve_pipe_close_into_a_false_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases: dict[str, float] = {}
+    process = _SleepyWaitProcess(phases)
+    process.stdout = _SlowCloseStream(0.02, phases)  # type: ignore[assignment]
     containment = pc.Containment(pc.LEVEL_PROCESS_GROUP, degraded=False, pid=0)
+    close_streams = pc.close_streams_bounded
+
+    def observed_close(streams: list[Any], timeout_seconds: float):
+        phases["close_window_s"] = timeout_seconds
+        phases["close_dispatched_at"] = time.monotonic()
+        result = close_streams(streams, timeout_seconds)
+        phases["close_returned_at"] = time.monotonic()
+        return result
+
+    monkeypatch.setattr(pc, "close_streams_bounded", observed_close)
 
     errors, _ = _bounded(
         lambda: pc.teardown_provider(process, containment, deadline=time.monotonic() + 0.5)
     )
 
-    assert not any("outside the provider's process group" in e for e in errors), errors
-    assert errors == [], errors
+    diagnostics = json.dumps({"errors": errors, "phases": dict(phases)}, sort_keys=True)
+    assert not any("outside the provider's process group" in e for e in errors), diagnostics
+    assert errors == [], diagnostics
 
 
 def test_unverified_death_with_held_pipes_is_a_timeout_not_an_escape() -> None:
