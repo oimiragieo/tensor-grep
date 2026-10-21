@@ -74,7 +74,11 @@ def _free_port() -> int:
 
 
 def _sleeper() -> subprocess.Popen[bytes]:
-    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(120)"],
+        stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
 
 
 def _reap(proc: subprocess.Popen[bytes]) -> None:
@@ -274,6 +278,8 @@ def test_a_shadow_module_decoy_is_not_killed_and_the_result_says_unproven(
         [sys.executable, "-m", _MODULE, "--root", str(root)],
         cwd=str(shadow),
         env={**os.environ, "PYTHONPATH": str(shadow)},
+        stdin=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     try:
         time.sleep(1.0)
