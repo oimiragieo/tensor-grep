@@ -140,7 +140,7 @@ Operationally, local release gates must run both `uv run ruff check .` and
 because preview formatting can reflow files differently and fail the `Formatting & Linting`
 job after push.
 
-The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
+The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. Foldhash 0.2.0 declares the Zlib license, so the policy permits that license only for that exact crate version; CI follows the full graph check with `python3 scripts/verify_foldhash_license_scope.py`, which tests the real graph and rejects the same license for another Foldhash version or crate. Run that command after changing the exception. To roll it back, remove the exact `foldhash@0.2.0` exception and its paired workflow step and contract tests; do not add Zlib to the global allowlist.
 
 Triggers:
 

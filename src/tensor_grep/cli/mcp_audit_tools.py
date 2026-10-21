@@ -20,7 +20,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from tensor_grep.backends.ast_backend import normalize_ast_language
 from tensor_grep.cli.main import (
@@ -1148,6 +1148,10 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
         return _sanitized_tool_error_text("tg_review_bundle_verify", exc)
 
 
+def _checkpoint_response(payload: dict[str, Any]) -> str:
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+
+
 @_register_legacy_tool  # type: ignore
 def tg_checkpoint_create(path: str = ".", label: str | None = None) -> str:
     """
@@ -1167,66 +1171,51 @@ def tg_checkpoint_create(path: str = ".", label: str | None = None) -> str:
         try:
             label = normalize_checkpoint_label(label)
         except ValueError:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {
-                        "code": "invalid_input",
-                        "message": "Checkpoint label must contain 1 to 120 printable characters.",
-                    },
-                    "path": "[refused]",
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {
+                    "code": "invalid_input",
+                    "message": "Checkpoint label must contain 1 to 120 printable characters.",
                 },
-                indent=2,
-            )
+                "path": "[refused]",
+            })
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                    "path": "[refused]",
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+            })
         except ValueError as exc:
             _log_tool_exception("tg_checkpoint_create", exc)
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
-                    "path": path,
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
+                "path": path,
+            })
 
         from tensor_grep.cli.checkpoint_store import create_checkpoint
 
         try:
             payload = create_checkpoint(path, label=label)
         except Exception as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": _sanitized_tool_error("tg_checkpoint_create", exc),
-                    "path": str(Path(path).expanduser()),
-                },
-                indent=2,
-            )
-
-        return json.dumps(
-            {
+            return _checkpoint_response({
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "schema_version": _json_output_version(),
-                **payload.__dict__,
-            },
-            indent=2,
-        )
+                "error": _sanitized_tool_error("tg_checkpoint_create", exc),
+                "path": str(Path(path).expanduser()),
+            })
+
+        return _checkpoint_response({
+            "version": _json_output_version(),
+            "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+            "schema_version": _json_output_version(),
+            **payload.__dict__,
+        })
     except Exception as exc:
         _log_tool_exception("tg_checkpoint_create", exc)
         return _sanitized_tool_error_text("tg_checkpoint_create", exc)
@@ -1246,50 +1235,38 @@ def tg_checkpoint_list(path: str = ".") -> str:
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                    "path": "[refused]",
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+            })
         except ValueError as exc:
             _log_tool_exception("tg_checkpoint_list", exc)
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
-                    "path": path,
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
+                "path": path,
+            })
 
         from tensor_grep.cli.checkpoint_store import list_checkpoints
 
         try:
             checkpoints = [record.__dict__ for record in list_checkpoints(path)]
         except Exception as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": _sanitized_tool_error("tg_checkpoint_list", exc),
-                    "path": str(Path(path).expanduser()),
-                },
-                indent=2,
-            )
-
-        return json.dumps(
-            {
+            return _checkpoint_response({
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "checkpoints": checkpoints,
-            },
-            indent=2,
-        )
+                "error": _sanitized_tool_error("tg_checkpoint_list", exc),
+                "path": str(Path(path).expanduser()),
+            })
+
+        return _checkpoint_response({
+            "version": _json_output_version(),
+            "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+            "checkpoints": checkpoints,
+        })
     except Exception as exc:
         _log_tool_exception("tg_checkpoint_list", exc)
         return _sanitized_tool_error_text("tg_checkpoint_list", exc)
@@ -1319,57 +1296,85 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                    "path": "[refused]",
-                    "checkpoint_id": checkpoint_id,
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+                "checkpoint_id": checkpoint_id,
+            })
         except ValueError as exc:
             _log_tool_exception("tg_checkpoint_undo", exc)
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
-                    "path": path,
-                    "checkpoint_id": checkpoint_id,
-                },
-                indent=2,
-            )
+            return _checkpoint_response({
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
+                "path": path,
+                "checkpoint_id": checkpoint_id,
+            })
 
         from tensor_grep.cli.checkpoint_store import undo_checkpoint
 
         try:
             payload = undo_checkpoint(checkpoint_id, path)
         except Exception as exc:
-            return json.dumps(
-                {
-                    "version": _json_output_version(),
-                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                    "error": _sanitized_tool_error("tg_checkpoint_undo", exc),
-                    "path": str(Path(path).expanduser()),
-                    "checkpoint_id": checkpoint_id,
-                },
-                indent=2,
-            )
-
-        return json.dumps(
-            {
+            return _checkpoint_response({
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "schema_version": _json_output_version(),
-                **payload.__dict__,
-            },
-            indent=2,
-        )
+                "error": _sanitized_tool_error("tg_checkpoint_undo", exc),
+                "path": str(Path(path).expanduser()),
+                "checkpoint_id": checkpoint_id,
+            })
+
+        return _checkpoint_response({
+            "version": _json_output_version(),
+            "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+            "schema_version": _json_output_version(),
+            **payload.__dict__,
+        })
     except Exception as exc:
         _log_tool_exception("tg_checkpoint_undo", exc)
         return _sanitized_tool_error_text("tg_checkpoint_undo", exc)
+
+
+def _checkpoint_meta(
+    action: str,
+    checkpoint_id: str | None,
+    path: str,
+    label: str | None,
+) -> str:
+    if label is not None and action in {"list", "undo"}:
+        payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
+        payload["error"] = {
+            "code": "invalid_input",
+            "message": "label is only accepted when action='create'.",
+        }
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+    try:
+        path = str(_self._confine_mcp_path(path, label="path"))
+    except _self.PathConfinementError as exc:
+        return _self._inject_mcp_contract_fields(
+            _self._meta_confinement_error("tg_checkpoint", action, exc)
+        )
+
+    try:
+        if action == "create":
+            return _self.tg_checkpoint_create(path=path, label=label)
+        if action == "list":
+            return _self.tg_checkpoint_list(path=path)
+        if action == "undo":
+            if checkpoint_id is None:
+                return _self._inject_mcp_contract_fields(
+                    _self._meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
+                )
+            return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
+        return _self._inject_mcp_contract_fields(
+            _self._meta_unknown_action_error("tg_checkpoint", action, _self._TG_CHECKPOINT_ACTIONS)
+        )
+    except Exception as exc:
+        payload = _self._meta_envelope(tool="tg_checkpoint", action=action)
+        payload["error"] = _self._sanitized_tool_error("tg_checkpoint", exc)
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore

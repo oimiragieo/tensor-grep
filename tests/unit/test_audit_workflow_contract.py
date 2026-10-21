@@ -73,3 +73,25 @@ def test_cargo_deny_policy_declares_explicit_license_allowlist() -> None:
     licenses = policy["licenses"]
     assert licenses["allow"]
     assert licenses["confidence-threshold"] >= 0.9
+
+
+def test_CargoDenyPolicy_ExactFoldhashException_AllowsOnlyVersionScopedZlib() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    policy = tomllib.loads((repo_root / "rust_core" / "deny.toml").read_text(encoding="utf-8"))
+
+    licenses = policy["licenses"]
+
+    assert licenses["exceptions"] == [{"crate": "foldhash@0.2.0", "allow": ["Zlib"]}]
+    assert "Zlib" not in licenses["allow"]
+
+
+def test_AuditWorkflow_FoldhashScopeVerifier_FollowsFullCargoDenyCheck() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+
+    full_check = "run: cargo deny check"
+    scoped_check = "run: python3 scripts/verify_foldhash_license_scope.py"
+
+    assert full_check in workflow
+    assert scoped_check in workflow
+    assert workflow.index(full_check) < workflow.index(scoped_check)

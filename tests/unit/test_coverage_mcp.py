@@ -12,8 +12,18 @@ from mcp import types
 from tensor_grep.cli import mcp_server
 
 
-def test_coverage_contract_advances_after_mcp_actions() -> None:
-    assert tuple(map(int, mcp_server._TG_MCP_SERVER_CONTRACT_VERSION.split("."))) == (1, 19, 0)
+def test_TgCoverage_OneFileProject_ReturnsCurrentContract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+
+    payload = json.loads(mcp_server.tg_coverage(str(project)))
+
+    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    assert payload["files_total"] == 1
 
 
 def test_tg_coverage_returns_inventory_and_contract_version(tmp_path: Path, monkeypatch) -> None:

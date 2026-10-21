@@ -21,7 +21,7 @@
     "rust_core/tests/test_routing.rs": 2995,
     "rust_core/tests/test_schema_compat.rs": 4412,
     "src/tensor_grep/cli/main.py": 13535,
-    "src/tensor_grep/cli/mcp_server.py": 5703,
+    "src/tensor_grep/cli/mcp_server.py": 5684,
     "src/tensor_grep/cli/repo_map.py": 15243,
     "src/tensor_grep/cli/session_daemon.py": 2137,
     "src/tensor_grep/cli/session_store.py": 1828,
