@@ -4,11 +4,51 @@ from __future__ import annotations
 
 import errno
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from tensor_grep.io import confined
+
+
+def _replace_parent_before_missing_component(
+    root: Path,
+    replacement: Path,
+    saved: Path,
+    missing_component: Path,
+    real_lstat: Callable[[Path], os.stat_result],
+) -> Callable[[Path], os.stat_result]:
+    def lstat(target: Path) -> os.stat_result:
+        if target == missing_component:
+            root.rename(saved)
+            replacement.rename(root)
+        return real_lstat(target)
+
+    return lstat
+
+
+def test_ValidateConfinedParentPrefix_MissingSuffixAfterParentSwap_Refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "trusted"
+    root.mkdir()
+    replacement = tmp_path / "replacement"
+    replacement.mkdir()
+    saved = tmp_path / "trusted-saved"
+    missing = root / "missing"
+    real_lstat = Path.lstat
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        _replace_parent_before_missing_component(root, replacement, saved, missing, real_lstat),
+    )
+
+    with pytest.raises(OSError, match="symbol cache parent changed"):
+        confined.validate_confined_parent_prefix(root, missing / "state.json")
+
+    root.rename(replacement)
+    saved.rename(root)
 
 
 def test_publication_overwrite_and_no_clobber(tmp_path: Path) -> None:

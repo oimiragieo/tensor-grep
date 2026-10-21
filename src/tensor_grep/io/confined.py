@@ -6,7 +6,7 @@ import hashlib
 import os
 import stat
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -17,7 +17,13 @@ def _file_identity(path: Path) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def _publish_windows(path: Path, data: bytes, identity: tuple[int, int, int, int] | None) -> None:
+def _publish_windows(
+    path: Path,
+    data: bytes,
+    identity: tuple[int, int, int, int] | None,
+    before_publish: Callable[[], None] | None,
+    on_published: Callable[[], None] | None,
+) -> None:
     """Publish under pinned directory handles, refusing new-destination races atomically."""
     from tensor_grep.io.windows_publication import discard_open, open_temporary, rename_open
 
@@ -31,8 +37,12 @@ def _publish_windows(path: Path, data: bytes, identity: tuple[int, int, int, int
             os.fsync(stream.fileno())
         if identity is not None and _file_identity(path) != identity:
             raise OSError("confined file changed before publication")
+        if before_publish is not None:
+            before_publish()
         rename_open(descriptor, path, replace=identity is not None)
         published = True
+        if on_published is not None:
+            on_published()
     finally:
         try:
             if not published:
@@ -81,9 +91,18 @@ def _real_components(root: Path, path: Path) -> list[tuple[Path, tuple[int, int]
         root,
         *(root.joinpath(*relative.parts[:i]) for i in range(1, len(relative.parts))),
     ]
-    identities = []
+    identities: list[tuple[Path, tuple[int, int]]] = []
     for component in components:
-        info = component.lstat()
+        try:
+            info = component.lstat()
+        except FileNotFoundError:
+            try:
+                _verify_parents(identities)
+            except FileNotFoundError as parent_exc:
+                raise OSError(
+                    "symbol cache parent changed while checking missing suffix"
+                ) from parent_exc
+            raise
         if not stat.S_ISDIR(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
             raise OSError(f"symbol cache refuses link/junction parent: {component}")
         identities.append((component, (info.st_dev, info.st_ino)))
@@ -99,6 +118,14 @@ def _verify_parents(parents: list[tuple[Path, tuple[int, int]]]) -> None:
             or (info.st_dev, info.st_ino) != identity
         ):
             raise OSError(f"symbol cache parent changed: {path}")
+
+
+def validate_confined_parent_prefix(root: Path, path: Path) -> None:
+    """Check existing real parent components, allowing a still-missing suffix."""
+    try:
+        _real_components(root, path)
+    except FileNotFoundError:
+        return
 
 
 def _verify_open_directory(descriptor: int, parents: list[tuple[Path, tuple[int, int]]]) -> None:
@@ -180,7 +207,15 @@ def read_confined(root: Path, path: Path, limit: int) -> bytes:
     return data
 
 
-def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bool = False) -> None:
+def publish_confined(
+    root: Path,
+    path: Path,
+    data: bytes,
+    *,
+    only_if_missing: bool = False,
+    before_publish: Callable[[], None] | None = None,
+    on_published: Callable[[], None] | None = None,
+) -> None:
     """Publish rebuildable advisory bytes; this is not a same-user filesystem CAS boundary.
 
     Absent targets use atomic no-clobber publication. Existing-target identity is checked,
@@ -201,7 +236,7 @@ def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bo
     _verify_parents(parents)
     with _pin_windows_parents(parents):
         if os.name == "nt":
-            _publish_windows(path, data, identity)
+            _publish_windows(path, data, identity, before_publish, on_published)
         else:
             parent_fd = os.open(
                 path.parent,
@@ -224,6 +259,8 @@ def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bo
                     os.fsync(stream.fileno())
                 _verify_parents(parents)
                 if identity is None:
+                    if before_publish is not None:
+                        before_publish()
                     os.link(
                         temporary,
                         path.name,
@@ -234,7 +271,11 @@ def publish_confined(root: Path, path: Path, data: bytes, *, only_if_missing: bo
                 else:
                     if _file_identity(path) != identity:
                         raise OSError("symbol cache changed before publication")
+                    if before_publish is not None:
+                        before_publish()
                     os.replace(temporary, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                if on_published is not None:
+                    on_published()
                 _verify_published(parent_fd, path.name, descriptor, data)
                 os.fsync(parent_fd)
             finally:

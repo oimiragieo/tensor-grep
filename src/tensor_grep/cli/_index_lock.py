@@ -348,6 +348,37 @@ def _preflight_all(scope: WriteScope) -> None:
     scope.preflighted = True
 
 
+def _prepare_write_authorization(
+    path: Path, replace: bool
+) -> tuple[WriteScope | None, WriteAuthorization | None, bool]:
+    scope = _WRITE_SCOPE.get()
+    auth = None
+    if scope is not None:
+        auth = scope.auths.get(_authorization_key(path))
+        if auth is None:
+            raise WriteAuthorizationError(
+                f"write target is not an authorized artifact path (refused): {path.name}"
+            )
+        if not scope.preflighted:
+            _preflight_all(scope)
+        if auth.identity is None:
+            replace = False
+    return scope, auth, replace
+
+
+def _prepare_authorized_parent(
+    path: Path,
+    scope: WriteScope | None,
+    auth: WriteAuthorization | None,
+) -> WriteAuthorization | None:
+    if scope is None or auth is None:
+        return auth
+    if auth.parent_identity is None:
+        return _create_missing_parents(path, auth, scope)
+    _enforce_parent(path, auth)
+    return auth
+
+
 def atomic_write_bytes_anchored(
     path: Path, data: bytes, *, mode: int | None = None, replace: bool = True
 ) -> None:
@@ -367,22 +398,8 @@ def atomic_write_bytes_anchored(
     see ``session_daemon_trust._recover_orphan_temps`` for the secret. The other callers write
     non-secret scaffolding, where a stray ``.tmp`` link is harmless.
     """
-    scope = _WRITE_SCOPE.get()
-    auth = None
-    if scope is not None:
-        auth = scope.auths.get(_authorization_key(path))
-        if auth is None:  # an authorization scope is active and this target is not in it
-            raise WriteAuthorizationError(
-                f"write target is not an authorized artifact path (refused): {path.name}"
-            )
-        if not scope.preflighted:
-            _preflight_all(scope)
-        if auth.parent_identity is None:
-            auth = _create_missing_parents(path, auth, scope)
-        else:
-            _enforce_parent(path, auth)  # BEFORE temp creation can touch a swapped parent
-        if auth.identity is None:
-            replace = False  # approved as ABSENT: publish no-clobber, never replace
+    scope, auth, replace = _prepare_write_authorization(path, replace)
+    auth = _prepare_authorized_parent(path, scope, auth)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise OSError(f"Refusing to write through a symlink: {path}")
@@ -446,6 +463,46 @@ def atomic_write_bytes_anchored(
         pass
     finally:
         os.close(dir_fd)
+
+
+def atomic_write_bytes_confined(
+    root: Path, path: Path, data: bytes, *, replace: bool = True
+) -> None:
+    """Publish bytes beneath a real root while honoring any active write authorization."""
+    root = Path(os.path.normcase(os.path.abspath(root)))
+    path = Path(os.path.normcase(os.path.abspath(path)))
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        raise OSError(f"confined output escapes trusted root: {path}") from None
+    if not relative.parts:
+        raise OSError(f"confined output must be below trusted root: {path}")
+
+    scope, auth, effective_replace = _prepare_write_authorization(path, replace)
+    from tensor_grep.io import confined
+
+    confined.validate_confined_parent_prefix(root, path)
+    auth = _prepare_authorized_parent(path, scope, auth)
+    if auth is None:
+        confined.prepare_directory(root, path.parent)
+    before_publish = None
+    on_published = None
+    if scope is not None and auth is not None:
+
+        def before_publish() -> None:
+            _enforce_authorization(path, auth)
+
+        def on_published() -> None:
+            scope.written.append(auth.label)
+
+    confined.publish_confined(
+        root,
+        path,
+        data,
+        only_if_missing=not effective_replace,
+        before_publish=before_publish,
+        on_published=on_published,
+    )
 
 
 def atomic_write_json(path: Path, payload: Any, *, mode: int | None = None) -> None:
