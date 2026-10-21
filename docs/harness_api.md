@@ -1540,7 +1540,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.19.0`), which is distinct from the installed CLI/package version and
+`1.20.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1605,7 +1605,9 @@ checkpoint metadata and the index. Omitted labels serialize as `null` for new re
 records without the key or with malformed label data load as `null` without hiding the checkpoint.
 Labels can repeat and never choose the undo target; undo
 uses the checkpoint ID. An older client that rewrites `index.json` may discard labels it does not
-understand.
+understand. Contract 1.20.0 routes every checkpoint JSON response through the shared envelope
+injector, so successful and structured error responses include the standard `incomplete` object;
+checkpoint operations default to `{status: false, cause: null, budget_remediable: false}`.
 - `tg_session_open(path=".", max_repo_files=2000)`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`

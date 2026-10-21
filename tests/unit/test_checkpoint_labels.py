@@ -336,6 +336,8 @@ def test_mcp_label_validation_error_does_not_disclose_exception_or_write_state(
     assert payload == {
         "version": mcp_server._json_output_version(),
         "mcp_contract_version": mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
+        "schema_version": 1,
+        "incomplete": {"status": False, "cause": None, "budget_remediable": False},
         "error": {
             "code": "invalid_input",
             "message": "Checkpoint label must contain 1 to 120 printable characters.",

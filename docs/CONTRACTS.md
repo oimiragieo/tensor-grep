@@ -262,6 +262,10 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
   handler runs. Invalid text that reaches the handler returns structured `invalid_input`.
   The storage version remains v1. Older clients that rewrite the index may discard labels they
   do not understand.
+  MCP contract 1.20.0 routes every checkpoint JSON response through `_inject_mcp_contract_fields`,
+  adding the standard top-level `incomplete` projection to success and structured error envelopes.
+  Checkpoint responses default to `{status: false, cause: null, budget_remediable: false}`; the
+  shared injector preserves an explicitly supplied incompleteness object.
 
 ## 5. Operational diagnostics (`tg doctor --json`)
 `tg doctor --json` is intended for operational automation and support workflows.

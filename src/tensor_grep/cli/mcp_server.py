@@ -174,7 +174,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.19.0"  # repository coverage inventory and citations batch
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.20.0"  # checkpoint response completeness envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1573,6 +1573,7 @@ from tensor_grep.cli.mcp_audit_tools import (  # noqa: E402
     tg_audit_diff as tg_audit_diff,
     tg_audit_history as tg_audit_history,
     tg_audit_manifest_verify as tg_audit_manifest_verify,
+    _checkpoint_meta as _checkpoint_meta,
     tg_checkpoint_create as tg_checkpoint_create,
     tg_checkpoint_list as tg_checkpoint_list,
     tg_checkpoint_undo as tg_checkpoint_undo,
@@ -5379,32 +5380,12 @@ def tg_checkpoint(
       checkpoint_id and deletes newer files within the stored scope.
     """
     try:
-        if label is not None and action in {"list", "undo"}:
-            payload = _meta_envelope(tool="tg_checkpoint", action=action)
-            payload["error"] = {
-                "code": "invalid_input",
-                "message": "label is only accepted when action='create'.",
-            }
-            return json.dumps(payload, indent=2)
-        try:
-            path = str(_confine_mcp_path(path, label="path"))
-        except PathConfinementError as exc:
-            return _meta_confinement_error("tg_checkpoint", action, exc)
-
-        try:
-            if action == "create":
-                return _self.tg_checkpoint_create(path=path, label=label)
-            if action == "list":
-                return _self.tg_checkpoint_list(path=path)
-            if action == "undo":
-                if checkpoint_id is None:
-                    return _meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
-                return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
-            return _meta_unknown_action_error("tg_checkpoint", action, _TG_CHECKPOINT_ACTIONS)
-        except Exception as exc:
-            payload = _meta_envelope(tool="tg_checkpoint", action=action)
-            payload["error"] = _sanitized_tool_error("tg_checkpoint", exc)
-            return json.dumps(payload, indent=2)
+        return _self._checkpoint_meta(
+            action=action,
+            checkpoint_id=checkpoint_id,
+            path=path,
+            label=label,
+        )
     except Exception as exc:
         _log_tool_exception("tg_checkpoint", exc)
         return _sanitized_tool_error_text("tg_checkpoint", exc)
