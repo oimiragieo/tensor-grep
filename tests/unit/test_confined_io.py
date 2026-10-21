@@ -4,12 +4,36 @@ from __future__ import annotations
 
 import errno
 import os
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from tensor_grep.io import confined
+
+
+def _lstat_with_disappearance(
+    path: Path,
+    first_observed: threading.Event,
+    verification_started: threading.Event,
+    allow_unlink: threading.Event,
+    real_lstat: Callable[[Path], os.stat_result],
+) -> Callable[[Path], os.stat_result]:
+    def lstat(target: Path) -> os.stat_result:
+        if target != path:
+            return real_lstat(target)
+        if first_observed.is_set():
+            verification_started.set()
+            assert allow_unlink.wait(timeout=5)
+            target.unlink()
+            return real_lstat(target)
+        info = real_lstat(target)
+        first_observed.set()
+        return info
+
+    return lstat
 
 
 def _replace_parent_before_missing_component(
@@ -26,6 +50,84 @@ def _replace_parent_before_missing_component(
         return real_lstat(target)
 
     return lstat
+
+
+def _lstat_with_parent_disappearance(
+    root: Path,
+    saved: Path,
+    path: Path,
+    real_lstat: Callable[[Path], os.stat_result],
+) -> Callable[[Path], os.stat_result]:
+    moved = False
+
+    def lstat(target: Path) -> os.stat_result:
+        nonlocal moved
+        if target == path and not moved:
+            root.rename(saved)
+            moved = True
+            return real_lstat(target)
+        if target == root and moved:
+            try:
+                return real_lstat(target)
+            except FileNotFoundError:
+                saved.rename(root)
+                moved = False
+                raise
+        return real_lstat(target)
+
+    return lstat
+
+
+def test_ReadConfined_ObservedLeafDisappearsAfterOpen_RaisesChangedSourceError(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "state.json"
+    path.write_bytes(b"{}")
+    first_observed = threading.Event()
+    verification_started = threading.Event()
+    allow_unlink = threading.Event()
+    real_lstat = Path.lstat
+
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        _lstat_with_disappearance(
+            path, first_observed, verification_started, allow_unlink, real_lstat
+        ),
+    )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(confined.read_confined, tmp_path, path, 64)
+        assert verification_started.wait(timeout=2)
+        allow_unlink.set()
+        with pytest.raises(OSError, match="confined source changed during read") as refusal:
+            future.result(timeout=2)
+        assert not isinstance(refusal.value, FileNotFoundError)
+
+
+def test_ReadConfined_GenuinelyAbsentLeaf_RemainsFileNotFound(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        confined.read_confined(tmp_path, tmp_path / "absent.json", 64)
+
+
+def test_ReadConfined_ParentDisappearsBeforeLeafObservation_RaisesChangedSourceError(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "trusted"
+    root.mkdir()
+    path = root / "absent.json"
+    saved = tmp_path / "trusted-saved"
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        _lstat_with_parent_disappearance(root, saved, path, Path.lstat),
+    )
+
+    with pytest.raises(OSError, match="confined source changed during read") as refusal:
+        confined.read_confined(root, path, 64)
+
+    assert not isinstance(refusal.value, FileNotFoundError)
+    assert root.is_dir()
 
 
 def test_ValidateConfinedParentPrefix_MissingSuffixAfterParentSwap_Refuses(
