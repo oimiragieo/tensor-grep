@@ -186,26 +186,36 @@ def _pin_windows_parents(parents: list[tuple[Path, tuple[int, int]]]) -> Iterato
 def read_confined(root: Path, path: Path, limit: int) -> bytes:
     """Reject special files/links and bind bounded bytes to the opened object identity."""
     parents = _real_components(root, path)
-    initial = path.lstat()
+    try:
+        initial = path.lstat()
+    except FileNotFoundError:
+        try:
+            _verify_parents(parents)
+        except FileNotFoundError as exc:
+            raise OSError(f"confined source changed during read: {path}") from exc
+        raise
     if not stat.S_ISREG(initial.st_mode) or getattr(initial, "st_file_attributes", 0) & 0x400:
         raise OSError(f"symbol cache refuses non-regular source: {path}")
     if initial.st_size > limit:
         raise OSError(f"symbol cache file exceeds {limit} bytes: {path}")
-    descriptor = os.open(
-        path,
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
-    with os.fdopen(descriptor, "rb") as stream:
-        opened = os.fstat(stream.fileno())
-        if (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino):
-            raise OSError(f"symbol cache source changed before read: {path}")
-        data = stream.read(limit + 1)
-        after = os.fstat(stream.fileno())
-    current = path.lstat()
-    _verify_parents(parents)
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino):
+                raise OSError(f"symbol cache source changed before read: {path}")
+            data = stream.read(limit + 1)
+            after = os.fstat(stream.fileno())
+        current = path.lstat()
+        _verify_parents(parents)
+    except FileNotFoundError as exc:
+        raise OSError(f"confined source changed during read: {path}") from exc
     observed = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
     if (
         len(data) > limit

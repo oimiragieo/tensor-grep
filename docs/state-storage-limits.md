@@ -1,6 +1,6 @@
 # Confined state-file publication
 
-Confined state writes must preserve the caller's approvals and stay inside the supplied root. Treat the root as a fenced yard and an active approval scope as the list of objects its owner allows the worker to change. These helpers reject parent traversal before filesystem inspection and preserve evidence when publication succeeds but final verification fails.
+Confined writes stay below the supplied root and preserve caller approvals. Active scopes list authorized outputs. Helpers reject parent traversal before metadata access and retain evidence if publication succeeds but verification fails.
 
 | Component | Plain-English Analogy | Core Responsibility |
 | --- | --- | --- |
@@ -9,7 +9,7 @@ Confined state writes must preserve the caller's approvals and stay inside the s
 
 ## Walkthrough
 
-Suppose an approved output is `root/cache/state.json`. `atomic_write_bytes_confined(root, path, data)` checks the normalized target is strictly below the root. When a scope is active, an unlisted target is refused and every approved output is checked before parent or temporary-file creation. No active scope means no approval-list requirement.
+For `root/cache/state.json`, `atomic_write_bytes_confined` requires a normalized target below root. Active scopes reject unlisted targets and preflight every approval before creating parents or temporaries; without a scope, no approval list is required.
 
 ```mermaid
 flowchart TD
@@ -20,9 +20,9 @@ flowchart TD
     E --> F[Publish, record, verify]
 ```
 
-The writer validates existing parents, prepares permitted missing parents and writes a temporary file beside the destination. `before_publish` rechecks authorization immediately before publication. An output approved as absent uses no-clobber publication: a competing file survives and publication refuses.
+The writer validates real parents, prepares permitted missing ones, and writes a sibling temporary. `before_publish` rechecks authorization; approved-absent targets use no-clobber publication.
 
-`on_published` records the authorized label immediately after publication, before final verification. If verification fails, the refusal can report an output already written. Labels live in memory; they are not a durable audit log. Windows marks the temporary as published before this callback, preventing failure cleanup from discarding a published file.
+After publication, `on_published` records the in-memory label before verification. A later refusal may report bytes already written. Labels are not a durable audit log; Windows preserves the published file if the callback fails.
 
 ## Contract changes and limits
 
@@ -33,9 +33,11 @@ G0a adds the approval-aware confined writer without changing the existing anchor
 - An already-outside or incompatible relative/absolute path retains `ValueError`. Ordinary relative root/path pairs remain supported.
 - `prepare_directory(root, root)` remains an unchecked no-op; it does not validate the root. Descendant preparation applies the lexical and real-parent checks.
 
-The higher authorization wrapper normalizes paths before invoking the low-level helpers. The shared check does not resolve away links. Existing link, junction and opened-object identity checks still apply. A missing parent suffix is accepted only after the observed parent identities are rechecked.
+G0b keeps genuine initial leaf absence as `FileNotFoundError` after rechecking observed parents. If a leaf disappears after first observation, or an observed parent disappears while the leaf is checked or read, `read_confined` raises `OSError("confined source changed during read")`. This prevents a changing snapshot from being mistaken for missing state.
 
-This is not filesystem compare-and-swap: another process running as the same user can change a directory entry between identity checking and replacement. Some interference is detected after publication, so refusal does not always mean nothing became visible. Authority above the supplied root is outside these helpers' checks.
+The authorization wrapper normalizes paths before low-level calls. The shared check does not resolve links; existing link, junction and opened-object identity checks remain. Missing parent suffixes are accepted only after observed parent identities are rechecked.
+
+This is not filesystem compare-and-swap. Same-user changes can race identity checks and replacement; some interference is detected after publication, so refusal may follow visible writes. Authority above the supplied root is outside these helpers' checks.
 
 ## Traceability
 
@@ -44,10 +46,11 @@ This is not filesystem compare-and-swap: another process running as the same use
 | G0-AUTH | Refuse unlisted outputs before creation | G0A-CODE | [`_index_lock.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/_index_lock.py) | [`test_AtomicConfinedWrite_UnlistedTarget_IsRefusedBeforeCreation`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_authorized_confined_publication.py) |
 | G0-OWN | Record publication before final verification | G0A-CODE | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_AtomicConfinedWrite_PostPublishVerificationFails_ReportsWrittenLabel`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_authorized_confined_publication.py) |
 | G0D | Refuse parent tails before metadata; preserve valid paths | G0D-PATH | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_ConfinedOperation_ParentTail_RefusesBeforeMetadata`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_confined_lexical_containment.py) |
+| G0-READ | Distinguish initial absence from observed disappearance | G0B-READ | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_confined_io.py`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_confined_io.py): leaf, parent, and genuine-absence controls. |
 
 ## Bounded verification on Windows
 
-From the repository root, with the development `.venv` configured, paste this into PowerShell. It runs focused tests with a 300-second timeout. The context manager owns and removes the temporary test directory on success or exception; the pytest child receives no interactive input or new console window.
+From the repository root with `.venv` configured, run this PowerShell recipe. It bounds focused tests at 300 seconds, owns the temporary directory through success or failure, and gives the child no interactive input or console window.
 
 ```powershell
 @'
