@@ -83,6 +83,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/assets/logo.jpg",
     "docs/benchmarks.md",
     "docs/benchmarks_ast.md",
+    "docs/daemon-probe-test-tracing.md",
     "docs/enterprise_review_bundle_ci.md",
     "docs/examples/ast_run.json",
     "docs/examples/attempt_ledger.json",

@@ -20,6 +20,8 @@ uv run mypy src/tensor_grep
 uv run pytest -q
 ```
 
+The daemon probe recorder test contract is described in [Daemon probe test tracing](docs/daemon-probe-test-tracing.md).
+
 For release/workflow/package-manager changes, also run:
 
 ```bash

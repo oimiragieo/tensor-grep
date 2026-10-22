@@ -15,6 +15,7 @@ exclude_docs: |
   !/assets/logo.jpg
   !/benchmarks.md
   !/benchmarks_ast.md
+  !/daemon-probe-test-tracing.md
   !/enterprise_review_bundle_ci.md
   !/examples/ast_run.json
   !/examples/attempt_ledger.json
@@ -136,6 +137,7 @@ nav:
     - Review Bundle CI Gate: enterprise_review_bundle_ci.md
   - Maintainers:
     - CI Pipeline: CI_PIPELINE.md
+    - Daemon Probe Test Tracing: daemon-probe-test-tracing.md
     - Release Checklist: RELEASE_CHECKLIST.md
     - Hotfix Procedure: HOTFIX_PROCEDURE.md
     - Package Manager Publish: package_manager_publish.md
