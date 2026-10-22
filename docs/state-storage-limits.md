@@ -35,6 +35,12 @@ G0a adds the approval-aware confined writer without changing the existing anchor
 
 G0b keeps genuine initial leaf absence as `FileNotFoundError` after rechecking observed parents. If a leaf disappears after first observation, or an observed parent disappears while the leaf is checked or read, `read_confined` raises `OSError("confined source changed during read")`. This prevents a changing snapshot from being mistaken for missing state.
 
+## Bounded read requests
+
+`read_confined` now asks the stream for at most 64 KiB per read, independently of stat-reported file size, and accumulates no more than `limit + 1` bytes before applying its existing byte-limit refusal. Nonempty short reads continue; only `b""` means EOF. A `None` result is an I/O refusal, not EOF.
+
+The helper stores chunks and joins them into the returned value; during that join, memory can approach twice the actual payload size. The per-request bound does not establish a whole-process or all-input memory bound.
+
 The authorization wrapper normalizes paths before low-level calls. The shared check does not resolve links; existing link, junction and opened-object identity checks remain. Missing parent suffixes are accepted only after observed parent identities are rechecked.
 
 This is not filesystem compare-and-swap. Same-user changes can race identity checks and replacement; some interference is detected after publication, so refusal may follow visible writes. Authority above the supplied root is outside these helpers' checks.
@@ -47,6 +53,7 @@ This is not filesystem compare-and-swap. Same-user changes can race identity che
 | G0-OWN | Record publication before final verification | G0A-CODE | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_AtomicConfinedWrite_PostPublishVerificationFails_ReportsWrittenLabel`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_authorized_confined_publication.py) |
 | G0D | Refuse parent tails before metadata; preserve valid paths | G0D-PATH | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_ConfinedOperation_ParentTail_RefusesBeforeMetadata`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_confined_lexical_containment.py) |
 | G0-READ | Distinguish initial absence from observed disappearance | G0B-READ | [`confined.py`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_confined_io.py`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_confined_io.py): leaf, parent, and genuine-absence controls. |
+| G0-RESOURCE | Bound stream reads and preserve short reads, EOF, and refusal behavior | G0C-READ | [`_read_limited_stream`](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/confined.py) | [`test_ReadConfined_TinyFileAtLargeLimit_KeepsPeakAllocationBounded`](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_confined_read_resources.py) |
 
 ## Bounded verification on Windows
 
@@ -69,6 +76,7 @@ with tempfile.TemporaryDirectory(prefix="tg-confined-check-") as temporary:
             "pytest",
             "-q",
             "tests/unit/test_authorized_confined_publication.py",
+            "tests/unit/test_confined_read_resources.py",
             "tests/unit/test_confined_io.py",
             "tests/unit/test_confined_lexical_containment.py",
             "--basetemp",

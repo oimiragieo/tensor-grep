@@ -9,7 +9,25 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 from uuid import uuid4
+
+_READ_CHUNK_BYTES = 64 * 1024
+
+
+def _read_limited_stream(stream: BinaryIO, limit: int) -> bytes:
+    """Read through EOF or one byte beyond the limit without a limit-sized request."""
+    remaining = limit + 1
+    chunks: list[bytes] = []
+    while remaining:
+        chunk = stream.read(min(remaining, _READ_CHUNK_BYTES))
+        if chunk is None:
+            raise OSError("confined source read returned no data")
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def _file_identity(path: Path) -> tuple[int, int, int, int]:
@@ -210,7 +228,7 @@ def read_confined(root: Path, path: Path, limit: int) -> bytes:
             opened = os.fstat(stream.fileno())
             if (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino):
                 raise OSError(f"symbol cache source changed before read: {path}")
-            data = stream.read(limit + 1)
+            data = _read_limited_stream(stream, limit)
             after = os.fstat(stream.fileno())
         current = path.lstat()
         _verify_parents(parents)
