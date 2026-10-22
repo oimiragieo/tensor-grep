@@ -73,6 +73,7 @@ exclude_docs: |
   !/runbooks/resident-worker.md
   !/session_daemon_protocol.md
   !/state-json-configuration.md
+  !/state-json-reading.md
   !/state-storage-limits.md
   !/subprocess-output-policy-inventory.json
   !/subprocess-output-policy-inventory.md
@@ -129,6 +130,7 @@ nav:
     - CLI and MCP API: harness_api.md
     - Session Daemon Protocol: session_daemon_protocol.md
     - State JSON Configuration: state-json-configuration.md
+    - State JSON Reading: state-json-reading.md
     - State Storage: state-storage-limits.md
     - Multi-Agent Context Plane: multi_agent_context_plane.md
     - Review Bundle CI Gate: enterprise_review_bundle_ci.md

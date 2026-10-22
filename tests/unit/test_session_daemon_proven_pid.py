@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -23,6 +24,26 @@ import pytest
 
 from tensor_grep.cli import session_daemon as sd
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+
+_DAEMON_REQUEST_FUNCTION = sd._daemon_request
+_DAEMON_REQUEST_CALL_LINES = {521: "connect", 526: "send", 528: "read"}
+
+
+def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:
+    code = getattr(request_function, "__code__", None)
+    if (
+        request_function is not _DAEMON_REQUEST_FUNCTION
+        or code is None
+        or code.co_name != "_daemon_request"
+        or request_function.__module__ != sd.__name__
+        or request_function.__globals__ is not sd.__dict__
+        or Path(code.co_filename).resolve() != Path(sd.__file__).resolve()
+    ):
+        return "unknown"
+    lines = [line for frame, line in traceback.walk_tb(error.__traceback__) if frame.f_code is code]
+    if len(lines) != 1:
+        return "unknown"
+    return _DAEMON_REQUEST_CALL_LINES.get(lines[0], "unknown")
 
 
 @pytest.fixture(autouse=True)
@@ -226,6 +247,8 @@ class _ProbeTrace:
         except BaseException as exc:
             entry["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
             entry["exception_category"] = self._safe_exception_category(exc)
+            if stage == "request":
+                entry["request_failure_stage"] = _request_failure_stage(exc, callback)
             raise
         entry["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
         self._record_safe_result(stage, entry, result)
@@ -253,8 +276,12 @@ class _ProbeTrace:
     @staticmethod
     def _safe_exception_category(exc: BaseException) -> str:
         kind = type(exc)
-        if kind is TimeoutError or kind is ConnectionError or kind is ConnectionRefusedError:
-            return "connection_or_timeout"
+        if kind is TimeoutError:
+            return "timeout"
+        if kind is ConnectionRefusedError:
+            return "connection_refused"
+        if kind is ConnectionError:
+            return "connection_error"
         if kind is OSError:
             return "os_error"
         if kind is RuntimeError or kind is ValueError or kind is TypeError or kind is KeyError:
@@ -300,6 +327,43 @@ class _ProbeTrace:
         return {stage: dict(values) for stage, values in self._steps.items()}
 
 
+class _RequestFailureConnection:
+    def __init__(self, failure_stage: str, failure: BaseException) -> None:
+        self._failure_stage = failure_stage
+        self._failure = failure
+
+    def __enter__(self) -> _RequestFailureConnection:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        return None
+
+    def settimeout(self, timeout: float | None) -> None:
+        return None
+
+    def sendall(self, payload: bytes) -> None:
+        if self._failure_stage == "send":
+            raise self._failure
+
+    def makefile(self, mode: str, *, encoding: str) -> _RequestFailureConnection:
+        return self
+
+    def readline(self) -> str:
+        raise self._failure
+
+
+def _fake_request_socket_boundary(
+    failure_stage: str, failure: BaseException, calls: list[tuple[Any, ...]]
+) -> Callable[..., Any]:
+    def create_connection(address: Any, *, timeout: float | None) -> _RequestFailureConnection:
+        calls.append((address, timeout))
+        if failure_stage == "connect":
+            raise failure
+        return _RequestFailureConnection(failure_stage, failure)
+
+    return create_connection
+
+
 def test_probe_trace_passes_arguments_and_result_through_without_retaining_values() -> None:
     trace = _ProbeTrace()
     marker = {"nonce": "synthetic-nonce", "token": "synthetic-token"}
@@ -329,6 +393,51 @@ def test_probe_trace_passes_arguments_and_result_through_without_retaining_value
     assert "synthetic-proof" not in repr(trace.safe_summary())
     assert trace.safe_summary()["request"]["reply_ok"] is True
     assert trace.safe_summary()["request"]["pid_type"] == "int"
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "failure_type", "expected_stage", "expected_category"),
+    [
+        pytest.param(
+            "connect", ConnectionRefusedError, "connect", "connection_refused", id="connect-refused"
+        ),
+        pytest.param("send", ConnectionError, "send", "connection_error", id="send-error"),
+        pytest.param("read", TimeoutError, "read", "timeout", id="read-timeout"),
+    ],
+)
+def test_ProbeTrace_RequestFailure_RealRequestClassifiesCallSiteAndPreservesPrivacy(
+    failure_stage: str,
+    failure_type: type[BaseException],
+    expected_stage: str,
+    expected_category: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _ProbeTrace()
+    failure = failure_type("private request failure canary")
+    calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        sd.socket,
+        "create_connection",
+        _fake_request_socket_boundary(failure_stage, failure, calls),
+    )
+
+    with pytest.raises(failure_type) as caught:
+        trace.observe(
+            "request",
+            _DAEMON_REQUEST_FUNCTION,
+            "127.0.0.1",
+            43210,
+            {"action": "ping"},
+            token="fixed-test-token",
+        )
+
+    summary = repr(trace.safe_summary())
+    assert caught.value is failure
+    assert calls == [(("127.0.0.1", 43210), sd._DAEMON_CONNECT_TIMEOUT_SECONDS)]
+    assert trace.safe_summary()["request"]["request_failure_stage"] == expected_stage
+    assert trace.safe_summary()["request"]["exception_category"] == expected_category
+    assert "private request failure canary" not in summary
+    assert "fixed-test-token" not in summary
 
 
 def test_probe_trace_reraises_the_same_exception_and_records_only_its_class() -> None:
@@ -381,11 +490,12 @@ def test_ProbeTrace_UntrustedExceptionNameAndMessage_AreRedacted() -> None:
     failure = untrusted_error("private exception message canary")
 
     with pytest.raises(Exception) as caught:
-        trace.observe("verify", lambda: (_ for _ in ()).throw(failure))
+        trace.observe("request", lambda: (_ for _ in ()).throw(failure))
 
     summary = repr(trace.safe_summary())
     assert caught.value is failure
-    assert trace.safe_summary()["verify"]["exception_category"] == "other"
+    assert trace.safe_summary()["request"]["exception_category"] == "other"
+    assert trace.safe_summary()["request"]["request_failure_stage"] == "unknown"
     assert untrusted_name not in summary
     assert "987654321" not in summary
     assert "private exception message canary" not in summary

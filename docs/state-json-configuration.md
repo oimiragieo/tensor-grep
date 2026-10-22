@@ -47,9 +47,10 @@ with the platform maximum. Integer conversion therefore stays small even under P
 integer digit ceiling. Scanning a long token still uses time and memory proportional to its
 length. The setting describes serialized bytes, not Python object memory or record counts.
 
-Only the configuration API is available at this stage; reader and encoder helpers are follow-up
-work. The independent Rust producer does not read this Python setting. Callers that later adopt
-it must capture the result once per operation and pass that same integer to helpers.
+The configuration and [reader](state-json-reading.md) APIs are available; encoding is follow-up
+work. Existing stores have not adopted these helpers. The independent Rust producer does not read
+this Python setting. Callers that later adopt it must capture the result once per operation and
+pass that same integer to helpers.
 
 | Spec ID | Behavior | CL | File | Unit test |
 | --- | --- | --- | --- | --- |

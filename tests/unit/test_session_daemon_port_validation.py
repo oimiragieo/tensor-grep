@@ -117,6 +117,22 @@ def _observe_call(
     return observed
 
 
+def _observe_substep(
+    real: Callable[..., Any], diagnostics: dict[str, dict[str, Any]], stage: str
+) -> Callable[..., Any]:
+    def observed(*args: Any, **kwargs: Any) -> Any:
+        started = time.monotonic()
+        diagnostics[stage] = row = dict[str, Any](called=True, completed=False)
+        try:
+            result = real(*args, **kwargs)
+        finally:
+            row["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
+        row["completed"] = True
+        return result
+
+    return observed
+
+
 @pytest.fixture
 def _running_daemon(
     tmp_path: Path,
@@ -240,6 +256,8 @@ def test_a_valid_int_port_is_still_accepted(
     _running_daemon: tuple[Path, sd._ThreadedSessionDaemon],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tensor_grep.cli import session_daemon_trust as trust
+
     # POSITIVE CONTROL: the rejections above would pass against a probe that rejects everything.
     root, server = _running_daemon
     _plant(root, int(server.server_address[1]))
@@ -253,10 +271,16 @@ def test_a_valid_int_port_is_still_accepted(
     real_request = sd._daemon_request
     real_verify = sd._verify_ping_reply
     real_proof_fields = sd._ping_proof_fields
+    real_secret = trust._load_or_create_user_secret
+    real_running_version = trust._daemon_running_version
     metadata_observer = _observe_call(real_metadata, diagnostics, "metadata")
     request_observer = _observe_call(real_request, diagnostics, "request")
     verify_observer = _observe_call(real_verify, diagnostics, "verification")
     proof_fields_observer = _observe_call(real_proof_fields, diagnostics, "proof_fields")
+    secret_observer = _observe_substep(real_secret, diagnostics, "proof_secret")
+    version_observer = _observe_substep(real_running_version, diagnostics, "proof_version")
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", secret_observer)
+    monkeypatch.setattr(trust, "_daemon_running_version", version_observer)
     monkeypatch.setattr(sd, "_read_daemon_metadata", metadata_observer)
     monkeypatch.setattr(sd, "_daemon_request", request_observer)
     monkeypatch.setattr(sd, "_verify_ping_reply", verify_observer)
@@ -275,6 +299,8 @@ def test_a_valid_int_port_is_still_accepted(
     assert diagnostics["proof_fields"]["called"] is True
     assert set(diagnostics["proof_fields"]) == {"called", "elapsed_ms"}
     assert type(diagnostics["proof_fields"]["elapsed_ms"]) is float
+    assert diagnostics["proof_secret"]["completed"] is True
+    assert diagnostics["proof_version"]["completed"] is True
 
 
 def test_ProbeObserver_RealCall_PreservesResultAndArguments(
