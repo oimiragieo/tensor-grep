@@ -9748,20 +9748,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         // guard execute_ripgrep_search's Err bubbles via `?` to main()'s default Result
         // termination, which exits 1 -- indistinguishable from a genuine no-match (audit #81 #7).
         require_ripgrep_or_exit(rg_available, "this search's flag combination");
-        // Bug #88/#480/#100: the implicit-walk-ceiling refusal used to live here, gated on
-        // `request.path_was_implicit && (!args.globs.is_empty() || !args.file_type.is_empty())`.
-        // It is now HOISTED into `execute_ripgrep_search` itself (rg_passthrough.rs) as that
-        // function's first statement, before `resolve_ripgrep_binary()` -- a single chokepoint
-        // every caller of `execute_ripgrep_search` passes through (this call site below, the
-        // native frontdoor's `-e` arm, the positional CLI, tg-search-fast, and the PyO3 FFI
-        // bridge), closing the native-frontdoor bypass audit #100 found (the frontdoor's `-e` arm
-        // defaulted `paths` to `["."]` with no `path_was_implicit` record, walking unbounded with
-        // zero ceiling checks). `command_ripgrep_args` below threads `request.path_was_implicit`
-        // into the `RipgrepSearchArgs` passed to `execute_ripgrep_search`, so this duplicate
-        // check is redundant -- deleted rather than left to drift out of sync with the hoisted
-        // one. The hoisted gate also drops the `--glob`/`--file_type` requirement this block had
-        // (fires on `path_was_implicit` alone, still bounded by the same 1500-file ceiling walk),
-        // closing #105 FOR THE RG-PASSTHROUGH ENGINE only (a bare unfiltered implicit-path search on a huge root). SCOPE CAVEAT : this bounds only callers of execute_ripgrep_search; the native-CPU engine (run_native_search, reached via --json / --force-cpu / word / fixed / rg-unavailable) does NOT pass through here and remains an unbounded implicit-walk vector -- tracked as the #105 residual (generalize the ceiling before engine selection, or replicate it at the native-CPU entry).
+        // execute_ripgrep_search enforces the implicit-path ceiling before resolving
+        // ripgrep; command_ripgrep_args preserves path_was_implicit. Native CPU walks
+        // enforce the same ceiling through check_native_implicit_walk_ceiling.
         if args.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
         }
