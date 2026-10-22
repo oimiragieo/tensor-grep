@@ -141,6 +141,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/runbooks/resident-worker.md",
     "docs/session_daemon_protocol.md",
     "docs/state-json-configuration.md",
+    "docs/state-json-reading.md",
     "docs/state-storage-limits.md",
     "docs/subprocess-output-policy-inventory.json",
     "docs/subprocess-output-policy-inventory.md",

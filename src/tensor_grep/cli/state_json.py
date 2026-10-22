@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
+from pathlib import Path
+from typing import Any
+
+from tensor_grep.io.confined import read_confined
 
 _DEFAULT_STATE_JSON_MAX_BYTES = 64 * 1024 * 1024
 _STATE_JSON_LIMIT_ENV = "TG_STATE_JSON_MAX_BYTES"
@@ -46,3 +51,22 @@ def configured_state_json_limit() -> int:
     limit = int(significant, 10) if in_range else 0
     _validate_limit(limit)
     return limit
+
+
+def read_state_json(path: Path, *, trusted_root: Path, limit: int, kind: str) -> Any:
+    """Read confined JSON; preserve initial path absence before leaf observation as FileNotFoundError.
+
+    Callers must supply an established trusted root and a fixed, nonsensitive
+    diagnostic label for ``kind``.
+    """
+    _validate_limit(limit)
+    try:
+        data = read_confined(trusted_root, path, limit)
+    except FileNotFoundError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise StateJsonError(f"could not read confined {kind} JSON state") from exc
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
+        raise StateJsonError(f"invalid {kind} JSON state") from exc
