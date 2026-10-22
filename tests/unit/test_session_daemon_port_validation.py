@@ -17,6 +17,8 @@ import pytest
 from tensor_grep.cli import session_daemon as sd
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
+_DAEMON_REQUEST_FUNCTION = sd._daemon_request
+
 
 @pytest.fixture(autouse=True)
 def _secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,18 +67,43 @@ def _metadata_shape(value: object) -> dict[str, bool]:
     }
 
 
+_DAEMON_REQUEST_CALL_LINES = {521: "connect", 526: "send", 528: "read"}
+
+
+def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:
+    code = getattr(request_function, "__code__", None)
+    if (
+        request_function is not _DAEMON_REQUEST_FUNCTION
+        or code is None
+        or code.co_name != "_daemon_request"
+        or request_function.__module__ != sd.__name__
+        or request_function.__globals__ is not sd.__dict__
+        or Path(code.co_filename).resolve() != Path(sd.__file__).resolve()
+    ):
+        return "unknown"
+    frame = error.__traceback__
+    request_line: int | None = None
+    while frame is not None:
+        if frame.tb_frame.f_code is code:
+            request_line = frame.tb_lineno
+        frame = frame.tb_next
+    return _DAEMON_REQUEST_CALL_LINES.get(request_line, "unknown")
+
+
 def _observe_call(
     real: Callable[..., Any], diagnostics: dict[str, dict[str, Any]], stage: str
 ) -> Callable[..., Any]:
     def observed(*args: Any, **kwargs: Any) -> Any:
         started = time.monotonic()
         row: dict[str, Any] = {"called": True}
+        diagnostics[stage] = row
         try:
             result = real(*args, **kwargs)
         except BaseException as error:
             row["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
             row["exception_class"] = type(error).__name__
-            diagnostics[stage] = row
+            if stage == "request":
+                row["failure_stage"] = _request_failure_stage(error, real)
             raise
         row["elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
         if stage == "metadata":
@@ -85,7 +112,6 @@ def _observe_call(
             row.update(_reply_shape(result))
         elif stage == "verification":
             row["signed_ping_accepted"] = result is True
-        diagnostics[stage] = row
         return result
 
     return observed
@@ -106,6 +132,38 @@ def _running_daemon(
         server.server_close()
         thread.join(timeout=2.0)
         assert not thread.is_alive(), "daemon server thread did not stop within 2 seconds"
+
+
+class _RequestBoundaryConnection:
+    def __init__(self, failure_stage: str, error: BaseException) -> None:
+        self.failure_stage = failure_stage
+        self.error = error
+        self.calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def create_connection(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append((args, kwargs))
+        if self.failure_stage == "connect":
+            raise self.error
+        return self
+
+    def __enter__(self) -> _RequestBoundaryConnection:
+        return self
+
+    def __exit__(self, *_args: Any) -> bool:
+        return False
+
+    def settimeout(self, _timeout: float | None) -> None:
+        return None
+
+    def sendall(self, _payload: bytes) -> None:
+        if self.failure_stage == "send":
+            raise self.error
+
+    def makefile(self, *_args: Any, **_kwargs: Any) -> _RequestBoundaryConnection:
+        return self
+
+    def readline(self) -> str:
+        raise self.error
 
 
 BAD_PORTS = [float("inf"), True, 4242.9, 0, 70000, -1, "8080", None, [8080]]
@@ -194,12 +252,15 @@ def test_a_valid_int_port_is_still_accepted(
     real_metadata = sd._read_daemon_metadata
     real_request = sd._daemon_request
     real_verify = sd._verify_ping_reply
+    real_proof_fields = sd._ping_proof_fields
     metadata_observer = _observe_call(real_metadata, diagnostics, "metadata")
     request_observer = _observe_call(real_request, diagnostics, "request")
     verify_observer = _observe_call(real_verify, diagnostics, "verification")
+    proof_fields_observer = _observe_call(real_proof_fields, diagnostics, "proof_fields")
     monkeypatch.setattr(sd, "_read_daemon_metadata", metadata_observer)
     monkeypatch.setattr(sd, "_daemon_request", request_observer)
     monkeypatch.setattr(sd, "_verify_ping_reply", verify_observer)
+    monkeypatch.setattr(sd, "_ping_proof_fields", proof_fields_observer)
 
     observed = sd._probe_daemon(root)
     assert observed is not None, f"sanitized daemon probe diagnostics: {diagnostics!r}"
@@ -211,6 +272,9 @@ def test_a_valid_int_port_is_still_accepted(
     assert diagnostics["request"]["response_ok"] is True
     assert diagnostics["request"]["response_proof_present"] is True
     assert diagnostics["verification"]["signed_ping_accepted"] is True
+    assert diagnostics["proof_fields"]["called"] is True
+    assert set(diagnostics["proof_fields"]) == {"called", "elapsed_ms"}
+    assert type(diagnostics["proof_fields"]["elapsed_ms"]) is float
 
 
 def test_ProbeObserver_RealCall_PreservesResultAndArguments(
@@ -221,12 +285,14 @@ def test_ProbeObserver_RealCall_PreservesResultAndArguments(
     keyword_value = object()
     result = object()
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    diagnostics: dict[str, dict[str, Any]] = {}
+    rows_seen_at_entry: list[dict[str, Any]] = []
 
     def real(*args: Any, **kwargs: Any) -> object:
         calls.append((args, kwargs))
+        rows_seen_at_entry.append(dict(diagnostics["sentinel"]))
         return result
 
-    diagnostics: dict[str, dict[str, Any]] = {}
     observed = _observe_call(real, diagnostics, "sentinel")
 
     returned = observed(positional, payload=keyword_value)
@@ -235,6 +301,7 @@ def test_ProbeObserver_RealCall_PreservesResultAndArguments(
     assert calls == [((positional,), {"payload": keyword_value})]
     assert calls[0][0][0] is positional
     assert calls[0][1]["payload"] is keyword_value
+    assert rows_seen_at_entry == [{"called": True}]
     assert diagnostics == {"sentinel": {"called": True, "elapsed_ms": 0.0}}
     assert type(diagnostics["sentinel"]["elapsed_ms"]) is float
 
@@ -263,6 +330,7 @@ def test_ProbeObserver_RealException_PreservesIdentity(
             "called": True,
             "elapsed_ms": 0.0,
             "exception_class": "TimeoutError",
+            "failure_stage": "unknown",
         }
     }
     assert "observer-private-exception-sentinel" not in repr(diagnostics)
@@ -330,3 +398,45 @@ def test_ProbeDiagnostics_SensitiveInputs_ExcludesSensitiveValues(
     assert "observer-private-token-sentinel" not in repr(diagnostics)
     assert "observer-private-proof-sentinel" not in repr(diagnostics)
     assert "observer-private-nonce-sentinel" not in repr(diagnostics)
+
+
+@pytest.mark.parametrize(
+    ("failure_stage", "expected_stage", "message"),
+    [
+        ("connect", "connect", "observer-private-connect-sentinel"),
+        ("send", "send", "observer-private-send-sentinel"),
+        ("read", "read", "observer-private-read-sentinel"),
+    ],
+    ids=["connect", "send", "read"],
+)
+def test_ProbeObserver_RequestTimeout_ReportsStageAndPreservesIdentity(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_stage: str,
+    expected_stage: str,
+    message: str,
+) -> None:
+    import socket
+
+    error = TimeoutError(message)
+    connection = _RequestBoundaryConnection(failure_stage, error)
+    monkeypatch.setattr(socket, "create_connection", connection.create_connection)
+    diagnostics: dict[str, dict[str, Any]] = {}
+    observed = _observe_call(_DAEMON_REQUEST_FUNCTION, diagnostics, "request")
+    monkeypatch.setattr(sd, "_daemon_request", observed)
+
+    with pytest.raises(TimeoutError) as raised:
+        sd._daemon_request(
+            "127.0.0.1",
+            4242,
+            {"command": "ping", "nonce": "observer-private-nonce-sentinel"},
+            token="observer-private-token-sentinel",
+        )
+
+    assert raised.value is error
+    assert len(connection.calls) == 1
+    assert connection.calls[0][0] == (("127.0.0.1", 4242),)
+    assert diagnostics["request"]["failure_stage"] == expected_stage
+    assert diagnostics["request"]["exception_class"] == "TimeoutError"
+    assert message not in repr(diagnostics)
+    assert "observer-private-nonce-sentinel" not in repr(diagnostics)
+    assert "observer-private-token-sentinel" not in repr(diagnostics)
