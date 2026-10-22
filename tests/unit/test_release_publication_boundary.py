@@ -11,7 +11,10 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-STATE_GUIDES = ("state-storage-limits.md",)
+STATE_GUIDES = (
+    "state-json-configuration.md",
+    "state-storage-limits.md",
+)
 
 
 def test_configured_release_generator_does_not_publish_commit_text(tmp_path):
@@ -331,6 +334,7 @@ def test_actual_mkdocs_site_excludes_untracked_private_documents(tmp_path):
 
     published = build(tmp_path / "site")
     assert "PUBLIC_FIXTURE_SENTINEL" in published
+    assert (tmp_path / "site" / "state-json-configuration" / "index.html").is_file()
     assert (tmp_path / "site" / "state-storage-limits" / "index.html").is_file()
     assert "PRIVATE_DOC_SENTINEL" not in published
     config.write_text(base, encoding="utf-8")
