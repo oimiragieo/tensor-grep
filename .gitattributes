@@ -21,3 +21,5 @@ benchmarks/patch_fixtures/** text eol=lf
 # `line-ending = "lf"` (pyproject), so a CRLF Windows checkout of AGENTS.md / docs/*.md fails the
 # format gate in the ci-local container even though the committed LF blob is clean.
 *.md text eol=lf
+
+benchmarks/git_history_retrieval/patches/** -text -diff

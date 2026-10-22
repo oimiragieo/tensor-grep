@@ -1,0 +1,126 @@
+name: Git history retrieval
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "rust_core/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "**/Cargo.lock"
+      - "Cargo.lock"
+      - "benchmarks/git_history_retrieval/**"
+      - "tests/eval/test_git_history_retrieval_gate.py"
+      - ".github/workflows/git-history-retrieval.yml"
+      - ".gitattributes"
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Ref containing the frozen manifest and patches"
+        required: true
+        type: string
+      baseline:
+        description: "Build the v1.126.0 baseline artifact"
+        required: true
+        default: false
+        type: boolean
+      baseline_update_pr:
+        description: "PR number to receive a per-metric delta when updating an existing baseline"
+        required: false
+        type: string
+jobs:
+  gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run frozen retrieval evaluation
+        continue-on-error: ${{ hashFiles('benchmarks/git_history_retrieval/baseline.json') == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f benchmarks/git_history_retrieval/manifest.json ]; then
+            echo "report-only: manifest.json arrives in leaf 11b" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          mkdir -p artifacts
+          if [ -f benchmarks/git_history_retrieval/baseline.json ]; then
+            python3 benchmarks/git_history_retrieval/harness.py orchestrate \
+              --repo "$PWD" --subject head --enforce \
+              --output artifacts/git_history_retrieval_head.json
+          else
+            python3 benchmarks/git_history_retrieval/harness.py orchestrate \
+              --repo "$PWD" --subject head \
+              --output artifacts/git_history_retrieval_head.json
+            echo "report-only: baseline.json arrives in leaf 11b" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: git-history-retrieval-head
+          path: artifacts/git_history_retrieval_head.json
+          if-no-files-found: ignore
+  baseline:
+    if: github.event_name == 'workflow_dispatch' && inputs.baseline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build fixed v1.126.0 artifact
+        shell: bash
+        env:
+          BASELINE_UPDATE_PR: ${{ inputs.baseline_update_pr }}
+        run: |
+          set -euo pipefail
+          test -f benchmarks/git_history_retrieval/manifest.json
+          if [ -f benchmarks/git_history_retrieval/baseline.json ] && [ -z "$BASELINE_UPDATE_PR" ]; then
+            echo "baseline_update_pr is required for a baseline update" >&2
+            exit 1
+          fi
+          mkdir -p artifacts
+          python3 benchmarks/git_history_retrieval/harness.py orchestrate \
+            --repo "$PWD" --subject baseline \
+            --output artifacts/git_history_retrieval_baseline_report.json \
+            --baseline-output artifacts/baseline.json
+      - name: Post per-metric baseline delta to update PR
+        if: ${{ inputs.baseline_update_pr != '' && hashFiles('artifacts/baseline_delta.md') != '' }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          BASELINE_UPDATE_PR: ${{ inputs.baseline_update_pr }}
+        with:
+          script: |
+            const fs = require('fs');
+            const number = Number(process.env.BASELINE_UPDATE_PR);
+            if (!Number.isSafeInteger(number) || number <= 0) {
+              throw new Error('invalid baseline_update_pr');
+            }
+            const {owner, repo} = context.repo;
+            const {data: pr} = await github.rest.pulls.get({owner, repo, pull_number: number});
+            if (!pr.labels.some(label => label.name === 'eval-baseline-update')) {
+              throw new Error('baseline update PR lacks eval-baseline-update label');
+            }
+            const start = '<!-- git-history-retrieval-baseline-delta:start -->';
+            const end = '<!-- git-history-retrieval-baseline-delta:end -->';
+            const delta = fs.readFileSync('artifacts/baseline_delta.md', 'utf8');
+            const oldBody = pr.body || '';
+            const before = oldBody.includes(start) ? oldBody.split(start)[0].trimEnd() : oldBody.trimEnd();
+            const body = `${before}\n\n${start}\n### Git history retrieval baseline delta\n${delta}\n${end}\n`;
+            await github.rest.pulls.update({owner, repo, pull_number: number, body});
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: git-history-retrieval-baseline
+          path: |
+            artifacts/baseline.json
+            artifacts/baseline_delta.md

@@ -59,6 +59,8 @@ APPROVED_GITHUB_FILES = frozenset({
     ".github/workflows/release.yml",
     ".github/workflows/stacked-pr-guard.yml",
     ".github/workflows/trust-benchmark.yml",
+    ".github/workflows/git-history-retrieval.yml",
+    ".github/workflows/git-history-retrieval-protection.yml",
 })
 APPROVED_AGENT_FILES = frozenset({
     ".claude/skills/tensor-grep/SKILL.md",
