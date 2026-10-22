@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
@@ -160,6 +161,21 @@ def test_Config_UnsetValue_Uses64MiBDefault(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.fixture
+def _python_json_scanner_at_recursion_limit_1000(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    original_recursion_limit = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(1000)
+        decoder = json.JSONDecoder()
+        decoder.scan_once = json.scanner.py_make_scanner(decoder)
+        monkeypatch.setattr(json, "_default_decoder", decoder)
+        yield
+    finally:
+        sys.setrecursionlimit(original_recursion_limit)
+
+
+@pytest.fixture
 def _bounded_integer_conversion() -> Iterator[None]:
     original = sys.get_int_max_str_digits()
     sys.set_int_max_str_digits(640)
@@ -312,7 +328,9 @@ def test_Reader_InvalidUtf8OrJson_RaisesStateJsonError(
     assert str(error.value) == "invalid checkpoint JSON state"
 
 
-def test_Reader_DeepJson_RefusesWithStateJsonError(tmp_path: Path) -> None:
+def test_Reader_DeepJson_RefusesWithStateJsonError(
+    tmp_path: Path, _python_json_scanner_at_recursion_limit_1000: None
+) -> None:
     path = tmp_path / "deep.json"
     path.write_bytes(b"[" * 5000 + b"0" + b"]" * 5000)
 
@@ -320,6 +338,18 @@ def test_Reader_DeepJson_RefusesWithStateJsonError(tmp_path: Path) -> None:
         state_json.read_state_json(path, trusted_root=tmp_path, limit=12000, kind="checkpoint")
 
     assert str(error.value) == "invalid checkpoint JSON state"
+    assert isinstance(error.value.__cause__, RecursionError)
+
+
+def test_Reader_ShallowJson_AcceptsWithPythonScanner(
+    tmp_path: Path, _python_json_scanner_at_recursion_limit_1000: None
+) -> None:
+    path = tmp_path / "shallow.json"
+    path.write_bytes(b'{"value": 7}')
+
+    payload = state_json.read_state_json(path, trusted_root=tmp_path, limit=16, kind="checkpoint")
+
+    assert payload == {"value": 7}
 
 
 def test_Reader_OversizedFile_RaisesStateJsonError(tmp_path: Path) -> None:
