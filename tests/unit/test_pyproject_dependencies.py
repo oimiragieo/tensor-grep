@@ -3,6 +3,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import Requirement
+
 
 def _pyproject_payload() -> dict[str, object]:
     root = Path(__file__).resolve().parents[2]
@@ -181,3 +183,29 @@ def test_uv_cache_keys_should_include_rust_native_inputs_without_forced_reinstal
     assert "rust_core/paste-compat/Cargo.toml" in file_entries
     assert "rust_core/paste-compat/src/**/*.rs" in file_entries
     assert "tensor-grep" not in uv_config.get("reinstall-package", [])
+
+
+def _brotli_requirement(dependencies: list[str]) -> Requirement:
+    for dependency in dependencies:
+        requirement = Requirement(dependency)
+        if requirement.name.lower() == "brotli":
+            return requirement
+    raise AssertionError("Declare the Brotli security floor for CVE-2026-111497")
+
+
+def test_resolve_nlp_metadata_BrotliAdvisory_RejectsAffectedDecoder() -> None:
+    dependencies = _optional_dependencies()["nlp"]
+
+    requirement = _brotli_requirement(dependencies)
+
+    assert requirement.specifier.contains("1.2.0") is False
+    assert requirement.specifier.contains("1.2.1") is True
+
+
+def test_resolve_uv_metadata_BrotliAdvisory_RejectsAffectedDecoder() -> None:
+    dependencies = _pyproject_payload()["tool"]["uv"]["constraint-dependencies"]
+
+    requirement = _brotli_requirement(dependencies)
+
+    assert requirement.specifier.contains("1.2.0") is False
+    assert requirement.specifier.contains("1.2.1") is True
