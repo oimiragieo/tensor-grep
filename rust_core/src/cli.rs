@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "tensor-grep-rs")]
-#[command(about = "High-Performance Multi-GPU Log Parsing and Structural Code Retrieval", long_about = None)]
+#[command(about = "Search code, follow symbols, and prepare a bounded edit.", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -10,7 +10,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Search for a regex pattern (GPU accelerated)
+    /// Search text. GPU execution is experimental.
     Search {
         /// A regular expression used for searching.
         pattern: String,

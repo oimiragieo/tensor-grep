@@ -13,6 +13,8 @@ used to be listed in root help. The setting takes effect only for the entry poin
 | `TG_FORCE_CPU` | Forces CPU routing for search commands. |
 | `TG_SIDECAR_TIMEOUT_MS` | Sidecar timeout in milliseconds; the native default is 30,000 ms. |
 | `TG_HELP_PROBE_TIMEOUT_MS` | Timeout in milliseconds for the native front door's `--help` probe. The default is 3,000 ms; if the probe times out, the native front door renders its condensed fallback help. |
+| `TG_PASSTHROUGH_TIMEOUT_MS` | Timeout for one-shot Python passthrough commands; defaults to 600,000 ms. It does not apply to `mcp`, `session serve`, or `lsp server` launches. |
+| `TG_LSP_PROVIDER` | Overrides the semantic LSP provider mode; defaults to `native` and accepts experimental modes such as `hybrid`. Provider availability alone does not prove LSP behavior. |
 | `TENSOR_GREP_DEVICE_IDS` | Comma-separated GPU IDs available to tensor-grep. |
 | `TENSOR_GREP_CLASSIFY_PROVIDER` | Set to `cybert` to opt into CyBERT/Triton classification. Classification otherwise uses local heuristics by default. |
 | `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` | Timeout for Triton-backed NLP probes. |

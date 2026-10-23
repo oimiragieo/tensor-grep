@@ -64,20 +64,15 @@ mod ast_run_remediation;
 mod main_env;
 mod search_citations_routing;
 mod search_flag_registry;
+mod top_level_help;
 use main_env::env_flag_enabled;
 use search_flag_registry::{
     raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
     SEARCH_PYTHON_PASSTHROUGH_FLAGS,
 };
 
-// audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
-// Python passthrough is unavailable or times out -- see resolve_help_probe_timeout()). Leads with
-// a condensed, agent-oriented pointer to the flagship/analysis commands (mirroring the Typer help's
-// "AI workflows" section in src/tensor_grep/cli/main.py) so degrading to this fallback is not
-// catastrophic for an agent that never sees the rich help. The full command roster (all ~40
-// commands, analysis and maintenance alike) still follows in clap's auto-generated Commands: list.
-const NATIVE_TOP_LEVEL_ABOUT: &str = "tensor-grep: native search, rewrite, and repository analysis CLI\n\nRepository analysis commands (start here):\n  tg orient PATH                      One-call codebase orientation capsule (entry points, central files, AST snippets)\n  tg coverage PATH --json             Read-only session and AST-cache coverage inventory\n  tg defs SYMBOL                      Find symbol definitions\n  tg refs SYMBOL                      Find symbol references\n  tg callers SYMBOL                   Find direct callers of a symbol\n  tg impact SYMBOL                    Estimate files impacted by a symbol or query\n  tg blast-radius PATH SYMBOL --json  Transitive caller blast-radius graph\n  tg map PATH                         Bounded repository map for agent context selection\n  tg agent PATH \"task\" --json         Actionable context capsule: targets, snippets, validation, rollback, confidence\n  tg search PATTERN [PATH]            Validated rg-compatible regex search\n  tg mcp                              Start the Model Context Protocol server for AI assistants\n\nThis native fallback renders when the richer Python help is unavailable; run `tg doctor` to diagnose.";
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Agent and GPU contracts:\n  tg agent --query TEXT --json        Emit an Actionable Context Capsule with validation, rollback, confidence, and optional gpu_acceleration evidence.\n  tg agent --gpu-device-ids 0,1       Run opt-in native GPU evidence probes; sidecar-routed GPU results are reported as unsupported.\n  --gpu-device-ids                    Pin selected GPUs for explicit search, benchmark, and agent evidence probes. GPU remains experimental until it beats rg and tg_cpu.\n\nSearch routing switches:\n  tg search                           Validated common rg-compatible subset, not a full ripgrep replacement.\n  tg -t js PATTERN PATH               Root shortcuts and option-first common search flags are treated as tg search.\n  tg --count-matches PATTERN PATH     Root shortcut for rg-compatible per-file match counts.\n  --format rg --json                  Emit ripgrep JSON Lines events; plain --json is tensor-grep aggregate JSON.\n  --smart-case                        CPU/sidecar honor lowercase-insensitive smart case; native GPU falls back when case-insensitive semantics are required.\n  --hidden, --max-depth N, --text      Structured CPU/sidecar search honors these switches; native GPU falls back when a requested switch changes unsupported semantics.\n\nLSP provider status:\n  tg lsp --provider hybrid            Optional experimental semantic provider mode; provider availability is not LSP proof.\n  tg doctor --with-lsp                Report provider availability plus health_status/health_check diagnostics.\n\nLauncher repair:\n  tg repair-launcher --allow-foreign-rename\n                                      Explicitly back up a foreign Windows tg.exe that blocks Python subprocess resolution and replace it with the verified tensor-grep front door.\n\nEnvironment overrides:\n  TG_SIDECAR_PYTHON                  Path to the Python executable used for sidecar-backed commands.\n  TG_NATIVE_TG_BINARY                Path to the native front door used by Python-backed commands.\n  TG_FRONTDOOR_HOPS                  Native/Python front-door hand-off depth (internal; absent means 0). A door refuses with exit 2 at 4 hops to stop a routing loop.\n  TG_RG_PATH                         Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                       Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS              Timeout for sidecar-backed commands.\n  TG_HELP_PROBE_TIMEOUT_MS           Timeout for the --help passthrough probe (default 3000ms).\n  TG_PASSTHROUGH_TIMEOUT_MS          Timeout for one-shot Python passthrough commands (default 600000ms). Does not apply to mcp/session serve/lsp server launches.\n  TG_LSP_PROVIDER                    Override the LSP semantic provider mode (default native; e.g. hybrid). Availability is not LSP proof.\n  TENSOR_GREP_DEVICE_IDS             Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_CLASSIFY_PROVIDER      Set to cybert to opt into CyBERT/Triton classification.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.\n  TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS Total per-command budget for optional external LSP provider requests.";
+// Root identity also appears in positional help generated from this binary.
+const NATIVE_TOP_LEVEL_ABOUT: &str = "Search code, follow symbols, and prepare a bounded edit.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -119,7 +114,6 @@ const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
 #[command(bin_name = "tg")]
 #[command(version)]
 #[command(about = NATIVE_TOP_LEVEL_ABOUT)]
-#[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 #[command(disable_help_subcommand = true)]
 pub struct CommandCli {
     #[command(subcommand)]
@@ -130,7 +124,6 @@ pub struct CommandCli {
 #[command(name = "tg")]
 #[command(version)]
 #[command(about = NATIVE_TOP_LEVEL_ABOUT)]
-#[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 #[command(disable_help_subcommand = true)]
 pub struct PositionalCli {
     /// The search pattern (regex or string)
@@ -1247,6 +1240,9 @@ fn main_inner() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if top_level_help::is_root_help_invocation(&raw_args) {
+        return print_native_top_level_help();
+    }
 
     // C3: plain `--json` combined with a render-only flag (e.g. -b/--passthru/--heading)
     // cannot be honored by the aggregate JSON path and must be rejected by the native
@@ -1351,8 +1347,8 @@ fn main_inner() -> anyhow::Result<()> {
 fn print_native_top_level_help() -> anyhow::Result<()> {
     use clap::CommandFactory;
 
-    let mut cmd = CommandCli::command();
-    cmd.print_help()?;
+    let cmd = CommandCli::command();
+    top_level_help::print_help(&cmd, &mut io::stdout().lock())?;
     Ok(())
 }
 
@@ -1398,7 +1394,6 @@ fn is_search_type_list_invocation(raw_args: &[OsString]) -> bool {
         && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("search")
         && raw_args.get(2).and_then(|arg| arg.to_str()) == Some("--type-list")
 }
-
 fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<String>)> {
     if raw_args.len() == 1 {
         return Some(("--help", Vec::new()));

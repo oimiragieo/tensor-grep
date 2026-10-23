@@ -1389,6 +1389,8 @@ def test_top_level_help__Action_cli__Condition_public_contract__ExpectedOutcome_
 
     assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
     assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    _assert_help_rows_once(python_help.stdout)
+    _assert_help_rows_once(native_help.stdout)
     catalog_commands = set().union(*dict(COMMAND_GROUPS).values())
     assert catalog_commands == PUBLIC_TOP_LEVEL_COMMANDS
 
@@ -1448,6 +1450,86 @@ def _assert_legacy_moat_commands(stdout: str) -> None:
         )
 
 
+def _assert_native_root_help_contract(stdout: str) -> None:
+    native_commands = _extract_visible_help_commands(stdout)
+    assert native_commands <= PUBLIC_TOP_LEVEL_COMMANDS, (
+        "native fallback help exposed commands outside the public contract: "
+        f"{sorted(native_commands - PUBLIC_TOP_LEVEL_COMMANDS)}"
+    )
+    missing_real = (PUBLIC_TOP_LEVEL_COMMANDS - native_commands) - PUBLIC_TOP_LEVEL_ALIASES
+    assert not missing_real, (
+        f"native fallback help is missing real (non-alias) commands: {sorted(missing_real)}"
+    )
+    rows = _extract_visible_help_command_rows(stdout)
+    assert len(rows) == len(PUBLIC_TOP_LEVEL_COMMANDS)
+    assert len(rows) == len(set(rows))
+    headings = (
+        "Search and structure:",
+        "Navigate:",
+        "Agent:",
+        "State and evidence:",
+        "Operations:",
+    )
+    positions = tuple(stdout.find(f"\n{heading}\n") for heading in headings)
+    assert all(position >= 0 for position in positions) and positions == tuple(sorted(positions)), (
+        stdout
+    )
+    assert "Search code, follow symbols, and prepare a bounded edit." in stdout
+    assert "\nSearch and structure:\n  search  " in stdout
+    _assert_legacy_moat_commands(stdout)
+    examples = (
+        "tg search -F TODO src",
+        "tg callers src create_invoice --json",
+        'tg prepare src "add invoice tax" --json',
+        "tg mcp",
+    )
+    assert all(example in stdout for example in examples), stdout
+
+
+def _root_help_fallback_environment(tmp_path: Path, python_mode: str, width: int) -> dict[str, str]:
+    env = {**os.environ, "COLUMNS": str(width)}
+    if python_mode == "unavailable":
+        broken_python = _broken_help_python()
+        assert Path(broken_python).is_file()
+        env["TG_SIDECAR_PYTHON"] = broken_python
+    else:
+        wrapper = _write_wedged_help_override(tmp_path)
+        env["TG_SIDECAR_PYTHON"] = str(wrapper)
+        env["TG_HELP_PROBE_TIMEOUT_MS"] = "250"
+    return env
+
+
+@pytest.mark.parametrize(
+    ("root_args", "shape"),
+    [([], "noargs"), (["--help"], "long-help"), (["-h"], "short-help")],
+)
+@pytest.mark.parametrize("python_mode", ["unavailable", "timed_out"])
+@pytest.mark.parametrize("width", [80, 120])
+def test_root_help_fallback_layout__Action_cli__Condition_python_mode_shape_and_columns__ExpectedOutcome_bounded_plain_grouped_help(
+    tmp_path: Path,
+    root_args: list[str],
+    shape: str,
+    python_mode: str,
+    width: int,
+) -> None:
+    env = _root_help_fallback_environment(tmp_path, python_mode, width)
+    result = _run_native_front_door(root_args, cwd=tmp_path, env=env)
+
+    assert result.returncode == 0, f"{shape}/{python_mode}/{width}: {result.stderr}"
+    assert result.stderr.strip() == ""
+    _assert_native_root_help_contract(result.stdout)
+    assert result.stdout == _strip_ansi(result.stdout)
+    assert "**" not in result.stdout and "`" not in result.stdout
+    assert all(len(line) <= width for line in result.stdout.splitlines()), (
+        f"{shape}/{python_mode}/{width}: line exceeds configured width"
+    )
+
+
+def _assert_help_rows_once(help_text: str) -> None:
+    rows = _extract_visible_help_command_rows(help_text)
+    assert len(rows) == len(set(rows))
+
+
 def _write_wedged_help_override(parity_env: Path) -> Path:
     if sys.platform == "win32":
         wrapper = parity_env / "wedged-python-help-probe-override.cmd"
@@ -1471,7 +1553,7 @@ def _assert_legacy_help_results(
     for result in (native_help, default_help):
         assert result.returncode == 0
         assert "Usage:" in result.stdout
-        assert "Repository analysis commands" in _strip_ansi(result.stdout)
+        _assert_native_root_help_contract(_strip_ansi(result.stdout))
         assert result.stderr.strip() == ""
 
 
@@ -1482,23 +1564,7 @@ def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
     native_help = _run_native_front_door([], cwd=parity_env, env=env)
 
     assert native_help.returncode == 0
-    # Unlike the passthrough parity tests above (which parse Python/Typer's stable help), this
-    # fallback path is rendered by clap's own formatter (`CommandCli::command().print_help()` in
-    # `print_native_top_level_help`). clap lays out the `update` visible-alias in a terminal-
-    # width/platform-dependent way, so it is not always parsed back out of the rendered text --
-    # the SAME byte-identical native binary passed this on one v1.76.10 release run and failed it
-    # on the next (PR #616). Assert the load-bearing invariant instead of exact set equality:
-    # every REAL command is present and no UNEXPECTED command leaks; only known aliases may be
-    # absent. This still catches genuine native<->Python command drift.
-    native_commands = _extract_visible_help_commands(native_help.stdout)
-    assert native_commands <= PUBLIC_TOP_LEVEL_COMMANDS, (
-        "native fallback help exposed commands outside the public contract: "
-        f"{sorted(native_commands - PUBLIC_TOP_LEVEL_COMMANDS)}"
-    )
-    missing_real = (PUBLIC_TOP_LEVEL_COMMANDS - native_commands) - PUBLIC_TOP_LEVEL_ALIASES
-    assert not missing_real, (
-        f"native fallback help is missing real (non-alias) commands: {sorted(missing_real)}"
-    )
+    _assert_native_root_help_contract(native_help.stdout)
     assert native_help.stderr.strip() == ""
 
 
@@ -1562,16 +1628,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
     assert native_help.returncode == 0
     stdout = _strip_ansi(native_help.stdout)
     assert native_help.stderr.strip() == ""
-    assert "Repository analysis commands" in stdout
-
-    _assert_legacy_moat_commands(stdout)
-
-    moat_header_pos = stdout.index("Repository analysis commands")
-    commands_list_pos = stdout.index("Commands:")
-    assert moat_header_pos < commands_list_pos, (
-        "the curated capability-commands pointer must appear before the auto-generated Commands: list "
-        "so an agent that stops reading early still sees it"
-    )
+    _assert_native_root_help_contract(stdout)
 
 
 def test_help_probe_timeout_env_override_is_honored(parity_env):
