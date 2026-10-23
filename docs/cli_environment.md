@@ -25,5 +25,14 @@ used to be listed in root help. The setting takes effect only for the entry poin
 | `TG_SESSION_DAEMON_AUTOSTART` | The warm-daemon path is on by default for `defs`, `impact`, `refs`, `callers`, and `blast-radius`. It probes for a running `tg session daemon`, then starts one without blocking on a miss. Set `0`, `false`, `no`, or `off` for the cold path. It is always off when `CI` or `GITHUB_ACTIONS` is set. Each daemon shuts down after `TG_SESSION_DAEMON_IDLE_SECONDS` of inactivity (900 seconds by default). |
 | `TG_SESSION_DAEMON_IDLE_SECONDS` | Idle lifetime in seconds before a session daemon shuts down; defaults to 900 seconds. |
 
+Search supports a validated common rg-compatible subset, not every ripgrep invocation.
+`--format rg --json` emits ripgrep JSON Lines; plain `--json` is tensor-grep aggregate JSON.
+CPU/sidecar routes honor `--smart-case`; native GPU falls back when case-insensitive semantics are required.
+Structured CPU/sidecar search honors `--hidden`, `--max-depth N`, and `--text`; native GPU falls back when
+a requested switch changes unsupported semantics.
+
+`tg repair-launcher --allow-foreign-rename` explicitly backs up a foreign Windows `tg.exe` that blocks
+Python subprocess resolution and replaces it with the verified tensor-grep front door.
+
 For routing and installation context, see [installation](installation.md), [routing policy](routing_policy.md),
 [GPU troubleshooting](runbooks/gpu-troubleshooting.md), and [contracts](CONTRACTS.md).

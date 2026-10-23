@@ -57,6 +57,14 @@ Benchmark behavior:
 - Scheduled runs keep accepted-baseline drift reporting and summary generation, but do not block on a synthetic base-vs-head comparison.
 - Accepted baseline JSONs remain the public benchmark truth surface, but drift against them is reported separately from the release-blocking same-runner comparison.
 
+#### Reading test timing
+
+The existing Python test matrix prints its 30 slowest reported durations of at least one second. Timing output does not change collection, markers, failure policy or platform coverage. Compare naturally occurring completed runs on the same OS, Python version and test population; a single run is not a performance baseline.
+
+Before Cargo Test, the existing Rust job prints rustc, Cargo and active-toolchain identities from rust_core. Use those identities to establish the tested compiler; matrix labels and the default toolchain outside that directory are insufficient.
+
+Use the timings to investigate expensive fixtures, subprocess startup and waits before adding workers or removing tests. Distinguish test time from installation/build time and summed job elapsed time from billed usage. This instrumentation adds no jobs, report uploads, dependencies or paid runners.
+
 ### `release.yml`
 
 Manual/backfill release artifact pipeline, dispatched via `workflow_dispatch` TARGETING a published tag ref (`gh workflow run release.yml --ref vX.Y.Z`; `GITHUB_REF` then resolves to that tag). It is NOT triggered by a tag push, so a manually-pushed `v*` tag can no longer bypass semantic-release to auto-publish npm/assets. Do not rely on it for the normal semantic-release path. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
