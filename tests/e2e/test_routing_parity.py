@@ -1423,11 +1423,60 @@ def test_public_help_falls_back_to_native_when_python_passthrough_is_broken(pari
     assert native_help.stderr.strip() == ""
 
 
-def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
+def _broken_help_python() -> str:
     if sys.platform == "win32":
-        broken_python = str(shutil.which("powershell.exe"))
+        return str(shutil.which("powershell.exe"))
+    return "/bin/sh"
+
+
+def _assert_legacy_moat_commands(stdout: str) -> None:
+    for moat_command in (
+        "orient",
+        "coverage",
+        "defs",
+        "refs",
+        "callers",
+        "impact",
+        "blast-radius",
+        "map",
+        "agent",
+        "search",
+        "mcp",
+    ):
+        assert moat_command in stdout, (
+            f"Missing capability command {moat_command!r} in native fallback help"
+        )
+
+
+def _write_wedged_help_override(parity_env: Path) -> Path:
+    if sys.platform == "win32":
+        wrapper = parity_env / "wedged-python-help-probe-override.cmd"
+        wrapper.write_text("@echo off\r\nping -n 9 127.0.0.1 >nul\r\n", encoding="utf-8")
     else:
-        broken_python = "/bin/sh"
+        wrapper = parity_env / "wedged-python-help-probe-override.sh"
+        wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+    return wrapper
+
+
+def _warm_native_help_binary(parity_env: Path) -> None:
+    if _get_native_binary() is None:
+        _run_native_front_door(["--version"], cwd=parity_env)
+
+
+def _assert_legacy_help_results(
+    native_help: subprocess.CompletedProcess[str],
+    default_help: subprocess.CompletedProcess[str],
+) -> None:
+    for result in (native_help, default_help):
+        assert result.returncode == 0
+        assert "Usage:" in result.stdout
+        assert "Repository analysis commands" in _strip_ansi(result.stdout)
+        assert result.stderr.strip() == ""
+
+
+def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
+    broken_python = _broken_help_python()
     env = {**os.environ, "TG_SIDECAR_PYTHON": broken_python}
 
     native_help = _run_native_front_door([], cwd=parity_env, env=env)
@@ -1505,10 +1554,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
     pointer to the flagship/capability commands positioned where an agent would actually see it, mirroring
     the Typer help's "AI workflows" section. This asserts that pointer exists and appears before the
     undifferentiated ~40-command wall, not buried after it."""
-    if sys.platform == "win32":
-        broken_python = str(shutil.which("powershell.exe"))
-    else:
-        broken_python = "/bin/sh"
+    broken_python = _broken_help_python()
     env = {**os.environ, "TG_SIDECAR_PYTHON": broken_python}
 
     native_help = _run_native_front_door(["--help"], cwd=parity_env, env=env)
@@ -1518,22 +1564,7 @@ def test_native_help_fallback_still_surfaces_moat_commands_when_python_passthrou
     assert native_help.stderr.strip() == ""
     assert "Repository analysis commands" in stdout
 
-    for moat_command in (
-        "orient",
-        "coverage",
-        "defs",
-        "refs",
-        "callers",
-        "impact",
-        "blast-radius",
-        "map",
-        "agent",
-        "search",
-        "mcp",
-    ):
-        assert moat_command in stdout, (
-            f"Missing capability command {moat_command!r} in native fallback help"
-        )
+    _assert_legacy_moat_commands(stdout)
 
     moat_header_pos = stdout.index("Repository analysis commands")
     commands_list_pos = stdout.index("Commands:")
@@ -1549,13 +1580,7 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
     fallback trigger fast even against a wedged Python that never responds to --help, proving the
     env var is actually read rather than silently ignored (which would fall through to the raised
     3000ms default and take ~3s instead)."""
-    if sys.platform == "win32":
-        wrapper = parity_env / "wedged-python-help-probe-override.cmd"
-        wrapper.write_text("@echo off\r\nping -n 9 127.0.0.1 >nul\r\n", encoding="utf-8")
-    else:
-        wrapper = parity_env / "wedged-python-help-probe-override.sh"
-        wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
-        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+    wrapper = _write_wedged_help_override(parity_env)
 
     env_override = {
         **os.environ,
@@ -1564,8 +1589,7 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
     }
     env_default = {**os.environ, "TG_SIDECAR_PYTHON": str(wrapper)}
     env_default.pop("TG_HELP_PROBE_TIMEOUT_MS", None)
-    if _get_native_binary() is None:
-        _run_native_front_door(["--version"], cwd=parity_env)
+    _warm_native_help_binary(parity_env)
 
     # Measure the 250ms override AND the 3000ms default back-to-back against the SAME wedged Python
     # under the SAME machine load, then compare the DELTA rather than an absolute wall-clock bound.
@@ -1589,11 +1613,7 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
         "override being ignored and the raised 3000ms default being used for both."
     )
     # Both paths must still fall back cleanly to the native help.
-    for result in (native_help, default_help):
-        assert result.returncode == 0
-        assert "Usage:" in result.stdout
-        assert "Repository analysis commands" in _strip_ansi(result.stdout)
-        assert result.stderr.strip() == ""
+    _assert_legacy_help_results(native_help, default_help)
 
 
 A90_MATRIX = [
