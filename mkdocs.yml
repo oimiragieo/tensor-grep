@@ -15,6 +15,7 @@ exclude_docs: |
   !/assets/logo.jpg
   !/benchmarks.md
   !/benchmarks_ast.md
+  !/cli_environment.md
   !/daemon-probe-test-tracing.md
   !/enterprise_review_bundle_ci.md
   !/examples/ast_run.json
@@ -127,6 +128,7 @@ nav:
     - Tool Comparison: tool_comparison.md
   - Technical Reference:
     - Contracts: CONTRACTS.md
+    - CLI Environment: cli_environment.md
     - Investigation Evidence: investigation.md
     - CLI and MCP API: harness_api.md
     - Session Daemon Protocol: session_daemon_protocol.md
