@@ -14,7 +14,7 @@ const EXAMPLES: &[&str] = &[
 const FOOTER: &[&str] = &[
     "Search supports a validated rg-compatible subset.",
     "GPU execution is experimental.",
-    "Use tg COMMAND --help for details.",
+    "Use tg COMMAND --help; settings: docs/cli_environment.md.",
 ];
 const WIDTH: usize = 78;
 const GROUPS: &[(&str, &str)] = &[

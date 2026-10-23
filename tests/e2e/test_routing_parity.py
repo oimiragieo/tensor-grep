@@ -1505,7 +1505,7 @@ def _root_help_fallback_environment(tmp_path: Path, python_mode: str, width: int
 )
 @pytest.mark.parametrize("python_mode", ["unavailable", "timed_out"])
 @pytest.mark.parametrize("width", [80, 120])
-def test_root_help_fallback_layout__Action_cli__Condition_python_mode_shape_and_columns__ExpectedOutcome_bounded_plain_grouped_help(
+def test_RootHelp_PythonModeShapeAndWidth_FallsBackToBoundedPlainGroups(
     tmp_path: Path,
     root_args: list[str],
     shape: str,
@@ -1513,6 +1513,7 @@ def test_root_help_fallback_layout__Action_cli__Condition_python_mode_shape_and_
     width: int,
 ) -> None:
     env = _root_help_fallback_environment(tmp_path, python_mode, width)
+
     result = _run_native_front_door(root_args, cwd=tmp_path, env=env)
 
     assert result.returncode == 0, f"{shape}/{python_mode}/{width}: {result.stderr}"
@@ -1520,8 +1521,12 @@ def test_root_help_fallback_layout__Action_cli__Condition_python_mode_shape_and_
     _assert_native_root_help_contract(result.stdout)
     assert result.stdout == _strip_ansi(result.stdout)
     assert "**" not in result.stdout and "`" not in result.stdout
-    assert all(len(line) <= width for line in result.stdout.splitlines()), (
-        f"{shape}/{python_mode}/{width}: line exceeds configured width"
+    _assert_root_help_width(result.stdout, width, f"{shape}/{python_mode}/{width}")
+
+
+def _assert_root_help_width(stdout: str, width: int, context: str) -> None:
+    assert all(len(line) <= width for line in stdout.splitlines()), (
+        f"{context}: line exceeds configured width"
     )
 
 
