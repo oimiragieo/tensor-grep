@@ -172,7 +172,7 @@ def registry_receipts(
                     continue
             except (OSError, ValueError, KeyError, TypeError, RecursionError):
                 pass
-            remaining = max(0.001, deadline - time.monotonic())
+            remaining = min(5.0, max(0.001, deadline - time.monotonic()))
             completed = subprocess.run(
                 [sys.executable, "-I", "-c", _FETCH, url, str(remaining), str(MAX_RESPONSE_BYTES)],
                 capture_output=True,
