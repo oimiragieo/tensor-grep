@@ -92,6 +92,14 @@ fn write_wrapper_script(dir: &Path, file_name: &str, body: &str) -> PathBuf {
     script
 }
 
+fn unavailable_python_wrapper_script(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        write_wrapper_script(dir, "unavailable-python.cmd", "@echo off\r\nexit /b 1\r\n")
+    } else {
+        write_wrapper_script(dir, "unavailable-python.sh", "#!/bin/sh\nexit 1\n")
+    }
+}
+
 fn python_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
     let python = repo_python();
 
@@ -191,9 +199,14 @@ fn rg_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
 }
 
 #[test]
-fn test_help_documents_runtime_override_env_vars() {
+fn test_native_help_when_python_fails_documents_runtime_settings() {
+    let dir = tempdir().unwrap();
+    let python_wrapper = unavailable_python_wrapper_script(dir.path());
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
-    tg.current_dir(repo_root()).arg("--help");
+    tg.current_dir(repo_root())
+        .arg("--help")
+        .env("TG_SIDECAR_PYTHON", &python_wrapper);
+
     let output = run_with_timeout(tg, Duration::from_secs(5));
 
     assert!(output.status.success());
@@ -212,9 +225,10 @@ fn test_help_documents_runtime_override_env_vars() {
         stdout.contains("TENSOR_GREP_TRITON_TIMEOUT_SECONDS"),
         "stdout={stdout}"
     );
-    for expected in ["--smart-case", "--hidden", "--max-depth", "--text"] {
-        assert!(stdout.contains(expected), "stdout={stdout}");
-    }
+    assert!(stdout.contains("--smart-case"), "stdout={stdout}");
+    assert!(stdout.contains("--hidden"), "stdout={stdout}");
+    assert!(stdout.contains("--max-depth"), "stdout={stdout}");
+    assert!(stdout.contains("--text"), "stdout={stdout}");
     assert!(stdout.contains("repair-launcher"), "stdout={stdout}");
     let normalized_stdout = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
