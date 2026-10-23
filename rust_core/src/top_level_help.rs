@@ -12,7 +12,8 @@ const EXAMPLES: &[&str] = &[
     "tg mcp",
 ];
 const FOOTER: &[&str] = &[
-    "Search supports a validated rg-compatible subset. GPU execution is experimental.",
+    "Search supports a validated rg-compatible subset.",
+    "GPU execution is experimental.",
     "Use tg COMMAND --help for details.",
 ];
 const WIDTH: usize = 78;
