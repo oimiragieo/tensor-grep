@@ -730,7 +730,7 @@ fn run_wedged_help_probe(wedge_script: &Path, probe_timeout_ms: &str) -> Duratio
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Repository analysis commands"),
+        stdout.contains("Search code, follow symbols, and prepare a bounded edit."),
         "expected the enriched native fallback help (probe={probe_timeout_ms}ms); stdout={stdout}"
     );
     elapsed
@@ -806,6 +806,90 @@ fn test_help_probe_timeout_env_override_falls_back_fast_with_wedged_python() {
     );
 }
 
+fn write_unavailable_python_script(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        let script = dir.join("unavailable_python.cmd");
+        fs::write(&script, "@echo off\r\nexit /b 1\r\n").unwrap();
+        script
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let script = dir.join("unavailable_python.sh");
+            fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+            let mut perms = fs::metadata(&script).unwrap().permissions();
+            perms.set_mode(perms.mode() | 0o111);
+            fs::set_permissions(&script, perms).unwrap();
+            script
+        }
+        #[cfg(not(unix))]
+        unreachable!("non-windows, non-unix target")
+    }
+}
+
+fn assert_native_root_help_fallback(args: &[&str], timed_out: bool) {
+    let dir = tempdir().unwrap();
+    let python = if timed_out {
+        write_wedged_python_script(dir.path())
+    } else {
+        write_unavailable_python_script(dir.path())
+    };
+    assert!(
+        python.is_file(),
+        "Python control fixture was not created: {python:?}"
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_tg"));
+    command
+        .current_dir(repo_root())
+        .args(args)
+        .env("TG_SIDECAR_PYTHON", &python);
+    if timed_out {
+        command.env("TG_HELP_PROBE_TIMEOUT_MS", "250");
+    }
+    let output = run_with_timeout(command, Duration::from_secs(8));
+    assert!(
+        output.status.success(),
+        "args={args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("Usage: tg <COMMAND>"), "{stdout}");
+    assert!(
+        stdout.contains("Search code, follow symbols, and prepare a bounded edit."),
+        "{stdout}"
+    );
+    let positions: Vec<_> = [
+        "Search and structure:",
+        "Navigate:",
+        "Agent:",
+        "State and evidence:",
+        "Operations:",
+    ]
+    .iter()
+    .filter_map(|heading| stdout.find(heading))
+    .collect();
+    assert!(
+        positions.len() == 5 && positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{stdout}"
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).trim().is_empty());
+}
+
+macro_rules! root_help_fallback_case {
+    ($name:ident, $args:expr, $timed_out:expr) => {
+        #[cfg(not(feature = "cuda"))]
+        #[test]
+        fn $name() {
+            assert_native_root_help_fallback($args, $timed_out);
+        }
+    };
+}
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_noargs_expected_outcome_grouped_fallback, &[], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_long_help_expected_outcome_grouped_fallback, &["--help"], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_short_help_expected_outcome_grouped_fallback, &["-h"], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_noargs_expected_outcome_grouped_fallback, &[], true);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_long_help_expected_outcome_grouped_fallback, &["--help"], true);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_short_help_expected_outcome_grouped_fallback, &["-h"], true);
 #[cfg(not(feature = "cuda"))]
 #[test]
 fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged() {
@@ -849,7 +933,7 @@ fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_i
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Repository analysis commands"),
+        stdout.contains("Search code, follow symbols, and prepare a bounded edit."),
         "expected the enriched native fallback help; stdout={stdout}"
     );
 }

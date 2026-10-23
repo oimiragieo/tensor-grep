@@ -199,7 +199,7 @@ fn rg_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
 }
 
 #[test]
-fn test_native_help_when_python_fails_documents_runtime_settings() {
+fn test_native_help_when_requested_points_to_documented_runtime_contracts() {
     let dir = tempdir().unwrap();
     let python_wrapper = unavailable_python_wrapper_script(dir.path());
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
@@ -211,6 +211,12 @@ fn test_native_help_when_python_fails_documents_runtime_settings() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("docs/cli_environment.md"),
+        "stdout={stdout}"
+    );
+    // The detailed contract now lives in the document linked by root help.
+    let stdout = include_str!("../../docs/cli_environment.md");
     assert!(stdout.contains("TG_SIDECAR_PYTHON"), "stdout={stdout}");
     assert!(stdout.contains("TG_NATIVE_TG_BINARY"), "stdout={stdout}");
     assert!(stdout.contains("TG_RG_PATH"), "stdout={stdout}");
