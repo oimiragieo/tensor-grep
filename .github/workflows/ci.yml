@@ -673,7 +673,7 @@ jobs:
         # diagnostic step immediately above, which measures whether that is still true on THIS
         # job rather than repeating the claim as settled.
         # Override the local fail-fast default so one matrix run reports all regressions.
-        run: uv run pytest tests -v --tb=short -m "not eval" --maxfail=0
+        run: uv run pytest tests -v --tb=short -m "not eval" --maxfail=0 --durations=30 --durations-min=1
 
       # The other half of the `-m "not eval"` exclusion above (audit finding TEST-005).
       # Excluding tests/eval/ from the BLANKET run is correct and stays: collection sorts
@@ -768,6 +768,15 @@ jobs:
           fi
         shell: bash
           
+      - name: Compiler provenance
+        shell: bash
+        working-directory: rust_core
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo --version
+          rustup show active-toolchain
+
       - name: Cargo Test
         working-directory: rust_core
         run: cargo test --verbose --no-default-features
