@@ -884,12 +884,12 @@ macro_rules! root_help_fallback_case {
         }
     };
 }
-root_help_fallback_case!(test_native_help__action_route_root__condition_unavailable_python_noargs__expected_outcome_grouped_fallback, &[], false);
-root_help_fallback_case!(test_native_help__action_route_root__condition_unavailable_python_long_help__expected_outcome_grouped_fallback, &["--help"], false);
-root_help_fallback_case!(test_native_help__action_route_root__condition_unavailable_python_short_help__expected_outcome_grouped_fallback, &["-h"], false);
-root_help_fallback_case!(test_native_help__action_route_root__condition_timed_out_python_noargs__expected_outcome_grouped_fallback, &[], true);
-root_help_fallback_case!(test_native_help__action_route_root__condition_timed_out_python_long_help__expected_outcome_grouped_fallback, &["--help"], true);
-root_help_fallback_case!(test_native_help__action_route_root__condition_timed_out_python_short_help__expected_outcome_grouped_fallback, &["-h"], true);
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_noargs_expected_outcome_grouped_fallback, &[], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_long_help_expected_outcome_grouped_fallback, &["--help"], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_unavailable_python_short_help_expected_outcome_grouped_fallback, &["-h"], false);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_noargs_expected_outcome_grouped_fallback, &[], true);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_long_help_expected_outcome_grouped_fallback, &["--help"], true);
+root_help_fallback_case!(test_native_help_action_route_root_condition_timed_out_python_short_help_expected_outcome_grouped_fallback, &["-h"], true);
 #[cfg(not(feature = "cuda"))]
 #[test]
 fn test_help_probe_default_timeout_recovers_with_enriched_fallback_when_python_is_wedged() {

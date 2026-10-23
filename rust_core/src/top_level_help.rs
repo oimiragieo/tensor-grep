@@ -170,12 +170,14 @@ mod tests {
     fn visible_rows_once(command: &clap::Command, output: &str) -> bool {
         let mut root = command.clone();
         root.build();
-        root.get_subcommands()
+        let all_rows_once = root
+            .get_subcommands()
             .filter(|cmd| !cmd.is_hide_set())
             .all(|cmd| {
                 let row = format!("  {} ", super::command_label(cmd));
                 output.matches(row.as_str()).count() == 1
-            })
+            });
+        all_rows_once
     }
     fn group_ordered(output: &str) -> bool {
         let positions: Vec<_> = GROUPS
@@ -186,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn test_root_help__action_render__condition_visible_commands__expected_outcome_once_and_hidden_omitted(
+    fn test_root_help_action_render_condition_visible_commands_expected_outcome_once_and_hidden_omitted(
     ) {
         let output = render(&CommandCli::command());
         assert!(
@@ -203,7 +205,7 @@ mod tests {
         );
     }
     #[test]
-    fn test_root_help__action_render__condition_groups__expected_outcome_ordered_with_operations_fallback(
+    fn test_root_help_action_render_condition_groups_expected_outcome_ordered_with_operations_fallback(
     ) {
         let output = render(&CommandCli::command());
         assert!(group_ordered(&output), "{output}");
@@ -216,7 +218,7 @@ mod tests {
         );
     }
     #[test]
-    fn test_root_help__action_render__condition_plain_width__expected_outcome_copyable_examples_and_usage(
+    fn test_root_help_action_render_condition_plain_width_expected_outcome_copyable_examples_and_usage(
     ) {
         let output = render(&CommandCli::command());
         assert!(output.starts_with("Usage: tg <COMMAND>\n"), "{output}");
@@ -236,8 +238,7 @@ mod tests {
             .all(|line| output.lines().any(|row| row == *line)));
     }
     #[test]
-    fn test_root_help__action_render__condition_visible_alias__expected_outcome_single_bounded_row()
-    {
+    fn test_root_help_action_render_condition_visible_alias_expected_outcome_single_bounded_row() {
         let command = clap::Command::new("tg").subcommand(clap::Command::new("primary").visible_alias("alt").about("A synthetic `long` **description** with enough words to exceed the row width when extended"));
         let output = render(&command);
         assert_eq!(
