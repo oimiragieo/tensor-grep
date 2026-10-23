@@ -13,7 +13,10 @@ import hmac
 import json
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from tensor_grep.cli import audit_manifest
+from tensor_grep.cli.main import app
 
 
 def _write_signed_manifest(path: Path, signing_key: bytes, embedded_key_path: str) -> None:
@@ -120,3 +123,61 @@ def test_signed_manifest_with_wrong_key_is_invalid(tmp_path: Path) -> None:
 
     result = audit_manifest.verify_audit_manifest(manifest, signing_key=wrong_key)
     assert result["checks"]["signature_valid"] is False
+
+
+def test_VerifyReviewBundle_MissingSigningKey_ReportsRequiredKey(tmp_path: Path) -> None:
+    _key, bundle_path = _make_signed_bundle(tmp_path, b"fixture-signing-key")
+
+    result = CliRunner().invoke(app, ["review-bundle", "verify", str(bundle_path)])
+
+    assert result.exit_code == 1
+    assert "manifest_signature_valid=False" in result.output
+    assert "no signing key was provided" in result.output
+    assert "refusing to trust the key_path embedded in the manifest" in result.output
+    assert "fixture-signing-key" not in result.output
+
+
+def test_VerifyReviewBundle_CorrectSigningKey_ReportsValidSignature(tmp_path: Path) -> None:
+    key, bundle_path = _make_signed_bundle(tmp_path, b"fixture-signing-key")
+
+    result = CliRunner().invoke(
+        app, ["review-bundle", "verify", str(bundle_path), "--signing-key", str(key)]
+    )
+
+    assert result.exit_code == 0
+    assert "manifest_signature_valid=True" in result.output
+    assert "manifest_signature_error:" not in result.output
+    assert "fixture-signing-key" not in result.output
+
+
+def test_VerifyReviewBundle_WrongSigningKey_ReportsInvalidSignature(tmp_path: Path) -> None:
+    _key, bundle_path = _make_signed_bundle(tmp_path, b"fixture-signing-key")
+    wrong_key = tmp_path / "wrong.key"
+    wrong_key.write_bytes(b"wrong-fixture-key")
+
+    result = CliRunner().invoke(
+        app, ["review-bundle", "verify", str(bundle_path), "--signing-key", str(wrong_key)]
+    )
+
+    assert result.exit_code == 1
+    assert "manifest_signature_valid=False" in result.output
+    assert "manifest_signature_error:" in result.output
+    assert "wrong-fixture-key" not in result.output
+
+
+def test_VerifyReviewBundle_ControlCharacters_EscapesSignatureDiagnostic(tmp_path: Path) -> None:
+    _key, bundle_path = _make_signed_bundle(tmp_path, b"fixture-signing-key")
+    manifest_path = tmp_path / "rewrite-audit.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["signature"]["kind"] = "invalid\x1b]52;c;Y2xpcGJvYXJk\x07\x9b31m"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    audit_manifest.create_review_bundle(manifest_path, output_path=bundle_path)
+
+    result = CliRunner().invoke(app, ["review-bundle", "verify", str(bundle_path)])
+
+    assert result.exit_code == 1
+    assert "Unsupported signature kind" in result.output
+    assert "\x1b" not in result.output
+    assert "\x07" not in result.output
+    assert "\x9b" not in result.output
+    assert "\\u001b]52;c;Y2xpcGJvYXJk\\u0007\\u009b31m" in result.output
