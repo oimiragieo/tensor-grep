@@ -18,6 +18,7 @@ exclude_docs: |
   !/cli_environment.md
   !/daemon-probe-test-tracing.md
   !/enterprise_review_bundle_ci.md
+  !/review-bundle-terminal-safety.md
   !/examples/ast_run.json
   !/examples/attempt_ledger.json
   !/examples/audit_manifest_verify.json
@@ -137,6 +138,7 @@ nav:
     - State Storage: state-storage-limits.md
     - Multi-Agent Context Plane: multi_agent_context_plane.md
     - Review Bundle CI Gate: enterprise_review_bundle_ci.md
+    - Review Bundle Terminal Safety: review-bundle-terminal-safety.md
   - Maintainers:
     - CI Pipeline: CI_PIPELINE.md
     - Daemon Probe Test Tracing: daemon-probe-test-tracing.md

@@ -86,6 +86,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/cli_environment.md",
     "docs/daemon-probe-test-tracing.md",
     "docs/enterprise_review_bundle_ci.md",
+    "docs/review-bundle-terminal-safety.md",
     "docs/examples/ast_run.json",
     "docs/examples/attempt_ledger.json",
     "docs/examples/audit_manifest_verify.json",

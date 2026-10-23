@@ -99,6 +99,7 @@ support review workflows; they are not generated or signed automatically for eve
 For automation, start with [docs/harness_api.md](docs/harness_api.md) and the working
 recipes in [docs/harness_cookbook.md](docs/harness_cookbook.md). The
 [review-bundle guide](docs/enterprise_review_bundle_ci.md) covers evidence checks in CI.
+See [terminal diagnostic safety](docs/review-bundle-terminal-safety.md) for text escaping and verification behavior.
 
 ## Choose the right search
 
