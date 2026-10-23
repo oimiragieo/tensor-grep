@@ -43,7 +43,7 @@ tg orient .
 tg context . "how are invoices calculated?" --max-tokens 2000
 ```
 
-Use `tg --help` for commands and `tg COMMAND --help` for options. Environment overrides are documented in [CLI environment settings](docs/cli_environment.md).
+Use `tg --help` for grouped command examples and `tg COMMAND --help` for options. Environment overrides are documented in [CLI environment settings](docs/cli_environment.md).
 
 New to command-line tools? The [first-search walkthrough](docs/getting-started.md)
 uses a small sample project and explains each command and result.

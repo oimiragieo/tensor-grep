@@ -2480,62 +2480,17 @@ def test_root_cli_should_generate_powershell_completion_script(monkeypatch) -> N
     )
 
 
-def test_root_help_should_surface_current_agent_gpu_launcher_and_validation_contracts() -> None:
-    result = CliRunner().invoke(app, ["--help"], prog_name="tg")
+def test_RenderRootHelp_Bootstrap_ShowsPlainProductExamples() -> None:
+    result = CliRunner().invoke(app, ["--help"], prog_name="tg", terminal_width=80)
 
-    # Task #295. Assert the CONTRACT TEXT against `app.info.help` -- its source of truth -- not
-    # against the RENDERED output, because tg deliberately switches renderers.
-    #
-    # ROOT CAUSE, measured end to end. `main.py:21-23` sets `TYPER_USE_RICH=0` at import time when
-    # `sys.platform` is Windows and stdout is not a TTY (Rich's legacy Windows renderer can raise
-    # EINVAL on long help piped through PowerShell). `typer/core.py:29` reads that env var ONCE, at
-    # ITS import, and caches `HAS_RICH`. Under pytest stdout is captured, so whether Rich is on
-    # comes down to whether `tensor_grep.cli.main` was imported before `typer.core` -- pure module
-    # IMPORT ORDER. Importing any test module that imports `main` at module scope flips it.
-    #
-    # The two renderings are not merely re-wrapped: root help was 18161 chars / 228 padded Rich
-    # rows vs 10128 chars / 152 plain Click lines, and "sidecar-routed GPU results" is absent from
-    # the plain form EVEN AFTER whitespace normalization. So no amount of normalizing the rendered
-    # text can make this assertion mode-independent -- the content itself differs.
-    #
-    # Splitting the assertion is what makes it honest: the CONTRACT lives in `app.info.help`, and
-    # the RENDERING is checked separately below in a way that holds in both modes.
     assert result.exit_code == 0
-    help_text = " ".join((app.info.help or "").split())
-    assert help_text, "app.info.help is empty -- the contract text below would pass vacuously"
-    for expected in [
-        'tg agent PATH "change invoice tax"',
-        "alternative targets",
-        "validation_commands",
-        "$file",
-        "--format rg --sort path",
-        "--allow-broad-generated-scan",
-        "--gpu-device-ids",
-        "gpu_acceleration",
-        "sidecar-routed GPU results",
-        "GPU",
-        "remains experimental",
-        "TENSOR_GREP_CLASSIFY_PROVIDER=cybert",
-        "--smart-case",
-        "--hidden",
-        "--max-depth",
-        "--text",
-        "native GPU falls back",
-        "TG_NATIVE_TG_BINARY",
-        "TG_SIDECAR_PYTHON",
-        "TG_RG_PATH",
-        "tg doctor --json",
-        "path_tg_first_launcher_kind",
-        "fresh_shell_path_tg_first_launcher_kind",
-    ]:
-        assert expected in help_text
-
-    # RENDERING arm -- deliberately mode-agnostic. `app.info.help` proves the text is CONFIGURED;
-    # this proves a user actually gets a working help screen listing the commands, under EITHER
-    # renderer. Single tokens only: multi-word phrases are exactly what differs between them.
-    rendered = " ".join(result.stdout.split())
-    for token in ["Usage:", "tensor-grep", "search", "agent", "doctor"]:
-        assert token in rendered, f"root help did not render {token!r} (renderer-independent)"
+    assert "Search code, follow symbols, and prepare a bounded edit." in result.stdout
+    assert "  tg search -F TODO src" in result.stdout.splitlines()
+    assert "  tg callers src create_invoice --json" in result.stdout.splitlines()
+    assert '  tg prepare src "add invoice tax" --json' in result.stdout.splitlines()
+    assert "  tg mcp" in result.stdout.splitlines()
+    assert "**" not in result.stdout and "`" not in result.stdout
+    assert "TG_NATIVE_TG_BINARY" not in result.stdout
 
 
 def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch) -> None:

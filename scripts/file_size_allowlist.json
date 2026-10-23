@@ -26,7 +26,7 @@
     "src/tensor_grep/cli/session_daemon.py": 2137,
     "src/tensor_grep/cli/session_store.py": 1828,
     "tests/unit/test_apply_policy.py": 2375,
-    "tests/unit/test_cli_bootstrap.py": 2987,
+    "tests/unit/test_cli_bootstrap.py": 2940,
     "tests/unit/test_file_deps.py": 2901,
     "tests/unit/test_semantic_provider_navigation.py": 2251,
     "tests/unit/test_session_cli.py": 3337,
