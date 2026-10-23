@@ -13,6 +13,8 @@ used to be listed in root help. The setting takes effect only for the entry poin
 | `TG_FORCE_CPU` | Forces CPU routing for search commands. |
 | `TG_SIDECAR_TIMEOUT_MS` | Sidecar timeout in milliseconds; the native default is 30,000 ms. |
 | `TG_HELP_PROBE_TIMEOUT_MS` | Timeout in milliseconds for the native front door's `--help` probe. The default is 3,000 ms; if the probe times out, the native front door renders its condensed fallback help. |
+| `TG_PASSTHROUGH_TIMEOUT_MS` | Timeout for one-shot Python passthrough commands; defaults to 600,000 ms. It does not apply to `mcp`, `session serve`, or `lsp server` launches. |
+| `TG_LSP_PROVIDER` | Overrides the semantic LSP provider mode; defaults to `native` and accepts experimental modes such as `hybrid`. Provider availability alone does not prove LSP behavior. |
 | `TENSOR_GREP_DEVICE_IDS` | Comma-separated GPU IDs available to tensor-grep. |
 | `TENSOR_GREP_CLASSIFY_PROVIDER` | Set to `cybert` to opt into CyBERT/Triton classification. Classification otherwise uses local heuristics by default. |
 | `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` | Timeout for Triton-backed NLP probes. |
@@ -22,6 +24,15 @@ used to be listed in root help. The setting takes effect only for the entry poin
 | `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES`, `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`, `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES` | Bound agent-loop response and LSP provider caches. |
 | `TG_SESSION_DAEMON_AUTOSTART` | The warm-daemon path is on by default for `defs`, `impact`, `refs`, `callers`, and `blast-radius`. It probes for a running `tg session daemon`, then starts one without blocking on a miss. Set `0`, `false`, `no`, or `off` for the cold path. It is always off when `CI` or `GITHUB_ACTIONS` is set. Each daemon shuts down after `TG_SESSION_DAEMON_IDLE_SECONDS` of inactivity (900 seconds by default). |
 | `TG_SESSION_DAEMON_IDLE_SECONDS` | Idle lifetime in seconds before a session daemon shuts down; defaults to 900 seconds. |
+
+Search supports a validated common rg-compatible subset, not every ripgrep invocation.
+`--format rg --json` emits ripgrep JSON Lines; plain `--json` is tensor-grep aggregate JSON.
+CPU/sidecar routes honor `--smart-case`; native GPU falls back when case-insensitive semantics are required.
+Structured CPU/sidecar search honors `--hidden`, `--max-depth N`, and `--text`; native GPU falls back when
+a requested switch changes unsupported semantics.
+
+`tg repair-launcher --allow-foreign-rename` explicitly backs up a foreign Windows `tg.exe` that blocks
+Python subprocess resolution and replaces it with the verified tensor-grep front door.
 
 For routing and installation context, see [installation](installation.md), [routing policy](routing_policy.md),
 [GPU troubleshooting](runbooks/gpu-troubleshooting.md), and [contracts](CONTRACTS.md).
