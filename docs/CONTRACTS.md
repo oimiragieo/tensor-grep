@@ -343,6 +343,14 @@ These surfaces may change, move, or be removed in minor releases.
 
 ## 11. Review bundles (`tg review-bundle create` / `verify`) -- evidence-receipt CI gate
 
+For an HMAC-signed audit manifest, pass `tg review-bundle verify BUNDLE --signing-key KEY`.
+The key must come from the caller; a manifest's embedded `key_path` is informational and is never trusted.
+Text verification prints `manifest_signature_valid` and, on failure, `manifest_signature_error`,
+so passing component checksums cannot conceal a missing or incorrect signing key.
+The error is a quoted JSON string so untrusted control characters cannot execute terminal sequences.
+This HMAC key is separate from the Ed25519 `--trusted-key` used for embedded evidence receipts.
+The JSON fields, unsigned-bundle acceptance policy, and success/refusal exit codes remain unchanged.
+
 `tg review-bundle create` packages an audit manifest plus optional scan results, checkpoint metadata, a manifest diff, and (additive) signed EvidenceReceipts into one JSON artifact; `tg review-bundle verify` re-checks its integrity, signatures, and -- when asked -- receipt trust and freshness against a git ref. This section documents the additive `--receipt` / `--against` / `--trusted-key` / `--require-trusted` surface that closes the loop between section 8's EvidenceReceipt signing and an actual CI gate.
 
 - **`evidence_receipts` component (optional, additive)**: `_REVIEW_BUNDLE_COMPONENTS` now includes `evidence_receipts` alongside `audit_manifest` (required), `scan_results`, `checkpoint_metadata`, and `diff` (all optional). A bundle created without `--receipt` sets `evidence_receipts: null`, exactly like the other optional components when their source flag is omitted; a bundle written by a pre-this-feature `tg` (no `evidence_receipts` key at all) verifies identically, since the generic per-component checksum loop treats "key absent" and "key present with `null`" the same way for a non-required component. Adding this component to the existing checksum/`bundle_sha256` machinery is sufficient for it to inherit the SAME tamper-evidence every other component already has -- no separate integrity mechanism was added.

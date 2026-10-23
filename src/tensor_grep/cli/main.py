@@ -12119,7 +12119,9 @@ def review_bundle_verify(
     signing_key: str | None = typer.Option(
         None,
         "--signing-key",
-        help="Optional HMAC signing key path to verify the embedded manifest's signature.",
+        help="HMAC key path required for an HMAC-signed embedded manifest. "
+        "Supply it explicitly; an embedded key_path is never trusted. "
+        "This is separate from Ed25519 --trusted-key.",
     ),
     against: str | None = typer.Option(
         None,
@@ -12258,48 +12260,9 @@ def review_bundle_verify(
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
-    typer.echo(f"Review bundle: {payload['bundle_path']}")
-    typer.echo(f"valid={payload['valid']}")
-    for component, check in cast(dict[str, dict[str, object]], payload["checks"]).items():
-        typer.echo(
-            f"{component}: valid={check['valid']} "
-            f"expected={check['expected']} actual={check['actual']}"
-        )
-    bundle_integrity = cast(dict[str, object], payload["bundle_integrity"])
-    typer.echo(
-        "bundle_integrity="
-        f"{bundle_integrity['valid']} "
-        f"expected={bundle_integrity['expected']} actual={bundle_integrity['actual']}"
-    )
-    against_check = payload.get("against")
-    if isinstance(against_check, dict):
-        typer.echo(
-            f"against={against_check['ref']} valid={against_check['valid']} "
-            f"resolved_commit_sha={against_check['resolved_commit_sha']}"
-        )
-        if against_check.get("error"):
-            typer.echo(f"  against_error: {against_check['error']}")
-    for receipt_check in cast(list[dict[str, object]], payload.get("receipts") or []):
-        typer.echo(
-            f"receipt[{receipt_check['index']}]: valid={receipt_check['valid']} "
-            f"receipt_sha256={receipt_check.get('receipt_sha256')}"
-        )
-        freshness = receipt_check.get("freshness")
-        if isinstance(freshness, dict) and freshness.get("error"):
-            typer.echo(f"  freshness_error: {freshness['error']}")
-        signature = receipt_check.get("signature")
-        if isinstance(signature, dict) and signature.get("errors"):
-            for signature_error in cast(list[object], signature["errors"]):
-                typer.echo(f"  signature_error: {signature_error}")
-    policy = payload.get("policy")
-    if isinstance(policy, dict):
-        typer.echo(
-            f"policy: min_receipts={policy['min_receipts']} "
-            f"valid_receipt_count={policy['valid_receipt_count']} "
-            f"expect_key_ids={policy['expect_key_ids']} valid={policy['valid']}"
-        )
-        for policy_reason in cast(list[object], policy.get("reasons") or []):
-            typer.echo(f"  policy_reason: {policy_reason}")
+    from tensor_grep.cli.review_bundle_render import render_review_bundle_verification
+
+    render_review_bundle_verification(payload)
     if not payload["valid"]:
         raise typer.Exit(code=1)
 
