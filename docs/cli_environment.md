@@ -1,7 +1,7 @@
 # CLI environment settings
 
-`tg --help` stays focused on common commands. This page preserves the environment settings that
-used to be listed in root help. The setting takes effect only for the entry point or feature named.
+This page documents CLI environment settings. Each setting takes effect only for the entry point
+or feature named below.
 
 | Setting | Behavior |
 |---|---|

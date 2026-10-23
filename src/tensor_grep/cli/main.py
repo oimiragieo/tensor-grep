@@ -38,16 +38,11 @@ from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.formatters.base import OutputFormatter
-from tensor_grep.cli.help_catalog import (
-    HELP_EXAMPLES,
-    HELP_FOOTER,
-    HELP_SUMMARY,
-    TopLevelHelpGroup,
-)
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
+from tensor_grep.cli.root_app import create_root_app
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version as _native_tg_version,
 )
@@ -426,14 +421,7 @@ _BUILTIN_TYPE_LIST = (
     "yaml: *.yml, *.yaml",
 )
 
-app = typer.Typer(
-    cls=TopLevelHelpGroup,
-    help=HELP_SUMMARY + "\n\n\b\nExamples:\n" + "\n".join(HELP_EXAMPLES),
-    epilog=HELP_FOOTER,
-    no_args_is_help=True,
-    add_completion=True,
-    rich_markup_mode="markdown",
-)
+app = create_root_app()
 checkpoint_app = typer.Typer(
     help="Create, list, and undo edit checkpoints.",
     no_args_is_help=True,
