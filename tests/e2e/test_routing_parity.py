@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 from tensor_grep.backends.ast_backend import get_supported_languages
+from tensor_grep.cli.help_catalog import COMMAND_GROUPS
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
@@ -1028,7 +1029,14 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
     for raw_line in stdout.splitlines():
         line = _strip_ansi(raw_line)
         stripped = line.strip()
-        if stripped == "Commands:":
+        if stripped in {
+            "Commands:",
+            "Search and structure:",
+            "Navigate:",
+            "Agent:",
+            "State and evidence:",
+            "Operations:",
+        }:
             mode = "plain"
             continue
         if "Commands" in stripped and stripped.startswith(box_header_prefixes):
@@ -1058,6 +1066,10 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
                     if re.match(r"^[a-z][a-z0-9-]*$", normalized):
                         commands.add(normalized)
     return commands
+
+
+def _extract_visible_help_command_rows(stdout: str) -> list[str]:
+    return re.findall(r"(?m)^  ([a-z][a-z0-9-]*) {2,}", stdout)
 
 
 def test_extract_visible_help_commands_handles_unicode_box_help() -> None:
@@ -1364,7 +1376,9 @@ def test_run_help_exposes_native_diff_contract_on_public_routes(parity_env):
         )
 
 
-def test_top_level_help_visible_commands_match_public_contract(parity_env):
+def test_top_level_help__Action_cli__Condition_public_contract__ExpectedOutcome_exact_once(
+    parity_env,
+):
     python_help = run_command("python-m", ["--help"], cwd=parity_env)
     native_help = _run_native_front_door(["--help"], cwd=parity_env)
 
@@ -1375,9 +1389,11 @@ def test_top_level_help_visible_commands_match_public_contract(parity_env):
 
     assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
     assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    catalog_commands = {name for _, names in COMMAND_GROUPS for name in names}
+    assert catalog_commands == PUBLIC_TOP_LEVEL_COMMANDS
 
 
-def test_empty_invocation_visible_commands_match_public_contract(parity_env):
+def test_empty_invocation__Action_cli__Condition_noargs__ExpectedOutcome_exact_once(parity_env):
     python_help = run_command("python-m", [], cwd=parity_env)
     native_help = _run_native_front_door([], cwd=parity_env)
 
@@ -1387,6 +1403,9 @@ def test_empty_invocation_visible_commands_match_public_contract(parity_env):
     native_commands = _extract_visible_help_commands(native_help.stdout)
     assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
     assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert len(_extract_visible_help_command_rows(python_help.stdout)) == len(
+        PUBLIC_TOP_LEVEL_COMMANDS
+    )
 
 
 def test_public_help_falls_back_to_native_when_python_passthrough_is_broken(parity_env):

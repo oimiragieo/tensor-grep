@@ -86,6 +86,8 @@ tg --help
 tg search -F 'ERROR' .
 ```
 
+`tg --help` lists grouped commands; use `tg COMMAND --help` for details. See [CLI environment settings](cli_environment.md) for launcher, sidecar, and feature overrides.
+
 The final command searches the current directory for the literal word `ERROR`. It can return no matches if your files do not contain that word; that is a valid search result.
 
 If `tg` is not found, open a new terminal so it reads updated `PATH` settings. On Windows, check which command will run:

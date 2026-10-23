@@ -616,22 +616,22 @@ def test_full_cli_run_accepts_ast_grep_pattern_option(monkeypatch, tmp_path: Pat
 
 
 def test_app_help_should_expose_the_python_public_top_level_surface():
-    runner = CliRunner()
-
-    result = runner.invoke(app, ["--help"])
-
+    result = CliRunner().invoke(app, ["--help"], terminal_width=80)
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
-    for snippet in TOP_LEVEL_HELP_REQUIRED_SNIPPETS:
-        assert snippet in help_text
-    normalized_help = re.sub(r"\s+", " ", _strip_ansi(result.stdout))
     assert (
-        "Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries."
-        in normalized_help
+        "Search code, follow symbols, and prepare a bounded edit." in help_text
+        and "Examples:" in help_text
+        and "Search and structure:" in help_text
+        and "Navigate:" in help_text
+        and "Agent:" in help_text
+        and "State and evidence:" in help_text
+        and "Operations:" in help_text
+        and "Search supports a validated rg-compatible subset." in help_text
     )
-    assert "tg doctor --with-lsp" in result.stdout
-    assert "doctor" in result.stdout
-    assert "symbol" in result.stdout
+    assert "Environment overrides" not in help_text
+    assert "TG_SIDECAR_PYTHON" not in help_text
+    assert "**" not in help_text and "`" not in help_text
 
 
 def test_search_help_should_render_python_search_help_smoke() -> None:
