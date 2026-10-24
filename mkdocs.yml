@@ -64,6 +64,7 @@ exclude_docs: |
   !/investigation.md
   !/multi_agent_context_plane.md
   !/package_manager_publish.md
+  !/optional-runtime-security.md
   !/rebuild-guides/README.md
   !/rebuild-guides/cache-and-schema-versioning.md
   !/rebuild-guides/tg-checkpoint.md
@@ -138,6 +139,7 @@ nav:
     - Multi-Agent Context Plane: multi_agent_context_plane.md
     - Review Bundle CI Gate: enterprise_review_bundle_ci.md
   - Maintainers:
+    - Optional Runtime Security: optional-runtime-security.md
     - CI Pipeline: CI_PIPELINE.md
     - Daemon Probe Test Tracing: daemon-probe-test-tracing.md
     - Release Checklist: RELEASE_CHECKLIST.md
