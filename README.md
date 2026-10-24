@@ -158,3 +158,5 @@ and [GitHub issues](https://github.com/oimiragieo/tensor-grep/issues) for discus
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE). Related project: [gotcontext.ai](https://gotcontext.ai).
+
+Optional runtime dependency security and verification: [security floors](docs/optional-runtime-security.md).

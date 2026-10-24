@@ -682,7 +682,10 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
     lock_command = "uv lock --upgrade-package tensor-grep"
     lock_position = build_command.find(lock_command)
     git_add_position = build_command.find("git add uv.lock")
-    cargo_lock_command = "cargo generate-lockfile --manifest-path rust_core/Cargo.toml"
+    cargo_lock_command = (
+        "test -f rust_core/Cargo.lock && "
+        "cargo update --workspace --manifest-path rust_core/Cargo.toml"
+    )
     cargo_lock_position = build_command.find(cargo_lock_command)
     cargo_lock_add_position = build_command.find("git add rust_core/Cargo.lock")
     build_position = build_command.rfind("uv build")

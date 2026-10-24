@@ -50,6 +50,46 @@ Release behavior:
 - Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 - Release completion requires main CI and semantic-release complete successfully, GitHub release native asset upload/verification passing for the semantic-release tag, `publish-success-gate` passing when publish is required, `git fetch origin main --tags`, local `main` fast-forwarded to the release commit, and PyPI/public installer availability verified when the install/update path changed.
 
+#### Preserving reviewed Rust dependencies
+
+A version-only release must not silently select newer third-party dependencies after
+the main test matrix. Treat the lockfile as a sealed shipping manifest: update the product
+label while keeping the inspected contents. Customers receive the reviewed dependency set.
+
+```mermaid
+flowchart TD
+  A[Stamp product version] --> B{Existing Cargo.lock?}
+  B -->|Yes| C[Update workspace version]
+  B -->|No| D[Stop release]
+  C --> E[Stage lock and build]
+```
+
+| Component | Plain-English Analogy | Core Responsibility |
+| --- | --- | --- |
+| Cargo.lock | Sealed shipping manifest | Preserve dependency versions and source revisions |
+| Workspace update | Product label change | Advance workspace versions during release stamping |
+
+The semantic-release command in [pyproject.toml](/pyproject.toml) first requires
+`rust_core/Cargo.lock`, then runs `cargo update --workspace --manifest-path rust_core/Cargo.toml`
+before staging it. Missing locks stop the chain before staging Cargo.lock or building artifacts.
+Intentional dependency upgrades belong in separately reviewed changes. See the
+[Cargo command contract](https://doc.rust-lang.org/cargo/commands/cargo-update.html).
+
+Run `uv run --no-sync pytest tests/unit/test_release_cargo_lock_preservation.py` under an
+external timeout. Its local-Git fixture advances an upstream revision, stamps the workspace,
+and executes only the actual configured lock step: expect the product version to advance,
+existing dependency records to stay identical, and missing-lock regeneration to fail.
+It performs no compilation or external dependency download. CI verifies the supported
+platforms; inspect the next natural release diff for unexpected third-party changes.
+Rollback is a normal revert of the configuration, validator and tests together, restoring
+the previous regeneration behavior and its dependency-drift risk.
+
+| Spec ID | Behavior | CL # | File Link | Unit Test |
+| --- | --- | --- | --- | --- |
+| REL-LOCK-01 | Preserve existing dependency records | REL-LOCK-1 | [tests](/tests/unit/test_release_cargo_lock_preservation.py) | `test_ReleaseLock_VersionStamp_PreservesExistingDependencyRecords` |
+| REL-LOCK-02 | Refuse missing lock | REL-LOCK-1 | [configuration](/pyproject.toml) | `test_ReleaseLock_MissingLock_RefusesRegeneration` |
+| REL-LOCK-03 | Reject regeneration configuration | REL-LOCK-1 | [validator](/scripts/_release_assets_checks/docs_and_manifest_checks.py) | `test_Validator_LockRegeneration_RejectsDependencyDrift` |
+
 Benchmark behavior:
 
 - Pull requests benchmark the candidate checkout and the PR base revision in the same runner job; the explicit base-vs-head comparison is the blocking regression gate.

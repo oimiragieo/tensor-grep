@@ -132,6 +132,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/investigation.md",
     "docs/multi_agent_context_plane.md",
     "docs/package_manager_publish.md",
+    "docs/optional-runtime-security.md",
     "docs/rebuild-guides/README.md",
     "docs/rebuild-guides/cache-and-schema-versioning.md",
     "docs/rebuild-guides/tg-checkpoint.md",

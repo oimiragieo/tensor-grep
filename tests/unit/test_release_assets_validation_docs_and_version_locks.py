@@ -156,7 +156,7 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
     assert "semantic_release.build_command must stage `uv.lock`" in joined_errors
     assert (
         "semantic_release.build_command must run "
-        "`cargo generate-lockfile --manifest-path rust_core/Cargo.toml`"
+        "`test -f rust_core/Cargo.lock && cargo update --workspace --manifest-path rust_core/Cargo.toml`"
     ) in joined_errors
     assert "semantic_release.build_command must stage `rust_core/Cargo.lock`" in joined_errors
     assert "semantic_release.build_command must stage release docs after stamping" in joined_errors

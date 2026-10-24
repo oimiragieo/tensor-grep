@@ -53,6 +53,8 @@ constraint-dependencies = [
     "urllib3>=2.8.0",
     "fsspec>=2026.6.0",
     "multidict>=6.9.1",
+    "filelock>=4.2.1",
+    "setuptools>=84.1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -160,7 +162,7 @@ version_toml = [
     "rust_core/Cargo.toml:package.version",
 ]
 branch = "main"
-build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && cargo generate-lockfile --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && python -m pip install --no-deps \"pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70\" && python -m pip install uv==0.13.4 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
+build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && test -f rust_core/Cargo.lock && cargo update --workspace --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && python -m pip install --no-deps \"pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70\" && python -m pip install uv==0.13.4 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
 upload_to_pypi = false
 upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"
@@ -246,8 +248,8 @@ dependencies = [
 # transitive (fsspec via torch/cudf/huggingface-hub; multidict via aiohttp/yarl). Their floors are
 # declared in every extra that pulls them, not only in `[tool.uv] constraint-dependencies` (which is
 # lock-only, never published) -- the same A69 rule as aiohttp below.
-gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "pyarrow>=23.0.1", "fsspec>=2026.6.0"]
-gpu-win = ["torch>=2.0", "fsspec>=2026.6.0"]
+gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "filelock>=4.2.1", "setuptools>=84.1.0; python_version >= '3.12'", "pyarrow>=23.0.1", "fsspec>=2026.6.0"]
+gpu-win = ["torch>=2.0", "filelock>=4.2.1", "setuptools>=84.1.0; python_version >= '3.12'", "fsspec>=2026.6.0"]
 # aiohttp is declared HERE, not only in `[tool.uv] constraint-dependencies`, on purpose.
 # `constraint-dependencies` governs LOCAL resolution (this repo's uv.lock) only -- it is NOT
 # published metadata, so a user running `pip install tensor-grep[nlp]` never sees it. This extra
@@ -255,7 +257,7 @@ gpu-win = ["torch>=2.0", "fsspec>=2026.6.0"]
 # direct floor the published extra can still resolve an advisory-affected aiohttp. Per AGENTS.md
 # A69, a fixable advisory is upgraded across BOTH the direct and the constraint floor.
 # CVE-2026-111497: the HTTP client can decode untrusted Brotli responses.
-nlp = ["transformers>=5.3.0", "tritonclient[http]", "brotli>=1.2.1", "aiohttp>=3.14.4", "urllib3>=2.8.0", "fsspec>=2026.6.0", "multidict>=6.9.1"]
+nlp = ["transformers>=5.3.0", "filelock>=4.2.1", "tritonclient[http]", "brotli>=1.2.1", "aiohttp>=3.14.4", "urllib3>=2.8.0", "fsspec>=2026.6.0", "multidict>=6.9.1"]
 ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust", "tree-sitter-go", "tree-sitter-java", "tree-sitter-php", "tree-sitter-c-sharp", "tree-sitter-c", "tree-sitter-cpp", "pygls>=2.0"]
 # `tg scan --ruleset` / `--rule` / `--inline-rules` run through the ast-grep WRAPPER backend,
 # which shells out to an `ast-grep`/`sg` BINARY on PATH -- a different dependency from the
@@ -271,7 +273,7 @@ scan = ["ast-grep-cli>=0.39"]
 # encode. Paired with the MIT-licensed minishlab/potion-code-16M model (fetched once, offline
 # after that). Absent -> visible BM25-only fallback (never a silent downgrade); see
 # core/retrieval_dense.py:dense_available().
-semantic = ["model2vec>=0.5", "numpy>=1.26", "fsspec>=2026.6.0"]
+semantic = ["model2vec>=0.5", "filelock>=4.2.1", "numpy>=1.26", "fsspec>=2026.6.0"]
 # Late-interaction (MaxSim) rerank stage (`tg search --rerank`, roadmap
 # docs/plans/design-tensor-grep-late-rerank-2026-07-09.md): onnxruntime is CPU-only ONNX Runtime
 # (MIT) and tokenizers is the Rust-backed HF tokenizer (Apache-2.0) -- NO torch/transformers/PyLate
@@ -314,7 +316,7 @@ bench = [
   "tree-sitter-c-sharp",
   "tree-sitter-c",
   "tree-sitter-cpp",
-  "torch>=2.0",
+  "torch>=2.0", "filelock>=4.2.1", "setuptools>=84.1.0; python_version >= '3.12'",
   "nvtx>=0.2",
 ]
 
