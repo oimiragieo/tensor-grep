@@ -162,7 +162,7 @@ version_toml = [
     "rust_core/Cargo.toml:package.version",
 ]
 branch = "main"
-build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && cargo generate-lockfile --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && python -m pip install --no-deps \"pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70\" && python -m pip install uv==0.13.4 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
+build_command = "python scripts/stamp_release_assets.py && git add AGENTS.md README.md SKILL.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default 1.96.0 && test -f rust_core/Cargo.lock && cargo update --workspace --manifest-path rust_core/Cargo.toml && git add rust_core/Cargo.lock && python -m pip install --no-deps \"pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70\" && python -m pip install uv==0.13.4 && uv lock --upgrade-package tensor-grep && git add uv.lock && uv build"
 upload_to_pypi = false
 upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"
