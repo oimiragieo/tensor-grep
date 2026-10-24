@@ -8,6 +8,7 @@ endpoint and token but name root B's daemon pid; A's stop would then escalate to
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import session_daemon as sd
+from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 _DAEMON_REQUEST_FUNCTION = sd._daemon_request
@@ -53,7 +55,15 @@ def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @contextmanager
-def _daemon(root: Path, *, metadata_pid: int, package_version: str | None = None) -> Iterator[Any]:
+def _daemon(
+    root: Path,
+    *,
+    metadata_pid: int,
+    package_version: str | None = None,
+    prepare_secret: bool = True,
+) -> Iterator[Any]:
+    if prepare_secret:
+        assert sd._load_or_create_user_secret() is not None, "fixture secret preparation failed"
     server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
     real_shutdown = server.shutdown
 
@@ -90,6 +100,184 @@ def _daemon(root: Path, *, metadata_pid: int, package_version: str | None = None
         real_shutdown()
         thread.join(timeout=2)
         server.server_close()
+        assert not thread.is_alive(), "daemon fixture did not quiesce"
+
+
+class _FirstCreationGate:
+    def __init__(self) -> None:
+        source = ast.parse(Path(trust.__file__).read_text(encoding="utf-8"))
+        function = next(
+            node
+            for node in source.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_load_or_create_user_secret"
+        )
+        self.line = next(
+            node.lineno
+            for node in function.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "pinned"
+        )
+        self.release = threading.Event()
+        self.entered = threading.Event()
+        self.finished = threading.Event()
+        self.server: Any = None
+        self.worker: threading.Thread | None = None
+        self.hits = 0
+        self.expired = False
+        self.timeout_while_held = False
+
+    def trace(self, frame: Any, event: str, argument: Any) -> Any:
+        if (
+            event == "call"
+            and frame.f_code is sd._SessionDaemonHandler.handle.__code__
+            and frame.f_locals["self"].server is self.server
+        ):
+            self.worker = threading.current_thread()
+        if threading.current_thread() is not self.worker:
+            return self.trace
+        if (
+            event == "line"
+            and frame.f_code is trust._load_or_create_user_secret.__code__
+            and frame.f_lineno == self.line
+        ):
+            self.hits += 1
+            self.entered.set()
+            if not self.release.wait(30):
+                self.expired = True
+                raise AssertionError("creation gate expired")
+        if (
+            event == "return"
+            and frame.f_code is sd.socketserver.ThreadingMixIn.process_request_thread.__code__
+        ):
+            self.finished.set()
+        return self.trace
+
+    def join(self) -> None:
+        self.release.set()
+        assert self.worker is not None, "target handler was not observed"
+        completed = False
+        try:
+            completed = self.finished.wait(10)
+        finally:
+            self.worker.join(timeout=10)
+        assert completed, "handler completion was not observed"
+        assert not self.worker.is_alive(), "handler did not quiesce"
+        assert not self.expired, "creation gate expired"
+
+
+class _MissingCompletion:
+    def wait(self, timeout: float) -> bool:
+        return False
+
+
+class _ObservedJoinThread(threading.Thread):
+    def __init__(self, release: threading.Event) -> None:
+        super().__init__(target=self._wait_for_release, daemon=True)
+        self.release = release
+        self.ready = threading.Event()
+        self.join_attempted = False
+
+    def _wait_for_release(self) -> None:
+        self.ready.set()
+        assert self.release.wait(5)
+
+    def join(self, timeout: float | None = None) -> None:
+        self.join_attempted = True
+        super().join(timeout)
+
+
+def _missing_completion_outcome(gate: _FirstCreationGate) -> tuple[bool, bool]:
+    worker = _ObservedJoinThread(gate.release)
+    gate.worker = worker
+    gate.finished = _MissingCompletion()  # type: ignore[assignment]
+    worker.start()
+    try:
+        assert worker.ready.wait(5)
+        with pytest.raises(AssertionError, match="handler completion was not observed"):
+            gate.join()
+        return worker.join_attempted, worker.is_alive()
+    finally:
+        gate.release.set()
+        threading.Thread.join(worker, timeout=5)
+        assert not worker.is_alive()
+
+
+def test_CreationGate_MissingCompletion_StillJoinsWorker() -> None:
+    gate = _FirstCreationGate()
+
+    observed = _missing_completion_outcome(gate)
+
+    assert observed == (True, False)
+
+
+def _probe_with_creation_gate(
+    root: Path, monkeypatch: pytest.MonkeyPatch, *, prepare_secret: bool = True
+) -> tuple[Any, Any]:
+    gate = _FirstCreationGate()
+    trace = _ProbeTrace()
+    previous = threading.gettrace()
+
+    def request(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return trace.observe("request", _DAEMON_REQUEST_FUNCTION, *args, **kwargs)
+        except TimeoutError:
+            gate.timeout_while_held = gate.entered.is_set() and not gate.release.is_set()
+            raise
+
+    threading.settrace(gate.trace)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sd, "_daemon_request", request)
+            with _daemon(root, metadata_pid=999_999, prepare_secret=prepare_secret) as server:
+                gate.server = server
+                try:
+                    proven = sd._probe_daemon(root)
+                finally:
+                    gate.join()
+    finally:
+        gate.release.set()
+        threading.settrace(previous)
+    assert threading.gettrace() is previous
+    return proven, {
+        "creation_branch_hits": gate.hits,
+        "gate_expired": gate.expired,
+        "timeout_while_gate_held": gate.timeout_while_held,
+        "worker_joined": gate.worker is not None and not gate.worker.is_alive(),
+        "request": trace.safe_summary()["request"],
+    }
+
+
+def test_Probe_DefaultFixture_ProvesPidWithoutFirstUseCreation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path.resolve()
+
+    proven, stages = _probe_with_creation_gate(root, monkeypatch)
+
+    assert proven is not None, f"bounded fixture mechanism: {stages!r}"
+    assert proven["pid"] == os.getpid()
+    assert stages["creation_branch_hits"] == 0
+    assert stages["gate_expired"] is False
+    assert stages["timeout_while_gate_held"] is False
+    assert stages["worker_joined"] is True
+    assert stages["request"]["reply_ok"] is True
+
+
+def test_Probe_UnpreparedFixture_CreationGateObservesReadTimeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path.resolve()
+
+    proven, stages = _probe_with_creation_gate(root, monkeypatch, prepare_secret=False)
+
+    assert proven is None
+    assert stages["creation_branch_hits"] == 1
+    assert stages["gate_expired"] is False
+    assert stages["timeout_while_gate_held"] is True
+    assert stages["worker_joined"] is True
+    assert stages["request"]["exception_category"] == "timeout"
+    assert stages["request"]["request_failure_stage"] == "read"
 
 
 def test_probe_returns_the_proven_pid_not_the_planted_one(
@@ -126,7 +314,10 @@ def test_stop_never_signals_a_planted_pid_and_reports_an_unconfirmed_stop_honest
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path.resolve()
-    victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
     try:
         with _daemon(root, metadata_pid=victim.pid) as server:
             # The daemon acks "stop" but keeps serving (a wedged / lying shutdown).
