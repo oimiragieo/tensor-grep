@@ -824,6 +824,14 @@ def maybe_autostart_session_daemon_nonblocking(path: str = ".") -> bool:
     root = _resolve_root(Path(path))
     if _probe_daemon(root) is not None:
         return False
+    secret_reason = diagnose_user_secret()
+    if secret_reason in {
+        "secret_dir_untrusted_owner_or_acl",
+        "secret_ancestor_untrusted",
+        "secret_untrusted_present",
+        "secret_extra_links",
+    }:
+        return False
     if not _try_acquire_daemon_start_lock(root):
         return False
     capture_fd: int | None = None
