@@ -2,29 +2,23 @@
 """CI-only diagnostic for task 22 / PR #868 -- OBSERVE which dispatch route an explicit
 ``--gpu-device-ids`` search actually takes on THIS runner, instead of inferring it from source.
 
-Background: PR #868 added a Python-side rule (``gpu_request_unhonoured``,
-``src/tensor_grep/cli/formatters/json_fmt.py``) that forces ``tg search --gpu-device-ids ...``
-to exit 2 when the request could not be honoured. ``tests/unit/test_cli_modes_shared.py``'s
-``test_cli_search_warns_when_gpu_device_id_out_of_local_inventory`` mocks ``Pipeline``/
-``DirectoryScanner`` (via ``_patch_cli_dependencies``) to force the *Python* code path and
-asserts exit 2 -- but that assertion is only trustworthy if ``search_command`` actually reaches
-the Python tail rather than delegating the whole request to a native ``tg`` subprocess
-(``resolve_native_tg_binary()`` + ``_can_delegate_to_native_tg_search``,
-``src/tensor_grep/cli/main.py``). That test fails on CI's ``test-python`` matrix with
-``exit_code == 0`` and a clean (non-crashing) ``Result`` -- consistent with a REAL, working,
-version-matching native binary answering the request instead of the mocked Python route ever
-being consulted.
+Historical background: PR #868 added a Python-side ``gpu_request_unhonoured`` rule in
+``src/tensor_grep/cli/formatters/json_fmt.py``. At the time, it changed the exit code to 2 when
+the explicit GPU request could not be honoured; that exit-code rule was retired on 2026-08-01.
+The unit test ``tests/unit/test_cli_modes_doctor.py::test_cli_search_warns_when_gpu_device_id_out_of_local_inventory``
+uses mocked ``Pipeline``/``DirectoryScanner`` fixtures to exercise the Python route. An earlier
+CI report recorded exit 0, which motivated this route probe. A subprocess delegation observed on
+a current leg describes that invocation only; it does not establish the cause of a past CI failure.
 
 EARLY LESSON FROM BUILDING THIS PROBE (kept as a comment, not silently dropped): the first draft
 of this script ran the search against the REAL, unmocked ``Pipeline`` and immediately hit an
 UNRELATED hard failure -- ``Pipeline._raise_explicit_gpu_configuration_error`` raises
 ``ConfigurationError`` (exit 2, via ``_exit_search_error``'s own default) whenever
 ``--gpu-device-ids`` is requested and neither CuDF nor Torch can be imported, which is true on
-most plain CPU boxes. That exit-2 predates PR #868 entirely and has NOTHING to do with
-``gpu_request_unhonoured`` -- but because both share the same numeric code, a naive real-Pipeline
-probe would report "exit 2 either way" as if it had confirmed something, when it had actually
-observed two unrelated mechanisms landing on the same number (the same-arm-twice trap). This
-probe therefore NEVER calls the real ``Pipeline`` -- it installs the exact same
+most plain CPU boxes. That CPU configuration error is independent of the retired exit-code rule. When both paths used
+code 2, a naive real-Pipeline probe could report "exit 2 either way" as if it had confirmed one
+mechanism, when it had actually observed unrelated paths landing on the same number. This probe
+therefore NEVER calls the real ``Pipeline`` -- it installs the exact same
 ``_FakePipeline``/``_FakeScanner``/``RipgrepBackend.is_available=False`` mocks the failing unit
 test uses, so a GPU-incapable CI runner cannot short-circuit the very thing being measured, and
 additionally instruments ``subprocess.run`` directly to make "delegation was attempted" an
@@ -169,6 +163,19 @@ class _MockedEnvironment:
         return False
 
 
+def _exception_diagnostic(exit_code: int, exception: BaseException | None) -> str | None:
+    if exception is None:
+        return None
+    if (
+        isinstance(exception, SystemExit)
+        and type(exception.code) is int
+        and exception.code in (0, 1)
+        and exception.code == exit_code
+    ):
+        return None
+    return repr(exception)
+
+
 def _invoke(args: list[str], *, resolve_native_override=None) -> dict[str, object]:
     """Run ``tg`` in-process via the real ``CliRunner`` (exactly how pytest exercises it --
     NOT a fresh subprocess against the real Pipeline, see the module docstring for why), with the
@@ -207,13 +214,34 @@ def _invoke(args: list[str], *, resolve_native_override=None) -> dict[str, objec
             else resolve_native_override
         ),
         "exit_code": result.exit_code,
-        "exception": repr(result.exception) if result.exception else None,
+        "exception": _exception_diagnostic(result.exit_code, result.exception),
         "output": result.output,
         "delegation_calls": mocked.delegation_calls,
     }
 
 
 _SENTINEL_NO_OVERRIDE = object()
+
+
+def _classify_route_observation(
+    subject_ambient: dict[str, object],
+    control_forced_python: dict[str, object],
+    control_forced_delegation: dict[str, object],
+) -> str:
+    if (
+        control_forced_python.get("delegation_calls")
+        or control_forced_python.get("exception") is not None
+        or control_forced_python.get("exit_code") not in (0, 1)
+        or not control_forced_delegation.get("delegation_calls")
+    ):
+        return "controls_invalid"
+    if subject_ambient.get("delegation_calls"):
+        return "delegation_observed"
+    if subject_ambient.get("exception") is None and subject_ambient.get(
+        "exit_code"
+    ) == control_forced_python.get("exit_code"):
+        return "matches_forced_python"
+    return "neither"
 
 
 def _summarize(run: dict[str, object]) -> str:
@@ -336,24 +364,25 @@ def main() -> int:
     # (gpu_evidence_status / native_gpu_unavailable / not_gpu_proof_reason) and does NOT
     # independently change the exit code, which stays the ordinary complete/not-found 0/1.
     #
-    # Left as-is, this control aborted with "the fixture mocks are wrong" -- blaming the SUBJECT
-    # for a change in the CONTRACT, which is the exact shape of a stale instrument reporting a
-    # confident false negative. It now asserts the retirement instead: exit 2 must NOT appear.
-    if control_forced_python["delegation_calls"] or control_forced_python["exit_code"] == 2:
+    # This control must reach the mocked Python path cleanly and return an ordinary complete or
+    # not-found code. Exit 2, a missing code, an exception, or observed delegation invalidates it.
+    if (
+        control_forced_python["delegation_calls"]
+        or control_forced_python["exception"] is not None
+        or control_forced_python["exit_code"] not in (0, 1)
+    ):
         print(
-            "NEGATIVE-CONTROL FAILURE: resolve_native_tg_binary() forced to None still shows a "
-            f"delegation attempt and/or a retired exit code ({_summarize(control_forced_python)})"
-            " -- expected zero delegation_calls and the ordinary 0/1 exit. An exit of 2 here would"
-            " mean the retired gpu_request_unhonoured exit-code rule (backlog #22 / PR #868) has"
-            " been reintroduced. Either the override is not taking effect or that rule is back."
+            "NEGATIVE-CONTROL FAILURE: resolve_native_tg_binary() forced to None did not produce "
+            f"a clean Python control ({_summarize(control_forced_python)}); expected zero "
+            "delegation_calls, no exception, and an ordinary 0/1 exit."
         )
         return 1
 
     _log(
         "both controls",
-        "PASS -- forcing a real path triggers an observed delegation attempt, forcing None "
-        "reaches the mocked Python tail with zero delegation calls and does NOT exit 2 "
-        "(the gpu_request_unhonoured exit-code rule was retired: backlog #22 / PR #868).",
+        "PASS -- forcing a real path triggers an observed delegation attempt; forcing None "
+        "reaches the mocked Python tail with zero delegation calls, no exception, and an "
+        "ordinary 0/1 exit (the independent exit-code rule was retired: backlog #22 / PR #868).",
     )
 
     _log_section(
@@ -365,30 +394,34 @@ def main() -> int:
         resolve_native_override=_SENTINEL_NO_OVERRIDE,
     )
     _log("subject (ambient, no override)", _summarize(subject_ambient))
-    if subject_ambient["delegation_calls"]:
+    route_observation = _classify_route_observation(
+        subject_ambient, control_forced_python, control_forced_delegation
+    )
+    if route_observation == "delegation_observed":
         _log(
             "COMPARISON 1 verdict",
-            "AMBIENT DELEGATION CONFIRMED on this leg -- search_command called "
-            "subprocess.run(...) with a native tg binary INSTEAD of consulting the "
-            "FakePipeline/FakeScanner mocks this probe installed. This IS the mechanism behind "
-            f"the CI failure. delegation argv: {subject_ambient['delegation_calls']}",
+            "Ambient delegation was observed on this invocation: search_command called "
+            "subprocess.run(...) with a native tg binary. This records the route on this leg; it "
+            "does not establish the cause of a past CI failure. delegation argv: "
+            f"{subject_ambient['delegation_calls']}",
         )
-    elif subject_ambient["exit_code"] == 2:
+    elif route_observation == "matches_forced_python":
         _log(
             "COMPARISON 1 verdict",
-            "NO delegation observed and exit_code == 2, matching the forced-Python control -- "
-            "on THIS leg, resolve_native_tg_binary() plausibly returned None (or "
-            "_can_delegate_to_native_tg_search refused for an unrelated reason) and the "
-            "gpu_request_unhonoured rule fired correctly via the mocked Python tail.",
+            "Ambient observation matches the forced-Python control: no delegation was observed, "
+            f"no exception occurred, and exit_code={subject_ambient['exit_code']} matched the "
+            "control's ordinary exit code on this invocation. This is consistent with the "
+            "mocked Python route here; it does not establish the cause of a past CI failure.",
+        )
+    elif route_observation == "neither":
+        _log(
+            "COMPARISON 1 verdict",
+            "Neither observed behavior matched the controls: no delegation was observed and the "
+            f"ambient result differs from the forced-Python control ({_summarize(subject_ambient)}). "
+            "Do not infer a cause from the exit code alone.",
         )
     else:
-        _log(
-            "COMPARISON 1 verdict",
-            "NEITHER control matched: no delegation was observed, but exit_code is not 2 "
-            f"either ({_summarize(subject_ambient)}). This is a THIRD, previously undescribed "
-            "behavior on this leg and needs its own investigation -- do not assume it is "
-            "covered by hypothesis A or B.",
-        )
+        _log("COMPARISON 1 verdict", "Controls were not discriminating; route is indeterminate.")
 
     _log_section(
         "COMPARISON 2 (explicitly requested control): the sibling --ltl invocation, which is "
@@ -412,22 +445,21 @@ def main() -> int:
     elif bool(subject_ambient["delegation_calls"]) != bool(control_ltl["delegation_calls"]):
         _log(
             "COMPARISON 2 verdict",
-            "DIFFER as expected if ambient delegation is happening -- the ambient subject "
-            "delegated while the structurally-refused --ltl control did not, corroborating "
-            "Comparison 1.",
+            "The ambient invocation delegated while the structurally-refused --ltl control did "
+            "not. This is a per-invocation route difference and does not establish a past CI cause.",
         )
     else:
         _log(
             "COMPARISON 2 verdict",
-            "SAME (neither delegated) -- consistent with the ambient subject also having taken "
-            "the Python route on this leg.",
+            "Neither invocation recorded delegation. That is the same absence of an observed "
+            "subprocess call, not independent proof that both took the Python route.",
         )
 
     _log_section("done")
     print(
         "[task22-diag] This step is continue-on-error and never fails ci.yml on its own; read "
-        "the verdicts above (backed by an OBSERVED subprocess.run(...) call, not an inferred "
-        "exit code) to settle which route the ambient environment took on THIS leg."
+        "the verdicts above as observations for THIS leg (including when the route remains "
+        "indeterminate). They do not establish a historical CI cause."
     )
     return 0
 
