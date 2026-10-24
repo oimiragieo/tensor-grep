@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 898,
+    "lineno": 906,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1615,
+    "lineno": 1623,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1692,
+    "lineno": 1700,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1823,
+    "lineno": 1831,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3171,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1916,
+    "lineno": 1924,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -3181,7 +3181,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1948,
+    "lineno": 1956,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3191,7 +3191,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1995,
+    "lineno": 2003,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
