@@ -7,7 +7,7 @@ Implementation symbols refer to `src/tensor_grep/cli/session_daemon.py`.
 
 > **Cite the symbol, not the line.** Constants are named here rather than pinned to line
 > numbers, which drift. Locate them with
-> `grep -n '_DAEMON_HOST\|_MAX_DAEMON_REQUEST_BYTES' src/tensor_grep/cli/session_daemon.py`.
+> `tg search -n '_DAEMON_HOST|_MAX_DAEMON_REQUEST_BYTES' src/tensor_grep/cli/session_daemon.py`.
 
 ---
 
@@ -146,6 +146,43 @@ callers should use the reason code for decisions.
 `tg doctor` reports `session_daemon.start_error` as `null` when the read-only secret
 check finds no problem, or as an object with `reason_code` and `detail` when it does.
 This check does not diagnose secret-lock contention.
+
+### Automatic start preflight
+
+An untrusted per-user secret can make repeated implicit daemon starts fail. A read-only preflight acts like a doorkeeper that declines an already-known unsafe entrance. Search continues through its existing cold path, while a later repaired permission allows another start attempt.
+
+```mermaid
+flowchart TD
+  A[Symbol request] --> B{Daemon running?}
+  B -->|Yes| C[Existing warm route]
+  B -->|No| D[Read secret diagnostic]
+  D --> E{Known trust refusal?}
+  E -->|Yes| F[Keep cold fallback]
+  E -->|No| G[Try start lock and spawn]
+  G --> H[Child checks trust again]
+  style F stroke-width:2px
+```
+
+| Component | Plain-English analogy | Core responsibility |
+|---|---|---|
+| Preflight | Doorkeeper | Avoid a known-refused spawn |
+| Start lock | One-person entrance | Retain existing spawn coordination |
+| Child trust check | Final inspector | Enforce security even after a race |
+
+Rebuild this behavior in [the source](/src/tensor_grep/cli/session_daemon.py): keep the existing running-daemon probe first, call diagnose_user_secret next, and return False before taking the start lock only for secret_dir_untrusted_owner_or_acl, secret_ancestor_untrusted, secret_untrusted_present or secret_extra_links. Keep the public signature maybe_autostart_session_daemon_nonblocking(path: str = ".") -> bool.
+
+For example, a defs request with no warm daemon and an unsafe secret directory returns to cold search without requesting a child. After an operator repairs permissions, the next request checks again and may attempt initialization. There is no persistent disabled state. A missing directory, no diagnostic, or secret_io_error still reaches existing initialization; the child remains authoritative for races, missing-directory ancestry and other failures.
+
+The preflight adds no telemetry event, credential write, ACL repair, wire key or schema change. Explicit daemon start retains its actionable reason codes. The existing TG_SESSION_DAEMON_AUTOSTART opt-out remains available.
+
+| Spec ID | Behavior | CL | File | Unit test |
+|---|---|---|---|---|
+| DF05-SUPPRESS | Decline four known trust refusals | DF05-01 | [source](/src/tensor_grep/cli/session_daemon.py) | test_autostart_KnownSecretTrustRefusal_ReturnsFalse |
+| DF05-PASS | Preserve initialization and transient I/O | DF05-01 | [tests](/tests/unit/test_session_daemon_autostart_trust.py) | test_autostart_TrustedOrFirstRunSecret_AllowsInitialization |
+| DF05-RECOVER | Recheck repaired trust on the same root | DF05-01 | [tests](/tests/unit/test_session_daemon_autostart_trust.py) | test_autostart_TrustRepairedOnSameRoot_AllowsNextAttempt |
+| DF05-LOCK | Release the existing start lock | DF05-01 | [tests](/tests/unit/test_session_daemon_autostart_trust.py) | test_autostart_PreviousAttemptCompleted_ReleasesStartLock |
+
+Run the focused trust and autostart tests under an external timeout, then the required static/security checks and supported-platform CI. Do not infer a latency improvement or host-wide ACL correctness from deterministic stubs. Rollback reverts this preflight and restores the previous attempted starts; child trust enforcement must remain unchanged.
 
 ---
 
