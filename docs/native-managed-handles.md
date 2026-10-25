@@ -31,6 +31,12 @@ The selector permits read/delete sharing, denies write sharing, refuses reparse/
 
 final_path queries that same handle into a fixed 32768-unit UTF-16 buffer, refusing oversized/API results and retaining Windows path spelling without lossy conversion. read_record reads at most 513 bytes from the current cursor and refuses overflow; the caller performs one record read.
 
+## Access policy groundwork
+
+[Pure native policies](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_acl_policy.rs) evaluate caller-verified owner/SID strings and effective known allow grants. Ancestors reject foreign replacement rights and broad write rights; the managed root rejects foreign write rights. The selector permits grants only to the current user, SYSTEM and Administrators. Root/selector ownership may match the verified token default owner; ancestor ownership also permits TrustedInstaller.
+
+A NULL, unavailable or unparsed ACL is None and always refused. An empty, successfully parsed ACL differs from NULL. Token identity and actual ACL acquisition remain unimplemented; unknown ACEs must be rejected by that future parser.
+
 ## Contract and rebuilding
 
 The module is Windows-only. It does not validate arbitrary device, pipe, alternate-stream or UNC paths; callers must exclude these before opening. It does not establish ACL, ancestry or executable trust. There are no wire changes, activation flags or installed-state mutations; rollback is a source revert.
@@ -43,3 +49,4 @@ On Windows, run cargo test --manifest-path rust_core/Cargo.toml --no-default-fea
 |---|---|---|---|---|
 | UPD-IO-006 | Handle-bound reads and precise absence | UPD-1c2 | [Native handles](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_windows_file.rs) | open_selector_missing_parent_returns_error; open_selector_exclusive_existing_handle_returns_sharing_error_not_missing |
 | UPD-IO-007 | Real reparse, link and sharing refusals | UPD-1c2 | [Native handles](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_windows_file.rs) | open_directory_refuses_real_junction; open_selector_hard_link_refuses_multiple_links; open_directory_handle_blocks_rename_until_drop |
+| UPD-IO-008 | Preserve the three distinct Windows trust policies | UPD-1c3 | [Native policies](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_acl_policy.rs) | ancestor_foreign_delete_without_delete_child_is_allowed; parent_foreign_write_grant_is_refused; selector_foreign_read_grant_is_refused |

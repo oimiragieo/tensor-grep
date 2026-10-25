@@ -19,6 +19,7 @@ pub mod frontdoor_hops;
 pub mod gpu_native;
 pub mod index;
 pub mod index_lock;
+pub mod managed_runtime_acl_policy;
 pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_windows_file;
