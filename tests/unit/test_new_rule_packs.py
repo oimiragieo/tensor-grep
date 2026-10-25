@@ -6,12 +6,11 @@ from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
 from tensor_grep.cli.rule_packs import list_rule_packs, resolve_rule_pack
-from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
+from tests.unit.test_cli_modes_shared import _FakeAstPipeline
 
 
 def _patch_fake_ast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
-    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
 
 def _scan_ruleset_json(
@@ -21,11 +20,12 @@ def _scan_ruleset_json(
     ruleset: str,
     language: str,
     content: str,
+    filename: str = "a.py",
     extra_args: list[str] | None = None,
 ) -> dict[str, object]:
     _patch_fake_ast(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    Path("a.py").write_text(content, encoding="utf-8")
+    Path(filename).write_text(content, encoding="utf-8")
     Path("b.py").write_text("ok\n", encoding="utf-8")
 
     runner = CliRunner()
@@ -104,67 +104,77 @@ def test_resolve_rule_pack_exposes_new_multilanguage_rules(
 
 
 @pytest.mark.parametrize(
-    ("ruleset", "language", "content", "expected_rule_id"),
+    ("ruleset", "language", "filename", "content", "expected_rule_id"),
     [
-        ("auth-safe", "python", "eval($$$ARGS)\n", "python-auth-eval"),
-        ("auth-safe", "javascript", "eval($$$ARGS)\n", "javascript-auth-eval"),
+        ("auth-safe", "python", "a.py", "eval($$$ARGS)\n", "python-auth-eval"),
+        ("auth-safe", "javascript", "a.js", "eval($$$ARGS)\n", "javascript-auth-eval"),
         (
             "auth-safe",
             "typescript",
+            "a.ts",
             'jwt.sign($PAYLOAD, "$SECRET")\n',
             "typescript-jwt-sign-hardcoded-secret",
         ),
         (
             "auth-safe",
             "rust",
+            "a.rs",
             "rhai::Engine::new().eval($CODE)\n",
             "rust-rhai-engine-eval",
         ),
         (
             "deserialization-safe",
             "python",
+            "a.py",
             "pickle.loads($$$ARGS)\n",
             "python-pickle-loads",
         ),
         (
             "deserialization-safe",
             "javascript",
+            "a.js",
             "JSON.parse($INPUT)\n",
             "javascript-json-parse-untrusted",
         ),
         (
             "deserialization-safe",
             "typescript",
+            "a.ts",
             "JSON.parse($INPUT)\n",
             "typescript-json-parse-untrusted",
         ),
         (
             "deserialization-safe",
             "rust",
+            "a.rs",
             "bincode::deserialize($BYTES)\n",
             "rust-bincode-deserialize",
         ),
         (
             "subprocess-safe",
             "python",
+            "a.py",
             "subprocess.run($CMD, shell=True)\n",
             "python-subprocess-run-shell-true",
         ),
         (
             "subprocess-safe",
             "javascript",
+            "a.js",
             "child_process.exec($CMD)\n",
             "javascript-child-process-exec",
         ),
         (
             "subprocess-safe",
             "typescript",
+            "a.ts",
             "execSync($CMD)\n",
             "typescript-exec-sync",
         ),
         (
             "subprocess-safe",
             "rust",
+            "a.rs",
             'Command::new("sh")\n',
             "rust-command-new-sh",
         ),
@@ -175,6 +185,7 @@ def test_new_rule_packs_detect_findings_across_languages(
     tmp_path: Path,
     ruleset: str,
     language: str,
+    filename: str,
     content: str,
     expected_rule_id: str,
 ) -> None:
@@ -184,6 +195,7 @@ def test_new_rule_packs_detect_findings_across_languages(
         ruleset=ruleset,
         language=language,
         content=content,
+        filename=filename,
     )
 
     assert payload["ruleset"] == ruleset
@@ -194,7 +206,7 @@ def test_new_rule_packs_detect_findings_across_languages(
         finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id
     )
     assert finding["matches"] == 1
-    assert finding["files"] == ["a.py"]
+    assert finding["files"] == [str((tmp_path / filename).resolve())]
     assert finding["status"] == "new"
 
 
@@ -500,7 +512,7 @@ def test_new_rule_packs_emit_evidence_snippets(
     )
     assert finding["evidence"] == [
         {
-            "file": "a.py",
+            "file": str((tmp_path / "a.py").resolve()),
             "match_count": 1,
             "snippets": [{"text": expected_snippet, "truncated": True}],
         }

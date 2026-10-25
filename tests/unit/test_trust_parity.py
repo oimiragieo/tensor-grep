@@ -9,7 +9,6 @@ from tensor_grep.cli.main import app
 from tests.unit.test_cli_modes_shared import (
     _canonical_manifest_bytes,
     _FakeAstPipeline,
-    _FakeAstScanner,
     _write_audit_manifest,
     _write_scan_results,
 )
@@ -204,10 +203,10 @@ def test_scan_builtin_ruleset_json_without_new_flags_keeps_existing_contract(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
-    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
+        scan_root = Path.cwd().resolve()
         Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
         Path("b.py").write_text("ok\n", encoding="utf-8")
 
@@ -242,7 +241,23 @@ def test_scan_builtin_ruleset_json_without_new_flags_keeps_existing_contract(
         "matched_rules",
         "total_matches",
         "findings",
+        "languages",
+        "language_selection",
+        "applicable_rule_count",
+        "scope",
     }
     assert payload["routing_reason"] == "builtin-ruleset-scan"
     assert payload["ruleset"] == "crypto-safe"
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
+    assert payload["languages"] == ["python"]
+    assert payload["language_selection"] == "explicit"
+    assert payload["applicable_rule_count"] == 2
+    assert payload["scope"] == {
+        "paths": [str(scan_root)],
+        "globs": [],
+        "types": [],
+        "max_depth": None,
+        "files_considered": 2,
+        "files_applicable": 2,
+        "detected_languages": ["python"],
+    }
