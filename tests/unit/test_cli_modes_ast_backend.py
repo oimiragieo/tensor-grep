@@ -1272,13 +1272,12 @@ def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
 
 def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
-    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
     with runner.isolated_filesystem():
         from pathlib import Path
 
-        Path("a.py").write_text('const apiKey = "$SECRET"\n', encoding="utf-8")
+        Path("a.js").write_text('const apiKey = "$SECRET"\n', encoding="utf-8")
         Path("b.py").write_text("ok\n", encoding="utf-8")
 
         result = runner.invoke(

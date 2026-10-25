@@ -10038,7 +10038,6 @@ def scan(
 ) -> None:
     """Scan code with tensor-grep's bounded AST rule/config surface."""
     from tensor_grep.backends.ast_backend import normalize_ast_language
-    from tensor_grep.cli.rule_packs import resolve_rule_pack
     from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
@@ -10068,32 +10067,28 @@ def scan(
 
     candidate_files: list[str] | None = None
     project_scan_fast_path = False
+    prepared_scope = None
     if ruleset:
-        ruleset_language = normalize_ast_language(language) if language is not None else None
         try:
-            ruleset_meta, rules = resolve_rule_pack(ruleset, ruleset_language)
+            from tensor_grep.cli.ruleset_scope import _prepare_builtin_ruleset_scan
+
+            project_cfg, rules, prepared_scope = _prepare_builtin_ruleset_scan(
+                ruleset,
+                language,
+                scan_paths=effective_scan_paths,
+                scan_globs=glob,
+                scan_types=type_filter,
+                scan_max_depth=max_depth,
+                allow_broad_generated_scan=allow_broad_generated_scan,
+                filter_regex=filter_regex,
+            )
+        except BroadScanRefusedError as exc:
+            typer.echo(str(exc), err=True)
+            sys.exit(2)
         except ValueError as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)
-        try:
-            # --filter was previously honored only for the sgconfig project-scan path (below) and
-            # explicitly rejected for --rule -- silently no-op'd here, so a --ruleset run always
-            # scanned every rule in the pack regardless of --filter (audit #22).
-            rules = _filter_ast_rule_specs(rules, filter_regex)
-        except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
-        project_cfg: dict[str, object] = {
-            "config_path": f"builtin:{ruleset_meta['name']}",
-            "root_dir": Path(effective_scan_paths[0]).resolve(),
-            "rule_dirs": [],
-            "test_dirs": [],
-            "language": ruleset_meta["language"],
-        }
-        scan_banner = (
-            "Scanning project using built-in ruleset "
-            f"{ruleset_meta['name']} ({ruleset_meta['language']})"
-        )
+        scan_banner = f"Scanning project using built-in ruleset {project_cfg['name']} ({project_cfg['public_language']})"
         routing_reason = "builtin-ruleset-scan"
     elif rule_file is not None:
         rule_path = Path(rule_file).expanduser().resolve()
@@ -10178,7 +10173,7 @@ def scan(
         if scan_paths:
             project_scan_fast_path = False
 
-    if not json_output and not sarif:
+    if not json_output and not sarif and not project_cfg.get("refusal_reason"):
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
     try:
         payload = _self._run_ast_scan_payload(
@@ -10187,8 +10182,9 @@ def scan(
             routing_reason=routing_reason,
             scan_paths=scan_paths or None,
             candidate_files=candidate_files,
+            prepared_scope=prepared_scope,
             project_scan_fast_path=project_scan_fast_path,
-            ruleset_name=ruleset_meta["name"] if ruleset else None,
+            ruleset_name=cast(str, project_cfg["name"]) if ruleset else None,
             scan_globs=glob,
             scan_types=type_filter,
             scan_max_depth=max_depth,
@@ -10234,11 +10230,15 @@ def scan(
                 indent=2,
             )
         )
-        return
+        raise typer.Exit(1 if payload.get("error") else 0)
 
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
-        return
+        raise typer.Exit(1 if payload.get("error") else 0)
+
+    if payload.get("error"):
+        typer.echo(f"warning: {cast(dict[str, object], payload['error'])['message']}")
+        raise typer.Exit(1)
 
     # Task #299 gave `scan` a `partial` / `partial_reason` / `remediation` / `unreadable_paths`
     # payload, and #310's SARIF output carries it in-band -- but the DEFAULT text renderer read

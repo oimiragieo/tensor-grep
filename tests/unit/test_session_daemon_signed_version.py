@@ -13,8 +13,9 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 
@@ -157,7 +158,7 @@ class _StopTrace:
         }
 
     def install_protocol_spies(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        real_request = session_daemon._daemon_request
+        real_request: Callable[..., dict[str, Any]] = session_daemon._daemon_request
 
         def request(host: str, port: int, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
             command = body.get("command")
@@ -207,7 +208,7 @@ class _StopTrace:
                 self.set_stage(previous)
 
         monkeypatch.setattr(session_daemon, "_daemon_request", request)
-        real_probe = session_daemon._probe_daemon
+        real_probe: Callable[..., dict[str, Any] | None] = session_daemon._probe_daemon
 
         def probe(root: Path) -> dict[str, Any] | None:
             previous = self.set_stage("initial-probe")
@@ -278,7 +279,7 @@ class _StopTrace:
             )
             monkeypatch.setattr(module, name, wrap(real, label))
 
-        real_fields = session_daemon._ping_proof_fields
+        real_fields: Callable[..., dict[str, Any]] = session_daemon._ping_proof_fields
 
         def fields(*args: Any, **kwargs: Any) -> dict[str, Any]:
             started = time.monotonic()
@@ -307,7 +308,7 @@ class _StopTrace:
         ):
             real = getattr(module, name)
 
-            def refusal_wrapper(real_fn: Any) -> Any:
+            def refusal_wrapper(real_fn: Callable[..., bool]) -> Callable[..., bool]:
                 def observed(
                     host: object, port: object, timeout_seconds: float, *args: Any, **kwargs: Any
                 ) -> bool:
@@ -544,6 +545,12 @@ def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 1.0)
 
 
+class _ThreadLifecycle(Protocol):
+    def is_alive(self) -> bool: ...
+
+    def join(self, timeout: float, /) -> None: ...
+
+
 class _Daemon:
     def __init__(
         self,
@@ -560,8 +567,9 @@ class _Daemon:
             trace.endpoint = (str(host), int(port))
             trace.shutdown_release = shutdown_release
             self._spy_lifecycle()
-        self.thread = threading.Thread(target=self._serve, daemon=True)
-        self.thread.start()
+        thread = threading.Thread(target=self._serve, daemon=True)
+        self.thread: _ThreadLifecycle = thread
+        thread.start()
         session_daemon._write_daemon_metadata(
             root,
             {
@@ -577,7 +585,8 @@ class _Daemon:
         )
 
     def _spy_lifecycle(self) -> None:
-        assert self.trace is not None
+        trace = self.trace
+        assert trace is not None
         for name in ("serve_forever", "shutdown", "server_close"):
             real = getattr(self.server, name)
 
@@ -585,30 +594,30 @@ class _Daemon:
                 def observed(*args: Any, **kwargs: Any) -> Any:
                     completion = threading.Event() if label == "shutdown" else None
                     if completion is not None:
-                        self.trace._shutdown_completions.put(completion)
+                        trace._shutdown_completions.put(completion)
                     try:
                         started = time.monotonic()
-                        self.trace.add(f"{label}_entry")
+                        trace.add(f"{label}_entry")
                         if label == "server_close":
-                            self.trace.close_entered.set()
-                        if label == "shutdown" and self.trace.shutdown_release is not None:
-                            self.trace.add("shutdown_hold_entry")
-                            self.trace.shutdown_held.set()
-                            released = self.trace.shutdown_release.wait(10.0)
+                            trace.close_entered.set()
+                        if label == "shutdown" and trace.shutdown_release is not None:
+                            trace.add("shutdown_hold_entry")
+                            trace.shutdown_held.set()
+                            released = trace.shutdown_release.wait(10.0)
                             if not released:
-                                self.trace.shutdown_hold_expired = True
-                            self.trace.add("shutdown_hold_end", released=released)
-                        self.trace.add(f"{label}_real_call")
+                                trace.shutdown_hold_expired = True
+                            trace.add("shutdown_hold_end", released=released)
+                        trace.add(f"{label}_real_call")
                         try:
                             result = real_fn(*args, **kwargs)
                         except BaseException as error:
-                            self.trace.add(
+                            trace.add(
                                 f"{label}_error",
                                 elapsed=round(time.monotonic() - started, 6),
-                                **self.trace._error_fields(error),
+                                **trace._error_fields(error),
                             )
                             raise
-                        self.trace.add(
+                        trace.add(
                             f"{label}_return",
                             elapsed=round(time.monotonic() - started, 6),
                         )
@@ -633,9 +642,20 @@ class _Daemon:
         self.thread.join(5.0)
 
 
+@pytest.fixture
+def _owned_daemon(tmp_path: Path) -> Iterator[_Daemon]:
+    daemon = _Daemon(tmp_path.resolve(), metadata_version="OLD")
+    try:
+        yield daemon
+    finally:
+        daemon.close()
+        assert not daemon.thread.is_alive(), "owned daemon fixture did not finish cleanup"
+        assert daemon.server.fileno() == -1, "owned daemon listener survived cleanup"
+
+
 def _record_commands(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     commands: list[str] = []
-    real = session_daemon._daemon_request
+    real: Callable[..., dict[str, Any]] = session_daemon._daemon_request
 
     def _spy(host: str, port: int, request: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         commands.append(str(request.get("command")))
@@ -690,6 +710,39 @@ def _without_version_fields(real: Any) -> Any:
     return _fields
 
 
+def _install_inline_signed_ping(
+    monkeypatch: pytest.MonkeyPatch,
+    daemon: _Daemon,
+    commands: list[str],
+    *,
+    timeout_second_ping: bool = False,
+) -> None:
+    """Keep proof generation real without racing semantic cases against a response deadline."""
+    real_request: Callable[..., dict[str, Any]] = session_daemon._daemon_request
+    owned_host, owned_port = daemon.server.server_address
+    ping_count = 0
+
+    def dispatch(host: str, port: int, body: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        nonlocal ping_count
+        command = body.get("command")
+        commands.append(str(command))
+        if command != "ping":
+            return real_request(host, port, body, **kwargs)
+        assert (host, port) == (owned_host, owned_port)
+        ping_count += 1
+        token = kwargs.get("token", "")
+        authenticated_request = {**body, session_daemon._DAEMON_TOKEN_FIELD: token}
+        assert daemon.server.is_authorized(authenticated_request)
+        if timeout_second_ping and ping_count == 2:
+            raise TimeoutError("controlled second ping timeout")
+        fields = session_daemon._ping_proof_fields(
+            body.get("nonce"), daemon.server.root, int(owned_port)
+        )
+        return {"version": session_daemon._SESSION_VERSION, "ok": True, **fields}
+
+    monkeypatch.setattr(session_daemon, "_daemon_request", dispatch)
+
+
 def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -698,18 +751,36 @@ def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
 ) -> None:
     root = tmp_path.resolve()
     trace = _StopTrace(request.node.nodeid)
-    monkeypatch.setattr(
-        session_daemon, "_ping_proof_fields", _without_version_fields(trust._ping_proof_fields)
-    )
-    trace.install_protocol_spies(monkeypatch)
     daemon: _Daemon | None = None
+    commands: list[str] = []
     result: dict[str, Any] | None = None
     original_failure: BaseException | None = None
     original_traceback: Any = None
     try:
         daemon = _Daemon(root, metadata_version="OLD", trace=trace)
+        monkeypatch.setattr(
+            session_daemon, "_ping_proof_fields", _without_version_fields(trust._ping_proof_fields)
+        )
+        _install_inline_signed_ping(monkeypatch, daemon, commands)
+        trace.install_protocol_spies(monkeypatch)
         result = session_daemon.stop_session_daemon(str(root))
+        assert commands == ["ping", "ping", "stop"], commands
+        assert any(
+            event["event"] == "session_daemon_verification" and event.get("verified")
+            for event in trace.events
+        ), "initial signed ping proof was not verified"
+        assert any(
+            event["event"] == "session_daemon_stop_verification" and event.get("verified")
+            for event in trace.events
+        ), "rejected-stop signed ping proof was not verified"
+        assert any(
+            event["event"] == "signed_version"
+            and event.get("missing_version")
+            and event.get("version_ok")
+            for event in trace.events
+        ), "missing signed version was not accepted as skew"
         assert result["stopped"] is True and result["stop_method"] == "cooperative", result
+        assert result["proof"] == "cooperative_refused", result
         assert not any(event["event"] == "signal_seam_reached" for event in trace.events), (
             "self-PID classification reached the signal seam"
         )
@@ -727,6 +798,47 @@ def test_a_verified_reply_with_no_signed_version_is_treated_as_skewed(
         )
 
 
+def test_StopDaemon_SecondPingTimeout_PreservesUnconfirmedListener(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _owned_daemon: _Daemon,
+    request: pytest.FixtureRequest,
+) -> None:
+    root = tmp_path.resolve()
+    daemon = _owned_daemon
+    trace = _StopTrace(request.node.nodeid)
+    commands: list[str] = []
+    monkeypatch.setattr(
+        session_daemon, "_ping_proof_fields", _without_version_fields(trust._ping_proof_fields)
+    )
+    _install_inline_signed_ping(monkeypatch, daemon, commands, timeout_second_ping=True)
+    trace.install_protocol_spies(monkeypatch)
+
+    result = session_daemon.stop_session_daemon(str(root))
+
+    metadata = session_daemon._read_daemon_metadata(root)
+    assert commands == ["ping", "ping"], commands
+    assert [
+        (event.get("stage"), event.get("exception"))
+        for event in trace.events
+        if event["event"] == "daemon_request_error"
+    ] == [("rejected-stop-ping", "TimeoutError")]
+    assert any(
+        event["event"] == "session_daemon_verification" and event.get("verified")
+        for event in trace.events
+    ), "first signed ping proof was not verified"
+    assert result["stopped"] is False and result["running"] is True, result
+    assert result["stop_method"] == "none", result
+    assert result["unconfirmed_reason"] == "pid_unproven", result
+    assert daemon.server.fileno() >= 0, "owned listener closed before cleanup"
+    assert daemon.thread.is_alive(), "owned server thread stopped before cleanup"
+    assert metadata is not None
+    assert metadata["package_version"] == "OLD" and metadata["pid"] == 0, metadata
+    assert not any(event["event"] == "signal_seam_reached" for event in trace.events), (
+        "self-PID classification reached the signal seam"
+    )
+
+
 def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -736,11 +848,8 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
     root = tmp_path.resolve()
     trace = _StopTrace(request.node.nodeid)
     release_shutdown = threading.Event()
-    monkeypatch.setattr(
-        session_daemon, "_ping_proof_fields", _without_version_fields(trust._ping_proof_fields)
-    )
-    trace.install_protocol_spies(monkeypatch)
     daemon: _Daemon | None = None
+    commands: list[str] = []
     result: dict[str, Any] | None = None
     original_failure: BaseException | None = None
     original_traceback: Any = None
@@ -751,7 +860,13 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
             trace=trace,
             shutdown_release=release_shutdown,
         )
+        monkeypatch.setattr(
+            session_daemon, "_ping_proof_fields", _without_version_fields(trust._ping_proof_fields)
+        )
+        _install_inline_signed_ping(monkeypatch, daemon, commands)
+        trace.install_protocol_spies(monkeypatch)
         result = session_daemon.stop_session_daemon(str(root))
+        assert commands == ["ping", "ping", "stop"], commands
         assert any(
             event["event"] == "control_ack_waited_for_shutdown_hold" and event.get("entered")
             for event in trace.events
@@ -760,6 +875,10 @@ def test_ack_is_not_refusal_when_fixture_shutdown_is_held(
             event["event"] == "session_daemon_stop_verification" and event.get("verified")
             for event in trace.events
         ), "real proof verification did not succeed"
+        assert any(
+            event["event"] == "session_daemon_verification" and event.get("verified")
+            for event in trace.events
+        ), "initial signed ping proof was not verified"
         assert any(
             event["event"] == "signed_version"
             and event.get("missing_version")
@@ -1162,7 +1281,7 @@ def test_diagnostic_shutdown_completions_share_one_cleanup_budget(
         completion.set()
         real_wait = completion.wait
 
-        def waiter(wait_fn: Any) -> Any:
+        def waiter(wait_fn: Callable[[float], bool]) -> Callable[[float], bool]:
             def wait(timeout: float) -> bool:
                 budgets.append(timeout)
                 return wait_fn(timeout)
@@ -1307,8 +1426,9 @@ def test_diagnostic_socket_spy_leaves_unrelated_arguments_untouched(
     trace = _StopTrace()
     trace.endpoint = ("127.0.0.1", 4242)
     trace.install_protocol_spies(monkeypatch)
-    address = ("127.0.0.1", "invalid-port")
-    assert socket.create_connection(address, timeout="unchanged") is returned
+    address: Any = ("127.0.0.1", "invalid-port")
+    invalid_timeout: Any = "unchanged"
+    assert socket.create_connection(address, timeout=invalid_timeout) is returned
     assert calls == [(address, (), {"timeout": "unchanged"})]
     assert not any(event["event"].startswith("socket_attempt") for event in trace.events)
 
