@@ -38,6 +38,8 @@ regressions are [tests/unit/test_managed_runtime_selection.py](https://github.co
 
 Windows primitives in [session_daemon_winsec.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/session_daemon_winsec.py) retain their existing defaults. `open_no_follow(..., raise_missing=True)` raises only for Windows error 2 (missing leaf); missing parent, access, sharing, reparse, and query failures remain refusals. `read_all(handle, limit=512)` consumes at most 513 bytes including its overflow sentinel; its default remains 8192 bytes. Invalid limits raise before any Windows API call. These primitives do not read `.tensor-grep/runtime-selection.json` or activate generations.
 
+`read_managed_runtime(*, trusted_root)` requires the caller to establish installation authority first. It pins the directory chain and reads only the fixed selector leaf once, with a 512-byte limit. Only a missing selector leaf returns `None`; path, trust, and Win32 failures raise sanitized `OSError`, while strict codec `ValueError`s remain visible. It returns derived native/Python paths for the same generation; those paths are not executable trust proofs, and the reader does not activate either runtime.
+
 | Spec ID | Behavior | CL # | File Link | Unit Test |
 |---|---|---|---|---|
 | UPD-SEL-001 | Strict schema and canonical encoding | UPD-1a | [src/tensor_grep/cli/managed_runtime_selection.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_selection.py) | `test_DecodeSelection_InvalidRecord_RaisesSanitizedValueError`; `test_EncodeSelection_ValidRecord_ReturnsCanonicalBytes` |
@@ -45,8 +47,9 @@ Windows primitives in [session_daemon_winsec.py](https://github.com/oimiragieo/t
 | UPD-SEL-003 | Bounded input/output and sanitized refusals | UPD-1a | [src/tensor_grep/cli/managed_runtime_selection.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_selection.py) | `test_DecodeSelection_MaximumRecordLength_Accepts512Bytes`; `test_EncodeSelection_EncodedRecordOver512Bytes_RefusesBeforeJsonSerialization`; `test_EncodeSelection_MaximumEncodedRecordLength_ReturnsExact512Bytes` |
 | UPD-IO-001 | Preserve defaults and distinguish missing leaf from other failures | UPD-1b0 | [Windows primitives](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/session_daemon_winsec.py) | `test_OpenNoFollow_OptedMissingFile_RaisesFileNotFoundError`; `test_OpenNoFollow_OptedNonFileNotFoundCreateError_RemainsRefused` |
 | UPD-IO-002 | Bound reads before Windows API work | UPD-1b0 | [Windows primitives](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/session_daemon_winsec.py) | `test_ReadAll_InvalidLimit_RefusesBeforeWinApi`; `test_ReadAll_Limit512_AcceptsExactBoundaryAndBoundsReads` |
+| UPD-IO-003 | Read one trusted selector and return a matched path pair without activation | UPD-1b1 | [src/tensor_grep/cli/managed_runtime_reader.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_reader.py) | `test_ReadManagedRuntime_ValidProtectedChain_ReturnsLiteralPairAndClosesReverse`; `test_ReadManagedRuntime_MissingSelectorUnderValidRoot_ReturnsNoneAndClosesChain` |
 
-This is groundwork only: no file reader, trusted-root validation, runtime resolution, activation,
-legacy fallback, or updater transaction is implemented. It does not fix the update incident by itself.
+This is groundwork only: runtime activation, legacy fallback, and updater transaction remain
+unimplemented. The caller still must establish installation authority before requesting a read.
 
-Verify with `uv run --no-sync python -m pytest tests/unit/test_managed_runtime_selection.py tests/unit/test_session_daemon_winsec_read.py -q`.
+Verify with `uv run --no-sync python -m pytest tests/unit/test_managed_runtime_selection.py tests/unit/test_session_daemon_winsec_read.py tests/unit/test_managed_runtime_reader.py -q`.
