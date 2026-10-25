@@ -8,6 +8,8 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -123,6 +125,26 @@ def _get_native_binary() -> str | None:
     except FileNotFoundError:
         return None
     return str(native_binary) if native_binary is not None else None
+
+
+def _record_native_route(resolve_binary: Callable[[], str | None], route: list[str]) -> str | None:
+    native_binary = resolve_binary()
+    route.append("discovered-binary" if native_binary is not None else "cargo-fallback")
+    return native_binary
+
+
+@pytest.mark.parametrize(
+    ("resolved", "expected_routes"),
+    [(None, ["cargo-fallback"]), ("native-tg", ["discovered-binary"]), ("", ["discovered-binary"])],
+)
+def test_NativeRouteRecorder_ResolvedValue_PreservesSelection(resolved, expected_routes):
+    routes: list[str] = []
+    resolve = partial(next, iter([resolved]))
+
+    observed = _record_native_route(resolve, routes)
+
+    assert observed is resolved
+    assert routes == expected_routes
 
 
 def _resolve_cargo_exe() -> Path | None:
@@ -1347,9 +1369,21 @@ def test_routing_parity_glob_skips_native_when_binary_is_missing(monkeypatch, pa
         _skip_if_native_binary_missing("native")
 
 
-def test_search_help_exposes_required_public_flags(parity_env):
+def test_search_help_exposes_required_public_flags(parity_env, monkeypatch, ci_hotspot_rows):
+    python_started = time.perf_counter()
     python_help = run_command("python-m", ["search", "--help"], cwd=parity_env)
+    python_seconds = time.perf_counter() - python_started
+
+    native_route: list[str] = []
+    resolve_binary = _get_native_binary
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_get_native_binary",
+        partial(_record_native_route, resolve_binary, native_route),
+    )
+    native_started = time.perf_counter()
     native_help = _run_native_front_door(["search", "--help"], cwd=parity_env)
+    native_seconds = time.perf_counter() - native_started
 
     assert python_help.returncode == 0
     assert native_help.returncode == 0
@@ -1360,6 +1394,8 @@ def test_search_help_exposes_required_public_flags(parity_env):
     for flag in PUBLIC_SEARCH_HELP_FLAGS:
         assert flag in python_stdout, f"Missing {flag} in python-m search --help"
         assert flag in native_stdout, f"Missing {flag} in native search --help"
+
+    ci_hotspot_rows.append(("help", python_seconds, native_seconds, native_route[0]))
 
 
 def test_run_help_exposes_native_diff_contract_on_public_routes(parity_env):

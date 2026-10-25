@@ -1,3 +1,4 @@
+import math
 import os
 import shutil
 import sys
@@ -266,3 +267,30 @@ def _host_kernel_is_not_a_wsl_signal():
         yield
     finally:
         runtime_paths._kernel_reports_wsl = original
+
+
+_CI_HOTSPOT_ROWS: pytest.StashKey[list[tuple[str, float, float, str]]] = pytest.StashKey()
+
+
+@pytest.fixture
+def ci_hotspot_rows(request: pytest.FixtureRequest) -> list[tuple[str, float, float, str]]:
+    return request.config.stash.setdefault(_CI_HOTSPOT_ROWS, [])
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    rows = config.stash.get(_CI_HOTSPOT_ROWS, [])
+    if not rows:
+        return
+
+    terminalreporter.write_sep("=", "CI hotspot attribution")
+    for name, first_seconds, second_seconds, route in rows:
+        if not math.isfinite(first_seconds) or not math.isfinite(second_seconds):
+            continue
+        if name == "help" and route in {"discovered-binary", "cargo-fallback"}:
+            terminalreporter.write_line(
+                f"help python={first_seconds:.3f}s native={second_seconds:.3f}s route={route}"
+            )
+        elif name == "tier-pin" and route == "none":
+            terminalreporter.write_line(
+                f"tier-pin child={first_seconds:.3f}s parent={second_seconds:.3f}s route=none"
+            )

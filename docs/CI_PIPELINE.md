@@ -105,6 +105,12 @@ Before Cargo Test, both Rust steps explicitly select matrix.rust_channel. The ex
 
 Use the timings to investigate expensive fixtures, subprocess startup and waits before adding workers or removing tests. Distinguish test time from installation/build time and summed job elapsed time from billed usage. This instrumentation adds no jobs, report uploads, dependencies or paid runners.
 
+The hotspot attribution rows split Python/native help time, including the selected
+native route, and tier-pin child pytest time from parent overhead. Rows describe
+completed assertion-bearing calls, not final test passes; fixture teardown can still fail
+afterward. These wall-clock diagnostics do not identify CPU time, compilation,
+removable work, savings or billed runner use.
+
 ### `release.yml`
 
 Manual/backfill release artifact pipeline, dispatched via `workflow_dispatch` TARGETING a published tag ref (`gh workflow run release.yml --ref vX.Y.Z`; `GITHUB_REF` then resolves to that tag). It is NOT triggered by a tag push, so a manually-pushed `v*` tag can no longer bypass semantic-release to auto-publish npm/assets. Do not rely on it for the normal semantic-release path. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
