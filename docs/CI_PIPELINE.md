@@ -101,7 +101,7 @@ Benchmark behavior:
 
 The existing Python test matrix prints its 30 slowest reported durations of at least one second. Timing output does not change collection, markers, failure policy or platform coverage. Compare naturally occurring completed runs on the same OS, Python version and test population; a single run is not a performance baseline.
 
-Before Cargo Test, the existing Rust job prints rustc, Cargo and active-toolchain identities from rust_core. Use those identities to establish the tested compiler; matrix labels and the default toolchain outside that directory are insufficient.
+Before Cargo Test, both Rust steps explicitly select matrix.rust_channel. The existing provenance step prints rustc, Cargo and active-toolchain identities from rust_core to establish the tested compiler. The crate pin still governs ordinary local and production invocations without an override. Selecting a newer compiler may change build and test time; this change preserves the job population, not a guaranteed billed duration.
 
 Use the timings to investigate expensive fixtures, subprocess startup and waits before adding workers or removing tests. Distinguish test time from installation/build time and summed job elapsed time from billed usage. This instrumentation adds no jobs, report uploads, dependencies or paid runners.
 
