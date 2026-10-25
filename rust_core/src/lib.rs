@@ -19,6 +19,7 @@ pub mod frontdoor_hops;
 pub mod gpu_native;
 pub mod index;
 pub mod index_lock;
+pub mod managed_runtime_selection;
 pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;

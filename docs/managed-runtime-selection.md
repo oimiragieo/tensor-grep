@@ -55,6 +55,8 @@ Windows integration tests use actual protected directories and handles: replacem
 | UPD-IO-004 | Publish through the owned handle while retaining an old reader | UPD-1b2 | [Windows publication](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/windows_publication.py) | `test_ReplaceOpen_ExistingTargetWithHeldReader_PublishesNewPairAtomically`; `test_ReplaceOpen_UnsupportedRenameClass_PreservesTargetAndSource` |
 | UPD-IO-005 | Validate protected reads and controlled Windows replacements | UPD-1b3 | [Windows controls](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_managed_runtime_reader_windows.py) | `test_ReadManagedRuntime_SelectorReplaceAfterReadGate_ReturnsOldThenNewPair`; `test_ReadManagedRuntime_HeldRoot_BlocksRenameUntilClosed` |
 
+The [native decoder](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_selection.rs) enforces the same schema and bounds; its 34 inline tests include array refusal and canonical-size boundaries.
+
 This is groundwork only: runtime activation, legacy fallback, and updater transaction remain
 unimplemented. The caller still must establish installation authority before requesting a read.
 
