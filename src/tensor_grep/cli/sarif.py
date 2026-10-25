@@ -204,7 +204,9 @@ def _invocation(payload: dict[str, Any]) -> dict[str, Any]:
     successful execution would let a gate treat a partial scan as a clean bill of health.
     """
     unreadable = payload.get("unreadable_paths")
-    is_partial = bool(payload.get("partial")) or bool(unreadable)
+    error = payload.get("error")
+    no_applicable_rules = isinstance(error, dict) and error.get("code") == "no_applicable_rules"
+    is_partial = bool(payload.get("partial")) or bool(unreadable) or no_applicable_rules
 
     invocation: dict[str, Any] = {"executionSuccessful": not is_partial}
     if not is_partial:
@@ -212,6 +214,13 @@ def _invocation(payload: dict[str, Any]) -> dict[str, Any]:
 
     reason = payload.get("partial_reason")
     notifications: list[dict[str, Any]] = []
+
+    if isinstance(error, dict) and no_applicable_rules:
+        notifications.append({
+            "level": "warning",
+            "message": {"text": str(error.get("message", "No applicable rules were found."))},
+            "descriptor": {"id": "tensor-grep/no-applicable-rules"},
+        })
 
     if isinstance(unreadable, dict):
         count = unreadable.get("count")
