@@ -1,7 +1,7 @@
 # Contributor guidance
 
 <!--
-release_docs_current_tag: v1.131.6
+release_docs_current_tag: v1.131.7
 -->
 
 Tensor-grep combines text search, structural search, repository context, and optional GPU execution.
