@@ -1,15 +1,15 @@
 #![cfg(windows)]
 
+use crate::managed_runtime_windows_sid::sid_to_string as shared_sid_to_string;
 use std::ffi::c_void;
 use std::fmt;
 use std::io;
 use std::mem::size_of;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 
+use windows_sys::Win32::Foundation::HANDLE;
 #[cfg(test)]
 use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
-use windows_sys::Win32::Foundation::{LocalFree, HANDLE, HLOCAL};
-use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{
     GetLengthSid, GetTokenInformation, IsValidSid, TokenOwner, TokenUser, TOKEN_OWNER, TOKEN_QUERY,
     TOKEN_USER,
@@ -19,7 +19,6 @@ const MAX_TOKEN_INFO_BYTES: usize = 4096;
 const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
 const SID_HEADER_BYTES: usize = 8;
 const SID_MAX_SUB_AUTHORITIES: usize = 15;
-const MAX_SID_STRING_UNITS: usize = 184;
 
 pub struct VerifiedTokenIdentity {
     user_sid: String,
@@ -265,30 +264,8 @@ fn checked_sid_span(
 fn sid_to_string(sid: *mut c_void) -> io::Result<String> {
     #[cfg(test)]
     SID_API_CALLS.with(|calls| calls.set(calls.get() + 1));
-    let mut wide = std::ptr::null_mut();
-    if unsafe { ConvertSidToStringSidW(sid, &mut wide) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if wide.is_null() {
-        return Err(invalid_token_data());
-    }
-    // ConvertSidToStringSidW owns this allocation; the guard frees it on every exit.
-    let _allocation = LocalAllocation(wide.cast::<c_void>());
-    let length = (0..=MAX_SID_STRING_UNITS)
-        .find(|index| unsafe { wide.add(*index).read() == 0 })
-        .ok_or_else(invalid_token_data)?;
-    String::from_utf16(unsafe { std::slice::from_raw_parts(wide, length) })
-        .map_err(|_| invalid_token_data())
-}
-
-struct LocalAllocation(HLOCAL);
-
-impl Drop for LocalAllocation {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = LocalFree(self.0);
-        }
-    }
+    // The caller checked the live SID span and both SDK validity/length predicates.
+    unsafe { shared_sid_to_string(sid, "process token data is invalid") }
 }
 
 fn invalid_token_data() -> io::Error {

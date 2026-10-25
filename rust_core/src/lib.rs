@@ -24,6 +24,8 @@ pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_windows_file;
 #[cfg(windows)]
+mod managed_runtime_windows_sid;
+#[cfg(windows)]
 pub mod managed_runtime_windows_token;
 pub mod mmap_arrow;
 pub mod native_search;

@@ -58,3 +58,5 @@ On Windows, run cargo test --manifest-path rust_core/Cargo.toml --no-default-fea
 | UPD-IO-009 | Bound current-process identity reads and redact diagnostics | UPD-1c4 | [Token helper](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_windows_token.rs) | current_token_sids_rejects_fill_reported_one_byte_short_before_sid_calls; current_token_sids_debug_output_redacts_both_sid_values |
 
 On Windows, also run cargo test --manifest-path rust_core/Cargo.toml --no-default-features --lib managed_runtime_windows_token::tests -- --test-threads=1; require eleven passes. OS-close failure and elevation portability remain unforced.
+
+SID conversion and SDK-owned allocation cleanup share [a private helper](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_windows_sid.rs); token bounds and diagnostics remain unchanged.
