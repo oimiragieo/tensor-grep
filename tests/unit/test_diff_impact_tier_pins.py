@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -137,7 +138,10 @@ def pytest_sessionfinish() -> None:
         Path(output).write_text(json.dumps(_CAPTURED, indent=2) + "\n", encoding="utf-8")
 
 
-def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: Path) -> None:
+def test_every_existing_diff_impact_scenario_matches_origin_main_pin(
+    tmp_path: Path, ci_hotspot_rows: list[tuple[str, float, float, str]]
+) -> None:
+    outer_started = time.perf_counter()
     root = Path(__file__).resolve().parents[2]
     expected_rows = json.loads(
         (Path(__file__).parent / "fixtures" / "diff_impact_tier_pins.json").read_text(
@@ -170,6 +174,7 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
         "--basetemp",
         str(tmp_path / "nested"),
     ]
+    child_started = time.perf_counter()
     result = subprocess.run(
         command,
         cwd=root,
@@ -181,6 +186,7 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
         timeout=260,
         check=False,
     )
+    child_seconds = time.perf_counter() - child_started
     actual_rows = json.loads(output.read_text(encoding="utf-8"))
     actual = {row["scenario_id"]: row for row in actual_rows}
     assert len(actual) == len(actual_rows)
@@ -209,3 +215,5 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(tmp_path: P
             f"unexpected extra scenarios on Linux: {sorted(extra - _LINUX_ONLY_SCENARIO_IDS)[:8]}"
         )
     assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-2000:]
+    parent_seconds = time.perf_counter() - outer_started - child_seconds
+    ci_hotspot_rows.append(("tier-pin", child_seconds, parent_seconds, "none"))
