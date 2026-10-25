@@ -127,6 +127,7 @@ opt-in features have separate requirements and limitations in
 | [First search](docs/getting-started.md) | A sample project, explained results, and a glossary |
 | [Architecture](docs/architecture.md) | How the CLI, search engines, Python services, and stored state fit together |
 | [docs/installation.md](docs/installation.md) | Install, verify, and troubleshoot the launcher |
+| [Managed runtime selection](docs/managed-runtime-selection.md) | Proposed runtime layout and implemented record codec; update activation remains pending |
 | [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contracts |
 | [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end automation examples |
 | [docs/routing_policy.md](docs/routing_policy.md) | How execution paths are selected |
