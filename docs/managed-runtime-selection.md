@@ -42,6 +42,8 @@ Windows primitives in [session_daemon_winsec.py](https://github.com/oimiragieo/t
 
 `windows_publication.replace_open(descriptor, path)` publishes an owned temporary through its existing DELETE-capable handle using Windows FileRenameInfoEx. It retains old readers while later opens see the new object. The caller must establish destination authority/confinement, flush before publication, and close the writer descriptor immediately afterward. Unsupported OS/filesystem operations raise without a legacy rename or delete fallback; no minimum Windows-version guarantee is claimed. Existing `rename_open(..., replace=...)` keeps its legacy behavior.
 
+Windows integration tests use actual protected directories and handles: replacement preserves the old reader and exposes a new pair afterward. Replacement before final-path validation may refuse safely. A held managed-root handle blocks rename with sharing error 32; rename succeeds after closure.
+
 | Spec ID | Behavior | CL # | File Link | Unit Test |
 |---|---|---|---|---|
 | UPD-SEL-001 | Strict schema and canonical encoding | UPD-1a | [src/tensor_grep/cli/managed_runtime_selection.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_selection.py) | `test_DecodeSelection_InvalidRecord_RaisesSanitizedValueError`; `test_EncodeSelection_ValidRecord_ReturnsCanonicalBytes` |
@@ -51,6 +53,7 @@ Windows primitives in [session_daemon_winsec.py](https://github.com/oimiragieo/t
 | UPD-IO-002 | Bound reads before Windows API work | UPD-1b0 | [Windows primitives](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/session_daemon_winsec.py) | `test_ReadAll_InvalidLimit_RefusesBeforeWinApi`; `test_ReadAll_Limit512_AcceptsExactBoundaryAndBoundsReads` |
 | UPD-IO-003 | Read one trusted selector and return a matched path pair without activation | UPD-1b1 | [src/tensor_grep/cli/managed_runtime_reader.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_reader.py) | `test_ReadManagedRuntime_ValidProtectedChain_ReturnsLiteralPairAndClosesReverse`; `test_ReadManagedRuntime_MissingSelectorUnderValidRoot_ReturnsNoneAndClosesChain` |
 | UPD-IO-004 | Publish through the owned handle while retaining an old reader | UPD-1b2 | [Windows publication](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/io/windows_publication.py) | `test_ReplaceOpen_ExistingTargetWithHeldReader_PublishesNewPairAtomically`; `test_ReplaceOpen_UnsupportedRenameClass_PreservesTargetAndSource` |
+| UPD-IO-005 | Validate protected reads and controlled Windows replacements | UPD-1b3 | [Windows controls](https://github.com/oimiragieo/tensor-grep/blob/main/tests/unit/test_managed_runtime_reader_windows.py) | `test_ReadManagedRuntime_SelectorReplaceAfterReadGate_ReturnsOldThenNewPair`; `test_ReadManagedRuntime_HeldRoot_BlocksRenameUntilClosed` |
 
 This is groundwork only: runtime activation, legacy fallback, and updater transaction remain
 unimplemented. The caller still must establish installation authority before requesting a read.
