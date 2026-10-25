@@ -23,6 +23,7 @@ from tensor_grep.cli._main_binding import _self as _self
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 def _load_yaml_dict(path: Path) -> dict[str, object]:
@@ -818,6 +819,7 @@ def _run_ast_scan_payload(
     scan_types: list[str] | None = None,
     scan_max_depth: int | None = None,
     allow_broad_generated_scan: bool = False,
+    prepared_scope: tuple[list[str], "DirectoryScanner"] | None = None,
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
@@ -870,9 +872,11 @@ def _run_ast_scan_payload(
         allow_broad_generated_scan=allow_broad_generated_scan,
     )
     scan_has_discovery_filter = bool(scan_globs or scan_types or scan_max_depth is not None)
-    scanner: DirectoryScanner | None = None
+    scanner: DirectoryScanner | None = prepared_scope[1] if prepared_scope else None
     resolved_candidate_files = (
-        None
+        list(prepared_scope[0])
+        if prepared_scope is not None
+        else None
         if scan_paths or scan_has_discovery_filter
         else list(candidate_files)
         if candidate_files is not None
@@ -885,6 +889,81 @@ def _run_ast_scan_payload(
     total_matches = 0
     matched_rules = 0
     findings: list[dict[str, object]] = []
+
+    if prepared_scope is not None and project_cfg.get("refusal_reason"):
+        reason = str(project_cfg["refusal_reason"])
+        observed = (
+            bool(getattr(scanner, "scan_truncated", False))
+            or bool(getattr(scanner, "gitignore_truncated", False))
+            or bool(getattr(scanner, "unreadable_path_count", 0))
+        )
+        scope = dict(cast(dict[str, object], project_cfg.get("scope", {})))
+        detected = ", ".join(cast(list[str], scope.get("detected_languages", []))) or "none"
+        message = (
+            f"No applicable rules were found (reason={reason}; "
+            f"attempted_language={project_cfg['language']}; detected_languages={detected})."
+        )
+        if observed:
+            message += " This describes the OBSERVED scope because discovery was incomplete."
+        payload: dict[str, object] = {
+            "version": _self._json_output_version(),
+            "schema_version": _self._json_output_version(),
+            "routing_backend": "AstBackend",
+            "routing_reason": routing_reason,
+            "sidecar_used": False,
+            "config_path": str(project_cfg["config_path"]),
+            "path": str(root_dir),
+            "ruleset": ruleset_name,
+            "language": str(project_cfg.get("public_language", project_cfg["language"])),
+            "languages": cast(list[str], project_cfg.get("languages", [])),
+            "language_selection": project_cfg.get("language_selection", "explicit"),
+            "rule_count": project_cfg.get("rule_count", len(rules)),
+            "applicable_rule_count": project_cfg.get("applicable_rule_count", 0),
+            "total_matches": 0,
+            "matched_rules": 0,
+            "backends": [],
+            "findings": [],
+            "scope": scope,
+            "error": {
+                "code": "no_applicable_rules",
+                "reason": reason,
+                "message": message,
+            },
+        }
+        if observed:
+            payload["partial"] = True
+            payload["partial_reason"] = "incomplete_discovery"
+            payload["remediation"] = (
+                "No applicable rules were found in the OBSERVED scope; discovery was incomplete."
+            )
+        if getattr(scanner, "scan_truncated", False):
+            payload["scan_truncated"] = True
+            payload["scan_truncation_cause"] = getattr(scanner, "scan_truncation_cause", None)
+        if getattr(scanner, "gitignore_truncated", False):
+            payload["gitignore_truncated"] = True
+        if scanner is not None and scanner.unreadable_path_count:
+            payload["unreadable_paths"] = {
+                "count": scanner.unreadable_path_count,
+                "sample": list(scanner.unreadable_path_sample),
+            }
+        return payload
+
+    prepared_rule_files = (
+        {
+            rule["id"]: [
+                path
+                for path in resolved_candidate_files or []
+                if (
+                    _regex_rule_targets_file(rule["language"], path)
+                    if rule.get("engine") == "regex"
+                    else _ast_grep_language_applies({rule["language"]}, path)
+                )
+            ]
+            for rule in rules
+        }
+        if prepared_scope is not None
+        else {}
+    )
 
     def _append_finding(
         *,
@@ -968,6 +1047,7 @@ def _run_ast_scan_payload(
             wrapper_languages.add(rule["language"])
         if (
             project_scan_fast_path
+            and prepared_scope is None
             and not scan_has_discovery_filter
             and type(backend).__name__ == "AstGrepWrapperBackend"
             and hasattr(backend, "search_project")
@@ -1048,7 +1128,9 @@ def _run_ast_scan_payload(
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             backend_scan_paths = (
-                _candidate_files_for_filtered_scan()
+                prepared_rule_files[rule["id"]]
+                if prepared_scope is not None
+                else _candidate_files_for_filtered_scan()
                 if scan_has_discovery_filter
                 else resolved_scan_paths
             )
@@ -1104,7 +1186,11 @@ def _run_ast_scan_payload(
                 )
             rule_matches = 0
             for member_pattern in member_patterns:
-                for current_file in resolved_candidate_files:
+                for current_file in (
+                    prepared_rule_files[rule["id"]]
+                    if prepared_scope is not None
+                    else resolved_candidate_files
+                ):
                     result = backend.search(current_file, member_pattern, config=rule_cfg)
                     merge_runtime_routing(scan_result, result)
                     if composite:
@@ -1251,12 +1337,38 @@ def _run_ast_scan_payload(
         "path": str(root_dir),
         "ruleset": ruleset_name,
         "language": str(project_cfg["language"]),
-        "rule_count": len(rules),
+        "rule_count": project_cfg.get("rule_count", len(rules)),
         "matched_rules": matched_rules,
         "total_matches": total_matches,
         "backends": sorted(backend_names_used),
         "findings": findings,
     }
+    if prepared_scope is not None:
+        payload["language"] = project_cfg.get("public_language", payload["language"])
+        payload["languages"] = project_cfg.get("languages", [])
+        payload["language_selection"] = project_cfg.get("language_selection", "explicit")
+        payload["applicable_rule_count"] = project_cfg.get("applicable_rule_count", len(rules))
+        payload["scope"] = project_cfg.get("scope", {})
+        if scanner is not None and (
+            getattr(scanner, "scan_truncated", False)
+            or getattr(scanner, "gitignore_truncated", False)
+            or getattr(scanner, "unreadable_path_count", 0)
+        ):
+            payload["scan_truncated"] = bool(getattr(scanner, "scan_truncated", False))
+            payload["scan_truncation_cause"] = getattr(scanner, "scan_truncation_cause", None)
+            payload["gitignore_truncated"] = bool(getattr(scanner, "gitignore_truncated", False))
+            payload["partial"] = True
+            payload["partial_reason"] = "incomplete_discovery"
+            scanner_samples = list(getattr(scanner, "unreadable_path_sample", []))
+            scan_samples = list(scan_unreadable.sample)
+            payload["unreadable_paths"] = {
+                "count": int(getattr(scanner, "unreadable_path_count", 0)) + scan_unreadable.count,
+                "sample": list(dict.fromkeys(scanner_samples + scan_samples)),
+            }
+            payload["remediation"] = (
+                "Discovery or reading was incomplete; this result does NOT prove omitted files "
+                "are clean. Narrow the scope or resolve the reported access/truncation issue."
+            )
     if include_scan_paths_in_payload:
         payload["scan_paths"] = resolved_scan_paths
     if scan_unreadable.hit:
@@ -1279,15 +1391,26 @@ def _run_ast_scan_payload(
         # The SAMPLE is de-duplicated because it is a list of PLACES, not a tally: two slots spent
         # on one path is a sample that names fewer of them. It is already capped, so this is
         # O(cap) and preserves first-seen order.
-        distinct_unreadable = list(dict.fromkeys(scan_unreadable.sample))
+        scanner_samples = (
+            list(getattr(scanner, "unreadable_path_sample", []))
+            if prepared_scope is not None and scanner is not None
+            else []
+        )
+        discovery_failures = (
+            int(getattr(scanner, "unreadable_path_count", 0))
+            if prepared_scope is not None and scanner is not None
+            else 0
+        )
+        distinct_unreadable = list(dict.fromkeys(scanner_samples + scan_unreadable.sample))
         payload["unreadable_paths"] = {
-            "count": scan_unreadable.count,
+            "count": scan_unreadable.count + discovery_failures,
             "sample": distinct_unreadable,
         }
         payload["partial"] = True
         payload["partial_reason"] = "unreadable_path"
+        failure_kind = "read or discovery failure(s)" if discovery_failures else "read attempt(s)"
         payload["remediation"] = (
-            f"{scan_unreadable.count} read attempt(s) in scope failed (e.g. "
+            f"{scan_unreadable.count + discovery_failures} {failure_kind} in scope failed (e.g. "
             f"{', '.join(distinct_unreadable) or 'an unreadable path'}), so no rule ran "
             "against those files and this result does NOT prove they are clean. Make them "
             "readable, or scope the scan away from them."
