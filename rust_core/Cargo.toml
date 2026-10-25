@@ -58,7 +58,13 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
 
 [[bin]]
 name = "tg"

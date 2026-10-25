@@ -23,6 +23,8 @@ pub mod managed_runtime_acl_policy;
 pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_windows_file;
+#[cfg(windows)]
+pub mod managed_runtime_windows_token;
 pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;
