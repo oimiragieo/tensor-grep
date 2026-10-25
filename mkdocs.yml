@@ -63,6 +63,7 @@ exclude_docs: |
   !/installation.md
   !/investigation.md
   !/managed-runtime-selection.md
+  !/native-managed-handles.md
   !/multi_agent_context_plane.md
   !/package_manager_publish.md
   !/optional-runtime-security.md
@@ -132,6 +133,7 @@ nav:
     - Contracts: CONTRACTS.md
     - CLI Environment: cli_environment.md
     - Managed Runtime Selection: managed-runtime-selection.md
+    - Native Windows Handles: native-managed-handles.md
     - Investigation Evidence: investigation.md
     - CLI and MCP API: harness_api.md
     - Session Daemon Protocol: session_daemon_protocol.md

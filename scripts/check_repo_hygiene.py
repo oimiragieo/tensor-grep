@@ -131,6 +131,7 @@ APPROVED_DOC_FILES = frozenset({
     "docs/installation.md",
     "docs/investigation.md",
     "docs/managed-runtime-selection.md",
+    "docs/native-managed-handles.md",
     "docs/multi_agent_context_plane.md",
     "docs/package_manager_publish.md",
     "docs/optional-runtime-security.md",
