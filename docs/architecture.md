@@ -106,6 +106,13 @@ size-capped; applications must bound input when they need a resource limit.
 | `tests/` | Tests for command contracts and behavior |
 | `scripts/` | Build, release, validation, and maintenance tools |
 
+Repository walks use `src/tensor_grep/cli/repo_map_gitignore.py`
+for private gitignore matching. Its result distinguishes an ignored path, an explicit
+re-inclusion, and no matching rule so nested rules retain their existing precedence.
+The module owns the single 64-entry matcher cache; `repo_map.py` reexports the same
+objects and clears that cache before rebuilding a repository map. Matching behavior
+and existing import paths are unchanged.
+
 ## Contracts and implementation detail
 
 [Contracts](CONTRACTS.md) is the canonical source for compatibility promises, completeness fields, state behavior, and failure semantics. [Harness API](harness_api.md) documents machine-readable output. [Experimental features](EXPERIMENTAL.md) identifies behavior outside stable guarantees. This overview intentionally avoids duplicating the full routing table and contract ledger.
