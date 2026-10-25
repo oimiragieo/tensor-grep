@@ -739,11 +739,9 @@ jobs:
             rustup toolchain install ${{ matrix.rust_channel }} --profile minimal --no-self-update
           fi
           rustup default ${{ matrix.rust_channel }}
-          # CI-harden: pre-fetch the rust_core/rust-toolchain.toml PIN (1.96.0) here, inside a
-          # retry loop, so the later `cargo test` (working-directory rust_core) does NOT trigger
-          # an un-retried on-demand toolchain download. A transient macos-runner network timeout
-          # on that pinned-manifest fetch red-failed CI on 2 consecutive PRs (#720, #721). The
-          # rustup-init curl above is already --retry 10; rustup's own toolchain fetch was not.
+          # CI-harden: retain retry-protected availability of the rust_core/rust-toolchain.toml
+          # pin (1.96.0) for other invocations. The Compiler provenance and Cargo Test steps
+          # explicitly select matrix.rust_channel and override that pin.
           ( cd rust_core
             for attempt in 1 2 3; do
               cargo --version && break
@@ -769,6 +767,8 @@ jobs:
         shell: bash
           
       - name: Compiler provenance
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
         shell: bash
         working-directory: rust_core
         run: |
@@ -778,6 +778,8 @@ jobs:
           rustup show active-toolchain
 
       - name: Cargo Test
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
         working-directory: rust_core
         run: cargo test --verbose --no-default-features
 

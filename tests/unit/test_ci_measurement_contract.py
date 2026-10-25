@@ -60,12 +60,14 @@ def test_RustTestStep_ProvenanceEnabled_PreservesCargoInvocation() -> None:
 
     assert steps[cargo_index - 1] == {
         "name": "Compiler provenance",
+        "env": {"RUSTUP_TOOLCHAIN": "${{ matrix.rust_channel }}"},
         "shell": "bash",
         "working-directory": "rust_core",
         "run": ("set -euo pipefail\nrustc -Vv\ncargo --version\nrustup show active-toolchain\n"),
     }
     assert steps[cargo_index] == {
         "name": "Cargo Test",
+        "env": {"RUSTUP_TOOLCHAIN": "${{ matrix.rust_channel }}"},
         "working-directory": "rust_core",
         "run": "cargo test --verbose --no-default-features",
     }
