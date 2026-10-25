@@ -8,6 +8,16 @@ planning and reranking default off. Registry metadata and static APIs never prov
 
 release_docs_current_tag: v1.131.5
 
+Built-in `tg scan --ruleset` infers all supported rule languages present
+in the discovered source scope when `--language` is omitted. Mixed-language scopes run
+the matching rules for each language; an explicit language restricts the selection. The `--filter`
+option applies after that union. JSON scan payloads disclose selected `languages`,
+`language_selection`, and pre-execution `scope` counts and roots. A clean exit is refused with
+`error.code = no_applicable_rules` when the scope is empty, excluded, unsupported, mismatched, or
+filtered to no rules. Unknown and extensionless files remain eligible for regex rules under the
+existing regex applicability policy; this does not make them AST-language inputs. A refusal does not
+apply or write baselines or suppressions, and SARIF marks the invocation unsuccessful.
+
 ## 0. The completeness contract (governs every section below)
 
 > **Every `tg` answer is either complete, or it names exactly how it is incomplete and whether
