@@ -1,7 +1,7 @@
-"""Windows handle-based file trust primitives for the session-daemon secret (ctypes, no deps).
+"""Windows handle-based file trust primitives (ctypes, no dependencies).
 
-Every function is win32-only and FAILS CLOSED: any API error returns ``None`` / ``False`` so the
-caller treats the object as untrusted. Nothing here follows links: the file or directory is opened
+Windows API failures return ``None`` / ``False`` by default. Opted-in missing-leaf reporting
+raises ``FileNotFoundError``; invalid read limits raise ``ValueError``. Nothing follows links: the file or directory is opened
 with ``FILE_FLAG_OPEN_REPARSE_POINT`` and refused if the OPENED handle is itself a reparse point
 (symlink / junction), and ownership + DACL are read from that same handle (``GetSecurityInfo``),
 so there is no path-spelling TOCTOU between the check and the read.
@@ -29,9 +29,13 @@ _MAX_READ_BYTES = 8192
 
 
 def open_no_follow(
-    path: str, *, directory: bool = False, share: int = _FILE_SHARE_READ
+    path: str,
+    *,
+    directory: bool = False,
+    share: int = _FILE_SHARE_READ,
+    raise_missing: bool = False,
 ) -> Any | None:
-    """Open ``path`` for reading WITHOUT following a reparse point; ``None`` if refused/failed."""
+    """Open without following reparse points; optionally raise for a missing leaf only."""
     if sys.platform != "win32":
         return None
     import ctypes
@@ -76,6 +80,9 @@ def open_no_follow(
         None,
     )
     if handle is None or handle == ctypes.c_void_p(-1).value:
+        error = ctypes.get_last_error()
+        if raise_missing and error == 2:
+            raise ctypes.WinError(error)
         return None
     info = _FileInfo()
     if not k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
@@ -151,8 +158,10 @@ def close_handle(handle: Any) -> None:
     k32.CloseHandle(handle)
 
 
-def read_all(handle: Any) -> bytes | None:
-    """Read the whole (small) file through the SAME handle; ``None`` on error or oversize."""
+def read_all(handle: Any, *, limit: int = _MAX_READ_BYTES) -> bytes | None:
+    """Read through the same handle, at most limit + 1 bytes; refuse errors or oversize."""
+    if type(limit) is not int or limit <= 0 or limit > _MAX_READ_BYTES:
+        raise ValueError("read limit must be a positive integer no greater than 8192 bytes")
     if sys.platform != "win32":
         return None
     import ctypes
@@ -168,10 +177,11 @@ def read_all(handle: Any) -> bytes | None:
     ]
     k32.ReadFile.restype = wintypes.BOOL
     out = b""
-    while len(out) <= _MAX_READ_BYTES:
-        buf = ctypes.create_string_buffer(4096)
+    while len(out) <= limit:
+        request = min(4096, limit + 1 - len(out))
+        buf = ctypes.create_string_buffer(request)
         got = wintypes.DWORD(0)
-        if not k32.ReadFile(handle, buf, 4096, ctypes.byref(got), None):
+        if not k32.ReadFile(handle, buf, request, ctypes.byref(got), None):
             return None
         if got.value == 0:
             return out
