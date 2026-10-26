@@ -932,6 +932,69 @@ def _publish_managed_generation(
             os.close(descriptor)
 
 
+def _canonical_windows_path(path: str | Path) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def _native_parent_matches_stable(
+    stable_path: Path, actual_image: str, advertised_image: str | None
+) -> bool:
+    actual_matches = _canonical_windows_path(actual_image) == _canonical_windows_path(stable_path)
+    advertised_matches = advertised_image is None or _canonical_windows_path(
+        advertised_image
+    ) == _canonical_windows_path(actual_image)
+    if advertised_image is not None and not advertised_matches:
+        raise RuntimeError("native launcher environment does not match the actual parent image")
+    return actual_matches
+
+
+def _open_native_parent_handle(stable_path: Path) -> int | None:
+    """Return an inheritable wait handle only when the direct parent is this stable tg.exe."""
+    import ctypes
+    from ctypes import wintypes
+
+    if not sys.platform.startswith("win"):
+        return None
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    handle = kernel.OpenProcess(0x00100000 | 0x1000, False, os.getppid())
+    if not handle:
+        raise RuntimeError("cannot pin the running native launcher process for deferred activation")
+
+    owned = True
+    try:
+        kernel.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        image = ctypes.create_unicode_buffer(32768)
+        image_size = wintypes.DWORD(len(image))
+        if not kernel.QueryFullProcessImageNameW(handle, 0, image, ctypes.byref(image_size)):
+            raise RuntimeError("cannot verify the running native launcher's image")
+        if not _native_parent_matches_stable(
+            stable_path, image.value, os.environ.get("TG_NATIVE_TG_BINARY")
+        ):
+            return None
+
+        kernel.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+        kernel.SetHandleInformation.restype = wintypes.BOOL
+        if not kernel.SetHandleInformation(handle, 1, 1):
+            raise RuntimeError(
+                "cannot pass the pinned native launcher handle to the activation helper"
+            )
+        owned = False
+        return int(handle)
+    finally:
+        if owned:
+            winsec.close_handle(handle)
+
+
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
     _pin_managed_directory(install_root, held)
     stable_bin = install_root / "bin"
