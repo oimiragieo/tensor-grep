@@ -811,7 +811,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 612,
+    "lineno": 629,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3511,7 +3511,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1288,
+    "lineno": 1232,
     "enclosing_symbol": "_activate_managed_generation_after_parent",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

@@ -17,6 +17,13 @@ from tests.unit.test_cli_modes_shared import *  # noqa: F403
 # ruff: noqa: F405  -- names come from the shared wildcard import above (W4-d split)
 
 
+@pytest.fixture(autouse=True)
+def _upgrade_test_uses_external_python_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli_main._native_frontdoor, "managed_windows_install_root", lambda _path: None
+    )
+
+
 def test_upgrade_does_not_unlink_owned_python_launcher_when_uninstall_fails(
     monkeypatch,
     tmp_path,

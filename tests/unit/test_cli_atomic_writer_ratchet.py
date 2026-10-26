@@ -1476,9 +1476,10 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     `_write_native_frontdoor_metadata` / `_download_native_frontdoor_asset`. Those two generated
     scripts are NOT recursively parsed by this first cut of the ratchet and their writers are
     therefore NOT yet counted in the `violating` total below -- they almost certainly carry the
-    identical defect. `_verify_target_python_tensor_grep_version` spawns a version-check probe
-    with no write calls at all
-    (`import importlib.metadata as m; ...; print(m.version('tensor-grep'))`) and is lower risk.
+    identical defect. `_verify_target_python_tensor_grep_version`, `_managed_cuda_profile`, and
+    `_verify_managed_candidate_python` spawn read-only version/model probes. `_schedule_managed_activation`
+    starts `_activate_managed_generation_after_parent`; its selector publication is pinned and
+    written through `atomic_write_bytes_anchored`, recorded in the helper-backed census below.
     Recursing this detector into generated-source payloads is left as an explicit follow-up, not
     silently declared clean.
     """
@@ -1494,6 +1495,9 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     assert sorted(sites) == [
         ("dogfood_features.py", "_artifact_identity"),
         ("main.py", "_schedule_windows_self_upgrade"),
+        ("managed_runtime_candidate.py", "_managed_cuda_profile"),
+        ("managed_runtime_candidate.py", "_verify_managed_candidate_python"),
+        ("native_frontdoor.py", "_schedule_managed_activation"),
         ("native_frontdoor.py", "_verify_target_python_tensor_grep_version"),
         ("windows_launcher.py", "_schedule_windows_native_frontdoor_refresh"),
     ], (
@@ -1656,6 +1660,11 @@ _EXPECTED_HELPER_BACKED = {
     (
         "native_frontdoor.py",
         "_install_release_native_frontdoor",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
+    (
+        "native_frontdoor.py",
+        "_activate_managed_generation_after_parent",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
 }

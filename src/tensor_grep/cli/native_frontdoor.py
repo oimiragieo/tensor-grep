@@ -1114,7 +1114,10 @@ def _schedule_managed_activation(
                 elif child is not None:
                     child.wait(timeout=5)
                     settled = True
-            except BaseException:
+            except BaseException as retry_exc:
+                if not isinstance(retry_exc, Exception):
+                    setattr(retry_exc, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+                    raise retry_exc from exc
                 settled = child is not None and child.poll() is not None
         if not settled:
             if cleanup_interruption is not None and not isinstance(cleanup_interruption, Exception):
@@ -1333,7 +1336,7 @@ def stage_managed_windows_runtime(
     finally:
         try:
             held.close()
-        except BaseException:
+        except Exception:
             pass
 
 
