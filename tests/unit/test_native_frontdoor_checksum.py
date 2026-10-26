@@ -92,6 +92,96 @@ def test_install_release_native_frontdoor_installs_verified_asset(tmp_path, monk
     assert result.asset_name == "tg-test-asset"
 
 
+def test_install_release_native_frontdoor_skips_destination_execution_with_checksum(
+    tmp_path, monkeypatch
+):
+    cand = _candidate()
+    asset_bytes = b"LEGIT-BINARY"
+    monkeypatch.setattr(
+        cli_main,
+        "_native_frontdoor_download_candidates",
+        lambda version: [(cand, "https://example.invalid/tg-test-asset")],
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_download_native_frontdoor_asset",
+        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+    )
+    digest = hashlib.sha256(asset_bytes).hexdigest()
+    monkeypatch.setattr(
+        cli_main,
+        "_fetch_native_frontdoor_checksums",
+        lambda version: f"{digest}  tg-test-asset\n",
+    )
+    version_checks = []
+    checksum_checks = []
+    real_checksum = cli_main._native_frontdoor_checksum_error
+    monkeypatch.setattr(
+        cli_main,
+        "_native_tg_version",
+        lambda path: version_checks.append(Path(path)) or "1.2.3",
+    )
+    monkeypatch.setattr(cli_main, "_native_tg_version_matches", lambda *a, **k: True)
+    monkeypatch.setattr(cli_main, "_write_native_frontdoor_metadata", lambda *a, **k: None)
+
+    def check_checksum(path, asset_name, checksums):
+        checksum_checks.append(Path(path))
+        return real_checksum(path, asset_name, checksums)
+
+    monkeypatch.setattr(cli_main, "_native_frontdoor_checksum_error", check_checksum)
+    dest = tmp_path / "candidate" / "tg.exe"
+
+    cli_main._install_release_native_frontdoor("1.2.3", dest, verify_destination=False)
+
+    assert dest.read_bytes() == asset_bytes
+    assert len(version_checks) == 1
+    assert version_checks[0] != dest
+    assert checksum_checks == [version_checks[0], dest]
+
+
+def test_install_release_native_frontdoor_restores_existing_candidate_on_checksum_refusal(
+    tmp_path, monkeypatch
+):
+    cand = _candidate()
+    asset_bytes = b"LEGIT-BINARY"
+    dest = tmp_path / "candidate" / "tg.exe"
+    dest.parent.mkdir()
+    dest.write_bytes(b"previous candidate")
+    monkeypatch.setattr(
+        cli_main,
+        "_native_frontdoor_download_candidates",
+        lambda version: [(cand, "https://example.invalid/tg-test-asset")],
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_download_native_frontdoor_asset",
+        lambda url, path: Path(path).write_bytes(asset_bytes),
+    )
+    digest = hashlib.sha256(asset_bytes).hexdigest()
+    monkeypatch.setattr(
+        cli_main,
+        "_fetch_native_frontdoor_checksums",
+        lambda version: f"{digest}  tg-test-asset\n",
+    )
+    monkeypatch.setattr(cli_main, "_native_tg_version", lambda _path: "1.2.3")
+    monkeypatch.setattr(cli_main, "_native_tg_version_matches", lambda *a, **k: True)
+    real_checksum = cli_main._native_frontdoor_checksum_error
+    monkeypatch.setattr(
+        cli_main,
+        "_native_frontdoor_checksum_error",
+        lambda path, asset_name, checksums: (
+            "checksum mismatch"
+            if Path(path) == dest
+            else real_checksum(path, asset_name, checksums)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="install checksum verification"):
+        cli_main._install_release_native_frontdoor("1.2.3", dest, verify_destination=False)
+
+    assert dest.read_bytes() == b"previous candidate"
+
+
 def test_install_release_native_frontdoor_refuses_when_checksums_unavailable(tmp_path, monkeypatch):
     cand = _candidate()
     monkeypatch.setattr(

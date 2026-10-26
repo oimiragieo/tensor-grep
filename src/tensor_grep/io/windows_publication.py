@@ -72,12 +72,12 @@ def _set_information(descriptor: int, kind: int, buffer: Any, size: int) -> None
     _set_handle_information(msvcrt.get_osfhandle(descriptor), kind, buffer, size)
 
 
-def rename_open(descriptor: int, path: Path, *, replace: bool) -> None:
+def _rename_open(descriptor: int, path: Path, *, flags: int, kind: int) -> None:
     """Rename THIS HANDLE, without resolving any source filename after bytes were written."""
 
     class RenameInformation(ctypes.Structure):
         _fields_ = [
-            ("ReplaceIfExists", wintypes.BOOL),
+            ("Flags", wintypes.DWORD),
             ("RootDirectory", wintypes.HANDLE),
             ("FileNameLength", wintypes.DWORD),
             ("FileName", wintypes.WCHAR * 1),
@@ -89,11 +89,11 @@ def rename_open(descriptor: int, path: Path, *, replace: bool) -> None:
     size = offset + len(encoded) + ctypes.sizeof(wintypes.WCHAR)
     buffer = ctypes.create_string_buffer(max(size, ctypes.sizeof(RenameInformation)))
     information = RenameInformation.from_buffer(buffer)
-    information.ReplaceIfExists = int(replace)
+    information.Flags = flags
     information.RootDirectory = None
     information.FileNameLength = len(encoded)
     ctypes.memmove(ctypes.addressof(buffer) + offset, encoded, len(encoded))
-    _set_information(descriptor, 3, buffer, size)  # FileRenameInfo
+    _set_information(descriptor, kind, buffer, size)
 
 
 def discard_open(descriptor: int) -> None:
@@ -107,3 +107,16 @@ def discard_open(descriptor: int) -> None:
 def _discard_handle(handle: int) -> None:
     delete = wintypes.BOOLEAN(1)
     _set_handle_information(handle, 4, ctypes.byref(delete), ctypes.sizeof(delete))
+
+
+def rename_open(descriptor: int, path: Path, *, replace: bool) -> None:
+    """Preserve legacy rename semantics for existing confined-publication callers."""
+    _rename_open(descriptor, path, flags=int(replace), kind=3)  # FileRenameInfo
+
+
+def replace_open(descriptor: int, path: Path) -> None:
+    """Replace by held source handle, retaining old readers; caller confines destination."""
+    if sys.platform != "win32":
+        raise OSError("Windows handle publication is unavailable on this platform")
+    # FileRenameInfoEx: REPLACE_IF_EXISTS | POSIX_SEMANTICS, with no legacy fallback.
+    _rename_open(descriptor, path, flags=3, kind=22)

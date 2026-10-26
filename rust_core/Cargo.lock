@@ -1988,6 +1988,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-python",
  "walkdir",
+ "windows-sys",
  "yaml_serde",
 ]
 

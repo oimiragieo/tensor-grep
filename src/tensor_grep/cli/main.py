@@ -33,6 +33,7 @@ from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import citations as _citations
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
+from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
@@ -10656,16 +10657,9 @@ def doctor(
 
 
 def _is_uv_tool_managed_python(executable: str) -> bool:
-    """True when `executable` belongs to a `uv tool install`-managed tool venv (path under
-    `.../uv/tools/`). Such launchers live in an isolated venv that `uv pip`/`pip install` into that
-    same interpreter cannot upgrade correctly; the source-aware path is `uv tool install --force`
-    (audit #2 — matches the WSL uv-tool pin that stranded tg at a stale version)."""
     return "/uv/tools/" in executable.replace("\\", "/").lower()
 
 
-# Module-level (not nested in `upgrade()`) so `tg install-dense` can reuse the identical
-# uv-tool -> uv pip -> pip cascade for the `semantic` extra install step, including the
-# uv-tool-managed-python trap handling (audit #2) -- .
 def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
     pip_cmd = [
         sys.executable,
@@ -10693,8 +10687,7 @@ def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
         ),
         ("pip", pip_cmd),
     ]
-    # A uv-tool-managed launcher must be upgraded via the uv-tool front door, not `uv pip`/`pip`
-    # into its isolated interpreter — try it first when detected (audit #2).
+    # Route its isolated venv through the uv-tool front door.
     if _is_uv_tool_managed_python(sys.executable):
         attempts.insert(0, ("uv-tool", ["uv", "tool", "install", "--force", package_spec]))
     return attempts
@@ -10715,12 +10708,12 @@ def _run_upgrade(
                 check=True,
             )
             return result, label
-        except FileNotFoundError as e:
-            errors.append(f"{label}: {e}")
-        except subprocess.CalledProcessError as e:
-            stderr = (e.stderr or "").strip()
-            stdout = (e.stdout or "").strip()
-            combined = stderr or stdout or str(e)
+        except FileNotFoundError as exc:
+            errors.append(f"{label}: {exc}")
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            combined = stderr or stdout or str(exc)
             errors.append(f"{label}: {combined}")
             if label == "pip" and "No module named pip" in combined:
                 try:
@@ -10741,12 +10734,12 @@ def _run_upgrade(
                         check=True,
                     )
                     return result, "pip+ensurepip"
-                except FileNotFoundError as ee:
-                    errors.append(f"ensurepip: {ee}")
-                except subprocess.CalledProcessError as ee:
-                    ee_stderr = (ee.stderr or "").strip()
-                    ee_stdout = (ee.stdout or "").strip()
-                    errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
+                except FileNotFoundError as ensurepip_error:
+                    errors.append(f"ensurepip: {ensurepip_error}")
+                except subprocess.CalledProcessError as ensurepip_error:
+                    stderr = (ensurepip_error.stderr or "").strip()
+                    stdout = (ensurepip_error.stdout or "").strip()
+                    errors.append(f"ensurepip: {stderr or stdout or str(ensurepip_error)}")
     raise RuntimeError("; ".join(errors))
 
 
@@ -11362,7 +11355,7 @@ def upgrade() -> None:
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
-        daemon_snapshot = _upgrade_running_session_daemon_snapshot()
+        daemon_snapshot = _self._upgrade_running_session_daemon_snapshot()
         previous_version = _installed_version()
         latest_version = _self._latest_pypi_tensor_grep_version()
         exact_latest_requested = False
@@ -11376,7 +11369,11 @@ def upgrade() -> None:
         else:
             package_spec = "tensor-grep"
         attempts = _upgrade_attempts(package_spec)
-        result, method = _run_upgrade(attempts)
+        if _managed_runtime_upgrade.handle_managed_windows_upgrade(
+            sys.executable, previous_version, latest_version, package_spec, daemon_snapshot
+        ):
+            return
+        result, method = _self._run_upgrade(attempts)
         current_version = _verify_target_python_tensor_grep_version(sys.executable)
         if (
             exact_latest_requested
@@ -11423,6 +11420,8 @@ def upgrade() -> None:
             typer.echo(daemon_restart_message)
 
     except RuntimeError as e:
+        if isinstance(e, _managed_runtime_upgrade.ManagedWindowsUpgradeError):
+            _managed_runtime_upgrade.exit_managed_upgrade_error(e)
         if _looks_like_windows_self_update_lock(str(e)):
             previous_version = _installed_version()
             latest_version = _self._latest_pypi_tensor_grep_version()
@@ -11529,7 +11528,7 @@ def _run_install_dense() -> dict[str, Any]:
 
     try:
         attempts = _upgrade_attempts(_INSTALL_DENSE_PACKAGE_SPEC)
-        result, method = _run_upgrade(attempts)
+        result, method = _self._run_upgrade(attempts)
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )

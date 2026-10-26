@@ -12,7 +12,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
+use crate::managed_runtime_python::{managed_runtime, resolve_sidecar_target, PythonLaunchTarget};
+
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
@@ -93,11 +94,6 @@ struct SidecarResponse {
     stdout: String,
     stderr: String,
     pid: u32,
-}
-
-enum PythonLaunchTarget {
-    Module(String),
-    Script(PathBuf),
 }
 
 enum SidecarWaitOutcome {
@@ -746,6 +742,9 @@ fn merge_stderr(process_stderr: &str, response_stderr: &str) -> String {
 }
 
 fn resolve_python_command() -> OsString {
+    if let Some(runtime) = managed_runtime() {
+        return runtime.python.as_os_str().to_os_string();
+    }
     if let Some(explicit) = resolve_explicit_file_override(TG_SIDECAR_PYTHON_ENV) {
         return explicit.into_os_string();
     }
@@ -763,7 +762,10 @@ fn command_for_executable(program: &OsStr) -> Command {
     // BatBadBut CVE-2024-24576 class). Since Rust 1.77.2 (pinned 1.96.0) std detects a
     // .bat/.cmd program and spawns it through cmd.exe WITH the CVE-fixed per-arg escaping, so
     // plain `Command::new(program)` is both correct and injection-safe on every platform.
-    Command::new(program)
+    crate::managed_runtime_python::command_for_executable_with_isolation(
+        program,
+        managed_runtime().is_some(),
+    )
 }
 
 fn resolve_python_command_for_context(
@@ -902,7 +904,9 @@ fn configure_python_module_path(command: &mut Command) {
 fn configure_python_child_environment(command: &mut Command) -> Result<(), SidecarError> {
     // Checked FIRST: a refusal must spawn nothing (see frontdoor_hops.rs).
     crate::frontdoor_hops::stamp_python_child(command)?;
-    configure_python_module_path(command);
+    if !crate::managed_runtime_python::configure_active_runtime_command(command) {
+        configure_python_module_path(command);
+    }
     // Mark the spawned Python as a re-exec OF the native front door. The Python launcher
     // checks this and refuses to delegate search back to the native binary — otherwise
     // `tg --json <native-passthrough-flag>` (e.g. --debug/--stats) ping-pongs
@@ -1021,16 +1025,6 @@ fn gpu_device_ids_env_value(request: &SidecarRequest) -> Option<OsString> {
     }
 
     Some(OsString::from(device_ids.join(",")))
-}
-
-fn resolve_sidecar_target() -> PythonLaunchTarget {
-    if let Some(script) = env::var_os("TG_SIDECAR_SCRIPT") {
-        return PythonLaunchTarget::Script(PathBuf::from(script));
-    }
-
-    let module =
-        env::var("TG_SIDECAR_MODULE").unwrap_or_else(|_| DEFAULT_SIDECAR_MODULE.to_string());
-    PythonLaunchTarget::Module(module)
 }
 
 fn resolve_sidecar_timeout() -> Duration {

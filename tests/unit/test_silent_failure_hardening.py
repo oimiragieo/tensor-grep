@@ -204,10 +204,11 @@ _EXCLUDED_MODULES = frozenset({
 # 2026-10-09 investigation improvements: observed 339 -> 341 (+2 reviewed fail-closed
 # boundaries in core/cross_encoder.py and core/cross_encoder_assets.py). Both re-raise
 # BackendExecutionError with the original cause; ledger records cite injected-failure tests.
-# Pin the actual population, using the one spare slot in the historical ceiling of 340.
+# - 2026-10-26 (managed Windows runtime): +6 disclosed/fail-closed candidate, reader, activation, upgrade, and daemon-restart boundaries; all six have disposition records.
+# - 2026-10-26 (managed staging cleanup): +1 LOGGED-DEGRADE cleanup boundary; ExitStack close errors are disclosed by type, covered by test_stage_managed_windows_runtime_discloses_cleanup_failure.
 # - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
 #   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
-TOTAL_BROAD_HANDLERS_CEILING = 346
+TOTAL_BROAD_HANDLERS_CEILING = 353
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

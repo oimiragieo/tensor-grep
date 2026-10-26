@@ -44,6 +44,15 @@ _REVIEWED_NON_RERAISING: dict[tuple[str, str, int], str] = {
         "caller thread unless it is the recoverable LateRerankUnavailableError (so a KeyboardInterrupt "
         "or SystemExit still propagates -- see the comment above the thread in the caller)"
     ),
+    ("cli/native_frontdoor.py", "_schedule_managed_activation", 1): (
+        "capture cleanup failure while settling the activation child, retry the bounded wait, and "
+        "re-raise either the original error or a cleanup interruption; KeyboardInterrupt and "
+        "SystemExit from the retry are not swallowed"
+    ),
+    ("cli/native_frontdoor.py", "_schedule_managed_activation", 2): (
+        "a second cleanup interruption is re-raised and marks the activation worker as possibly "
+        "live so callers retain the staged generation instead of treating cleanup as settled"
+    ),
 }
 
 

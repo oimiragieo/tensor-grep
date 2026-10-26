@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -29,8 +30,14 @@ import typer
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli._main_binding import _self as _self
 from tensor_grep.cli.freshness_process import capture_probe as _capture_freshness_probe
+from tensor_grep.cli.managed_runtime_selection import ManagedRuntimeSelection, encode_selection
 from tensor_grep.cli.runtime_paths import native_frontdoor_metadata_path
 from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
+from tensor_grep.cli.windows_parent_process import (
+    _canonical_windows_path,
+    _open_native_parent_handle,
+)
+from tensor_grep.io import windows_publication
 
 _PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
 _LOGGER = logging.getLogger(__name__)
@@ -62,6 +69,16 @@ class _NativeFrontdoorInstallResult:
     # future caller stay valid without threading these through everywhere.
     requested_flavor: str = "cpu"
     downgrade_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ManagedWindowsRuntimeInstall:
+    generation: str
+    version: str
+    install_method: str
+    native_flavor: str
+    activation_pending: bool = False
+    activation_log: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -597,7 +614,7 @@ def _write_native_frontdoor_metadata(
 
 
 def _install_release_native_frontdoor(
-    version: str, destination: Path
+    version: str, destination: Path, *, verify_destination: bool = True
 ) -> _NativeFrontdoorInstallResult:
     candidates = _self._native_frontdoor_download_candidates(version)
     if not candidates:
@@ -661,17 +678,33 @@ def _install_release_native_frontdoor(
             # and gives the destination its own explicit symlink-refusal check).
             install_mode = None if sys.platform.startswith("win") else 0o755
             atomic_write_bytes_anchored(destination, temp_path.read_bytes(), mode=install_mode)
-            installed_version = _self._native_tg_version(destination)
-            if not _self._native_tg_version_matches(version, installed_version):
-                if previous_bytes is not None:
-                    atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
-                else:
-                    destination.unlink(missing_ok=True)
-                download_errors.append(
-                    f"{candidate.flavor} asset failed install verification: installed native "
-                    f"tg front door reported {installed_version or 'no version'} instead of {version}"
+            if verify_destination:
+                installed_version = _self._native_tg_version(destination)
+                if not _self._native_tg_version_matches(version, installed_version):
+                    if previous_bytes is not None:
+                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
+                    else:
+                        destination.unlink(missing_ok=True)
+                    download_errors.append(
+                        f"{candidate.flavor} asset failed install verification: installed native "
+                        f"tg front door reported {installed_version or 'no version'} instead of "
+                        f"{version}"
+                    )
+                    continue
+            else:
+                checksum_error = _self._native_frontdoor_checksum_error(
+                    destination, candidate.asset_name, checksums_text
                 )
-                continue
+                if checksum_error is not None:
+                    if previous_bytes is not None:
+                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
+                    else:
+                        destination.unlink(missing_ok=True)
+                    download_errors.append(
+                        f"{candidate.flavor} asset failed install checksum verification: "
+                        f"{checksum_error}"
+                    )
+                    continue
             _self._write_native_frontdoor_metadata(
                 destination,
                 version=version,
@@ -713,6 +746,606 @@ def _install_release_native_frontdoor(
     raise RuntimeError(
         "release-native front-door asset install failed: " + "; ".join(download_errors)
     )
+
+
+def managed_windows_install_root(executable: str) -> Path | None:
+    """Return the managed root after validating its profile, ancestry, and opened handles."""
+    if not sys.platform.startswith("win"):
+        return None
+    executable_path = Path(executable).expanduser().absolute()
+    scripts = executable_path.parent
+    venv = scripts.parent
+    if scripts.name.casefold() != "scripts" or venv.name.casefold() != ".venv":
+        return None
+    if executable_path.name.casefold() != "python.exe":
+        return None
+    parent = venv.parent
+    if parent.name.casefold() == ".tensor-grep":
+        root = parent
+    elif (
+        re.fullmatch(r"[0-9a-f]{32}", parent.name) is not None
+        and parent.parent.name.casefold() == "runtimes"
+        and parent.parent.parent.name.casefold() == ".tensor-grep"
+    ):
+        root = parent.parent.parent
+    else:
+        return None
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli.managed_runtime_candidate import _windows_profile_directory
+
+    authority = (_windows_profile_directory() / ".tensor-grep").absolute()
+
+    def path_key(value: Path) -> str:
+        return os.path.normcase(os.path.normpath(os.fspath(value)))
+
+    if path_key(root) != path_key(authority):
+        raise RuntimeError("managed Windows runtime is outside the OS-verified user profile")
+    if not trust._ancestors_trusted(authority):
+        raise RuntimeError("managed Windows runtime root or ancestry is not trusted")
+    with ExitStack() as held:
+        _pin_managed_directory(authority, held)
+    return authority
+
+
+def selected_managed_windows_version(install_root: Path) -> str | None:
+    try:
+        from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
+
+        managed = read_managed_runtime(trusted_root=install_root)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"managed runtime selector cannot be trusted: {exc}") from exc
+    if managed is None:
+        return None
+    generation_root = install_root / "runtimes" / managed.selection.generation
+    try:
+        with ExitStack() as held:
+            _pin_managed_directory(install_root, held)
+            _pin_managed_directory(install_root / "runtimes", held)
+            _pin_managed_directory(generation_root, held)
+            _pin_managed_generation_executables(generation_root, held)
+    except (OSError, RuntimeError):
+        raise RuntimeError(
+            "managed runtime selector points to an incomplete or untrusted generation"
+        ) from None
+    return managed.selection.version
+
+
+def _pin_managed_directory(path: Path, held: ExitStack) -> str:
+    """Retain each directory handle while checking its final path and ACL."""
+    from tensor_grep.cli import managed_runtime_reader as reader
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    if (
+        not path.is_absolute()
+        or len(path.drive) != 2
+        or path.drive[1] != ":"
+        or len(path.parts) < 2
+    ):
+        raise RuntimeError("managed runtime directory must be below a local drive root")
+    current = Path(path.anchor)
+    drive_handle = winsec.open_no_follow(str(current), directory=True, share=3)
+    if drive_handle is None:
+        raise RuntimeError("managed runtime drive root is missing or unsafe")
+    held.callback(winsec.close_handle, drive_handle)
+    parent_final = winsec.final_path(drive_handle)
+    if reader._final_key(parent_final) != reader._final_key(str(current)):
+        raise RuntimeError("managed runtime drive root identity changed")
+    for component in path.parts[1:]:
+        current = current / component
+        handle = winsec.open_no_follow(str(current), directory=True, share=3)
+        if handle is None:
+            raise RuntimeError(f"managed runtime directory is missing or unsafe: {current}")
+        held.callback(winsec.close_handle, handle)
+        final = winsec.final_path(handle)
+        if parent_final is not None and not reader._is_direct_child(final, parent_final, component):
+            raise RuntimeError("managed runtime directory identity changed during validation")
+        if current == path:
+            if not trust._parent_handle_ok(handle):
+                raise RuntimeError("managed runtime directory ACL is not trusted")
+        else:
+            details = winsec.owner_and_dacl_entries(handle)
+            sid = trust._win_current_user_sid()
+            if details is None or sid is None or not trust._windows_owner_ok(details[0], sid):
+                raise RuntimeError("managed runtime ancestor owner is not trusted")
+            if not trust._windows_ancestor_dacl_ok(details[1], sid):
+                raise RuntimeError("managed runtime ancestor ACL is not trusted")
+        parent_final = final
+    if parent_final is None:
+        raise RuntimeError("managed runtime directory final path is unavailable")
+    return parent_final
+
+
+def _validate_managed_leaf_handle(handle: int, parent_final: str, name: str) -> None:
+    from tensor_grep.cli import managed_runtime_reader as reader
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    if not trust._windows_handle_trusted(handle, check_dacl=True):
+        raise RuntimeError(f"managed runtime executable ACL is not trusted: {name}")
+    if winsec.link_count(handle) != 1:
+        raise RuntimeError(f"managed runtime executable must have one hard link: {name}")
+    if not reader._is_direct_child(winsec.final_path(handle), parent_final, name):
+        raise RuntimeError(f"managed runtime executable is outside its pinned directory: {name}")
+
+
+def _pin_managed_executable(path: Path, held: ExitStack) -> None:
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    parent_final = _pin_managed_directory(path.parent, held)
+    handle = winsec.open_no_follow(str(path), share=1)
+    if handle is None:
+        raise RuntimeError(f"managed runtime executable is missing or unsafe: {path.name}")
+    try:
+        _validate_managed_leaf_handle(handle, parent_final, path.name)
+    except BaseException:
+        winsec.close_handle(handle)
+        raise
+    held.callback(winsec.close_handle, handle)
+
+
+def _pin_managed_generation_executables(generation_root: Path, held: ExitStack) -> None:
+    _pin_managed_directory(generation_root / ".venv", held)
+    _pin_managed_executable(generation_root / "bin" / "tg.exe", held)
+    _pin_managed_executable(generation_root / ".venv" / "Scripts" / "python.exe", held)
+
+
+def _validate_managed_publication_descriptor(descriptor: int, parent_final: str, name: str) -> None:
+    import msvcrt
+
+    descriptor_handle = msvcrt.get_osfhandle(descriptor)  # type: ignore[attr-defined]
+    _validate_managed_leaf_handle(descriptor_handle, parent_final, name)
+
+
+def _publish_managed_generation(
+    install_root: Path,
+    generation: str,
+    version: str,
+    held: ExitStack,
+    publication_attempted: list[bool] | None = None,
+) -> None:
+    """Publish one verified generation; the caller holds the selector lock and generation pins."""
+    selector_path = install_root / "runtime-selection.json"
+    selector_bytes = encode_selection(ManagedRuntimeSelection(generation, version))
+    selected_version = selected_managed_windows_version(install_root)
+    if selected_version is not None and _self._is_version_newer(selected_version, version):
+        raise RuntimeError(
+            f"managed runtime selector advanced to {selected_version}; "
+            f"refusing to activate older candidate {version}"
+        )
+
+    parent_final = _pin_managed_directory(install_root, held)
+    temporary_path = selector_path.with_name(f"{selector_path.name}.{uuid4().hex}.tmp")
+    descriptor = None
+    replacement_attempted = False
+    try:
+        descriptor = windows_publication.open_temporary(temporary_path)
+        with os.fdopen(descriptor, "wb", closefd=False) as output:
+            output.write(selector_bytes)
+            output.flush()
+            os.fsync(output.fileno())
+        _validate_managed_publication_descriptor(descriptor, parent_final, temporary_path.name)
+        replacement_attempted = True
+        if publication_attempted is not None:
+            publication_attempted[0] = True
+        windows_publication.replace_open(descriptor, selector_path)
+        os.close(descriptor)
+        descriptor = None
+        if selected_managed_windows_version(install_root) != version:
+            raise RuntimeError("managed selector read-back failed")
+        from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
+
+        resolved = read_managed_runtime(trusted_root=install_root)
+        if resolved is None or resolved.selection.generation != generation:
+            raise RuntimeError("stable dispatcher did not resolve the activated generation")
+    finally:
+        if descriptor is not None:
+            discard_temporary = not replacement_attempted
+            if replacement_attempted:
+                try:
+                    import msvcrt
+
+                    from tensor_grep.cli import managed_runtime_reader as reader
+                    from tensor_grep.cli import session_daemon_winsec as winsec
+
+                    discard_temporary = reader._is_direct_child(
+                        winsec.final_path(
+                            msvcrt.get_osfhandle(descriptor)  # type: ignore[attr-defined]
+                        ),
+                        parent_final,
+                        temporary_path.name,
+                    )
+                except OSError:
+                    pass
+            if discard_temporary:
+                try:
+                    windows_publication.discard_open(descriptor)
+                except OSError:
+                    pass
+            os.close(descriptor)
+
+
+def _create_activation_ready_event() -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), None, True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel.CreateEventW.argtypes = [
+        ctypes.POINTER(SecurityAttributes),
+        wintypes.BOOL,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    ]
+    kernel.CreateEventW.restype = wintypes.HANDLE
+    handle = kernel.CreateEventW(ctypes.byref(attributes), True, False, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+    return int(handle)
+
+
+def _signal_activation_ready(ready_handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel.SetEvent.argtypes = [wintypes.HANDLE]
+    kernel.SetEvent.restype = wintypes.BOOL
+    if not kernel.SetEvent(ready_handle):
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+
+
+class _ManagedActivationUnsettledError(RuntimeError):
+    pass
+
+
+_MANAGED_ACTIVATION_WORKER_MAY_LIVE = "_managed_activation_worker_may_live"
+_ACTIVATION_WORKER_PROGRAM = (
+    "import sys; from pathlib import Path; "
+    "from tensor_grep.cli.native_frontdoor import _activate_managed_generation_after_parent; "
+    "raise SystemExit(_activate_managed_generation_after_parent("
+    "int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),sys.argv[4],sys.argv[5]))"
+)
+
+
+def _schedule_managed_activation(
+    candidate_python: Path,
+    install_root: Path,
+    generation: str,
+    expected_version: str,
+    parent_handle: int,
+    held: ExitStack,
+) -> Path:
+    """Start an isolated helper and return only after its pinned preflight is ready."""
+    import ctypes
+    import subprocess
+    from ctypes import wintypes
+
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    ready_handle: int | None = None
+    process_handle = None
+    child = None
+    kernel = None
+    status_path = install_root / "logs" / f"activation-{generation}.log"
+    try:
+        encode_selection(ManagedRuntimeSelection(generation, expected_version))
+        generation_root = install_root / "runtimes" / generation
+        expected_python = generation_root / ".venv" / "Scripts" / "python.exe"
+        if _canonical_windows_path(candidate_python) != _canonical_windows_path(expected_python):
+            raise RuntimeError("activation Python does not match the selected generation")
+        _pin_managed_directory(install_root, held)
+        _pin_managed_directory(install_root / "runtimes", held)
+        _pin_managed_generation_executables(generation_root, held)
+
+        ready_handle = _create_activation_ready_event()
+        startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        startup.lpAttributeList = {"handle_list": [parent_handle, ready_handle]}
+        flags = 0
+        for flag in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+            flags |= int(getattr(subprocess, flag, 0))
+        child = _self.subprocess.Popen(
+            [
+                str(expected_python),
+                "-I",
+                "-c",
+                _ACTIVATION_WORKER_PROGRAM,
+                str(parent_handle),
+                str(ready_handle),
+                str(install_root),
+                generation,
+                expected_version,
+            ],
+            stdin=_self.subprocess.DEVNULL,
+            stdout=_self.subprocess.DEVNULL,
+            stderr=_self.subprocess.DEVNULL,
+            close_fds=True,
+            startupinfo=startup,
+            creationflags=flags,
+        )
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+        kernel.SetHandleInformation.restype = wintypes.BOOL
+        for inherited in (parent_handle, ready_handle):
+            if not kernel.SetHandleInformation(inherited, 1, 0):
+                raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+        process_handle = winsec.open_process(child.pid)
+        if process_handle is None:
+            raise RuntimeError("cannot open activation helper process for readiness wait")
+        handles = (wintypes.HANDLE * 2)(ready_handle, process_handle)
+        kernel.WaitForMultipleObjects.argtypes = [
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel.WaitForMultipleObjects.restype = wintypes.DWORD
+        waited = int(kernel.WaitForMultipleObjects(2, handles, False, 30_000))
+        if waited == 1:
+            raise RuntimeError("activation helper exited before candidate preflight was ready")
+        if waited == 258:
+            raise TimeoutError("activation helper did not become ready within 30 seconds")
+        if waited != 0:
+            raise RuntimeError("activation helper readiness wait failed")
+        return status_path
+    except BaseException as exc:
+        settled = child is None
+        cleanup_interruption: BaseException | None = None
+        try:
+            if child is not None and process_handle is not None:
+                winsec.terminate_process(process_handle)
+                settled = winsec.wait_process(process_handle, 5_000)
+            elif child is not None:
+                child.terminate()
+                child.wait(timeout=5)
+                settled = True
+        except BaseException as cleanup_exc:
+            cleanup_interruption = cleanup_exc
+            try:
+                if process_handle is not None:
+                    settled = winsec.wait_process(process_handle, 5_000)
+                elif child is not None:
+                    child.wait(timeout=5)
+                    settled = True
+            except BaseException as retry_exc:
+                if not isinstance(retry_exc, Exception):
+                    setattr(retry_exc, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+                    raise retry_exc from exc
+                settled = child is not None and child.poll() is not None
+        if not settled:
+            if cleanup_interruption is not None and not isinstance(cleanup_interruption, Exception):
+                setattr(cleanup_interruption, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+                raise cleanup_interruption from exc
+            setattr(exc, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+            if isinstance(exc, Exception):
+                raise _ManagedActivationUnsettledError(
+                    "activation helper may still be running; staged generation retained"
+                ) from exc
+        elif cleanup_interruption is not None and not isinstance(cleanup_interruption, Exception):
+            raise cleanup_interruption from exc
+        raise
+    finally:
+        winsec.close_handle(parent_handle)
+        if ready_handle is not None:
+            winsec.close_handle(ready_handle)
+        if process_handle is not None:
+            winsec.close_handle(process_handle)
+
+
+def _stable_dispatcher_matches_release(version: str, stable_path: Path) -> bool:
+    """Keep a launcher only when its bytes match a checksum-listed release asset."""
+    with ExitStack() as held:
+        try:
+            _pin_managed_executable(stable_path, held)
+        except (OSError, RuntimeError):
+            return False
+        checksums = _self._fetch_native_frontdoor_checksums(version)
+        if checksums is None:
+            return False
+        return any(
+            _self._native_frontdoor_checksum_error(stable_path, candidate.asset_name, checksums)
+            is None
+            for candidate, _url in _self._native_frontdoor_download_candidates(version)
+        )
+
+
+def _activate_managed_generation_after_parent(
+    parent_handle: int,
+    ready_handle: int,
+    install_root: Path,
+    generation: str,
+    version: str,
+) -> int:
+    """Wait for the old launcher, publish selection, then repair its stable dispatcher."""
+    import ctypes
+    from ctypes import wintypes
+
+    from tensor_grep.cli import session_daemon_winsec as winsec
+    from tensor_grep.cli.managed_runtime_candidate import (
+        _verify_managed_candidate_python,
+        _windows_profile_directory,
+    )
+
+    with ExitStack() as resources:
+        resources.callback(winsec.close_handle, parent_handle)
+        resources.callback(winsec.close_handle, ready_handle)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        status_path: Path | None = None
+        selector_attempted = [False]
+        with ExitStack() as held:
+            try:
+                expected_root = (_windows_profile_directory() / ".tensor-grep").absolute()
+                if _canonical_windows_path(install_root) != _canonical_windows_path(expected_root):
+                    raise RuntimeError(
+                        "activation root does not match the OS-verified user profile"
+                    )
+                if re.fullmatch(r"[0-9a-f]{32}", generation) is None:
+                    raise RuntimeError("activation generation is not a valid UUID")
+                if (
+                    re.fullmatch(
+                        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+                        version,
+                    )
+                    is None
+                ):
+                    raise RuntimeError("activation version is not a stable x.y.z version")
+
+                install_root = expected_root
+                _pin_managed_directory(install_root, held)
+                logs_path = install_root / "logs"
+                logs_path.mkdir(exist_ok=True)
+                _pin_managed_directory(logs_path, held)
+                status_path = logs_path / f"activation-{generation}.log"
+
+                runtimes = install_root / "runtimes"
+                _pin_managed_directory(runtimes, held)
+                generation_root = runtimes / generation
+                _pin_managed_directory(generation_root, held)
+                _pin_managed_generation_executables(generation_root, held)
+                candidate_python = generation_root / ".venv" / "Scripts" / "python.exe"
+                _verify_managed_candidate_python(candidate_python, version)
+                _signal_activation_ready(ready_handle)
+                if kernel.WaitForSingleObject(parent_handle, 900_000) != 0:
+                    raise RuntimeError(
+                        "native launcher did not exit before the activation deadline"
+                    )
+
+                stable_path = _pin_stable_launcher_directory(install_root, held)
+                from tensor_grep.cli._index_lock import index_lock
+
+                with index_lock(install_root / "runtime-selection.json"):
+                    _publish_managed_generation(
+                        install_root, generation, version, held, selector_attempted
+                    )
+                    if not _stable_dispatcher_matches_release(version, stable_path):
+                        _install_release_native_frontdoor(version, stable_path)
+                atomic_write_bytes_anchored(
+                    status_path, f"activated {version} generation {generation}\n".encode()
+                )
+                return 0
+            except Exception as exc:
+                if status_path is not None:
+                    state = (
+                        "pending after selector publication attempt"
+                        if selector_attempted[0]
+                        else "failed"
+                    )
+                    try:
+                        atomic_write_bytes_anchored(
+                            status_path, f"activation {state}: {type(exc).__name__}\n".encode()
+                        )
+                    except OSError:
+                        pass
+                return 1
+
+
+def stage_managed_windows_runtime(
+    executable: str, package_spec: str, expected_version: str
+) -> ManagedWindowsRuntimeInstall:
+    """Install a verified generation beside the active runtime, then select it."""
+    from tensor_grep.cli import managed_runtime_candidate as candidate
+    from tensor_grep.cli._index_lock import index_lock
+
+    install_root = managed_windows_install_root(executable)
+    if install_root is None:
+        raise RuntimeError("executable is not a Windows managed tensor-grep Python runtime")
+    generation = uuid4().hex
+    encode_selection(ManagedRuntimeSelection(generation, expected_version))
+    generation_root = install_root / "runtimes" / generation
+    candidate_python = generation_root / ".venv" / "Scripts" / "python.exe"
+    native_path = generation_root / "bin" / "tg.exe"
+    selector_path = install_root / "runtime-selection.json"
+    held = ExitStack()
+    selector_attempted = [False]
+    try:
+        _pin_managed_directory(install_root, held)
+        runtimes_root = install_root / "runtimes"
+        runtimes_root.mkdir(exist_ok=True)
+        _pin_managed_directory(runtimes_root, held)
+        # Failed generations stay unselected; recursive path cleanup races Windows swaps.
+        generation_root.mkdir(exist_ok=False)
+        _pin_managed_directory(generation_root, held)
+
+        venv_path = candidate_python.parent.parent
+        try:
+            _self.subprocess.run(
+                ["uv", "venv", "--python", str(Path(executable).absolute()), str(venv_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+        except (FileNotFoundError, _self.subprocess.CalledProcessError):
+            _self.subprocess.run(
+                [str(Path(executable).absolute()), "-m", "venv", str(venv_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+
+        normalized_spec = candidate._managed_candidate_package_spec(package_spec)
+        expected_cuda = "12.8" if "gpu-win" in normalized_spec else None
+        install_method = candidate._run_managed_candidate_install(candidate_python, normalized_spec)
+        candidate._verify_managed_candidate_python(
+            candidate_python, expected_version, expected_cuda=expected_cuda
+        )
+        native_result = _install_release_native_frontdoor(
+            expected_version, native_path, verify_destination=False
+        )
+        _pin_managed_generation_executables(generation_root, held)
+        stable_path = _pin_stable_launcher_directory(install_root, held)
+        parent_handle = _open_native_parent_handle(stable_path)
+        if parent_handle is not None:
+            status_path = _schedule_managed_activation(
+                candidate_python, install_root, generation, expected_version, parent_handle, held
+            )
+            return ManagedWindowsRuntimeInstall(
+                generation,
+                expected_version,
+                install_method,
+                native_result.flavor,
+                activation_pending=True,
+                activation_log=status_path,
+            )
+
+        with index_lock(selector_path):
+            _publish_managed_generation(
+                install_root, generation, expected_version, held, selector_attempted
+            )
+            if not _stable_dispatcher_matches_release(expected_version, stable_path):
+                _install_release_native_frontdoor(expected_version, stable_path)
+        return ManagedWindowsRuntimeInstall(
+            generation, expected_version, install_method, native_result.flavor
+        )
+    except BaseException as exc:
+        if isinstance(exc, RuntimeError) or not isinstance(exc, Exception):
+            raise
+        raise RuntimeError(f"managed runtime staging failed: {exc}") from exc
+    finally:
+        try:
+            held.close()
+        except Exception as exc:
+            _LOGGER.warning("managed runtime staging cleanup failed (%s)", type(exc).__name__)
+
+
+def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
+    _pin_managed_directory(install_root, held)
+    stable_bin = install_root / "bin"
+    stable_bin.mkdir(exist_ok=True)
+    _pin_managed_directory(stable_bin, held)
+    return stable_bin / "tg.exe"
 
 
 def _windows_managed_native_bin_dir() -> Path | None:

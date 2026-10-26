@@ -19,6 +19,29 @@ pub mod frontdoor_hops;
 pub mod gpu_native;
 pub mod index;
 pub mod index_lock;
+pub mod managed_runtime_acl_policy;
+#[cfg(windows)]
+pub mod managed_runtime_acl_reader;
+#[cfg(all(test, windows))]
+mod managed_runtime_acl_test_fixture;
+#[cfg(windows)]
+pub mod managed_runtime_dispatch;
+#[cfg(windows)]
+pub mod managed_runtime_entry;
+#[cfg(windows)]
+pub(crate) mod managed_runtime_handoff;
+pub mod managed_runtime_python;
+#[cfg(windows)]
+pub mod managed_runtime_resolver;
+pub mod managed_runtime_selection;
+#[cfg(windows)]
+pub use managed_runtime_dispatch::prepare_main_startup;
+#[cfg(windows)]
+pub mod managed_runtime_windows_file;
+#[cfg(windows)]
+mod managed_runtime_windows_sid;
+#[cfg(windows)]
+pub mod managed_runtime_windows_token;
 pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;
