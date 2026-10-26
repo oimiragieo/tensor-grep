@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import native_frontdoor
+from tensor_grep.cli import native_frontdoor, windows_parent_process
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="native parent identity is Windows-only")
 
@@ -108,14 +108,14 @@ def test_OpenNativeParentHandle_WhenAdvertisedImageConflicts_ClosesHandleAndRais
 def test_NativeParentMatch_WhenEnvironmentIsAbsent_UsesActualImage(tmp_path):
     stable = tmp_path / "tg.exe"
 
-    assert native_frontdoor._native_parent_matches_stable(stable, str(stable), None)
+    assert windows_parent_process._native_parent_matches_stable(stable, str(stable), None)
 
 
 def test_NativeParentMatch_WhenAdvertisedImageConflicts_Raises(tmp_path):
     stable = tmp_path / "tg.exe"
 
     with pytest.raises(RuntimeError, match="environment does not match"):
-        native_frontdoor._native_parent_matches_stable(
+        windows_parent_process._native_parent_matches_stable(
             stable, str(stable), str(tmp_path / "other.exe")
         )
 
@@ -123,7 +123,7 @@ def test_NativeParentMatch_WhenAdvertisedImageConflicts_Raises(tmp_path):
 def test_NativeParentMatch_WhenActualImageDiffers_ReturnsFalse(tmp_path):
     stable = tmp_path / "tg.exe"
 
-    assert not native_frontdoor._native_parent_matches_stable(
+    assert not windows_parent_process._native_parent_matches_stable(
         stable, str(tmp_path / "other.exe"), None
     )
 
@@ -157,7 +157,7 @@ def test_OpenNativeParentHandle_WhenPathComparisonRaises_ClosesHandle(monkeypatc
     monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
     monkeypatch.setattr(winsec, "close_handle", closed.append)
     monkeypatch.setattr(
-        native_frontdoor,
+        windows_parent_process,
         "_native_parent_matches_stable",
         lambda *_args: (_ for _ in ()).throw(ValueError("comparison failed")),
     )
@@ -284,7 +284,7 @@ def test_open_native_parent_handle_when_generation_ancestry_is_missing_fails_clo
 def test_WindowsProcessParentPid_WhenGenerationIsNested_ReturnsOsReportedParent():
     worker = (
         "import ctypes, sys; "
-        "from tensor_grep.cli.native_frontdoor import _windows_process_parent_pid; "
+        "from tensor_grep.cli.windows_parent_process import _windows_process_parent_pid; "
         "print(_windows_process_parent_pid(ctypes.WinDLL('kernel32'), int(sys.argv[1])))"
     )
     generation = (
