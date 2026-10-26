@@ -168,6 +168,148 @@ def test_OpenNativeParentHandle_WhenPathComparisonRaises_ClosesHandle(monkeypatc
     assert closed == [112]
 
 
+def _generation_parent_kernel(stable, generation, closed, *, stable_is_older=True):
+    kernel = _Kernel(str(generation))
+    handles = {321: 112, 654: 113}
+    images = {112: str(generation), 113: str(stable)}
+
+    kernel.OpenProcess = _WinFunction(
+        lambda access, inherit, pid: (
+            kernel.open_calls.append((access, inherit, pid)) or handles[pid]
+        )
+    )
+
+    def query(handle, _flags, image, image_size):
+        image.value = images[handle]
+        image_size._obj.value = len(image.value)
+        return True
+
+    kernel.QueryFullProcessImageNameW = _WinFunction(query)
+    kernel.SetHandleInformation = _WinFunction(
+        lambda handle, mask, flags: kernel.inherit_calls.append((handle, mask, flags)) or True
+    )
+    kernel.CreateToolhelp32Snapshot = _WinFunction(lambda *_args: 999)
+
+    def first(_snapshot, entry):
+        entry._obj.th32ProcessID = 321
+        entry._obj.th32ParentProcessID = 654
+        return True
+
+    kernel.Process32FirstW = _WinFunction(first)
+    kernel.Process32NextW = _WinFunction(lambda *_args: False)
+    kernel.CloseHandle = _WinFunction(lambda handle: closed.append(handle) or True)
+
+    def process_times(handle, creation, *_args):
+        creation._obj.low = (
+            10 if handle == 113 and stable_is_older else (30 if handle == 113 else 20)
+        )
+        return True
+
+    kernel.GetProcessTimes = _WinFunction(process_times)
+    return kernel
+
+
+def _advertise_generation(monkeypatch, generation, advertise):
+    if advertise:
+        monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(generation))
+    else:
+        monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+
+
+@pytest.mark.parametrize("advertise_generation", [True, False])
+def test_open_native_parent_handle_when_generation_parent_pins_stable_ancestor(
+    monkeypatch, tmp_path, advertise_generation
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    closed = []
+    kernel = _generation_parent_kernel(stable, generation, closed)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    _advertise_generation(monkeypatch, generation, advertise_generation)
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    assert native_frontdoor._open_native_parent_handle(stable) == 113
+
+    assert kernel.open_calls == [
+        (0x00100000 | 0x1000, False, 321),
+        (0x00100000 | 0x1000, False, 654),
+    ]
+    assert kernel.inherit_calls == [(113, 1, 1)]
+    assert sorted(closed) == [112, 999]
+
+
+def test_open_native_parent_handle_when_stable_pid_was_reused_refuses_activation(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    closed = []
+    kernel = _generation_parent_kernel(stable, generation, closed, stable_is_older=False)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    _advertise_generation(monkeypatch, generation, False)
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    with pytest.raises(RuntimeError, match="PID was reused"):
+        native_frontdoor._open_native_parent_handle(stable)
+
+    assert kernel.inherit_calls == []
+    assert sorted(closed) == [112, 113, 999]
+
+
+def test_open_native_parent_handle_when_generation_ancestry_is_missing_fails_closed(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    closed = []
+    kernel = _generation_parent_kernel(stable, generation, closed)
+    kernel.Process32FirstW = _WinFunction(lambda *_args: False)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    _advertise_generation(monkeypatch, generation, False)
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    with pytest.raises(RuntimeError, match="absent from the Windows process snapshot"):
+        native_frontdoor._open_native_parent_handle(stable)
+
+    assert sorted(closed) == [112, 999]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows Toolhelp process APIs")
+def test_WindowsProcessParentPid_WhenGenerationIsNested_ReturnsOsReportedParent():
+    worker = (
+        "import ctypes, sys; "
+        "from tensor_grep.cli.native_frontdoor import _windows_process_parent_pid; "
+        "print(_windows_process_parent_pid(ctypes.WinDLL('kernel32'), int(sys.argv[1])))"
+    )
+    generation = (
+        "import os, subprocess, sys; "
+        "print('GEN_PARENT=' + str(os.getppid()), flush=True); "
+        "subprocess.run([sys.executable, '-c', sys.argv[1], str(os.getpid())], check=True)"
+    )
+    stable = (
+        "import subprocess, sys; "
+        "subprocess.run([sys.executable, '-c', sys.argv[1], sys.argv[2]], check=True)"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", stable, generation, worker],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    lines = result.stdout.splitlines()
+    assert lines[0].removeprefix("GEN_PARENT=") == lines[1], result.stdout
+
+
 def test_OpenNativeParentHandle_WhenRunningInChildIdentifiesAndInheritsRealParentHandle(
     tmp_path,
 ):
