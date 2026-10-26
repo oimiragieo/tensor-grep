@@ -5,7 +5,9 @@ use std::ffi::c_void;
 use std::fmt;
 use std::io;
 use std::mem::size_of;
+use std::os::windows::ffi::OsStringExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::path::PathBuf;
 
 use windows_sys::Win32::Foundation::HANDLE;
 #[cfg(test)]
@@ -15,7 +17,9 @@ use windows_sys::Win32::Security::{
     TOKEN_USER,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+use windows_sys::Win32::UI::Shell::GetUserProfileDirectoryW;
 const MAX_TOKEN_INFO_BYTES: usize = 4096;
+const MAX_PROFILE_DIRECTORY_UNITS: usize = 32_768;
 const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
 const SID_HEADER_BYTES: usize = 8;
 const SID_MAX_SUB_AUTHORITIES: usize = 15;
@@ -59,6 +63,59 @@ pub fn current_token_sids() -> io::Result<VerifiedTokenIdentity> {
         user_sid,
         default_owner_sid,
     })
+}
+
+pub fn current_profile_directory() -> io::Result<PathBuf> {
+    let token = open_current_process_token()?;
+    profile_directory_from_query(|output| match output {
+        None => {
+            let mut needed = 0u32;
+            let succeeded = unsafe {
+                GetUserProfileDirectoryW(token.as_raw_handle(), std::ptr::null_mut(), &mut needed)
+            };
+            let error = io::Error::last_os_error();
+            if succeeded == 0 && error.raw_os_error() == Some(ERROR_INSUFFICIENT_BUFFER) {
+                Ok(needed as usize)
+            } else if succeeded != 0 {
+                Err(invalid_token_data())
+            } else {
+                Err(error)
+            }
+        }
+        Some(output) => {
+            let mut returned = output.len() as u32;
+            if unsafe {
+                GetUserProfileDirectoryW(token.as_raw_handle(), output.as_mut_ptr(), &mut returned)
+            } == 0
+            {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(returned as usize)
+            }
+        }
+    })
+}
+
+fn profile_directory_from_query(
+    mut query: impl FnMut(Option<&mut [u16]>) -> io::Result<usize>,
+) -> io::Result<PathBuf> {
+    let needed = query(None)?;
+    if !(2..=MAX_PROFILE_DIRECTORY_UNITS).contains(&needed) {
+        return Err(invalid_token_data());
+    }
+    let mut buffer = vec![0u16; needed];
+    let returned = query(Some(&mut buffer))?;
+    if !(2..=needed).contains(&returned)
+        || buffer[returned - 1] != 0
+        || buffer[..returned - 1].contains(&0)
+    {
+        return Err(invalid_token_data());
+    }
+    let profile = PathBuf::from(std::ffi::OsString::from_wide(&buffer[..returned - 1]));
+    if !profile.is_absolute() {
+        return Err(invalid_token_data());
+    }
+    Ok(profile)
 }
 
 fn open_current_process_token() -> io::Result<OwnedHandle> {
@@ -335,8 +392,96 @@ impl Drop for FaultGuard {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::{current_token_sids, FaultGuard, FaultPoint};
-    use std::io::ErrorKind;
+    use super::{
+        current_profile_directory, current_token_sids, profile_directory_from_query, FaultGuard,
+        FaultPoint, MAX_PROFILE_DIRECTORY_UNITS,
+    };
+    use std::io::{self, ErrorKind};
+
+    #[test]
+    fn current_profile_directory_returns_absolute_nonempty_path() {
+        let profile = current_profile_directory().unwrap();
+
+        assert!(profile.is_absolute());
+        assert!(!profile.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn profile_directory_query_propagates_size_probe_failure() {
+        let result = profile_directory_from_query(|_| Err(io::Error::from_raw_os_error(5)));
+
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+    }
+
+    #[test]
+    fn profile_directory_query_propagates_fill_failure() {
+        let result = profile_directory_from_query(|output| match output {
+            None => Ok(4),
+            Some(_) => Err(io::Error::from_raw_os_error(5)),
+        });
+
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+    }
+
+    #[test]
+    fn profile_directory_query_rejects_oversized_probe_length() {
+        let calls = std::cell::Cell::new(0);
+        let result = profile_directory_from_query(|_| {
+            calls.set(calls.get() + 1);
+            Ok(MAX_PROFILE_DIRECTORY_UNITS + 1)
+        });
+
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+        assert_eq!(
+            calls.get(),
+            1,
+            "fill query must not run after oversized probe"
+        );
+    }
+
+    #[test]
+    fn profile_directory_query_rejects_returned_length_beyond_buffer() {
+        let result = profile_directory_from_query(|output| match output {
+            None => Ok(2),
+            Some(_) => Ok(3),
+        });
+
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn profile_directory_query_rejects_missing_terminator() {
+        let result = profile_directory_from_query(|output| match output {
+            None => Ok(4),
+            Some(buffer) => {
+                buffer.copy_from_slice(&[b'C' as u16, b':' as u16, b'\\' as u16, b'X' as u16]);
+                Ok(4)
+            }
+        });
+
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn profile_directory_query_rejects_interior_terminator() {
+        let result = profile_directory_from_query(|output| match output {
+            None => Ok(7),
+            Some(buffer) => {
+                buffer.copy_from_slice(&[
+                    b'C' as u16,
+                    b':' as u16,
+                    b'\\' as u16,
+                    b'x' as u16,
+                    0,
+                    b'y' as u16,
+                    0,
+                ]);
+                Ok(7)
+            }
+        });
+
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::InvalidData);
+    }
 
     #[test]
     fn current_token_sids_returns_nonempty_canonical_user_and_default_owner() {
