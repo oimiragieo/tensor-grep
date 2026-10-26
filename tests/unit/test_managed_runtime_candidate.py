@@ -11,6 +11,10 @@ def _failed_probe(command, **_kwargs):
     raise subprocess.CalledProcessError(1, command, stderr="probe failed")
 
 
+def _failed_install(command, detail):
+    raise subprocess.CalledProcessError(2, command, stderr=detail)
+
+
 def _candidate_evidence(python, *, version="0.33.0", cuda="12.8", extension=None):
     site = python.parent.parent / "Lib" / "site-packages"
     return {
@@ -134,3 +138,144 @@ def test_CandidateVerification_WhenProbeProcessFails_ReportsVerificationFailure(
 
     with pytest.raises(RuntimeError, match="candidate Python verification failed"):
         candidate._verify_managed_candidate_python(tmp_path / "python.exe", "0.33.0")
+
+
+def test_CandidateInstall_WhenRequestedCudaProfileCannotBeRecreated_RefusesBeforeInstall(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        candidate, "_managed_candidate_package_spec", lambda _spec: "tensor-grep[gpu-win]"
+    )
+    monkeypatch.setattr(candidate, "_managed_cuda_profile", lambda _executable: "12.7")
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("unsupported CUDA must refuse before install"),
+    )
+
+    with pytest.raises(RuntimeError, match=r"only the installer-pinned CUDA 12\.8 profile"):
+        candidate._run_managed_candidate_install(tmp_path / "python.exe", "tensor-grep[gpu-win]")
+
+
+def test_CudaProfile_WhenTorchHasNoCudaBuild_ReturnsNone(monkeypatch):
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, "\n", ""),
+    )
+
+    assert candidate._managed_cuda_profile("python.exe") is None
+
+
+def test_CandidateInstall_WhenUvSucceeds_UsesPinnedCandidatePythonAndPackageSpec(
+    monkeypatch, tmp_path
+):
+    python = tmp_path / "python.exe"
+    commands = []
+    monkeypatch.setattr(candidate, "_managed_candidate_package_spec", lambda spec: spec)
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda command, **_kwargs: (
+            commands.append(command),
+            subprocess.CompletedProcess(command, 0, "", ""),
+        )[1],
+    )
+
+    install_method = candidate._run_managed_candidate_install(python, "tensor-grep==0.33.0")
+
+    assert install_method == "uv"
+    assert commands == [
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--upgrade-package",
+            "tensor-grep",
+            "tensor-grep==0.33.0",
+        ]
+    ]
+
+
+def test_CandidateInstall_WhenCudaProfileMatches_InstallsPinnedCudaAndPackage(
+    monkeypatch, tmp_path
+):
+    python = tmp_path / "python.exe"
+    commands = []
+    monkeypatch.setattr(
+        candidate, "_managed_candidate_package_spec", lambda _spec: "tensor-grep[gpu-win]"
+    )
+    monkeypatch.setattr(candidate, "_managed_cuda_profile", lambda _executable: "12.8")
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda command, **_kwargs: (
+            commands.append(command),
+            subprocess.CompletedProcess(command, 0, "", ""),
+        )[1],
+    )
+
+    install_method = candidate._run_managed_candidate_install(python, "tensor-grep[gpu-win]")
+
+    assert install_method == "uv"
+    assert commands[0] == [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "--index-url",
+        "https://download.pytorch.org/whl/cu128",
+    ]
+    assert commands[1][-1] == "tensor-grep[gpu-win]"
+
+
+def test_CandidateInstall_WhenUvInstallFails_UsesPipWithBoundedPackageArguments(
+    monkeypatch, tmp_path
+):
+    python = tmp_path / "python.exe"
+    commands = []
+    outcomes = iter([
+        lambda command: _failed_install(command, "uv failed"),
+        lambda command: subprocess.CompletedProcess(command, 0, "", ""),
+    ])
+    monkeypatch.setattr(candidate, "_managed_candidate_package_spec", lambda spec: spec)
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda command, **_kwargs: (commands.append(command), next(outcomes)(command))[1],
+    )
+
+    install_method = candidate._run_managed_candidate_install(python, "tensor-grep==0.33.0")
+
+    assert install_method == "pip"
+    assert commands[0][:2] == ["uv", "pip"]
+    assert commands[1] == [
+        str(python),
+        "-m",
+        "pip",
+        "install",
+        "--no-cache-dir",
+        "tensor-grep==0.33.0",
+    ]
+
+
+def test_CandidateInstall_WhenUvAndPipBothFail_ReportsBothErrors(monkeypatch, tmp_path):
+    outcomes = iter([
+        lambda command: _failed_install(command, "uv failed"),
+        lambda command: _failed_install(command, "pip failed"),
+    ])
+    monkeypatch.setattr(candidate, "_managed_candidate_package_spec", lambda spec: spec)
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
+        lambda command, **_kwargs: next(outcomes)(command),
+    )
+
+    with pytest.raises(RuntimeError, match="uv: uv failed; pip: pip failed"):
+        candidate._run_managed_candidate_install(tmp_path / "python.exe", "tensor-grep==0.33.0")

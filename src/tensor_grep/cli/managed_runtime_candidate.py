@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from tensor_grep.cli._main_binding import _self
@@ -53,6 +54,97 @@ def _managed_candidate_package_spec(package_spec: str) -> str:
     if not extras or "[" in package_spec:
         return package_spec
     return package_spec.replace("tensor-grep", f"tensor-grep[{','.join(extras)}]", 1)
+
+
+def _run_managed_candidate_install(candidate_python: Path, package_spec: str) -> str:
+    package_spec = _managed_candidate_package_spec(package_spec)
+    if "[" in package_spec and "gpu-win" in package_spec:
+        cuda = _managed_cuda_profile(sys.executable)
+        if cuda != "12.8":
+            raise RuntimeError(
+                "managed CUDA upgrade refused: only the installer-pinned CUDA 12.8 profile "
+                "can be reproduced safely"
+            )
+        _self.subprocess.run(
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(candidate_python),
+                "torch",
+                "torchvision",
+                "torchaudio",
+                "--index-url",
+                "https://download.pytorch.org/whl/cu128",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+    attempts = [
+        (
+            "uv",
+            [
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                str(candidate_python),
+                "--upgrade-package",
+                "tensor-grep",
+                package_spec,
+            ],
+        ),
+        (
+            "pip",
+            [
+                str(candidate_python),
+                "-m",
+                "pip",
+                "install",
+                "--no-cache-dir",
+                package_spec,
+            ],
+        ),
+    ]
+    errors: list[str] = []
+    for label, command in attempts:
+        try:
+            _self.subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+            return label
+        except FileNotFoundError as exc:
+            errors.append(f"{label}: {exc}")
+        except _self.subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            errors.append(f"{label}: {detail}")
+    raise RuntimeError("managed candidate package install failed: " + "; ".join(errors))
+
+
+def _managed_cuda_profile(executable: str) -> str | None:
+    try:
+        result = _self.subprocess.run(
+            [str(executable), "-I", "-c", "import torch; print(torch.version.cuda or '')"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            timeout=15,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"managed CUDA profile could not be verified: {exc}") from exc
+    lines = (result.stdout or "").strip().splitlines()
+    return lines[-1] if lines else None
 
 
 def _verify_managed_candidate_python(
