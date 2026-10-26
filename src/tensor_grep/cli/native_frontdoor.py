@@ -755,6 +755,29 @@ def managed_windows_install_root(executable: str) -> Path | None:
     return authority
 
 
+def selected_managed_windows_version(install_root: Path) -> str | None:
+    try:
+        from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
+
+        managed = read_managed_runtime(trusted_root=install_root)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"managed runtime selector cannot be trusted: {exc}") from exc
+    if managed is None:
+        return None
+    generation_root = install_root / "runtimes" / managed.selection.generation
+    try:
+        with ExitStack() as held:
+            _pin_managed_directory(install_root, held)
+            _pin_managed_directory(install_root / "runtimes", held)
+            _pin_managed_directory(generation_root, held)
+            _pin_managed_generation_executables(generation_root, held)
+    except (OSError, RuntimeError):
+        raise RuntimeError(
+            "managed runtime selector points to an incomplete or untrusted generation"
+        ) from None
+    return managed.selection.version
+
+
 def _pin_managed_directory(path: Path, held: ExitStack) -> str:
     """Retain each directory handle while checking its final path and ACL."""
     from tensor_grep.cli import managed_runtime_reader as reader
