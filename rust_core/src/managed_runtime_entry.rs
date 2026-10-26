@@ -44,7 +44,7 @@ pub(crate) fn path_key(path: &Path) -> io::Result<String> {
     Ok(value.trim_end_matches('\\').to_ascii_lowercase())
 }
 
-fn valid_generation(value: &str) -> bool {
+pub(crate) fn valid_generation(value: &str) -> bool {
     value.len() == 32
         && value
             .bytes()

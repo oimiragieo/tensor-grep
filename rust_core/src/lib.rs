@@ -33,6 +33,10 @@ pub mod managed_runtime_resolver;
 #[cfg(windows)]
 pub(crate) mod managed_runtime_handoff;
 #[cfg(windows)]
+pub mod managed_runtime_dispatch;
+#[cfg(windows)]
+pub use managed_runtime_dispatch::prepare_main_startup;
+#[cfg(windows)]
 pub mod managed_runtime_windows_file;
 #[cfg(windows)]
 mod managed_runtime_windows_sid;

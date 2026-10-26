@@ -16,11 +16,12 @@ use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, TerminateProcess, WaitForSingleObject,
 };
 
-pub(crate) struct UnsettledChild {
-    pub(crate) error: io::Error,
-    pub(crate) runtime: ManagedRuntime,
-    pub(crate) child: Child,
-    pub(crate) process_handle: Option<OwnedHandle>,
+#[derive(Debug)]
+pub struct UnsettledChild {
+    pub error: io::Error,
+    pub runtime: ManagedRuntime,
+    pub child: Child,
+    pub process_handle: Option<OwnedHandle>,
 }
 
 /// Fail closed when process termination cannot be confirmed.
