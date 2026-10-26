@@ -294,8 +294,30 @@ def test_scan_ignores_unused_empty_pattern_rule(tmp_path, capsys):
     assert "unused-empty" not in captured.out
 
 
-def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
+def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys, monkeypatch):
+    from types import SimpleNamespace
+
+    from tensor_grep.cli import ast_workflows
     from tensor_grep.cli.ast_workflows import test_command
+
+    seen_patterns = []
+
+    class LinkedRuleBackend:
+        def search_many(self, paths, pattern, *, config):
+            seen_patterns.append(pattern)
+            assert pattern == "ERROR"
+            assert [Path(path).read_text(encoding="utf-8") for path in paths] == [
+                "PASS",
+                "ERROR",
+            ]
+            return SimpleNamespace(matched_file_paths=[paths[1]], matches=[])
+
+    backend = LinkedRuleBackend()
+    monkeypatch.setattr(
+        ast_workflows,
+        "_select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: backend,
+    )
 
     (tmp_path / "sgconfig.yml").write_text(
         "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
@@ -314,6 +336,7 @@ def test_empty_test_case_pattern_uses_linked_valid_rule(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
+    assert seen_patterns == ["ERROR"]
 
 
 def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):

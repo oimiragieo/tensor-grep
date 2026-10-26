@@ -913,9 +913,19 @@ def test_ensure_harness_venv_is_stdlib_only(tmp_path: Path) -> None:
     harness = harness_module()
     build = tmp_path / "build"
     python = harness.ensure_harness_venv(build)
+    venv = build / "harness-venv"
     assert python.is_file()
-    assert python.resolve().is_relative_to((build / "harness-venv").resolve())
-    assert not any((build / "harness-venv").rglob("tensor_grep"))
+    prefix = subprocess.run(
+        [str(python), "-c", "import sys; print(sys.prefix)"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert Path(prefix).resolve() == venv.resolve()
+    assert "include-system-site-packages = false" in (venv / "pyvenv.cfg").read_text(
+        encoding="utf-8"
+    )
+    assert not any(venv.rglob("tensor_grep"))
 
 
 def test_worker_prefers_harness_venv_interpreter(
