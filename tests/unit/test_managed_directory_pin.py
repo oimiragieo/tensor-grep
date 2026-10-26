@@ -6,6 +6,10 @@ import pytest
 from tensor_grep.cli import native_frontdoor
 
 
+def _refuse_managed_directory(_path, _held):
+    raise RuntimeError("untrusted managed root")
+
+
 def _fake_directory_handles(
     monkeypatch,
     final_path=None,
@@ -183,3 +187,36 @@ def test_ManagedGenerationPin_WhenGenerationContainsBothExecutables_PinsAllThree
     assert str(root / "bin" / "tg.exe") in calls
     assert str(root / ".venv" / "Scripts" / "python.exe") in calls
     assert len(closed) == len(calls)
+
+
+def test_StableLauncherPin_WhenBinDirectoryDoesNotExist_CreatesThenValidatesIt(
+    monkeypatch, tmp_path
+):
+    install_root = tmp_path / ".tensor-grep"
+    install_root.mkdir()
+    pin_states = []
+    monkeypatch.setattr(
+        native_frontdoor,
+        "_pin_managed_directory",
+        lambda path, _held: (
+            pin_states.append((path, (install_root / "bin").exists())),
+            str(path),
+        )[1],
+    )
+
+    with ExitStack() as held:
+        launcher = native_frontdoor._pin_stable_launcher_directory(install_root, held)
+
+    assert launcher == install_root / "bin" / "tg.exe"
+    assert (install_root / "bin").is_dir()
+    assert pin_states == [(install_root, False), (install_root / "bin", True)]
+
+
+def test_StableLauncherPin_WhenInstallRootIsRefused_DoesNotCreateBin(monkeypatch, tmp_path):
+    install_root = tmp_path / ".tensor-grep"
+    monkeypatch.setattr(native_frontdoor, "_pin_managed_directory", _refuse_managed_directory)
+
+    with ExitStack() as held, pytest.raises(RuntimeError, match="untrusted managed root"):
+        native_frontdoor._pin_stable_launcher_directory(install_root, held)
+
+    assert not (install_root / "bin").exists()

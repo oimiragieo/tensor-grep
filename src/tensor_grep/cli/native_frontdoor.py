@@ -835,6 +835,14 @@ def _pin_managed_generation_executables(generation_root: Path, held: ExitStack) 
     _pin_managed_executable(generation_root / ".venv" / "Scripts" / "python.exe", held)
 
 
+def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
+    _pin_managed_directory(install_root, held)
+    stable_bin = install_root / "bin"
+    stable_bin.mkdir(exist_ok=True)
+    _pin_managed_directory(stable_bin, held)
+    return stable_bin / "tg.exe"
+
+
 def _windows_managed_native_bin_dir() -> Path | None:
     user_profile = os.environ.get("USERPROFILE")
     if user_profile:
