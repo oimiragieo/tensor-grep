@@ -1033,7 +1033,7 @@ def _create_activation_ready_event() -> int:
         ]
 
     attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), None, True)
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel.CreateEventW.argtypes = [
         ctypes.POINTER(SecurityAttributes),
         wintypes.BOOL,
