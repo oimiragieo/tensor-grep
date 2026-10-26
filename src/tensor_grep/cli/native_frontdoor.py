@@ -600,7 +600,7 @@ def _write_native_frontdoor_metadata(
 
 
 def _install_release_native_frontdoor(
-    version: str, destination: Path
+    version: str, destination: Path, *, verify_destination: bool = True
 ) -> _NativeFrontdoorInstallResult:
     candidates = _self._native_frontdoor_download_candidates(version)
     if not candidates:
@@ -664,17 +664,33 @@ def _install_release_native_frontdoor(
             # and gives the destination its own explicit symlink-refusal check).
             install_mode = None if sys.platform.startswith("win") else 0o755
             atomic_write_bytes_anchored(destination, temp_path.read_bytes(), mode=install_mode)
-            installed_version = _self._native_tg_version(destination)
-            if not _self._native_tg_version_matches(version, installed_version):
-                if previous_bytes is not None:
-                    atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
-                else:
-                    destination.unlink(missing_ok=True)
-                download_errors.append(
-                    f"{candidate.flavor} asset failed install verification: installed native "
-                    f"tg front door reported {installed_version or 'no version'} instead of {version}"
+            if verify_destination:
+                installed_version = _self._native_tg_version(destination)
+                if not _self._native_tg_version_matches(version, installed_version):
+                    if previous_bytes is not None:
+                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
+                    else:
+                        destination.unlink(missing_ok=True)
+                    download_errors.append(
+                        f"{candidate.flavor} asset failed install verification: installed native "
+                        f"tg front door reported {installed_version or 'no version'} instead of "
+                        f"{version}"
+                    )
+                    continue
+            else:
+                checksum_error = _self._native_frontdoor_checksum_error(
+                    destination, candidate.asset_name, checksums_text
                 )
-                continue
+                if checksum_error is not None:
+                    if previous_bytes is not None:
+                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
+                    else:
+                        destination.unlink(missing_ok=True)
+                    download_errors.append(
+                        f"{candidate.flavor} asset failed install checksum verification: "
+                        f"{checksum_error}"
+                    )
+                    continue
             _self._write_native_frontdoor_metadata(
                 destination,
                 version=version,
