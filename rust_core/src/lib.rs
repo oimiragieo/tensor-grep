@@ -24,6 +24,8 @@ pub mod managed_runtime_acl_policy;
 pub mod managed_runtime_acl_reader;
 #[cfg(all(test, windows))]
 mod managed_runtime_acl_test_fixture;
+#[cfg(windows)]
+pub mod managed_runtime_entry;
 pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_resolver;
