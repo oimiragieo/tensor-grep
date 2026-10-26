@@ -253,6 +253,7 @@ impl Drop for AclFixture {
 #[cfg(test)]
 mod characterization_tests {
     use super::{AclFixture, FixtureDaclShape};
+    use crate::managed_runtime_acl_reader::read_handle_acl;
     use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
 
     #[test]
@@ -283,5 +284,37 @@ mod characterization_tests {
         let readable = fixture.open_with_access(FILE_READ_ATTRIBUTES);
 
         assert!(readable.is_ok());
+    }
+
+    #[test]
+    fn handle_reader_extracts_owner_and_allow_grant_from_real_descriptor() {
+        let mut fixture = AclFixture::new().unwrap();
+        fixture.set_sddl_dacl("D:P(A;;0x00120089;;;SY)").unwrap();
+
+        let acl = read_handle_acl(fixture.handle()).unwrap();
+
+        assert!(acl.owner.starts_with("S-1-"));
+        assert_eq!(acl.allow_grants, vec![("S-1-5-18".to_string(), 0x0012_0089)]);
+    }
+
+    #[test]
+    fn handle_reader_accepts_valid_empty_dacl() {
+        let mut fixture = AclFixture::new().unwrap();
+        fixture.set_sddl_dacl("D:P").unwrap();
+
+        let acl = read_handle_acl(fixture.handle()).unwrap();
+
+        assert!(acl.owner.starts_with("S-1-"));
+        assert!(acl.allow_grants.is_empty());
+    }
+
+    #[test]
+    fn handle_reader_refuses_null_dacl() {
+        let mut fixture = AclFixture::new().unwrap();
+        fixture.set_null_dacl().unwrap();
+
+        let error = read_handle_acl(fixture.handle()).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 }

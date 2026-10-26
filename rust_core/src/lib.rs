@@ -20,6 +20,8 @@ pub mod gpu_native;
 pub mod index;
 pub mod index_lock;
 pub mod managed_runtime_acl_policy;
+#[cfg(windows)]
+pub mod managed_runtime_acl_reader;
 #[cfg(all(test, windows))]
 mod managed_runtime_acl_test_fixture;
 pub mod managed_runtime_selection;
