@@ -3,6 +3,11 @@
 Published versions and their release pages are listed below.
 
 
+## v1.132.0
+
+[Release details](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.132.0)
+
+
 ## v1.131.7
 
 [Release details](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.131.7)
