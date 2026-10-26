@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -713,6 +714,52 @@ def _install_release_native_frontdoor(
     raise RuntimeError(
         "release-native front-door asset install failed: " + "; ".join(download_errors)
     )
+
+
+def _pin_managed_directory(path: Path, held: ExitStack) -> str:
+    """Retain each directory handle while checking its final path and ACL."""
+    from tensor_grep.cli import managed_runtime_reader as reader
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    if (
+        not path.is_absolute()
+        or len(path.drive) != 2
+        or path.drive[1] != ":"
+        or len(path.parts) < 2
+    ):
+        raise RuntimeError("managed runtime directory must be below a local drive root")
+    current = Path(path.anchor)
+    drive_handle = winsec.open_no_follow(str(current), directory=True, share=3)
+    if drive_handle is None:
+        raise RuntimeError("managed runtime drive root is missing or unsafe")
+    held.callback(winsec.close_handle, drive_handle)
+    parent_final = winsec.final_path(drive_handle)
+    if reader._final_key(parent_final) != reader._final_key(str(current)):
+        raise RuntimeError("managed runtime drive root identity changed")
+    for component in path.parts[1:]:
+        current = current / component
+        handle = winsec.open_no_follow(str(current), directory=True, share=3)
+        if handle is None:
+            raise RuntimeError(f"managed runtime directory is missing or unsafe: {current}")
+        held.callback(winsec.close_handle, handle)
+        final = winsec.final_path(handle)
+        if parent_final is not None and not reader._is_direct_child(final, parent_final, component):
+            raise RuntimeError("managed runtime directory identity changed during validation")
+        if current == path:
+            if not trust._parent_handle_ok(handle):
+                raise RuntimeError("managed runtime directory ACL is not trusted")
+        else:
+            details = winsec.owner_and_dacl_entries(handle)
+            sid = trust._win_current_user_sid()
+            if details is None or sid is None or not trust._windows_owner_ok(details[0], sid):
+                raise RuntimeError("managed runtime ancestor owner is not trusted")
+            if not trust._windows_ancestor_dacl_ok(details[1], sid):
+                raise RuntimeError("managed runtime ancestor ACL is not trusted")
+        parent_final = final
+    if parent_final is None:
+        raise RuntimeError("managed runtime directory final path is unavailable")
+    return parent_final
 
 
 def _windows_managed_native_bin_dir() -> Path | None:
