@@ -1032,6 +1032,115 @@ def _signal_activation_ready(ready_handle: int) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+def _stable_dispatcher_matches_release(version: str, stable_path: Path) -> bool:
+    """Keep a launcher only when its bytes match a checksum-listed release asset."""
+    with ExitStack() as held:
+        try:
+            _pin_managed_executable(stable_path, held)
+        except (OSError, RuntimeError):
+            return False
+        checksums = _self._fetch_native_frontdoor_checksums(version)
+        if checksums is None:
+            return False
+        return any(
+            _self._native_frontdoor_checksum_error(stable_path, candidate.asset_name, checksums)
+            is None
+            for candidate, _url in _self._native_frontdoor_download_candidates(version)
+        )
+
+
+def _activate_managed_generation_after_parent(
+    parent_handle: int,
+    ready_handle: int,
+    install_root: Path,
+    generation: str,
+    version: str,
+) -> int:
+    """Wait for the old launcher, publish selection, then repair its stable dispatcher."""
+    import ctypes
+    from ctypes import wintypes
+
+    from tensor_grep.cli import session_daemon_winsec as winsec
+    from tensor_grep.cli.managed_runtime_candidate import (
+        _verify_managed_candidate_python,
+        _windows_profile_directory,
+    )
+
+    with ExitStack() as resources:
+        resources.callback(winsec.close_handle, parent_handle)
+        resources.callback(winsec.close_handle, ready_handle)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.WaitForSingleObject.restype = wintypes.DWORD
+        status_path: Path | None = None
+        selector_attempted = [False]
+        with ExitStack() as held:
+            try:
+                expected_root = (_windows_profile_directory() / ".tensor-grep").absolute()
+                if _canonical_windows_path(install_root) != _canonical_windows_path(expected_root):
+                    raise RuntimeError(
+                        "activation root does not match the OS-verified user profile"
+                    )
+                if re.fullmatch(r"[0-9a-f]{32}", generation) is None:
+                    raise RuntimeError("activation generation is not a valid UUID")
+                if (
+                    re.fullmatch(
+                        r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)",
+                        version,
+                    )
+                    is None
+                ):
+                    raise RuntimeError("activation version is not a stable x.y.z version")
+
+                install_root = expected_root
+                _pin_managed_directory(install_root, held)
+                logs_path = install_root / "logs"
+                logs_path.mkdir(exist_ok=True)
+                _pin_managed_directory(logs_path, held)
+                status_path = logs_path / f"activation-{generation}.log"
+
+                runtimes = install_root / "runtimes"
+                _pin_managed_directory(runtimes, held)
+                generation_root = runtimes / generation
+                _pin_managed_directory(generation_root, held)
+                _pin_managed_generation_executables(generation_root, held)
+                candidate_python = generation_root / ".venv" / "Scripts" / "python.exe"
+                _verify_managed_candidate_python(candidate_python, version)
+                _signal_activation_ready(ready_handle)
+                if kernel.WaitForSingleObject(parent_handle, 900_000) != 0:
+                    raise RuntimeError(
+                        "native launcher did not exit before the activation deadline"
+                    )
+
+                stable_path = _pin_stable_launcher_directory(install_root, held)
+                from tensor_grep.cli._index_lock import index_lock
+
+                with index_lock(install_root / "runtime-selection.json"):
+                    _publish_managed_generation(
+                        install_root, generation, version, held, selector_attempted
+                    )
+                    if not _stable_dispatcher_matches_release(version, stable_path):
+                        _install_release_native_frontdoor(version, stable_path)
+                atomic_write_bytes_anchored(
+                    status_path, f"activated {version} generation {generation}\n".encode()
+                )
+                return 0
+            except Exception as exc:
+                if status_path is not None:
+                    state = (
+                        "pending after selector publication attempt"
+                        if selector_attempted[0]
+                        else "failed"
+                    )
+                    try:
+                        atomic_write_bytes_anchored(
+                            status_path, f"activation {state}: {type(exc).__name__}\n".encode()
+                        )
+                    except OSError:
+                        pass
+                return 1
+
+
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
     _pin_managed_directory(install_root, held)
     stable_bin = install_root / "bin"
