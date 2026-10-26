@@ -995,6 +995,43 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
             winsec.close_handle(handle)
 
 
+def _create_activation_ready_event() -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), None, True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateEventW.argtypes = [
+        ctypes.POINTER(SecurityAttributes),
+        wintypes.BOOL,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    ]
+    kernel.CreateEventW.restype = wintypes.HANDLE
+    handle = kernel.CreateEventW(ctypes.byref(attributes), True, False, None)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return int(handle)
+
+
+def _signal_activation_ready(ready_handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.SetEvent.argtypes = [wintypes.HANDLE]
+    kernel.SetEvent.restype = wintypes.BOOL
+    if not kernel.SetEvent(ready_handle):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
     _pin_managed_directory(install_root, held)
     stable_bin = install_root / "bin"
