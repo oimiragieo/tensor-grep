@@ -893,7 +893,8 @@ def _pin_managed_generation_executables(generation_root: Path, held: ExitStack) 
 def _validate_managed_publication_descriptor(descriptor: int, parent_final: str, name: str) -> None:
     import msvcrt
 
-    _validate_managed_leaf_handle(msvcrt.get_osfhandle(descriptor), parent_final, name)
+    descriptor_handle = msvcrt.get_osfhandle(descriptor)  # type: ignore[attr-defined]
+    _validate_managed_leaf_handle(descriptor_handle, parent_final, name)
 
 
 def _publish_managed_generation(
@@ -948,7 +949,9 @@ def _publish_managed_generation(
                     from tensor_grep.cli import session_daemon_winsec as winsec
 
                     discard_temporary = reader._is_direct_child(
-                        winsec.final_path(msvcrt.get_osfhandle(descriptor)),
+                        winsec.final_path(
+                            msvcrt.get_osfhandle(descriptor)  # type: ignore[attr-defined]
+                        ),
                         parent_final,
                         temporary_path.name,
                     )
@@ -984,7 +987,7 @@ def _create_activation_ready_event() -> int:
     kernel.CreateEventW.restype = wintypes.HANDLE
     handle = kernel.CreateEventW(ctypes.byref(attributes), True, False, None)
     if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
     return int(handle)
 
 
@@ -992,11 +995,11 @@ def _signal_activation_ready(ready_handle: int) -> None:
     import ctypes
     from ctypes import wintypes
 
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel.SetEvent.argtypes = [wintypes.HANDLE]
     kernel.SetEvent.restype = wintypes.BOOL
     if not kernel.SetEvent(ready_handle):
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
 
 
 class _ManagedActivationUnsettledError(RuntimeError):
@@ -1072,7 +1075,7 @@ def _schedule_managed_activation(
         kernel.SetHandleInformation.restype = wintypes.BOOL
         for inherited in (parent_handle, ready_handle):
             if not kernel.SetHandleInformation(inherited, 1, 0):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         process_handle = winsec.open_process(child.pid)
         if process_handle is None:
             raise RuntimeError("cannot open activation helper process for readiness wait")
@@ -1170,7 +1173,7 @@ def _activate_managed_generation_after_parent(
     with ExitStack() as resources:
         resources.callback(winsec.close_handle, parent_handle)
         resources.callback(winsec.close_handle, ready_handle)
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         kernel.WaitForSingleObject.restype = wintypes.DWORD
         status_path: Path | None = None
