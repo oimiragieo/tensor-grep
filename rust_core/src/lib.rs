@@ -31,6 +31,8 @@ pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_resolver;
 #[cfg(windows)]
+pub(crate) mod managed_runtime_handoff;
+#[cfg(windows)]
 pub mod managed_runtime_windows_file;
 #[cfg(windows)]
 mod managed_runtime_windows_sid;
