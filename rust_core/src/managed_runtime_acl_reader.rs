@@ -18,6 +18,7 @@ const MAX_ACE_COUNT: u32 = 1024;
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 const INHERIT_ONLY_ACE: u8 = 0x08;
 const KNOWN_ALLOW_ACE_FLAGS: u8 = 0x1f;
+const ACL_HEADER_BYTES: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandleAcl {
@@ -83,10 +84,14 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
         return Err(invalid_acl("DACL is unavailable or null"));
     }
     let acl_start = queried_dacl as usize;
-    if acl_start < start || acl_start.checked_add(8).is_none_or(|acl_end| acl_end > end) {
+    if acl_start < start
+        || acl_start
+            .checked_add(ACL_HEADER_BYTES)
+            .is_none_or(|acl_end| acl_end > end)
+    {
         return Err(invalid_acl("DACL lies outside its security descriptor"));
     }
-    let acl_size = unsafe { (*queried_dacl).AclSize } as usize;
+    let acl_size = unsafe { std::ptr::addr_of!((*queried_dacl).AclSize).read_unaligned() } as usize;
     if acl_size < 8 {
         return Err(invalid_acl("DACL is too short"));
     }
@@ -118,10 +123,7 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
             return Err(invalid_acl("DACL ACE is unavailable"));
         }
         let ace_start = raw_ace as usize;
-        let header_end = ace_start
-            .checked_add(std::mem::size_of::<ACE_HEADER>())
-            .filter(|value| *value <= acl_end)
-            .ok_or_else(|| invalid_acl("ACE header lies outside its DACL"))?;
+        let header_end = checked_ace_header_end(acl_start, acl_end, ace_start)?;
         let header = unsafe { raw_ace.cast::<ACE_HEADER>().read_unaligned() };
         let ace_end = ace_start
             .checked_add(header.AceSize as usize)
@@ -142,6 +144,19 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
         owner: owner_sid,
         allow_grants: grants,
     })
+}
+
+fn checked_ace_header_end(acl_start: usize, acl_end: usize, ace_start: usize) -> io::Result<usize> {
+    let minimum_ace_start = acl_start
+        .checked_add(ACL_HEADER_BYTES)
+        .ok_or_else(|| invalid_acl("DACL header range overflowed"))?;
+    if ace_start < minimum_ace_start {
+        return Err(invalid_acl("ACE header starts before the DACL body"));
+    }
+    ace_start
+        .checked_add(std::mem::size_of::<ACE_HEADER>())
+        .filter(|value| *value <= acl_end)
+        .ok_or_else(|| invalid_acl("ACE header lies outside its DACL"))
 }
 
 fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
@@ -207,7 +222,7 @@ fn invalid_acl(message: &'static str) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_allow_ace;
+    use super::{checked_ace_header_end, parse_allow_ace};
     use std::io;
 
     #[test]
@@ -220,6 +235,13 @@ mod tests {
         ace[9] = 1; // SID claims one 4-byte subauthority; only 8 SID bytes remain.
 
         let error = parse_allow_ace(&ace).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn ace_header_range_rejects_pointer_before_dacl_body() {
+        let error = checked_ace_header_end(0x1000, 0x1100, 0x1004).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
