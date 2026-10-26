@@ -189,6 +189,8 @@ mod tests {
     fn outside_profile_managed_shaped_path_remains_standalone() {
         let outside = tempfile::tempdir().unwrap();
         let profile = tempfile::tempdir().unwrap();
+        let canonical_profile = std::fs::canonicalize(profile.path()).unwrap();
+        let canonical_profile = std::fs::canonicalize(profile.path()).unwrap();
         let executable = outside
             .path()
             .join(".tensor-grep")
@@ -196,10 +198,7 @@ mod tests {
             .join("tg.exe");
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(&executable, b"standalone").unwrap();
-
-        let outcome =
-            prepare_startup_for(&executable, &[], || Ok(profile.path().to_path_buf())).unwrap();
-
+        let outcome = prepare_startup_for(&executable, &[], || Ok(canonical_profile)).unwrap();
         assert!(matches!(outcome, StartupOutcome::Standalone));
     }
 }
