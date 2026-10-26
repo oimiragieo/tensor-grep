@@ -41,7 +41,10 @@ impl std::fmt::Display for DispatchError {
             Self::Io(error) => write!(formatter, "{error}"),
             Self::Hop(error) => write!(formatter, "{}", error.message),
             Self::UnsettledChild(_) => {
-                write!(formatter, "termination requested; child settlement unproven")
+                write!(
+                    formatter,
+                    "termination requested; child settlement unproven"
+                )
             }
         }
     }
@@ -147,9 +150,7 @@ pub(crate) fn prepare_from_root(
     match launch_selected_native(runtime, args, next_hops) {
         Ok(exit_code) => Ok(StartupOutcome::Exit(exit_code)),
         Err(LaunchFailure::Io(error)) => Err(DispatchError::Io(error)),
-        Err(LaunchFailure::Unsettled(unsettled)) => {
-            Err(DispatchError::UnsettledChild(unsettled))
-        }
+        Err(LaunchFailure::Unsettled(unsettled)) => Err(DispatchError::UnsettledChild(unsettled)),
     }
 }
 
@@ -189,7 +190,6 @@ mod tests {
     fn outside_profile_managed_shaped_path_remains_standalone() {
         let outside = tempfile::tempdir().unwrap();
         let profile = tempfile::tempdir().unwrap();
-        let canonical_profile = std::fs::canonicalize(profile.path()).unwrap();
         let canonical_profile = std::fs::canonicalize(profile.path()).unwrap();
         let executable = outside
             .path()

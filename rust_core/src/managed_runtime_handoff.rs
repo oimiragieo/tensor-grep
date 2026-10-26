@@ -166,9 +166,10 @@ mod tests {
             .unwrap();
         let handle = duplicate_process_handle(&child).unwrap();
 
-        let result = recover_wait_failure(io::Error::other("injected primary wait failure"), || {
-            terminate_and_confirm(&handle, Duration::from_secs(10))
-        });
+        let result =
+            recover_wait_failure(io::Error::other("injected primary wait failure"), || {
+                terminate_and_confirm(&handle, Duration::from_secs(10))
+            });
 
         match result {
             WaitRecoveryError::Settled(error) => {
@@ -182,9 +183,10 @@ mod tests {
 
     #[test]
     fn unconfirmed_wait_failure_retains_original_diagnostic() {
-        let result = recover_wait_failure(io::Error::other("injected primary wait failure"), || {
-            Ok(false)
-        });
+        let result =
+            recover_wait_failure(io::Error::other("injected primary wait failure"), || {
+                Ok(false)
+            });
 
         match result {
             WaitRecoveryError::Unconfirmed(error) => {

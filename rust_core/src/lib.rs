@@ -25,15 +25,15 @@ pub mod managed_runtime_acl_reader;
 #[cfg(all(test, windows))]
 mod managed_runtime_acl_test_fixture;
 #[cfg(windows)]
-pub mod managed_runtime_entry;
-pub mod managed_runtime_python;
-pub mod managed_runtime_selection;
+pub mod managed_runtime_dispatch;
 #[cfg(windows)]
-pub mod managed_runtime_resolver;
+pub mod managed_runtime_entry;
 #[cfg(windows)]
 pub(crate) mod managed_runtime_handoff;
+pub mod managed_runtime_python;
 #[cfg(windows)]
-pub mod managed_runtime_dispatch;
+pub mod managed_runtime_resolver;
+pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub use managed_runtime_dispatch::prepare_main_startup;
 #[cfg(windows)]

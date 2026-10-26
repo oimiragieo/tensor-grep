@@ -294,7 +294,10 @@ mod characterization_tests {
         let acl = read_handle_acl(fixture.handle()).unwrap();
 
         assert!(acl.owner.starts_with("S-1-"));
-        assert_eq!(acl.allow_grants, vec![("S-1-5-18".to_string(), 0x0012_0089)]);
+        assert_eq!(
+            acl.allow_grants,
+            vec![("S-1-5-18".to_string(), 0x0012_0089)]
+        );
     }
 
     #[test]
