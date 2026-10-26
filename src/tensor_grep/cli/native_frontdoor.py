@@ -68,6 +68,16 @@ class _NativeFrontdoorInstallResult:
 
 
 @dataclass(frozen=True)
+class ManagedWindowsRuntimeInstall:
+    generation: str
+    version: str
+    install_method: str
+    native_flavor: str
+    activation_pending: bool = False
+    activation_log: Path | None = None
+
+
+@dataclass(frozen=True)
 class _WindowsStalePythonLauncher:
     path: Path
     python_executable: Path
@@ -1289,6 +1299,98 @@ def _activate_managed_generation_after_parent(
                     except OSError:
                         pass
                 return 1
+
+
+def stage_managed_windows_runtime(
+    executable: str, package_spec: str, expected_version: str
+) -> ManagedWindowsRuntimeInstall:
+    """Install a verified generation beside the active runtime, then select it."""
+    from tensor_grep.cli import managed_runtime_candidate as candidate
+    from tensor_grep.cli._index_lock import index_lock
+
+    install_root = managed_windows_install_root(executable)
+    if install_root is None:
+        raise RuntimeError("executable is not a Windows managed tensor-grep Python runtime")
+    generation = uuid4().hex
+    encode_selection(ManagedRuntimeSelection(generation, expected_version))
+    generation_root = install_root / "runtimes" / generation
+    candidate_python = generation_root / ".venv" / "Scripts" / "python.exe"
+    native_path = generation_root / "bin" / "tg.exe"
+    selector_path = install_root / "runtime-selection.json"
+    held = ExitStack()
+    selector_attempted = [False]
+    try:
+        _pin_managed_directory(install_root, held)
+        runtimes_root = install_root / "runtimes"
+        runtimes_root.mkdir(exist_ok=True)
+        _pin_managed_directory(runtimes_root, held)
+        # Failed generations stay unselected; recursive path cleanup races Windows swaps.
+        generation_root.mkdir(exist_ok=False)
+        _pin_managed_directory(generation_root, held)
+
+        venv_path = candidate_python.parent.parent
+        try:
+            _self.subprocess.run(
+                ["uv", "venv", "--python", str(Path(executable).absolute()), str(venv_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+        except (FileNotFoundError, _self.subprocess.CalledProcessError):
+            _self.subprocess.run(
+                [str(Path(executable).absolute()), "-m", "venv", str(venv_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+
+        normalized_spec = candidate._managed_candidate_package_spec(package_spec)
+        expected_cuda = "12.8" if "gpu-win" in normalized_spec else None
+        install_method = candidate._run_managed_candidate_install(candidate_python, normalized_spec)
+        candidate._verify_managed_candidate_python(
+            candidate_python, expected_version, expected_cuda=expected_cuda
+        )
+        native_result = _install_release_native_frontdoor(
+            expected_version, native_path, verify_destination=False
+        )
+        _pin_managed_generation_executables(generation_root, held)
+        stable_path = _pin_stable_launcher_directory(install_root, held)
+        parent_handle = _open_native_parent_handle(stable_path)
+        if parent_handle is not None:
+            status_path = _schedule_managed_activation(
+                candidate_python, install_root, generation, expected_version, parent_handle, held
+            )
+            return ManagedWindowsRuntimeInstall(
+                generation,
+                expected_version,
+                install_method,
+                native_result.flavor,
+                activation_pending=True,
+                activation_log=status_path,
+            )
+
+        with index_lock(selector_path):
+            _publish_managed_generation(
+                install_root, generation, expected_version, held, selector_attempted
+            )
+            if not _stable_dispatcher_matches_release(expected_version, stable_path):
+                _install_release_native_frontdoor(expected_version, stable_path)
+        return ManagedWindowsRuntimeInstall(
+            generation, expected_version, install_method, native_result.flavor
+        )
+    except BaseException as exc:
+        if isinstance(exc, RuntimeError) or not isinstance(exc, Exception):
+            raise
+        raise RuntimeError(f"managed runtime staging failed: {exc}") from exc
+    finally:
+        try:
+            held.close()
+        except BaseException:
+            pass
 
 
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
