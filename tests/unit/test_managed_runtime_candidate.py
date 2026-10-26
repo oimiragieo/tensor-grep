@@ -167,6 +167,20 @@ def test_CudaProfile_WhenTorchHasNoCudaBuild_ReturnsNone(monkeypatch):
     assert candidate._managed_cuda_profile("python.exe") is None
 
 
+def test_CudaProfile_WhenProbeFails_RaisesVerificationError(monkeypatch):
+    def fail_probe(*_args, **_kwargs):
+        raise OSError("CUDA probe unavailable")
+
+    monkeypatch.setattr(candidate._self.subprocess, "run", fail_probe)
+
+    with pytest.raises(
+        RuntimeError, match="CUDA profile could not be verified: CUDA probe unavailable"
+    ) as caught:
+        candidate._managed_cuda_profile("python.exe")
+
+    assert isinstance(caught.value.__cause__, OSError)
+
+
 def test_CandidateInstall_WhenUvSucceeds_UsesPinnedCandidatePythonAndPackageSpec(
     monkeypatch, tmp_path
 ):

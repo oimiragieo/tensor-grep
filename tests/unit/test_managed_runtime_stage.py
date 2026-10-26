@@ -86,6 +86,9 @@ def _stub_stage_dependencies(
 
     monkeypatch.setattr(cli_main.subprocess, "run", run)
     monkeypatch.setattr(managed_runtime_candidate, "_run_managed_candidate_install", install)
+    monkeypatch.setattr(
+        managed_runtime_candidate, "_managed_candidate_package_spec", lambda spec: spec
+    )
     monkeypatch.setattr(managed_runtime_candidate, "_verify_managed_candidate_python", verify)
     monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", install_native)
     monkeypatch.setattr(
