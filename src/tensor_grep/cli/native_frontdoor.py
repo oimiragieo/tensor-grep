@@ -801,6 +801,40 @@ def _pin_managed_directory(path: Path, held: ExitStack) -> str:
     return parent_final
 
 
+def _validate_managed_leaf_handle(handle: int, parent_final: str, name: str) -> None:
+    from tensor_grep.cli import managed_runtime_reader as reader
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    if not trust._windows_handle_trusted(handle, check_dacl=True):
+        raise RuntimeError(f"managed runtime executable ACL is not trusted: {name}")
+    if winsec.link_count(handle) != 1:
+        raise RuntimeError(f"managed runtime executable must have one hard link: {name}")
+    if not reader._is_direct_child(winsec.final_path(handle), parent_final, name):
+        raise RuntimeError(f"managed runtime executable is outside its pinned directory: {name}")
+
+
+def _pin_managed_executable(path: Path, held: ExitStack) -> None:
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    parent_final = _pin_managed_directory(path.parent, held)
+    handle = winsec.open_no_follow(str(path), share=1)
+    if handle is None:
+        raise RuntimeError(f"managed runtime executable is missing or unsafe: {path.name}")
+    try:
+        _validate_managed_leaf_handle(handle, parent_final, path.name)
+    except BaseException:
+        winsec.close_handle(handle)
+        raise
+    held.callback(winsec.close_handle, handle)
+
+
+def _pin_managed_generation_executables(generation_root: Path, held: ExitStack) -> None:
+    _pin_managed_directory(generation_root / ".venv", held)
+    _pin_managed_executable(generation_root / "bin" / "tg.exe", held)
+    _pin_managed_executable(generation_root / ".venv" / "Scripts" / "python.exe", held)
+
+
 def _windows_managed_native_bin_dir() -> Path | None:
     user_profile = os.environ.get("USERPROFILE")
     if user_profile:
