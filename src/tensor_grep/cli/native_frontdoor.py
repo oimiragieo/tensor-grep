@@ -1336,8 +1336,8 @@ def stage_managed_windows_runtime(
     finally:
         try:
             held.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            _LOGGER.warning("managed runtime staging cleanup failed (%s)", type(exc).__name__)
 
 
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:

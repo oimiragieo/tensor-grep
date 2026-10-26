@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -97,6 +98,38 @@ def _stub_stage_dependencies(
     monkeypatch.setattr(native_frontdoor, "_open_native_parent_handle", lambda _path: None)
     monkeypatch.setattr(native_frontdoor, "_schedule_managed_activation", lambda *_args: None)
     return venv_calls, installs, verification
+
+
+def test_ManagedStage_WhenHandleCleanupFails_LogsWarning(
+    trusted_base_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    _stub_stage_dependencies(monkeypatch)
+
+    class FailingCloseExitStack(native_frontdoor.ExitStack):
+        def close(self) -> None:
+            super().close()
+            raise OSError("fixture close failure")
+
+    monkeypatch.setattr(native_frontdoor, "ExitStack", FailingCloseExitStack)
+    monkeypatch.setattr(native_frontdoor, "_open_native_parent_handle", lambda _path: 1)
+    monkeypatch.setattr(
+        native_frontdoor,
+        "_schedule_managed_activation",
+        lambda *_args: tmp_path / "activation.log",
+    )
+
+    with caplog.at_level(logging.WARNING, logger=native_frontdoor.__name__):
+        result = native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    assert result.activation_pending
+    assert "managed runtime staging cleanup failed (OSError)" in caplog.text
+    assert "fixture close failure" not in caplog.text
 
 
 @pytest.mark.parametrize(

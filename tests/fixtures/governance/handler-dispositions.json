@@ -3518,5 +3518,15 @@
     "evidence": "tests/unit/test_managed_activation_worker.py::test_ActivationWorker_WhenParentHandleIsInvalid_LogsFailureWithoutPublishing verifies nonzero return, no selector publication, and an activation-failed status record.",
     "reason": "Activation errors must remain visible and must never be reported as a successful generation switch.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 1339,
+    "enclosing_symbol": "stage_managed_windows_runtime",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "tests/unit/test_managed_runtime_stage.py::test_ManagedStage_WhenHandleCleanupFails_LogsWarning verifies a type-only warning when staged handle cleanup raises OSError.",
+    "reason": "Cleanup can run after the activation worker starts or the selector is published, so rollback is unsafe; the warning discloses the secondary failure without exception text or paths. KeyboardInterrupt and SystemExit still propagate because only Exception is caught.",
+    "hardened_in": null
   }
 ]

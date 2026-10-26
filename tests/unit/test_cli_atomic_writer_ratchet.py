@@ -1478,8 +1478,9 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     therefore NOT yet counted in the `violating` total below -- they almost certainly carry the
     identical defect. `_verify_target_python_tensor_grep_version`, `_managed_cuda_profile`, and
     `_verify_managed_candidate_python` spawn read-only version/model probes. `_schedule_managed_activation`
-    starts `_activate_managed_generation_after_parent`; its selector publication is pinned and
-    written through `atomic_write_bytes_anchored`, recorded in the helper-backed census below.
+    starts `_activate_managed_generation_after_parent`; its activation status log is written
+    through `atomic_write_bytes_anchored`, recorded in the helper-backed census below. Selector
+    publication uses handle-based `windows_publication.replace_open`.
     Recursing this detector into generated-source payloads is left as an explicit follow-up, not
     silently declared clean.
     """
