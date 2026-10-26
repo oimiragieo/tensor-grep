@@ -1032,6 +1032,140 @@ def _signal_activation_ready(ready_handle: int) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
+class _ManagedActivationUnsettledError(RuntimeError):
+    pass
+
+
+_MANAGED_ACTIVATION_WORKER_MAY_LIVE = "_managed_activation_worker_may_live"
+_ACTIVATION_WORKER_PROGRAM = (
+    "import sys; from pathlib import Path; "
+    "from tensor_grep.cli.native_frontdoor import _activate_managed_generation_after_parent; "
+    "raise SystemExit(_activate_managed_generation_after_parent("
+    "int(sys.argv[1]),int(sys.argv[2]),Path(sys.argv[3]),sys.argv[4],sys.argv[5]))"
+)
+
+
+def _schedule_managed_activation(
+    candidate_python: Path,
+    install_root: Path,
+    generation: str,
+    expected_version: str,
+    parent_handle: int,
+    held: ExitStack,
+) -> Path:
+    """Start an isolated helper and return only after its pinned preflight is ready."""
+    import ctypes
+    import subprocess
+    from ctypes import wintypes
+
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    ready_handle: int | None = None
+    process_handle = None
+    child = None
+    kernel = None
+    status_path = install_root / "logs" / f"activation-{generation}.log"
+    try:
+        encode_selection(ManagedRuntimeSelection(generation, expected_version))
+        generation_root = install_root / "runtimes" / generation
+        expected_python = generation_root / ".venv" / "Scripts" / "python.exe"
+        if _canonical_windows_path(candidate_python) != _canonical_windows_path(expected_python):
+            raise RuntimeError("activation Python does not match the selected generation")
+        _pin_managed_directory(install_root, held)
+        _pin_managed_directory(install_root / "runtimes", held)
+        _pin_managed_generation_executables(generation_root, held)
+
+        ready_handle = _create_activation_ready_event()
+        startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        startup.lpAttributeList = {"handle_list": [parent_handle, ready_handle]}
+        flags = 0
+        for flag in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+            flags |= int(getattr(subprocess, flag, 0))
+        child = _self.subprocess.Popen(
+            [
+                str(expected_python),
+                "-I",
+                "-c",
+                _ACTIVATION_WORKER_PROGRAM,
+                str(parent_handle),
+                str(ready_handle),
+                str(install_root),
+                generation,
+                expected_version,
+            ],
+            stdin=_self.subprocess.DEVNULL,
+            stdout=_self.subprocess.DEVNULL,
+            stderr=_self.subprocess.DEVNULL,
+            close_fds=True,
+            startupinfo=startup,
+            creationflags=flags,
+        )
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+        kernel.SetHandleInformation.restype = wintypes.BOOL
+        for inherited in (parent_handle, ready_handle):
+            if not kernel.SetHandleInformation(inherited, 1, 0):
+                raise ctypes.WinError(ctypes.get_last_error())
+        process_handle = winsec.open_process(child.pid)
+        if process_handle is None:
+            raise RuntimeError("cannot open activation helper process for readiness wait")
+        handles = (wintypes.HANDLE * 2)(ready_handle, process_handle)
+        kernel.WaitForMultipleObjects.argtypes = [
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel.WaitForMultipleObjects.restype = wintypes.DWORD
+        waited = int(kernel.WaitForMultipleObjects(2, handles, False, 30_000))
+        if waited == 1:
+            raise RuntimeError("activation helper exited before candidate preflight was ready")
+        if waited == 258:
+            raise TimeoutError("activation helper did not become ready within 30 seconds")
+        if waited != 0:
+            raise RuntimeError("activation helper readiness wait failed")
+        return status_path
+    except BaseException as exc:
+        settled = child is None
+        cleanup_interruption: BaseException | None = None
+        try:
+            if child is not None and process_handle is not None:
+                winsec.terminate_process(process_handle)
+                settled = winsec.wait_process(process_handle, 5_000)
+            elif child is not None:
+                child.terminate()
+                child.wait(timeout=5)
+                settled = True
+        except BaseException as cleanup_exc:
+            cleanup_interruption = cleanup_exc
+            try:
+                if process_handle is not None:
+                    settled = winsec.wait_process(process_handle, 5_000)
+                elif child is not None:
+                    child.wait(timeout=5)
+                    settled = True
+            except BaseException:
+                settled = child is not None and child.poll() is not None
+        if not settled:
+            if cleanup_interruption is not None and not isinstance(cleanup_interruption, Exception):
+                setattr(cleanup_interruption, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+                raise cleanup_interruption from exc
+            setattr(exc, _MANAGED_ACTIVATION_WORKER_MAY_LIVE, True)
+            if isinstance(exc, Exception):
+                raise _ManagedActivationUnsettledError(
+                    "activation helper may still be running; staged generation retained"
+                ) from exc
+        elif cleanup_interruption is not None and not isinstance(cleanup_interruption, Exception):
+            raise cleanup_interruption from exc
+        raise
+    finally:
+        winsec.close_handle(parent_handle)
+        if ready_handle is not None:
+            winsec.close_handle(ready_handle)
+        if process_handle is not None:
+            winsec.close_handle(process_handle)
+
+
 def _stable_dispatcher_matches_release(version: str, stable_path: Path) -> bool:
     """Keep a launcher only when its bytes match a checksum-listed release asset."""
     with ExitStack() as held:
