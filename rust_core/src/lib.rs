@@ -26,6 +26,7 @@ pub mod managed_runtime_acl_reader;
 mod managed_runtime_acl_test_fixture;
 #[cfg(windows)]
 pub mod managed_runtime_entry;
+pub mod managed_runtime_python;
 pub mod managed_runtime_selection;
 #[cfg(windows)]
 pub mod managed_runtime_resolver;
