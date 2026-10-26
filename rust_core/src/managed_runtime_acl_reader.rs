@@ -52,10 +52,10 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     if !(20..=MAX_DESCRIPTOR_BYTES).contains(&length) {
         return Err(invalid_acl("security descriptor length is invalid"));
     }
+    // SAFETY: GetSecurityInfo returned this LocalFree-owned buffer, and the validated length
+    // bounds every byte view below. `_owner` keeps the allocation alive for this function.
+    let descriptor_bytes = unsafe { std::slice::from_raw_parts(descriptor.cast::<u8>(), length) };
     let start = descriptor as usize;
-    let end = start
-        .checked_add(length)
-        .ok_or_else(|| invalid_acl("security descriptor range overflowed"))?;
     let mut queried_owner = std::ptr::null_mut();
     let mut owner_defaulted = 0;
     if unsafe { GetSecurityDescriptorOwner(descriptor, &mut queried_owner, &mut owner_defaulted) }
@@ -64,7 +64,13 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     {
         return Err(invalid_acl("security descriptor owner is unavailable"));
     }
-    let owner_sid = sid_string(queried_owner.cast(), start, end)?;
+    let owner_offset = (queried_owner as usize)
+        .checked_sub(start)
+        .ok_or_else(|| invalid_acl("security descriptor owner is outside its allocation"))?;
+    let owner_bytes = descriptor_bytes
+        .get(owner_offset..)
+        .ok_or_else(|| invalid_acl("security descriptor owner is outside its allocation"))?;
+    let owner_sid = sid_string(owner_bytes)?;
 
     let mut dacl_present = 0;
     let mut queried_dacl = std::ptr::null_mut();
@@ -83,21 +89,23 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     {
         return Err(invalid_acl("DACL is unavailable or null"));
     }
-    let acl_start = queried_dacl as usize;
-    if acl_start < start
-        || acl_start
-            .checked_add(ACL_HEADER_BYTES)
-            .is_none_or(|acl_end| acl_end > end)
-    {
-        return Err(invalid_acl("DACL lies outside its security descriptor"));
-    }
-    let acl_size = unsafe { std::ptr::addr_of!((*queried_dacl).AclSize).read_unaligned() } as usize;
-    if acl_size < 8 {
+    let acl_start = (queried_dacl as usize)
+        .checked_sub(start)
+        .ok_or_else(|| invalid_acl("DACL lies outside its security descriptor"))?;
+    let acl_header_end = acl_start
+        .checked_add(ACL_HEADER_BYTES)
+        .filter(|value| *value <= descriptor_bytes.len())
+        .ok_or_else(|| invalid_acl("DACL lies outside its security descriptor"))?;
+    let acl_header = descriptor_bytes
+        .get(acl_start..acl_header_end)
+        .ok_or_else(|| invalid_acl("DACL lies outside its security descriptor"))?;
+    let acl_size = u16::from_ne_bytes([acl_header[2], acl_header[3]]) as usize;
+    if acl_size < ACL_HEADER_BYTES {
         return Err(invalid_acl("DACL is too short"));
     }
     let acl_end = acl_start
         .checked_add(acl_size)
-        .filter(|value| *value <= end)
+        .filter(|value| *value <= descriptor_bytes.len())
         .ok_or_else(|| invalid_acl("DACL range is invalid"))?;
     if unsafe { IsValidAcl(queried_dacl) } == 0 {
         return Err(invalid_acl("DACL is malformed"));
@@ -122,22 +130,29 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
         if unsafe { GetAce(queried_dacl, index, &mut raw_ace) } == 0 || raw_ace.is_null() {
             return Err(invalid_acl("DACL ACE is unavailable"));
         }
-        let ace_start = raw_ace as usize;
-        let header_end = checked_ace_header_end(acl_start, acl_end, ace_start)?;
-        let header = unsafe { raw_ace.cast::<ACE_HEADER>().read_unaligned() };
+        let ace_start = (raw_ace as usize)
+            .checked_sub(start)
+            .ok_or_else(|| invalid_acl("ACE lies outside its security descriptor"))?;
+        let header_end = checked_ace_header_end(acl_start + ACL_HEADER_BYTES, acl_end, ace_start)?;
+        let header = descriptor_bytes
+            .get(ace_start..header_end)
+            .ok_or_else(|| invalid_acl("ACE header lies outside its DACL"))?;
+        let ace_size = u16::from_ne_bytes([header[2], header[3]]) as usize;
         let ace_end = ace_start
-            .checked_add(header.AceSize as usize)
+            .checked_add(ace_size)
             .filter(|value| *value <= acl_end)
             .ok_or_else(|| invalid_acl("ACE range is invalid"))?;
         if ace_end < header_end {
             return Err(invalid_acl("ACE range is invalid"));
         }
-        let ace_bytes = unsafe {
-            std::slice::from_raw_parts(raw_ace.cast::<u8>(), ace_end.saturating_sub(ace_start))
-        };
+        let ace_bytes = descriptor_bytes
+            .get(ace_start..ace_end)
+            .ok_or_else(|| invalid_acl("ACE range is invalid"))?;
         if let Some((sid_offset, mask)) = parse_allow_ace(ace_bytes)? {
-            let sid = unsafe { raw_ace.cast::<u8>().add(sid_offset).cast::<c_void>() };
-            grants.push((sid_string(sid, ace_start, ace_end)?, mask));
+            let sid = ace_bytes
+                .get(sid_offset..)
+                .ok_or_else(|| invalid_acl("allow ACE SID lies outside its ACE"))?;
+            grants.push((sid_string(sid)?, mask));
         }
     }
     Ok(HandleAcl {
@@ -146,11 +161,12 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     })
 }
 
-fn checked_ace_header_end(acl_start: usize, acl_end: usize, ace_start: usize) -> io::Result<usize> {
-    let minimum_ace_start = acl_start
-        .checked_add(ACL_HEADER_BYTES)
-        .ok_or_else(|| invalid_acl("DACL header range overflowed"))?;
-    if ace_start < minimum_ace_start {
+fn checked_ace_header_end(
+    acl_body_start: usize,
+    acl_end: usize,
+    ace_start: usize,
+) -> io::Result<usize> {
+    if ace_start < acl_body_start {
         return Err(invalid_acl("ACE header starts before the DACL body"));
     }
     ace_start
@@ -163,10 +179,10 @@ fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
     if ace.len() < std::mem::size_of::<ACE_HEADER>() {
         return Err(invalid_acl("ACE header is truncated"));
     }
-    let header = unsafe { ace.as_ptr().cast::<ACE_HEADER>().read_unaligned() };
-    if header.AceSize as usize != ace.len()
-        || header.AceType != ACCESS_ALLOWED_ACE_TYPE
-        || header.AceFlags & !KNOWN_ALLOW_ACE_FLAGS != 0
+    let ace_size = u16::from_ne_bytes([ace[2], ace[3]]) as usize;
+    if ace_size != ace.len()
+        || ace[0] != ACCESS_ALLOWED_ACE_TYPE
+        || ace[1] & !KNOWN_ALLOW_ACE_FLAGS != 0
     {
         return Err(invalid_acl("DACL contains unsupported ACE semantics"));
     }
@@ -179,20 +195,17 @@ fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
     if sid[0] != 1 || sid[1] > 15 || sid_length != sid.len() {
         return Err(invalid_acl("allow ACE SID is malformed or exceeds its ACE"));
     }
-    if header.AceFlags & INHERIT_ONLY_ACE != 0 {
+    if ace[1] & INHERIT_ONLY_ACE != 0 {
         return Ok(None);
     }
     let mask = u32::from_ne_bytes(ace[4..8].try_into().expect("ACE header has mask bytes"));
     Ok(Some((sid_offset, mask)))
 }
 
-fn sid_string(sid: *mut c_void, start: usize, end: usize) -> io::Result<String> {
-    let sid_start = sid as usize;
-    sid_start
-        .checked_add(8)
-        .filter(|value| sid_start >= start && *value <= end)
-        .ok_or_else(|| invalid_acl("SID header lies outside its security descriptor"))?;
-    let sid_header = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), 8) };
+fn sid_string(sid: &[u8]) -> io::Result<String> {
+    let sid_header = sid
+        .get(..8)
+        .ok_or_else(|| invalid_acl("SID header is truncated"))?;
     let sid_length = 8usize
         .checked_add(
             (sid_header[1] as usize)
@@ -201,19 +214,17 @@ fn sid_string(sid: *mut c_void, start: usize, end: usize) -> io::Result<String> 
         )
         .filter(|_| sid_header[0] == 1 && sid_header[1] <= 15)
         .ok_or_else(|| invalid_acl("SID header is malformed"))?;
-    if sid_start
-        .checked_add(sid_length)
-        .is_none_or(|value| value > end)
-    {
-        return Err(invalid_acl("SID lies outside its security descriptor"));
-    }
-    if unsafe { IsValidSid(sid) } == 0 {
+    let sid = sid
+        .get(..sid_length)
+        .ok_or_else(|| invalid_acl("SID lies outside its security descriptor"))?;
+    let sid_pointer = sid.as_ptr() as *mut c_void;
+    if unsafe { IsValidSid(sid_pointer) } == 0 {
         return Err(invalid_acl("SID is malformed"));
     }
-    if unsafe { windows_sys::Win32::Security::GetLengthSid(sid) } as usize != sid_length {
+    if unsafe { windows_sys::Win32::Security::GetLengthSid(sid_pointer) } as usize != sid_length {
         return Err(invalid_acl("SID length is inconsistent"));
     }
-    unsafe { sid_to_string(sid, "SID could not be converted") }
+    unsafe { sid_to_string(sid_pointer, "SID could not be converted") }
 }
 
 fn invalid_acl(message: &'static str) -> io::Error {
@@ -241,7 +252,7 @@ mod tests {
 
     #[test]
     fn ace_header_range_rejects_pointer_before_dacl_body() {
-        let error = checked_ace_header_end(0x1000, 0x1100, 0x1004).unwrap_err();
+        let error = checked_ace_header_end(0x1008, 0x1100, 0x1004).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
