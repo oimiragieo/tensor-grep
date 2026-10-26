@@ -7,10 +7,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUST_MAIN = REPO_ROOT / "rust_core" / "src" / "main.rs"
+MAIN_ENV = REPO_ROOT / "rust_core" / "src" / "main_env.rs"
 _STARTUP_CALL = re.compile(
-    r"(?m)^\s*#\[cfg\(windows\)\]\s*"
-    r"let\s+_managed_runtime\s*=\s*"
-    r"tensor_grep_rs::prepare_main_startup\(&raw_args\[1\.\.\]\)\?;"
+    r"(?m)^\s*let\s+\(raw_args,\s*_managed_runtime\)\s*=\s*"
+    r"main_env::collect_main_args\(\)\?;"
 )
 
 
@@ -23,8 +23,10 @@ def _main_inner(source: str) -> str:
 
 def test_source_fixture_contains_native_main_entrypoint() -> None:
     source = RUST_MAIN.read_text(encoding="utf-8")
+    helper = MAIN_ENV.read_text(encoding="utf-8")
 
-    assert "let raw_args: Vec<OsString> = std::env::args_os().collect();" in source
+    assert "pub(crate) fn collect_main_args()" in helper
+    assert "tensor_grep_rs::prepare_main_startup(&args[1..])?" in helper
     assert _main_inner(source).startswith("fn main_inner()")
 
 
@@ -34,7 +36,7 @@ def test_managed_runtime_preflight_precedes_native_command_routing() -> None:
     first_route = main.find("if raw_args.len() <= 1")
 
     assert startup is not None, (
-        "Windows main_inner must retain prepare_main_startup's runtime handle; "
+        "Windows main_inner must retain the managed-runtime guard; "
         "otherwise tg.exe ignores the generation selected by the updater"
     )
     assert first_route > startup.start(), (

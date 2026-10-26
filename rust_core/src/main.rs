@@ -1169,9 +1169,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn main_inner() -> anyhow::Result<()> {
-    let raw_args: Vec<OsString> = std::env::args_os().collect();
-    #[cfg(windows)]
-    let _managed_runtime = tensor_grep_rs::prepare_main_startup(&raw_args[1..])?;
+    let (raw_args, _managed_runtime) = main_env::collect_main_args()?;
 
     if raw_args.len() <= 1 {
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
