@@ -39,7 +39,20 @@ def try_managed_windows_upgrade(
             "PyPI version could not be verified"
         )
     if previous_version == latest_version:
-        return f"tensor-grep is already at the latest PyPI version ({latest_version})."
+        try:
+            selected_version = _native_frontdoor.selected_managed_windows_version(install_root)
+            launcher_is_current = (
+                selected_version == latest_version
+                and _native_frontdoor._stable_dispatcher_matches_release(
+                    latest_version, install_root / "bin" / "tg.exe"
+                )
+            )
+        except (OSError, RuntimeError) as exc:
+            raise ManagedWindowsUpgradeError(
+                f"cannot safely inspect the current managed runtime: {exc}"
+            ) from exc
+        if launcher_is_current:
+            return f"tensor-grep is already at the latest PyPI version ({latest_version})."
     if previous_version is not None and _native_frontdoor._is_version_newer(
         previous_version, latest_version
     ):

@@ -84,6 +84,16 @@ def test_upgrade_WhenManagedRuntimeAlreadyCurrent_DoesNotRestartHealthyDaemon(
 ):
     _patch_managed_upgrade(monkeypatch, tmp_path, "1.1.0", "1.1.0")
     monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "selected_managed_windows_version",
+        lambda _root: "1.1.0",
+    )
+    monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "_stable_dispatcher_matches_release",
+        lambda _version, _path: True,
+    )
+    monkeypatch.setattr(
         cli_main, "_upgrade_running_session_daemon_snapshot", lambda: {"root": "repo"}
     )
     monkeypatch.setattr(
@@ -105,6 +115,77 @@ def test_upgrade_WhenManagedRuntimeAlreadyCurrent_DoesNotRestartHealthyDaemon(
 
     assert result.exit_code == 0
     assert "already at the latest PyPI version (1.1.0)" in result.output
+
+
+@pytest.mark.parametrize(
+    ("selected_version", "launcher_matches"),
+    [(None, False), ("1.1.0", False)],
+    ids=["legacy-runtime", "stale-stable-launcher"],
+)
+def test_upgrade_WhenAlreadyCurrentLegacyRuntimeOrLauncherNeedsRepair_StagesGeneration(
+    monkeypatch, tmp_path, selected_version, launcher_matches
+):
+    _patch_managed_upgrade(monkeypatch, tmp_path, "1.1.0", "1.1.0")
+    monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "selected_managed_windows_version",
+        lambda _root: selected_version,
+    )
+    launcher_checks = []
+
+    def launcher_matches_release(version, path):
+        launcher_checks.append((version, path))
+        return launcher_matches
+
+    monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "_stable_dispatcher_matches_release",
+        launcher_matches_release,
+    )
+    staged = cli_main._native_frontdoor.ManagedWindowsRuntimeInstall("c" * 32, "1.1.0", "uv", "cpu")
+    staged_versions = []
+
+    def stage_runtime(_executable, package_spec, version):
+        staged_versions.append((package_spec, version))
+        return staged
+
+    monkeypatch.setattr(cli_main._native_frontdoor, "stage_managed_windows_runtime", stage_runtime)
+
+    result = CliRunner().invoke(cli_main.app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert staged_versions == [("tensor-grep==1.1.0", "1.1.0")]
+    assert "Successfully upgraded tensor-grep to 1.1.0 via managed staging." in result.output
+    assert len(launcher_checks) == (0 if selected_version is None else 1)
+
+
+def test_upgrade_WhenCurrentLauncherChecksumReadFails_RefusesWithoutTraceback(
+    monkeypatch, tmp_path
+):
+    _patch_managed_upgrade(monkeypatch, tmp_path, "1.1.0", "1.1.0")
+    monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "selected_managed_windows_version",
+        lambda _root: "1.1.0",
+    )
+
+    def refuse_checksum(_version, _path):
+        raise PermissionError("launcher read refused")
+
+    monkeypatch.setattr(
+        cli_main._native_frontdoor, "_stable_dispatcher_matches_release", refuse_checksum
+    )
+    monkeypatch.setattr(
+        cli_main._native_frontdoor,
+        "stage_managed_windows_runtime",
+        lambda *_args: pytest.fail("untrusted launcher verification must stop before staging"),
+    )
+
+    result = CliRunner().invoke(cli_main.app, ["upgrade"])
+
+    assert result.exit_code == 1
+    assert "cannot safely inspect the current managed runtime" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_upgrade_WhenManagedRuntimeVersionIsUnknown_FailsWithoutInPlaceMutation(
@@ -277,3 +358,17 @@ def test_managedUpgrade_WhenDaemonShutdownIsUnconfirmed_DoesNotStartReplacement(
     result = upgrade._restart_managed_session_daemon({"root": "repo"}, native_path, "1.1.0")
 
     assert "could not confirm session daemon shutdown" in result
+
+
+def test_managedUpgrade_WhenDaemonPinFails_ReturnsVisibleWarning(monkeypatch, tmp_path):
+    def fail_pin(_path, _held):
+        raise OSError("launcher pin refused")
+
+    monkeypatch.setattr(upgrade._native_frontdoor, "_pin_managed_executable", fail_pin)
+
+    result = upgrade._restart_managed_session_daemon({"root": "repo"}, tmp_path / "tg.exe", "1.1.0")
+
+    assert result == (
+        "WARNING: managed upgrade could not restart the session daemon for repo: "
+        "launcher pin refused"
+    )
