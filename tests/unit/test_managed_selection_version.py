@@ -1,11 +1,19 @@
 import os
 import sys
+from contextlib import ExitStack
 
 import pytest
 
 from tensor_grep.cli import session_daemon_trust, session_daemon_winsec
+from tensor_grep.cli._index_lock import index_lock
+from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
 from tensor_grep.cli.managed_runtime_selection import ManagedRuntimeSelection, encode_selection
-from tensor_grep.cli.native_frontdoor import selected_managed_windows_version
+from tensor_grep.cli.native_frontdoor import (
+    _pin_managed_directory,
+    _pin_managed_generation_executables,
+    _publish_managed_generation,
+    selected_managed_windows_version,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="managed selection is Windows-only")
 
@@ -42,6 +50,15 @@ def _write_raw_selection(root, payload):
         assert session_daemon_winsec.write_all(handle, payload)
     finally:
         session_daemon_winsec.close_handle(handle)
+
+
+def _create_generation(root, generation):
+    generation_root = root / "runtimes" / generation
+    (generation_root / "bin").mkdir(parents=True)
+    (generation_root / ".venv" / "Scripts").mkdir(parents=True)
+    (generation_root / "bin" / "tg.exe").write_bytes(b"native")
+    (generation_root / ".venv" / "Scripts" / "python.exe").write_bytes(b"python")
+    return generation_root
 
 
 def test_SelectedManagedVersion_WhenNoSelectionExists_ReturnsNone(trusted_base_dir, tmp_path):
@@ -118,3 +135,98 @@ def test_SelectedManagedVersion_WhenSelectedNativeIsHardLinked_RefusesGeneration
 
     with pytest.raises(RuntimeError, match="incomplete or untrusted generation"):
         selected_managed_windows_version(root)
+
+
+def test_ManagedSelectionPublication_WhenCandidateIsVerified_SelectsGeneration(
+    trusted_base_dir, tmp_path
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    generation = "0123456789abcdef0123456789abcdef"
+    generation_root = _create_generation(root, generation)
+    (root / "runtimes").mkdir(exist_ok=True)
+
+    with ExitStack() as held:
+        _pin_managed_directory(root, held)
+        _pin_managed_directory(root / "runtimes", held)
+        _pin_managed_directory(generation_root, held)
+        _pin_managed_generation_executables(generation_root, held)
+        with index_lock(root / "runtime-selection.json"):
+            _publish_managed_generation(root, generation, "1.2.3", held)
+
+    selected = read_managed_runtime(trusted_root=root)
+    assert selected is not None
+    assert selected.selection == ManagedRuntimeSelection(generation, "1.2.3")
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []
+
+
+def test_ManagedSelectionPublication_WhenCandidateIsOlder_PreservesNewerSelection(
+    trusted_base_dir, tmp_path
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "0123456789abcdef0123456789abcdef"
+    candidate_generation = "fedcba9876543210fedcba9876543210"
+    _create_generation(root, selected_generation)
+    candidate_root = _create_generation(root, candidate_generation)
+    _write_selection(root, selected_generation, "1.3.0")
+    original = (root / "runtime-selection.json").read_bytes()
+    attempted = [False]
+
+    with ExitStack() as held:
+        _pin_managed_directory(root, held)
+        _pin_managed_directory(root / "runtimes", held)
+        _pin_managed_directory(candidate_root, held)
+        _pin_managed_generation_executables(candidate_root, held)
+        with index_lock(root / "runtime-selection.json"):
+            with pytest.raises(RuntimeError, match="refusing to activate older candidate"):
+                _publish_managed_generation(root, candidate_generation, "1.2.9", held, attempted)
+
+    assert (root / "runtime-selection.json").read_bytes() == original
+    assert attempted == [False]
+    assert candidate_root.is_dir()
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []
+
+
+def test_ManagedSelectionPublication_WhenSelectorIsLocked_PreservesOldRecordAndCleansTemp(
+    trusted_base_dir, tmp_path
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "0123456789abcdef0123456789abcdef"
+    candidate_generation = "fedcba9876543210fedcba9876543210"
+    _create_generation(root, selected_generation)
+    candidate_root = _create_generation(root, candidate_generation)
+    _write_selection(root, selected_generation, "1.2.3")
+    original = (root / "runtime-selection.json").read_bytes()
+    blocker = session_daemon_winsec.open_no_follow(str(root / "runtime-selection.json"), share=3)
+    assert blocker is not None
+
+    try:
+        with ExitStack() as held:
+            _pin_managed_directory(root, held)
+            _pin_managed_directory(root / "runtimes", held)
+            _pin_managed_directory(candidate_root, held)
+            _pin_managed_generation_executables(candidate_root, held)
+            with index_lock(root / "runtime-selection.json"):
+                with pytest.raises(OSError):
+                    _publish_managed_generation(root, candidate_generation, "1.2.4", held)
+    finally:
+        session_daemon_winsec.close_handle(blocker)
+
+    assert (root / "runtime-selection.json").read_bytes() == original
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    ("generation", "version"),
+    [("bad-generation", "1.2.3"), ("0123456789abcdef0123456789abcdef", "latest")],
+)
+def test_ManagedSelectionPublication_WhenRecordIsInvalid_RefusesBeforeTemporaryCreation(
+    trusted_base_dir, tmp_path, generation, version
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    (root / "runtimes").mkdir()
+
+    with ExitStack() as held, pytest.raises(ValueError, match="selection"):
+        _publish_managed_generation(root, generation, version, held)
+
+    assert list(root.iterdir()) == [root / "runtimes"]
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []

@@ -30,8 +30,10 @@ import typer
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli._main_binding import _self as _self
 from tensor_grep.cli.freshness_process import capture_probe as _capture_freshness_probe
+from tensor_grep.cli.managed_runtime_selection import ManagedRuntimeSelection, encode_selection
 from tensor_grep.cli.runtime_paths import native_frontdoor_metadata_path
 from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
+from tensor_grep.io import windows_publication
 
 _PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
 _LOGGER = logging.getLogger(__name__)
@@ -856,6 +858,78 @@ def _pin_managed_generation_executables(generation_root: Path, held: ExitStack) 
     _pin_managed_directory(generation_root / ".venv", held)
     _pin_managed_executable(generation_root / "bin" / "tg.exe", held)
     _pin_managed_executable(generation_root / ".venv" / "Scripts" / "python.exe", held)
+
+
+def _validate_managed_publication_descriptor(descriptor: int, parent_final: str, name: str) -> None:
+    import msvcrt
+
+    _validate_managed_leaf_handle(msvcrt.get_osfhandle(descriptor), parent_final, name)
+
+
+def _publish_managed_generation(
+    install_root: Path,
+    generation: str,
+    version: str,
+    held: ExitStack,
+    publication_attempted: list[bool] | None = None,
+) -> None:
+    """Publish one verified generation; the caller holds the selector lock and generation pins."""
+    selector_path = install_root / "runtime-selection.json"
+    selector_bytes = encode_selection(ManagedRuntimeSelection(generation, version))
+    selected_version = selected_managed_windows_version(install_root)
+    if selected_version is not None and _self._is_version_newer(selected_version, version):
+        raise RuntimeError(
+            f"managed runtime selector advanced to {selected_version}; "
+            f"refusing to activate older candidate {version}"
+        )
+
+    parent_final = _pin_managed_directory(install_root, held)
+    temporary_path = selector_path.with_name(f"{selector_path.name}.{uuid4().hex}.tmp")
+    descriptor = None
+    replacement_attempted = False
+    try:
+        descriptor = windows_publication.open_temporary(temporary_path)
+        with os.fdopen(descriptor, "wb", closefd=False) as output:
+            output.write(selector_bytes)
+            output.flush()
+            os.fsync(output.fileno())
+        _validate_managed_publication_descriptor(descriptor, parent_final, temporary_path.name)
+        replacement_attempted = True
+        if publication_attempted is not None:
+            publication_attempted[0] = True
+        windows_publication.replace_open(descriptor, selector_path)
+        os.close(descriptor)
+        descriptor = None
+        if selected_managed_windows_version(install_root) != version:
+            raise RuntimeError("managed selector read-back failed")
+        from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
+
+        resolved = read_managed_runtime(trusted_root=install_root)
+        if resolved is None or resolved.selection.generation != generation:
+            raise RuntimeError("stable dispatcher did not resolve the activated generation")
+    finally:
+        if descriptor is not None:
+            discard_temporary = not replacement_attempted
+            if replacement_attempted:
+                try:
+                    import msvcrt
+
+                    from tensor_grep.cli import managed_runtime_reader as reader
+                    from tensor_grep.cli import session_daemon_winsec as winsec
+
+                    discard_temporary = reader._is_direct_child(
+                        winsec.final_path(msvcrt.get_osfhandle(descriptor)),
+                        parent_final,
+                        temporary_path.name,
+                    )
+                except OSError:
+                    pass
+            if discard_temporary:
+                try:
+                    windows_publication.discard_open(descriptor)
+                except OSError:
+                    pass
+            os.close(descriptor)
 
 
 def _pin_stable_launcher_directory(install_root: Path, held: ExitStack) -> Path:
