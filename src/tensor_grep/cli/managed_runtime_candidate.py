@@ -21,6 +21,40 @@ _MANAGED_VERSION_PROBE = (
 )
 
 
+def _windows_profile_directory() -> Path:
+    """Resolve the Windows profile through its Known Folder API."""
+    import ctypes
+    from ctypes import wintypes
+
+    windll = ctypes.windll  # type: ignore[attr-defined]
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", wintypes.DWORD),
+            ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    folder = GUID(
+        0x5E6C858F,
+        0x0E22,
+        0x4760,
+        (ctypes.c_ubyte * 8)(0x9A, 0xFE, 0xEA, 0x33, 0x17, 0xB6, 0x71, 0x73),
+    )
+    result = ctypes.c_wchar_p()
+    if (
+        windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(result))
+        != 0
+        or not result.value
+    ):
+        raise RuntimeError("managed Windows profile authority could not be resolved")
+    try:
+        return Path(result.value)
+    finally:
+        windll.ole32.CoTaskMemFree(result)
+
+
 def _managed_candidate_package_spec(package_spec: str) -> str:
     """Preserve optional features detected in the currently running managed environment."""
     import shutil

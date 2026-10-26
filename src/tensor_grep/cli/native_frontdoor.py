@@ -716,6 +716,45 @@ def _install_release_native_frontdoor(
     )
 
 
+def managed_windows_install_root(executable: str) -> Path | None:
+    """Return the managed root after validating its profile, ancestry, and opened handles."""
+    if not sys.platform.startswith("win"):
+        return None
+    executable_path = Path(executable).expanduser().absolute()
+    scripts = executable_path.parent
+    venv = scripts.parent
+    if scripts.name.casefold() != "scripts" or venv.name.casefold() != ".venv":
+        return None
+    if executable_path.name.casefold() != "python.exe":
+        return None
+    parent = venv.parent
+    if parent.name.casefold() == ".tensor-grep":
+        root = parent
+    elif (
+        re.fullmatch(r"[0-9a-f]{32}", parent.name) is not None
+        and parent.parent.name.casefold() == "runtimes"
+        and parent.parent.parent.name.casefold() == ".tensor-grep"
+    ):
+        root = parent.parent.parent
+    else:
+        return None
+    from tensor_grep.cli import session_daemon_trust as trust
+    from tensor_grep.cli.managed_runtime_candidate import _windows_profile_directory
+
+    authority = (_windows_profile_directory() / ".tensor-grep").absolute()
+
+    def path_key(value: Path) -> str:
+        return os.path.normcase(os.path.normpath(os.fspath(value)))
+
+    if path_key(root) != path_key(authority):
+        raise RuntimeError("managed Windows runtime is outside the OS-verified user profile")
+    if not trust._ancestors_trusted(authority):
+        raise RuntimeError("managed Windows runtime root or ancestry is not trusted")
+    with ExitStack() as held:
+        _pin_managed_directory(authority, held)
+    return authority
+
+
 def _pin_managed_directory(path: Path, held: ExitStack) -> str:
     """Retain each directory handle while checking its final path and ACL."""
     from tensor_grep.cli import managed_runtime_reader as reader
