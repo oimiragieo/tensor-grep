@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from tensor_grep.cli._main_binding import _self
@@ -22,6 +23,38 @@ _MANAGED_VERSION_PROBE = (
     "'extension':str(pathlib.Path(r.__file__).resolve()),'cuda':cuda,'torch':torch_present,"
     "'torch_path':torch_path,'torch_auxiliaries':torch_auxiliaries}))"
 )
+
+_MANAGED_PROFILE_PROBE = (
+    "import importlib.metadata as m, importlib.util as u, json, pathlib, shutil; "
+    "d=m.distribution('tensor-grep'); module=u.find_spec('tensor_grep'); "
+    "ts=u.find_spec('torch'); cuda=None; torch_path=None; "
+    "torch_present=ts is not None; "
+    "exec('import torch; cuda=torch.version.cuda; torch_path=str(pathlib.Path(torch.__file__).resolve())' "
+    "if torch_present else 'pass'); "
+    "aux={name:str(pathlib.Path(spec.origin).resolve()) for name in ('torchvision','torchaudio') "
+    "if (spec:=u.find_spec(name)) is not None and spec.origin}; "
+    "features=[]; "
+    "[(features.append(extra)) for extra,mods in "
+    "(('gpu-win',('torch',)),('nlp',('transformers','tritonclient')),"
+    "('ast',('tree_sitter',)),('semantic',('model2vec',)),('rerank',('onnxruntime',))) "
+    "if any(u.find_spec(mod) is not None for mod in mods)]; "
+    "scan=any((dist.metadata.get('Name') or '').casefold()=='ast-grep-cli' for dist in m.distributions()) "
+    "or any(shutil.which(name) for name in ('ast-grep','ast-grep.exe')); "
+    "features.extend(['scan'] if scan else []); "
+    "print(json.dumps({'version':m.version('tensor-grep'),"
+    "'module':str(pathlib.Path(module.origin).resolve()) if module and module.origin else None,"
+    "'dist':str(pathlib.Path(d.locate_file('')).resolve()),"
+    "'torch':torch_present,'cuda':cuda,"
+    "'torch_path':torch_path,'torch_auxiliaries':aux,'extras':features}))"
+)
+
+
+@dataclass(frozen=True)
+class ManagedCandidateProfile:
+    version: str
+    extras: tuple[str, ...]
+    cuda: str | None
+    torch_auxiliaries: tuple[str, ...]
 
 
 def _windows_profile_directory() -> Path:
@@ -58,39 +91,77 @@ def _windows_profile_directory() -> Path:
         windll.ole32.CoTaskMemFree(result)
 
 
-def _managed_candidate_package_spec(package_spec: str) -> str:
-    """Preserve optional features detected in the currently running managed environment."""
-    import shutil
-    from importlib import metadata
-    from importlib.util import find_spec
-
-    extras: list[str] = []
-    for extra, modules in (
-        ("gpu-win", ("torch",)),
-        ("nlp", ("transformers", "tritonclient")),
-        ("ast", ("tree_sitter",)),
-        ("semantic", ("model2vec",)),
-        ("rerank", ("onnxruntime",)),
-    ):
-        for module in modules:
-            try:
-                present = find_spec(module) is not None
-            except (ImportError, ValueError):
-                present = False
-            if present:
-                extras.append(extra)
-                break
-    try:
-        metadata.version("ast-grep-cli")
-    except metadata.PackageNotFoundError:
-        scan_present = any(shutil.which(name) for name in ("ast-grep", "ast-grep.exe"))
-    else:
-        scan_present = True
-    if scan_present:
-        extras.append("scan")
+def _managed_candidate_package_spec(
+    package_spec: str, *, detected_extras: tuple[str, ...] = ()
+) -> str:
+    """Add optional extras discovered from the managed source interpreter."""
+    extras = list(detected_extras)
     if not extras or "[" in package_spec:
         return package_spec
     return package_spec.replace("tensor-grep", f"tensor-grep[{','.join(extras)}]", 1)
+
+
+def _managed_candidate_profile(executable: Path | str) -> ManagedCandidateProfile:
+    """Read the installed managed interpreter's package and torch profile in isolation."""
+    try:
+        result = _self.subprocess.run(
+            [str(executable), "-I", "-c", _MANAGED_PROFILE_PROBE],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            timeout=60,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"managed source Python profile could not be verified: {exc}") from exc
+    try:
+        evidence = json.loads((result.stdout or "").strip())
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("managed source Python profile returned invalid evidence") from exc
+    if not isinstance(evidence, dict):
+        raise RuntimeError("managed source Python profile returned invalid evidence")
+    expected_root = Path(executable).parent.parent.resolve()
+    for key in ("module", "dist"):
+        value = evidence.get(key)
+        if not isinstance(value, str) or not Path(value).resolve().is_relative_to(expected_root):
+            raise RuntimeError(f"managed source Python {key} origin is outside its environment")
+    version = evidence.get("version")
+    extras = evidence.get("extras")
+    cuda = evidence.get("cuda")
+    if (
+        not isinstance(version, str)
+        or not isinstance(extras, list)
+        or any(not isinstance(extra, str) for extra in extras)
+        or len(extras) != len(set(extras))
+        or not (cuda is None or isinstance(cuda, str))
+    ):
+        raise RuntimeError("managed source Python profile returned invalid evidence")
+    if evidence.get("torch") is True:
+        torch_path = evidence.get("torch_path")
+        if not isinstance(torch_path, str) or not Path(torch_path).resolve().is_relative_to(
+            expected_root
+        ):
+            raise RuntimeError("managed source Python torch origin is outside its environment")
+    elif evidence.get("torch") is not False or cuda is not None:
+        raise RuntimeError("managed source Python torch profile is invalid")
+    auxiliaries = evidence.get("torch_auxiliaries")
+    if (
+        not isinstance(auxiliaries, dict)
+        or set(auxiliaries) - {"torchvision", "torchaudio"}
+        or any(
+            not isinstance(name, str)
+            or not isinstance(path, str)
+            or not Path(path).resolve().is_relative_to(expected_root)
+            for name, path in auxiliaries.items()
+        )
+        or set(extras) - {"gpu-win", "nlp", "ast", "semantic", "rerank", "scan"}
+        or type(evidence.get("torch")) is not bool
+        or (evidence.get("torch") is True and "gpu-win" not in extras)
+        or (evidence.get("torch") is False and cuda is not None)
+    ):
+        raise RuntimeError("managed source Python torch auxiliary profile is invalid")
+    return ManagedCandidateProfile(version, tuple(extras), cuda, tuple(sorted(auxiliaries)))
 
 
 def _run_managed_candidate_install(
@@ -99,8 +170,13 @@ def _run_managed_candidate_install(
     *,
     source_cuda: str | None,
     source_torch_auxiliaries: tuple[str, ...] = (),
+    source_extras: tuple[str, ...] | None = None,
 ) -> str:
-    package_spec = _managed_candidate_package_spec(package_spec)
+    package_spec = (
+        _managed_candidate_package_spec(package_spec)
+        if source_extras is None
+        else _managed_candidate_package_spec(package_spec, detected_extras=source_extras)
+    )
     if "[" in package_spec and "gpu-win" in package_spec:
         if source_cuda not in (None, "12.8"):
             raise RuntimeError(

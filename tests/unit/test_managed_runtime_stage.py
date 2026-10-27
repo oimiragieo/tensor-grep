@@ -62,7 +62,7 @@ def _stub_stage_dependencies(
     venv_calls: list[list[str]] = []
     installs: list[tuple[Path, dict[str, object]]] = []
     verification: list[tuple[Path, str, str | None, tuple[str, ...]]] = []
-    candidate_installs: list[tuple[str | None, tuple[str, ...]]] = []
+    candidate_installs: list[tuple[str | None, tuple[str, ...], tuple[str, ...]]] = []
 
     def run(args, **_kwargs):
         venv_calls.append(args)
@@ -79,8 +79,9 @@ def _stub_stage_dependencies(
         *,
         source_cuda: str | None = None,
         source_torch_auxiliaries: tuple[str, ...] = (),
+        source_extras: tuple[str, ...] = (),
     ) -> str:
-        candidate_installs.append((source_cuda, source_torch_auxiliaries))
+        candidate_installs.append((source_cuda, source_torch_auxiliaries, source_extras))
         return "pip"
 
     def verify(
@@ -103,13 +104,16 @@ def _stub_stage_dependencies(
     monkeypatch.setattr(cli_main.subprocess, "run", run)
     monkeypatch.setattr(managed_runtime_candidate, "_run_managed_candidate_install", install)
     monkeypatch.setattr(
-        managed_runtime_candidate, "_managed_candidate_package_spec", lambda spec: spec
+        managed_runtime_candidate,
+        "_managed_candidate_package_spec",
+        lambda spec, **_kwargs: spec,
     )
     monkeypatch.setattr(
-        managed_runtime_candidate, "_managed_cuda_profile", lambda _executable: source_cuda
-    )
-    monkeypatch.setattr(
-        managed_runtime_candidate, "_managed_torch_auxiliaries", lambda: ("torchvision",)
+        managed_runtime_candidate,
+        "_managed_candidate_profile",
+        lambda _executable: managed_runtime_candidate.ManagedCandidateProfile(
+            "1.2.3", ("gpu-win",), source_cuda, ("torchvision",)
+        ),
     )
     monkeypatch.setattr(managed_runtime_candidate, "_verify_managed_candidate_python", verify)
     monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", install_native)
@@ -212,7 +216,7 @@ def test_ManagedStage_WhenGpuWinSourceProfileIsKnown_PreservesAndVerifiesIt(
 
     native_frontdoor.stage_managed_windows_runtime(str(executable), "tensor-grep[gpu-win]", "1.2.3")
 
-    assert candidate_installs == [(source_cuda, ("torchvision",))]
+    assert candidate_installs == [(source_cuda, ("torchvision",), ("gpu-win",))]
     assert verification[0][2] == expected_cuda
     assert verification[0][3] == ("torchvision",)
 
