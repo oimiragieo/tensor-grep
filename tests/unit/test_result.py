@@ -37,6 +37,11 @@ class TestStripLineTerminator:
 
 
 class TestSearchResult:
+    def test_positional_constructor_keeps_sidecar_field_position(self):
+        result = SearchResult([], False, [], {}, 0, 0, True)
+
+        assert result.sidecar_used is True
+
     def test_should_create_result_with_matches(self):
         match = MatchLine(line_number=2, text="ERROR Connection timeout", file="test.log")
         result = SearchResult(matches=[match], total_files=1, total_matches=1)

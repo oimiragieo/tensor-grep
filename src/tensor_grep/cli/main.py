@@ -3953,6 +3953,7 @@ def search_command(
     search_start = time.perf_counter()
     matched_file_paths: set[str] = set()
     matched_file_paths_ordered: list[str] = []
+    binary_match_file_paths: set[str] = set()
 
     def _record_matched_file(file_path: str | None) -> None:
         if not file_path or file_path in matched_file_paths:
@@ -3965,13 +3966,22 @@ def search_command(
         if result.fallback_reason is not None:
             all_results.fallback_reason = result.fallback_reason
 
-    def _merge_count_metadata(result: SearchResult) -> None:
+    def _merge_count_metadata(result: SearchResult, file_path: str | None = None) -> None:
+        if result.binary_match_files and file_path is not None:
+            try:
+                identity = os.path.normcase(str(Path(file_path).resolve(strict=False)))
+            except (OSError, RuntimeError):
+                identity = os.path.normcase(os.path.abspath(file_path))
+            if identity not in binary_match_file_paths:
+                binary_match_file_paths.add(identity)
+                all_results.binary_match_files += result.binary_match_files
+        elif file_path is None:
+            all_results.binary_match_files += result.binary_match_files
         for file_path, count in result.match_counts_by_file.items():
             all_results.match_counts_by_file[file_path] = (
                 all_results.match_counts_by_file.get(file_path, 0) + count
             )
 
-    # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
         if guarded_broad_root:
@@ -4019,16 +4029,7 @@ def search_command(
                 _record_matched_file(match.file)
             _merge_runtime_routing(result)
     else:
-        # Critical unscoped-search-hang fix (B): the native (CPU/Torch) engine has no
-        # internal per-file timeout -- unlike the RipgrepBackend branch above, which is
-        # bounded by the rg subprocess's own `configured_ripgrep_timeout_seconds()` timeout.
-        # A search that can't route through rg (native `--json` aggregate, `--rank`,
-        # tensor-only flags, or rg absent from PATH) would otherwise walk
-        # `candidate_files_ordered` with NO limit at all and could hang until manually
-        # killed on a large/unscoped tree. Check the SAME wall-clock budget once per FILE
-        # (never per match -- that would be too fine-grained to bound a pathological single
-        # file) and, on expiry, stop and return whatever was found so far as an explicitly
-        # incomplete (never silently empty, never a raw crash) result.
+        # Native scans check the shared deadline per file and mark partial results on expiry.
         from tensor_grep.backends.cpu_backend import (
             compute_native_walk_deadline,
             native_walk_deadline_exceeded,
@@ -4076,7 +4077,7 @@ def search_command(
             all_results.matches.extend(result.matches)
             for matched_path in result.matched_file_paths:
                 _record_matched_file(matched_path)
-            _merge_count_metadata(result)
+            _merge_count_metadata(result, current_file)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1

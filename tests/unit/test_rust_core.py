@@ -327,11 +327,13 @@ def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
 
     assert notice.total_matches == 1
     assert notice.total_files == 1
+    assert notice.binary_match_files == 1
     assert notice.matches[0].text == 'binary file matches (found "\\0" byte around offset 6)'
     assert notice.matches[0].meta_variables == {"binary_notice": True}
     assert notice.routing_reason == "rust_binary_notice"
     assert no_match.total_matches == 0
     assert no_match.total_files == 0
+    assert no_match.binary_match_files == 0
     assert no_match.routing_reason == "rust_binary_skipped"
     assert text_result.total_matches == 1
     assert binary_result.total_matches == 1
