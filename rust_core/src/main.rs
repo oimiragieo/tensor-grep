@@ -10374,8 +10374,7 @@ struct SearchResultJson<'a> {
     remediation: Option<serde_json::Value>,
 }
 
-/// Terminal record on every NDJSON run, including empty or incomplete scans, so readers see
-/// result disclosures even when there are no matches. `type` is the discriminator.
+/// Terminal record keeps disclosures available on empty and incomplete scans.
 #[derive(Serialize)]
 struct SearchSummaryNdjson {
     #[serde(rename = "type")]
@@ -14382,6 +14381,7 @@ fn incomplete_envelope_fields(
     (None, None, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_json_search_results(
     decision: RoutingDecision,
     pattern: &str,
@@ -14724,6 +14724,7 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_ndjson_search_results(
     decision: RoutingDecision,
     pattern: &str,
