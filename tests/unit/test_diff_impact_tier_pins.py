@@ -11,6 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 # Scenarios emitted only on non-Windows runners (see matching skipif in the test module).
 _LINUX_ONLY_SCENARIO_IDS = frozenset({
     "tests/unit/test_diff_impact.py::test_real_repo_binary_named_like_the_deletion_suffix#1",
@@ -174,6 +176,8 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(
         "--basetemp",
         str(tmp_path / "nested"),
     ]
+    if pytest.version_tuple[:2] >= (9, 2):
+        command.extend(["-o", "parametrize_long_str_id_strategy=legacy"])
     child_started = time.perf_counter()
     result = subprocess.run(
         command,
