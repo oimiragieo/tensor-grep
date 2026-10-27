@@ -9451,10 +9451,9 @@ fn emit_multi_pattern_native_results(
     options: NativeSearchOutputOptions<'_>,
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
-    binary_match_files: usize,
+    binary_matches: usize,
 ) -> anyhow::Result<()> {
-    let has_matches =
-        !matches.is_empty() || ((options.json || options.ndjson) && binary_match_files > 0);
+    let has_matches = !matches.is_empty() || (options.json || options.ndjson) && binary_matches > 0;
     if options.json {
         emit_json_search_results(
             options.decision,
@@ -9464,7 +9463,7 @@ fn emit_multi_pattern_native_results(
             matches,
             incomplete_paths,
             options.path_was_implicit,
-            (binary_match_files > 0).then_some(binary_match_files),
+            (binary_matches > 0).then_some(binary_matches),
         )?;
     } else if options.ndjson {
         emit_ndjson_search_results(
@@ -9475,7 +9474,7 @@ fn emit_multi_pattern_native_results(
             matches,
             incomplete_paths,
             options.path_was_implicit,
-            (binary_match_files > 0).then_some(binary_match_files),
+            (binary_matches > 0).then_some(binary_matches),
         )?;
     } else if options.count {
         emit_count_search_matches(options.path, &matches)?;
