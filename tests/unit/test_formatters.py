@@ -106,6 +106,48 @@ class TestFormatters:
         assert rows[0] == ["file", "line_number", "text"]
         assert rows[1] == ["test.log", "2", "ERROR test"]
 
+    def test_csv_output_neutralizes_formula_text_and_filenames(self):
+        result = SearchResult(
+            matches=[
+                MatchLine(line_number=1, text="=1+1", file="+cmd|' /C calc'!A0"),
+                MatchLine(line_number=2, text=" @SUM(A1:A2)", file="-report.csv"),
+            ],
+            total_files=2,
+            total_matches=2,
+        )
+
+        rows = list(csv.reader(io.StringIO(CsvFormatter().format(result))))
+
+        assert rows[1:] == [
+            ["'+cmd|' /C calc'!A0", "1", "'=1+1"],
+            ["'-report.csv", "2", "' @SUM(A1:A2)"],
+        ]
+
+    def test_csv_output_neutralizes_control_unicode_whitespace_and_fullwidth_formulas(self):
+        result = SearchResult(
+            matches=[
+                MatchLine(line_number=1, text="\t=1", file="\rfile"),
+                MatchLine(line_number=2, text="\n+1", file="\u2003-foo"),
+                MatchLine(line_number=3, text="\u00a0@SUM(A1:A2)", file="\u3000\uff1d1"),
+                MatchLine(line_number=4, text="\uff0b1", file="\uff0d1"),
+                MatchLine(line_number=5, text="\uff20SUM(A1:A2)", file="\uff1d1"),
+                MatchLine(line_number=6, text="", file=""),
+            ],
+            total_files=6,
+            total_matches=6,
+        )
+
+        rows = list(csv.reader(io.StringIO(CsvFormatter().format(result))))
+
+        assert rows[1:] == [
+            ["'\rfile", "1", "'\t=1"],
+            ["'\u2003-foo", "2", "'\n+1"],
+            ["'\u3000\uff1d1", "3", "'\u00a0@SUM(A1:A2)"],
+            ["'\uff0d1", "4", "'\uff0b1"],
+            ["'\uff1d1", "5", "'\uff20SUM(A1:A2)"],
+            ["", "6", ""],
+        ]
+
     def test_count_matches_mode_outputs_count(self):
         config = SearchConfig(count_matches=True)
         fmt = RipgrepFormatter(config=config)

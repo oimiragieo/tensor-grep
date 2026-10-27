@@ -2,6 +2,11 @@
 
 This document defines the backward-compatibility guarantees for data structures and CLI outputs used by enterprise integrations, IDEs, and editor-plane agents.
 
+CSV search output prefixes match text and filenames with an apostrophe when the value begins
+with tab, carriage return, or line feed, or when its first non-whitespace character is an ASCII
+or fullwidth `=`, `+`, `-`, or `@`. This changes those cell values to reduce spreadsheet formula
+injection risk; it is not a universal guarantee across spreadsheet applications.
+
 The [investigation evidence contract](investigation.md) defines optional hop graphs,
 dependency grounding, and native reranking. Grounding defaults to local metadata; hop
 planning and reranking default off. Registry metadata and static APIs never prove compatibility.
