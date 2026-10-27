@@ -1015,6 +1015,14 @@ _ACTIVATION_WORKER_PROGRAM = (
 )
 
 
+_MANAGED_ACTIVATION_READY_TIMEOUT_MS = 90_000
+
+
+def _wait_for_managed_activation_ready(kernel: object, handles: object) -> int:
+    wait = kernel.WaitForMultipleObjects  # type: ignore[attr-defined]
+    return int(wait(2, handles, False, _MANAGED_ACTIVATION_READY_TIMEOUT_MS))
+
+
 def _schedule_managed_activation(
     candidate_python: Path,
     install_root: Path,
@@ -1087,11 +1095,11 @@ def _schedule_managed_activation(
             wintypes.DWORD,
         ]
         kernel.WaitForMultipleObjects.restype = wintypes.DWORD
-        waited = int(kernel.WaitForMultipleObjects(2, handles, False, 30_000))
+        waited = _wait_for_managed_activation_ready(kernel, handles)
         if waited == 1:
             raise RuntimeError("activation helper exited before candidate preflight was ready")
         if waited == 258:
-            raise TimeoutError("activation helper did not become ready within 30 seconds")
+            raise TimeoutError("activation helper did not become ready within 90 seconds")
         if waited != 0:
             raise RuntimeError("activation helper readiness wait failed")
         return status_path

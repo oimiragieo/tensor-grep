@@ -221,7 +221,7 @@ def test_ActivationScheduler_WhenReadinessTimesOutAndChildSettles_RaisesTimeout(
     _pin_fixture(monkeypatch)
     child, _closed = _fake_scheduler_runtime(monkeypatch, 258, settled=True)
 
-    with ExitStack() as held, pytest.raises(TimeoutError, match="within 30 seconds"):
+    with ExitStack() as held, pytest.raises(TimeoutError, match="within 90 seconds"):
         native_frontdoor._schedule_managed_activation(python, root, generation, "1.2.3", 123, held)
 
     assert child.terminated
