@@ -234,6 +234,8 @@ class JsonFormatter(OutputFormatter):
             "routing_worker_count": envelope["routing_worker_count"],
             "matches": [_match_payload(match, self.config) for match in result.matches],
         }
+        if result.binary_match_files > 0:
+            data["binary_match_files"] = result.binary_match_files
         # Additive-only: absent on an explicitly-scoped search, so an existing consumer's payload
         # is byte-identical. Present ONLY when the caller did not choose the scope, which is the
         # case where `total_matches: 0` is ambiguous on its own.
@@ -281,6 +283,8 @@ class NdjsonFormatter(OutputFormatter):
                 # Python JSON compatibility while preserving the public field.
                 "line": match.line_number,
             }
+            if result.binary_match_files > 0:
+                row["binary_match_files"] = result.binary_match_files
             rows.append(json.dumps(row))
         if not rows:
             # ZERO ROWS MEANS ZERO CARRIERS. The envelope above -- which holds
@@ -306,6 +310,8 @@ class NdjsonFormatter(OutputFormatter):
                 for key, value in envelope.items()
                 if key in ("result_incomplete", "incomplete_reason", "incomplete_reason_class")
             }
+            if result.binary_match_files > 0:
+                disclosure["binary_match_files"] = result.binary_match_files
             # `path_was_defaulted`/`scope_note` are read off the RESULT, not filtered out of the
             # envelope, because `_routing_envelope` never carried them: #871 added the pair to
             # `JsonFormatter.format` alone, so the Python `--ndjson` surface never had the scope

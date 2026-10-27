@@ -268,6 +268,7 @@ class RustCoreBackend(ComputeBackend):
                 matches=matches,
                 total_files=1 if matches else 0,
                 total_matches=len(matches),
+                binary_match_files=len(matches),
                 routing_backend="RustCoreBackend",
                 routing_reason="rust_binary_notice" if matches else "rust_binary_skipped",
                 routing_distributed=False,

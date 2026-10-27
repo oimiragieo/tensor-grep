@@ -184,6 +184,7 @@ class TestFormatters:
             ],
             total_files=1,
             total_matches=1,
+            binary_match_files=1,
             routing_backend="RustCoreBackend",
             routing_reason="rust_binary_notice",
         )
@@ -195,8 +196,10 @@ class TestFormatters:
         assert text_output == 'binary file matches (found "\\0" byte around offset 16)'
         assert json_output["matches"][0]["text"] == text_output
         assert json_output["matches"][0]["metaVariables"] == {"binary_notice": True}
+        assert json_output["binary_match_files"] == 1
         assert ndjson_output["text"] == text_output
         assert ndjson_output["metaVariables"] == {"binary_notice": True}
+        assert ndjson_output["binary_match_files"] == 1
 
     def test_binary_matches_respect_text_mode(self, tmp_path: Path):
         binary_file = tmp_path / "sample.bin"
