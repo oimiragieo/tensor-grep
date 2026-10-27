@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tensor_grep.backends.ast_backend import is_native_ast_language, normalize_ast_language
+from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli._index_lock import atomic_write_bytes
 
 # NOTE: `tensor_grep.cli.ast_workflows` (the facade) is deliberately NOT imported
@@ -692,6 +693,8 @@ def _inject_run_json_fields(json_str: str, mode: str) -> str:
 
 
 def _safe_stdout_line(text: str) -> None:
+    if _terminal_output.stdout_is_tty(sys.stdout):
+        text = _terminal_output.sanitize_terminal_controls(text)
     try:
         print(text)
     except UnicodeEncodeError:
