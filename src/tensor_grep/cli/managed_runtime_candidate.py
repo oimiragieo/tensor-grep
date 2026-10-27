@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 from tensor_grep.cli._main_binding import _self
@@ -12,12 +11,16 @@ _MANAGED_VERSION_PROBE = (
     "import importlib.metadata as m, importlib.util as u, json, pathlib, tensor_grep; "
     "import tensor_grep.cli.main, tensor_grep.cli.native_frontdoor; "
     "import tensor_grep.rust_core as r; d=m.distribution('tensor-grep'); "
-    "cuda=None; "
-    "exec('import torch; cuda=torch.version.cuda' if u.find_spec('torch') else 'pass'); "
+    "cuda=None; torch_path=None; torch_present=u.find_spec('torch') is not None; "
+    "torch_auxiliaries={name:(__import__(name),str(pathlib.Path(spec.origin).resolve()))[1] for name in "
+    "('torchvision','torchaudio') if (spec:=u.find_spec(name)) is not None and spec.origin}; "
+    "exec('import torch; cuda=torch.version.cuda; torch_path=str(pathlib.Path(torch.__file__).resolve())' "
+    "if torch_present else 'pass'); "
     "print(json.dumps({'version':m.version('tensor-grep'),"
     "'module':str(pathlib.Path(tensor_grep.__file__).resolve()),"
     "'dist':str(pathlib.Path(d.locate_file('')).resolve()),"
-    "'extension':str(pathlib.Path(r.__file__).resolve()),'cuda':cuda}))"
+    "'extension':str(pathlib.Path(r.__file__).resolve()),'cuda':cuda,'torch':torch_present,"
+    "'torch_path':torch_path,'torch_auxiliaries':torch_auxiliaries}))"
 )
 
 
@@ -90,34 +93,33 @@ def _managed_candidate_package_spec(package_spec: str) -> str:
     return package_spec.replace("tensor-grep", f"tensor-grep[{','.join(extras)}]", 1)
 
 
-def _run_managed_candidate_install(candidate_python: Path, package_spec: str) -> str:
+def _run_managed_candidate_install(
+    candidate_python: Path,
+    package_spec: str,
+    *,
+    source_cuda: str | None,
+    source_torch_auxiliaries: tuple[str, ...] = (),
+) -> str:
     package_spec = _managed_candidate_package_spec(package_spec)
     if "[" in package_spec and "gpu-win" in package_spec:
-        cuda = _managed_cuda_profile(sys.executable)
-        if cuda != "12.8":
+        if source_cuda not in (None, "12.8"):
             raise RuntimeError(
                 "managed CUDA upgrade refused: only the installer-pinned CUDA 12.8 profile "
                 "can be reproduced safely"
             )
-        _self.subprocess.run(
-            [
-                "uv",
-                "pip",
-                "install",
-                "--python",
-                str(candidate_python),
-                "torch",
-                "torchvision",
-                "torchaudio",
-                "--index-url",
+        if source_cuda == "12.8":
+            _install_managed_torch(
+                candidate_python,
                 "https://download.pytorch.org/whl/cu128",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=True,
-        )
+                source_torch_auxiliaries,
+            )
+        elif source_cuda is None:
+            _install_managed_torch(
+                candidate_python,
+                "https://download.pytorch.org/whl/cpu",
+                source_torch_auxiliaries,
+                pip_fallback=True,
+            )
     attempts = [
         (
             "uv",
@@ -164,6 +166,50 @@ def _run_managed_candidate_install(candidate_python: Path, package_spec: str) ->
     raise RuntimeError("managed candidate package install failed: " + "; ".join(errors))
 
 
+def _install_managed_torch(
+    candidate_python: Path,
+    index_url: str,
+    auxiliaries: tuple[str, ...],
+    *,
+    pip_fallback: bool = False,
+) -> None:
+    packages = ["torch", *auxiliaries]
+    uv = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(candidate_python),
+        *packages,
+        "--index-url",
+        index_url,
+    ]
+    pip = [str(candidate_python), "-m", "pip", "install", *packages, "--index-url", index_url]
+    if not pip_fallback:
+        _self.subprocess.run(
+            uv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True
+        )
+        return
+    errors: list[str] = []
+    for label, command in (("uv", uv), ("pip", pip)):
+        try:
+            _self.subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+            )
+            return
+        except FileNotFoundError as exc:
+            errors.append(f"{label}: {exc}")
+        except _self.subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            errors.append(f"{label}: {detail}")
+    raise RuntimeError("managed CPU torch install failed: " + "; ".join(errors))
+
+
 def _managed_cuda_profile(executable: str) -> str | None:
     try:
         result = _self.subprocess.run(
@@ -173,7 +219,7 @@ def _managed_cuda_profile(executable: str) -> str | None:
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=15,
+            timeout=60,
         )
     except Exception as exc:
         raise RuntimeError(f"managed CUDA profile could not be verified: {exc}") from exc
@@ -181,8 +227,20 @@ def _managed_cuda_profile(executable: str) -> str | None:
     return lines[-1] if lines else None
 
 
+def _managed_torch_auxiliaries() -> tuple[str, ...]:
+    from importlib.util import find_spec
+
+    return tuple(
+        module for module in ("torchvision", "torchaudio") if find_spec(module) is not None
+    )
+
+
 def _verify_managed_candidate_python(
-    candidate_python: Path, expected_version: str, *, expected_cuda: str | None = None
+    candidate_python: Path,
+    expected_version: str,
+    *,
+    expected_cuda: str | None = None,
+    expected_torch_auxiliaries: tuple[str, ...] = (),
 ) -> None:
     try:
         result = _self.subprocess.run(
@@ -192,7 +250,7 @@ def _verify_managed_candidate_python(
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=30,
+            timeout=60,
         )
     except Exception as exc:
         raise RuntimeError(f"candidate Python verification failed: {exc}") from exc
@@ -210,7 +268,34 @@ def _verify_managed_candidate_python(
         value = evidence.get(key)
         if not isinstance(value, str) or not Path(value).resolve().is_relative_to(expected_root):
             raise RuntimeError(f"candidate Python {key} origin is outside the staged environment")
-    if expected_cuda is not None and evidence.get("cuda") != expected_cuda:
+    if expected_cuda is not None and evidence.get("torch") is not True:
+        profile = "CPU" if expected_cuda == "cpu" else expected_cuda
+        raise RuntimeError(f"candidate Python {profile} torch profile mismatch: torch is missing")
+    if expected_cuda is not None:
+        torch_path = evidence.get("torch_path")
+        if not isinstance(torch_path, str) or not Path(torch_path).resolve().is_relative_to(
+            expected_root
+        ):
+            raise RuntimeError("candidate Python torch origin is outside the staged environment")
+        auxiliary_origins = evidence.get("torch_auxiliaries")
+        if not isinstance(auxiliary_origins, dict) or set(auxiliary_origins) != set(
+            expected_torch_auxiliaries
+        ):
+            raise RuntimeError("candidate Python torch auxiliary profile mismatch")
+        if any(
+            not isinstance(path, str) or not Path(path).resolve().is_relative_to(expected_root)
+            for path in auxiliary_origins.values()
+        ):
+            raise RuntimeError(
+                "candidate Python torch auxiliary origin is outside the staged environment"
+            )
+    if expected_cuda == "cpu" and evidence.get("cuda") is not None:
+        raise RuntimeError("candidate Python CPU torch profile mismatch: CUDA build found")
+    if (
+        expected_cuda is not None
+        and expected_cuda != "cpu"
+        and evidence.get("cuda") != expected_cuda
+    ):
         raise RuntimeError(
             f"candidate Python CUDA profile mismatch: expected {expected_cuda}, "
             f"got {evidence.get('cuda') or 'no CUDA build'}"
