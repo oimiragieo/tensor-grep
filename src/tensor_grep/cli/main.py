@@ -35,6 +35,7 @@ from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
+from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
@@ -901,6 +902,8 @@ def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
     if not paths:
         return
     if use_nul:
+        if _terminal_output.stdout_is_tty(sys.stdout):
+            paths = [_terminal_output.sanitize_terminal_controls(path) for path in paths]
         payload = b"\x00".join(os.fsencode(path) for path in paths) + b"\x00"
         sys.stdout.buffer.write(payload)
         sys.stdout.buffer.flush()
@@ -933,32 +936,7 @@ def _path_has_hidden_component(path: str) -> bool:
 
 
 def _safe_stdout_line(text: str) -> None:
-    encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
-    buffer = getattr(sys.stdout, "buffer", None)
-    if buffer is not None and encoding and "utf" not in encoding and not text.isascii():
-        buffer.write(f"{text}\n".encode("utf-8", errors="replace"))
-        flush = getattr(buffer, "flush", None)
-        if callable(flush):
-            flush()
-        return
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        payload = f"{text}\n".encode("utf-8", errors="replace")
-        if buffer is not None:
-            buffer.write(payload)
-            flush = getattr(buffer, "flush", None)
-            if callable(flush):
-                flush()
-            return
-        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
-        escaped_text = f"{text}\n".encode(encoding, errors="backslashreplace").decode(
-            encoding, errors="ignore"
-        )
-        sys.stdout.write(escaped_text)
-        flush = getattr(sys.stdout, "flush", None)
-        if callable(flush):
-            flush()
+    _terminal_output.safe_stdout_line(text)
 
 
 def _is_invalid_regex_error(exc: Exception) -> bool:

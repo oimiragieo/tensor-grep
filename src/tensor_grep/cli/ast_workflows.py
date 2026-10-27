@@ -502,10 +502,10 @@ def run_command(
 
         applied_files: set[str] = set()
         for file_path, file_matches in matches_by_file.items():
-            print(f"{chr(10)}File: {file_path}")
+            _safe_stdout_line(f"{chr(10)}File: {file_path}")
 
             for m in file_matches:
-                print(f"  L{m.line_number}: {m.text.strip()}")
+                _safe_stdout_line(f"  L{m.line_number}: {m.text.strip()}")
 
             choice = (
                 input(f"Apply rewrite to {len(file_matches)} matches in this file? [y/n/a/q]: ")
