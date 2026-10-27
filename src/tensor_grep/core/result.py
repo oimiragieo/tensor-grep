@@ -171,6 +171,7 @@ class SearchResult:
     rerank_texts: list[str] | None = field(default=None, repr=False)
     dependency_grounding: dict[str, object] | None = None
     install_state: str | None = None
+    binary_match_files: int = 0
 
     @property
     def is_empty(self) -> bool:
