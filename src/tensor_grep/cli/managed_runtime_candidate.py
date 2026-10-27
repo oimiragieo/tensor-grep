@@ -12,12 +12,14 @@ _MANAGED_VERSION_PROBE = (
     "import importlib.metadata as m, importlib.util as u, json, pathlib, tensor_grep; "
     "import tensor_grep.cli.main, tensor_grep.cli.native_frontdoor; "
     "import tensor_grep.rust_core as r; d=m.distribution('tensor-grep'); "
-    "cuda=None; "
-    "exec('import torch; cuda=torch.version.cuda' if u.find_spec('torch') else 'pass'); "
+    "cuda=None; torch_path=None; torch_present=u.find_spec('torch') is not None; "
+    "exec('import torch; cuda=torch.version.cuda; torch_path=str(pathlib.Path(torch.__file__).resolve())' "
+    "if torch_present else 'pass'); "
     "print(json.dumps({'version':m.version('tensor-grep'),"
     "'module':str(pathlib.Path(tensor_grep.__file__).resolve()),"
     "'dist':str(pathlib.Path(d.locate_file('')).resolve()),"
-    "'extension':str(pathlib.Path(r.__file__).resolve()),'cuda':cuda}))"
+    "'extension':str(pathlib.Path(r.__file__).resolve()),'cuda':cuda,'torch':torch_present,"
+    "'torch_path':torch_path}))"
 )
 
 
@@ -173,7 +175,7 @@ def _managed_cuda_profile(executable: str) -> str | None:
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=15,
+            timeout=60,
         )
     except Exception as exc:
         raise RuntimeError(f"managed CUDA profile could not be verified: {exc}") from exc
@@ -192,7 +194,7 @@ def _verify_managed_candidate_python(
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=30,
+            timeout=60,
         )
     except Exception as exc:
         raise RuntimeError(f"candidate Python verification failed: {exc}") from exc
@@ -210,6 +212,14 @@ def _verify_managed_candidate_python(
         value = evidence.get(key)
         if not isinstance(value, str) or not Path(value).resolve().is_relative_to(expected_root):
             raise RuntimeError(f"candidate Python {key} origin is outside the staged environment")
+    if expected_cuda is not None and evidence.get("torch") is not True:
+        raise RuntimeError("candidate Python CUDA profile mismatch: torch is missing")
+    if expected_cuda is not None:
+        torch_path = evidence.get("torch_path")
+        if not isinstance(torch_path, str) or not Path(torch_path).resolve().is_relative_to(
+            expected_root
+        ):
+            raise RuntimeError("candidate Python torch origin is outside the staged environment")
     if expected_cuda is not None and evidence.get("cuda") != expected_cuda:
         raise RuntimeError(
             f"candidate Python CUDA profile mismatch: expected {expected_cuda}, "

@@ -169,6 +169,16 @@ def test_ManagedStage_WhenCandidateVerified_PublishesThenRepairsLauncher(
     ]
 
 
+def test_ManagedActivation_ReadinessBudgetCoversTorchProbeBound() -> None:
+    calls = []
+    handles = object()
+    kernel = SimpleNamespace(WaitForMultipleObjects=lambda *args: calls.append(args) or 0)
+
+    native_frontdoor._wait_for_managed_activation_ready(kernel, handles)
+
+    assert calls == [(2, handles, False, 90_000)]
+
+
 def test_ManagedStage_WhenNativeParentLives_ReturnsPendingAfterReadiness(
     trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

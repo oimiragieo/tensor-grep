@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from importlib import metadata, util
 
 import pytest
@@ -23,6 +24,8 @@ def _candidate_evidence(python, *, version="0.33.0", cuda="12.8", extension=None
         "dist": str(site),
         "extension": str(extension or site / "tensor_grep" / "rust_core.pyd"),
         "cuda": cuda,
+        "torch": True,
+        "torch_path": str(site / "torch" / "__init__.py"),
     }
 
 
@@ -52,12 +55,81 @@ def test_CandidateVerification_WhenOriginsAreInsideEnvironment_AcceptsPinnedVers
     monkeypatch.setattr(
         candidate._self.subprocess,
         "run",
+        lambda command, **kwargs: (
+            pytest.fail(f"unexpected probe timeout: {kwargs.get('timeout')}")
+            if kwargs.get("timeout") != 60
+            else subprocess.CompletedProcess(command, 0, json.dumps(evidence), "")
+        ),
+    )
+
+    candidate._verify_managed_candidate_python(python, "0.33.0", expected_cuda="12.8")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("torch", False, "torch is missing"),
+        ("torch_path", "C:/outside/torch.py", "torch origin is outside"),
+    ],
+    ids=["torch-missing", "torch-outside-environment"],
+)
+def test_CandidateVerification_WhenTorchProfileDoesNotMatch_RejectsCandidate(
+    monkeypatch, tmp_path, field, value, message
+):
+    python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    evidence = _candidate_evidence(python)
+    evidence[field] = value
+    monkeypatch.setattr(
+        candidate._self.subprocess,
+        "run",
         lambda command, **_kwargs: subprocess.CompletedProcess(
             command, 0, json.dumps(evidence), ""
         ),
     )
 
-    candidate._verify_managed_candidate_python(python, "0.33.0", expected_cuda="12.8")
+    with pytest.raises(RuntimeError, match=message):
+        candidate._verify_managed_candidate_python(python, "0.33.0", expected_cuda="12.8")
+
+
+def test_ManagedVersionProbe_WhenTorchIsPresent_ReportsItsProfileAndOrigin(tmp_path):
+    runner = r"""
+import importlib.machinery as machinery
+import importlib.metadata as metadata
+import json, pathlib, sys, types
+root = pathlib.Path(sys.argv[1])
+for name in ('tensor_grep', 'tensor_grep.cli', 'tensor_grep.cli.main',
+             'tensor_grep.cli.native_frontdoor', 'tensor_grep.rust_core'):
+    module = types.ModuleType(name)
+    module.__file__ = str(root / (name.replace('.', '/') + '.py'))
+    module.__path__ = []
+    sys.modules[name] = module
+    if '.' in name:
+        parent, child = name.rsplit('.', 1)
+        setattr(sys.modules[parent], child, module)
+torch = types.ModuleType('torch')
+torch.__file__ = str(root / 'site-packages/torch/__init__.py')
+torch.__spec__ = machinery.ModuleSpec('torch', None, origin=torch.__file__)
+torch.version = types.SimpleNamespace(cuda='12.8')
+sys.modules['torch'] = torch
+metadata.version = lambda _: '0.33.0'
+metadata.distribution = lambda _: types.SimpleNamespace(
+    locate_file=lambda _: root / 'site-packages')
+exec(sys.argv[2])
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", runner, str(tmp_path), candidate._MANAGED_VERSION_PROBE],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+
+    assert result.returncode == 0
+    evidence = json.loads(result.stdout)
+    assert evidence["torch"] is True
+    assert evidence["cuda"] == "12.8"
+    assert evidence["torch_path"] == str((tmp_path / "site-packages/torch/__init__.py").resolve())
 
 
 def test_CandidateVerification_WhenExtensionOriginEscapesEnvironment_RejectsCandidate(
@@ -165,6 +237,32 @@ def test_CudaProfile_WhenTorchHasNoCudaBuild_ReturnsNone(monkeypatch):
     )
 
     assert candidate._managed_cuda_profile("python.exe") is None
+
+
+def test_CudaProfile_WhenTorchImportExceedsBound_RefusesWithTimeout(monkeypatch):
+    def run(command, **kwargs):
+        assert kwargs["timeout"] == 60
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(candidate._self.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="CUDA profile could not be verified") as caught:
+        candidate._managed_cuda_profile("python.exe")
+
+    assert isinstance(caught.value.__cause__, subprocess.TimeoutExpired)
+
+
+def test_CandidateVerification_WhenTorchImportExceedsBound_RejectsCandidate(monkeypatch, tmp_path):
+    def run(command, **kwargs):
+        assert kwargs["timeout"] == 60
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(candidate._self.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="candidate Python verification failed") as caught:
+        candidate._verify_managed_candidate_python(tmp_path / "python.exe", "0.33.0")
+
+    assert isinstance(caught.value.__cause__, subprocess.TimeoutExpired)
 
 
 def test_CudaProfile_WhenProbeFails_RaisesVerificationError(monkeypatch):
