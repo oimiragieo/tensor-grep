@@ -1243,12 +1243,12 @@ fn test_search_ndjson_suppresses_binary_warning_for_agent_contract() {
     let payloads = assert_ndjson_routing(&output, "NativeCpuBackend", "force_cpu", false);
     assert_eq!(
         payloads.len(),
-        1,
+        2,
         "stdout={}",
         String::from_utf8_lossy(&output.stdout)
     );
     assert_eq!(payloads[0]["file"], text_path.display().to_string());
-
+    assert_eq!(payloads[1]["binary_match_files"], 1);
     assert_eq!("", String::from_utf8_lossy(&output.stderr));
 }
 

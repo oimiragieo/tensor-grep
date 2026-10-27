@@ -25,19 +25,17 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::routing::gpu_proof_fields;
+#[path = "native_search_binary_summary.rs"]
+mod binary_summary;
+use binary_summary::emit_ndjson_binary_summary;
 
 const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES: usize = 64 * 1024;
 const STREAMING_OUTPUT_FLUSH_BYTES_DEBUG: usize = 8 * 1024;
-/// Mirrors `grep_searcher::line_buffer::DEFAULT_BUFFER_CAPACITY` (64 KiB): the fixed-size prefix
-/// that `grep-searcher`'s `BinaryDetection::quit` guarantees to scan for the binary byte when
-/// searching mmap-backed content (see that type's doc comment in the `grep-searcher` crate --
-/// "only a fixed sized region at the beginning of the contents are detected for binary data").
-/// The serial (non-chunked) search path relies on exactly this guaranteed floor when a whole file
-/// is searched via one mmap-backed `Searcher`; `search_file_chunk_parallel` must apply the
-/// identical floor over the whole file before fanning out per-chunk, since its per-chunk `Bytes`
-/// sinks never surface `binary_data` callbacks back up to this caller.
+/// Mirrors `grep_searcher`'s guaranteed 64 KiB prefix scan for `BinaryDetection::quit`.
+/// Chunked search checks this whole-file prefix too because per-chunk `Bytes` sinks do not
+/// propagate `binary_data` callbacks to this caller.
 const BINARY_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -78,34 +76,22 @@ pub struct SearchStats {
     pub total_matches: usize,
     pub skipped_binary_files: usize,
     pub binary_match_files: usize,
+    #[serde(skip)]
+    pub binary_match_paths: Vec<PathBuf>,
     pub matches: Vec<NativeSearchMatch>,
-    /// Per-entry walk errors (a permission-denied subdirectory, a vanished path) that were
-    /// reported on stderr and stepped over. Task #276 slice A: this is the PLUMBING only. The
-    /// count is carried so a later slice can put `result_incomplete` into the `--json` envelope
-    /// and exit 2 -- today nothing reads it, so behaviour is byte-identical.
-    ///
-    /// It is deliberately a COUNT, not a path list: the walk runs in `build_parallel()` across
-    /// threads, and an unbounded per-path Vec behind a mutex would be both a contention point on
-    /// the hot walker and a DoS surface (a tree with 50k unreadable entries would produce a 50k
-    /// -entry payload). A consumer only needs to know THAT the answer is incomplete.
+    /// Count unreadable paths skipped by the walk; consumers need the incomplete signal, not paths.
     pub walk_errors: usize,
 }
 
 impl SearchStats {
-    /// True when this worker observed nothing worth merging.
-    ///
-    /// One place that knows every countable field, so "did you cover the new field?" is a
-    /// single-site question. `ParallelWalkWorker::drop` previously enumerated the fields inline
-    /// and covered five of six.
-    ///
-    /// Any field added to this struct MUST be added here. `search_stats_is_empty_covers_every_
-    /// countable_field` fails if one is missed.
+    /// True when this worker observed nothing worth merging. Keep every result-bearing field here.
     pub fn is_empty(&self) -> bool {
         self.searched_files == 0
             && self.matched_files == 0
             && self.total_matches == 0
             && self.skipped_binary_files == 0
             && self.binary_match_files == 0
+            && self.binary_match_paths.is_empty()
             && self.walk_errors == 0
             && self.matches.is_empty()
     }
@@ -242,6 +228,7 @@ pub struct NativeSearchConfig {
     pub large_file_chunk_threshold_bytes: usize,
     pub parallel_large_files: bool,
     pub chunk_parallelism_threads: Option<usize>,
+    pub track_binary_match_paths: bool,
     pub output_target: NativeOutputTarget,
 }
 
@@ -284,6 +271,7 @@ impl Default for NativeSearchConfig {
             large_file_chunk_threshold_bytes: LARGE_FILE_CHUNK_THRESHOLD_BYTES,
             parallel_large_files: true,
             chunk_parallelism_threads: None,
+            track_binary_match_paths: false,
             output_target: NativeOutputTarget::Stdout,
         }
     }
@@ -590,6 +578,9 @@ impl ParallelWalkWorker {
                     return Err(err);
                 }
                 self.local_stats.binary_match_files += 1;
+                if self.config.track_binary_match_paths {
+                    self.local_stats.binary_match_paths.push(path.to_path_buf());
+                }
             }
             self.output_buffer.clear();
             return Ok(());
@@ -880,34 +871,19 @@ struct NativeJsonOutput<'a> {
     path: String,
     total_files: usize,
     total_matches: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binary_match_files: Option<usize>,
     matched_file_paths: Vec<String>,
     match_counts_by_file: BTreeMap<String, usize>,
     matches: Vec<NativeJsonMatch>,
-    // Task #276 slice B2 -- the whole point of the issue. Until now this envelope reported
-    // success on a walk that skipped unreadable paths, so an agent parsing --json could not tell
-    // "no matches exist" from "I could not finish looking".
-    //
-    // NAMES ARE NOT NEW. `result_incomplete` and `incomplete_reason_class` are the vocabulary the
-    // PYTHON routes have emitted since slice 1 (formatters/json_fmt.py:127, :140), with a closed
-    // class set (unreadable_path | timeout | deadline | scan_limit) that #293 documented and
-    // ratcheted. The native path adopting them verbatim is the point: one contract, two engines.
-    //
-    // `skip_serializing_if` on ALL THREE keeps a COMPLETE envelope byte-identical to before this
-    // change, which is what makes the fix additive for every existing consumer.
+    // Omit these fields on complete walks to keep existing payloads byte-identical.
     #[serde(skip_serializing_if = "Option::is_none")]
     result_incomplete: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_reason_class: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     incomplete_paths_count: Option<usize>,
-    // Task #26. The scope-disclosure pair, SIBLING to the incompleteness triple above and
-    // deliberately NOT part of it: a search whose PATH defaulted to `.` RAN TO COMPLETION. It
-    // answered a narrower question than the caller may have meant, which is an advisory, not an
-    // incompleteness -- setting `result_incomplete` here would be false AND would drag the exit
-    // code to 2, breaking the closed 0/1/2 contract for the most ordinary invocation there is.
-    //
-    // Same `skip_serializing_if` convention as everything above it, for the same reason: an
-    // explicitly-scoped search emits neither key and stays byte-identical for every consumer.
+    // Scope defaulting is advisory, not incomplete; explicit scopes omit these fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     path_was_defaulted: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -997,6 +973,7 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
 
     let inputs = split_search_inputs(&config)?;
     let mut effective_config = config;
+    effective_config.track_binary_match_paths |= effective_config.json || effective_config.ndjson;
     effective_config.count &= !(effective_config.json || effective_config.ndjson); // J-06
     effective_config.with_filename = should_print_with_filename(&effective_config, &inputs);
     let matcher = build_matcher(&effective_config)?;
@@ -1022,10 +999,21 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         merge_search_stats(&mut stats, root_stats);
     }
 
+    if effective_config.track_binary_match_paths {
+        stats.binary_match_files = stats
+            .binary_match_paths
+            .iter()
+            .map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+    }
+
     sort_search_matches(&mut stats.matches);
 
     if effective_config.json {
         emit_json_matches(&effective_config, &stats)?;
+    } else if effective_config.ndjson && stats.binary_match_files > 0 {
+        emit_ndjson_binary_summary(&effective_config, &stats)?;
     }
 
     Ok(stats)
@@ -1255,6 +1243,9 @@ fn run_native_search_files(
                     config.with_filename,
                 )?;
                 stats.binary_match_files += 1;
+                if config.track_binary_match_paths {
+                    stats.binary_match_paths.push(file_path.clone());
+                }
             }
             continue;
         }
@@ -1526,6 +1517,7 @@ fn merge_search_stats(target: &mut SearchStats, source: SearchStats) {
     target.total_matches += source.total_matches;
     target.skipped_binary_files += source.skipped_binary_files;
     target.binary_match_files += source.binary_match_files;
+    target.binary_match_paths.extend(source.binary_match_paths);
     // Task #276 slice A. Missing this line is the whole failure mode: every worker would count
     // its own walk errors and the aggregate would report zero, so the envelope would claim a
     // complete result on an incomplete walk -- the exact defect #276 exists to fix.
@@ -2358,7 +2350,6 @@ fn search_file_ndjson_with_searcher(
             line_number: Some(line_number),
             raw: rendered_bytes,
         };
-        emit_ndjson_match(config, &search_path, &matched).map_err(sink_io_error)?;
         matches.push(matched);
         Ok(true)
     }));
@@ -2371,6 +2362,15 @@ fn search_file_ndjson_with_searcher(
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
+    } else {
+        for matched in &matches {
+            emit_ndjson_match(config, &search_path, matched).with_context(|| {
+                format!(
+                    "failed to write native NDJSON output for {}",
+                    path.display()
+                )
+            })?;
+        }
     }
 
     Ok(FileSearchResult {
@@ -2559,8 +2559,10 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         *match_counts_by_file.entry(path).or_insert(0) += 1;
     }
     let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
-    let (path_was_defaulted, scope_note) =
-        defaulted_scope_fields(config.path_was_implicit, stats.total_matches);
+    let (path_was_defaulted, scope_note) = defaulted_scope_fields(
+        config.path_was_implicit,
+        stats.total_matches.saturating_add(stats.binary_match_files),
+    );
     let payload = NativeJsonOutput {
         version: JSON_OUTPUT_VERSION,
         routing_backend: config.routing_backend,
@@ -2576,6 +2578,7 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
         path: display_search_path(&config.paths),
         total_files: stats.matched_files,
         total_matches: stats.total_matches,
+        binary_match_files: (stats.binary_match_files > 0).then_some(stats.binary_match_files),
         matched_file_paths,
         match_counts_by_file,
         matches: stats

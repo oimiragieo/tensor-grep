@@ -58,6 +58,215 @@ fn json_envelope_is_byte_identical_when_the_walk_was_complete() {
     );
 }
 
+#[test]
+fn json_search_reports_matching_binary_files_without_counting_them_as_lines() {
+    let dir = tempfile::tempdir().expect("fixture directory must be created");
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, b"needle\0payload").expect("binary fixture must be written");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        paths: vec![path],
+        json: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("binary search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+
+    assert_eq!(stats.binary_match_files, 1);
+    assert_eq!(stats.total_matches, 0);
+    assert_eq!(envelope["total_matches"], serde_json::json!(0));
+    assert_eq!(envelope["binary_match_files"], serde_json::json!(1));
+}
+
+#[test]
+fn json_search_omits_binary_count_when_binary_file_does_not_match() {
+    let dir = tempfile::tempdir().expect("fixture directory must be created");
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, b"other\0payload").expect("binary fixture must be written");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        paths: vec![path],
+        json: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("binary search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+
+    assert_eq!(stats.binary_match_files, 0);
+    assert_eq!(envelope["total_matches"], serde_json::json!(0));
+    assert!(envelope.get("binary_match_files").is_none());
+}
+
+#[test]
+fn json_search_counts_overlapping_binary_inputs_once() {
+    let dir = tempfile::Builder::new()
+        .prefix("tg-binary-overlap-")
+        .tempdir_in("tests")
+        .expect("fixture directory must be created");
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, b"needle\0payload").expect("binary fixture must be written");
+    let absolute_path = std::fs::canonicalize(&path).expect("binary path must resolve");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        paths: vec![path, absolute_path, dir.path().to_path_buf()],
+        json: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("binary search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let envelope: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+
+    assert_eq!(stats.binary_match_files, 1);
+    assert_eq!(envelope["binary_match_files"], serde_json::json!(1));
+}
+
+#[test]
+fn ndjson_search_counts_overlapping_binary_inputs_once() {
+    let dir = tempfile::Builder::new()
+        .prefix("tg-binary-overlap-")
+        .tempdir_in("tests")
+        .expect("fixture directory must be created");
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, b"needle\0payload").expect("binary fixture must be written");
+    let absolute_path = std::fs::canonicalize(&path).expect("binary path must resolve");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        paths: vec![path, absolute_path, dir.path().to_path_buf()],
+        ndjson: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("binary search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let summary: serde_json::Value = output
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<serde_json::Value>(line).expect("valid NDJSON"))
+        .find(|record| record["type"] == "summary")
+        .expect("binary match summary must be written");
+
+    assert_eq!(stats.binary_match_files, 1);
+    assert_eq!(summary["binary_match_files"], serde_json::json!(1));
+}
+
+#[test]
+fn binary_ndjson_summary_keeps_incomplete_and_defaulted_scope_disclosures() {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        path_was_implicit: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+    emit_ndjson_binary_summary(
+        &config,
+        &SearchStats {
+            binary_match_files: 1,
+            walk_errors: 2,
+            ..SearchStats::default()
+        },
+    )
+    .expect("summary must be written");
+
+    let output = buffer.lock().expect("buffer lock").clone();
+    let summary: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+
+    assert_eq!(summary["binary_match_files"], serde_json::json!(1));
+    assert_eq!(summary["routing_backend"], "NativeCpuBackend");
+    assert_eq!(summary["routing_reason"], "native_search");
+    assert_eq!(summary["sidecar_used"], false);
+    assert_eq!(summary["result_incomplete"], serde_json::json!(true));
+    assert_eq!(summary["incomplete_paths_count"], serde_json::json!(2));
+    assert!(summary.get("path_was_defaulted").is_none());
+    assert!(summary.get("scope_note").is_none());
+}
+
+#[test]
+fn ndjson_reports_binary_only_results_in_a_terminal_summary() {
+    let dir = tempfile::tempdir().expect("fixture directory must be created");
+    let path = dir.path().join("binary.dat");
+    std::fs::write(&path, b"needle\0payload").expect("binary fixture must be written");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        paths: vec![path],
+        ndjson: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("binary search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let records = output
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<serde_json::Value>(line).expect("valid NDJSON"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(stats.binary_match_files, 1);
+    assert_eq!(stats.total_matches, 0);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["type"], serde_json::json!("summary"));
+    assert_eq!(records[0]["total_matches"], serde_json::json!(0));
+    assert_eq!(records[0]["binary_match_files"], serde_json::json!(1));
+}
+
+#[test]
+fn ndjson_discards_late_binary_lines_and_keeps_text_file_matches() {
+    let dir = tempfile::tempdir().expect("fixture directory must be created");
+    let text_path = dir.path().join("text.txt");
+    let binary_path = dir.path().join("late-binary.dat");
+    std::fs::write(&text_path, b"needle in text\n").expect("text fixture must be written");
+    let mut binary = vec![b'a'; 70_000];
+    binary[..6].copy_from_slice(b"needle");
+    binary[6] = b'\n';
+    binary[69_999] = 0;
+    std::fs::write(&binary_path, binary).expect("binary fixture must be written");
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let config = NativeSearchConfig {
+        pattern: "needle".to_string(),
+        fixed_strings: true,
+        mmap: false,
+        paths: vec![text_path, binary_path],
+        ndjson: true,
+        output_target: NativeOutputTarget::Buffer(Arc::clone(&buffer)),
+        ..NativeSearchConfig::default()
+    };
+
+    let stats = run_native_search(config).expect("mixed search must complete");
+    let output = buffer.lock().expect("buffer lock").clone();
+    let records = output
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<serde_json::Value>(line).expect("valid NDJSON"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(stats.binary_match_files, 1);
+    assert_eq!(stats.total_matches, 1);
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["text"], serde_json::json!("needle in text"));
+    assert_eq!(records[1]["type"], serde_json::json!("summary"));
+    assert_eq!(records[1]["total_matches"], serde_json::json!(1));
+    assert_eq!(records[1]["binary_match_files"], serde_json::json!(1));
+}
+
 // --- Task #26: the --json envelope must NAME the scope a zero-result search covered -------
 //
 // The v1.101.22 dogfood: "PATH note is stderr-only -- bare `--json` still returns empty
