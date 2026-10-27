@@ -162,7 +162,7 @@ def test_ManagedStage_WhenHandleCleanupFails_LogsWarning(
     [(False, 1), (True, 2)],
     ids=["uv", "python-venv-fallback"],
 )
-def test_ManagedStage_WhenCandidateVerified_PublishesThenRepairsLauncher(
+def test_ManagedStage_WhenCandidateVerified_RepairsLauncherThenPublishes(
     trusted_base_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -190,7 +190,7 @@ def test_ManagedStage_WhenCandidateVerified_PublishesThenRepairsLauncher(
     assert venv_calls[-1][0] == (str(executable) if fallback else "uv")
     assert installs[0][1] == {"verify_destination": False}
     assert installs[1][0] == root / "bin" / "tg.exe"
-    assert installs[1][1] == {}
+    assert installs[1][1] == {"verify_destination": False}
     assert verification == [
         (
             root / "runtimes" / result.generation / ".venv" / "Scripts" / "python.exe",
@@ -273,6 +273,54 @@ def test_ManagedStage_WhenCandidateVerificationFails_PreservesPreviousSelection(
     assert selected is not None
     assert selected.selection.version == "1.1.0"
     assert len(list((root / "runtimes").iterdir())) == 2
+
+
+def test_ManagedStage_WhenStableDispatcherRepairFails_PreservesPreviousSelector(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    _seed_selected(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1.1.0")
+    previous = (root / "runtime-selection.json").read_bytes()
+    _stub_stage_dependencies(monkeypatch)
+    install_native = native_frontdoor._install_release_native_frontdoor
+
+    def fail_stable_repair(version: str, destination: Path, **kwargs):
+        if destination == root / "bin" / "tg.exe":
+            raise RuntimeError("stable dispatcher repair failed")
+        return install_native(version, destination, **kwargs)
+
+    monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", fail_stable_repair)
+
+    with pytest.raises(RuntimeError, match="stable dispatcher repair failed"):
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    assert (root / "runtime-selection.json").read_bytes() == previous
+
+
+def test_ManagedStage_WhenCandidateIsOlder_SkipsStableRepairAndPreservesSelection(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    _seed_selected(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1.3.0")
+    previous = (root / "runtime-selection.json").read_bytes()
+    dispatcher = b"previous stable dispatcher"
+    stable_path = root / "bin" / "tg.exe"
+    stable_path.parent.mkdir()
+    _restricted_file(stable_path, dispatcher)
+    _venv_calls, installs, _verification, _candidate_installs = _stub_stage_dependencies(
+        monkeypatch
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to activate older candidate"):
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    assert len(installs) == 1
+    assert (root / "runtime-selection.json").read_bytes() == previous
+    assert stable_path.read_bytes() == dispatcher
 
 
 def test_ManagedStage_WhenSchedulerSettlesFailure_DoesNotPublish(

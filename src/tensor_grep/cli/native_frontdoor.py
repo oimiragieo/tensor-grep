@@ -897,6 +897,15 @@ def _validate_managed_publication_descriptor(descriptor: int, parent_final: str,
     _validate_managed_leaf_handle(descriptor_handle, parent_final, name)
 
 
+def _ensure_managed_generation_not_older(install_root: Path, version: str) -> None:
+    selected_version = selected_managed_windows_version(install_root)
+    if selected_version is not None and _self._is_version_newer(selected_version, version):
+        raise RuntimeError(
+            f"managed runtime selector advanced to {selected_version}; "
+            f"refusing to activate older candidate {version}"
+        )
+
+
 def _publish_managed_generation(
     install_root: Path,
     generation: str,
@@ -907,12 +916,7 @@ def _publish_managed_generation(
     """Publish one verified generation; the caller holds the selector lock and generation pins."""
     selector_path = install_root / "runtime-selection.json"
     selector_bytes = encode_selection(ManagedRuntimeSelection(generation, version))
-    selected_version = selected_managed_windows_version(install_root)
-    if selected_version is not None and _self._is_version_newer(selected_version, version):
-        raise RuntimeError(
-            f"managed runtime selector advanced to {selected_version}; "
-            f"refusing to activate older candidate {version}"
-        )
+    _ensure_managed_generation_not_older(install_root, version)
 
     parent_final = _pin_managed_directory(install_root, held)
     temporary_path = selector_path.with_name(f"{selector_path.name}.{uuid4().hex}.tmp")
@@ -1171,7 +1175,7 @@ def _activate_managed_generation_after_parent(
     generation: str,
     version: str,
 ) -> int:
-    """Wait for the old launcher, publish selection, then repair its stable dispatcher."""
+    """Wait for the old launcher, repair its stable dispatcher, then publish selection."""
     import ctypes
     from ctypes import wintypes
 
@@ -1231,11 +1235,14 @@ def _activate_managed_generation_after_parent(
                 from tensor_grep.cli._index_lock import index_lock
 
                 with index_lock(install_root / "runtime-selection.json"):
+                    _ensure_managed_generation_not_older(install_root, version)
+                    if not _stable_dispatcher_matches_release(version, stable_path):
+                        _install_release_native_frontdoor(
+                            version, stable_path, verify_destination=False
+                        )
                     _publish_managed_generation(
                         install_root, generation, version, held, selector_attempted
                     )
-                    if not _stable_dispatcher_matches_release(version, stable_path):
-                        _install_release_native_frontdoor(version, stable_path)
                 atomic_write_bytes_anchored(
                     status_path, f"activated {version} generation {generation}\n".encode()
                 )
@@ -1356,11 +1363,14 @@ def stage_managed_windows_runtime(
             )
 
         with index_lock(selector_path):
+            _ensure_managed_generation_not_older(install_root, expected_version)
+            if not _stable_dispatcher_matches_release(expected_version, stable_path):
+                _install_release_native_frontdoor(
+                    expected_version, stable_path, verify_destination=False
+                )
             _publish_managed_generation(
                 install_root, generation, expected_version, held, selector_attempted
             )
-            if not _stable_dispatcher_matches_release(expected_version, stable_path):
-                _install_release_native_frontdoor(expected_version, stable_path)
         return ManagedWindowsRuntimeInstall(
             generation, expected_version, install_method, native_result.flavor
         )

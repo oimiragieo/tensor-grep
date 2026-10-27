@@ -1,6 +1,6 @@
 # Managed runtime selection record
 
-**BLUF:** This bounded codec defines one strict identity record for a future matching Python/native runtime generation.
+**BLUF:** This bounded codec defines the strict identity record used to route Windows managed runs to a matching Python/native runtime generation.
 
 **ELI5:** Think of the record as a small label that names a generation and its release. The codec checks that label before returning a frozen pair, and it writes that pair in one fixed format. A bad label gets a short error that does not repeat its contents.
 
@@ -28,7 +28,7 @@ Input bytes pass the 512-byte bound before decoding. Strict UTF-8 JSON validatio
 
 | Planned location | Meaning |
 |---|---|
-| `.tensor-grep/runtime-selection.json` | The future selection record. |
+| `.tensor-grep/runtime-selection.json` | The selected generation record. |
 | `.tensor-grep/runtimes/<generation>/bin/tg.exe` | Native executable for that generation. |
 | `.tensor-grep/runtimes/<generation>/.venv/Scripts/python.exe` | Matching Python runtime. |
 
@@ -57,7 +57,8 @@ Windows integration tests use actual protected directories and handles: replacem
 
 The [native decoder](https://github.com/oimiragieo/tensor-grep/blob/main/rust_core/src/managed_runtime_selection.rs) enforces the same schema and bounds; its 34 inline tests include array refusal and canonical-size boundaries.
 
-This is groundwork only: runtime activation, legacy fallback, and updater transaction remain
-unimplemented. The caller still must establish installation authority before requesting a read.
+Windows activation repairs the stable dispatcher before publishing a new selector. If repair fails, the prior selector bytes remain selected; if there is no selector yet, the stable launcher keeps its legacy startup path. A candidate older than the selected version is refused before dispatcher repair, and the version guard is repeated before selector replacement under the same lock. Equal-version generations remain eligible for selection. The stable dispatcher candidate is smoke-tested before installation and its installed bytes are checked against the release checksum. Its post-install `--version` probe is skipped because the existing selector would route that probe to the old generation. The caller still must establish installation authority before requesting a read.
+
+The synchronous staging and deferred activation paths share this ordering. Staging raises on dispatcher repair failure; deferred activation returns failure and records the exception type in its activation log. See `test_ManagedStage_WhenStableDispatcherRepairFails_PreservesPreviousSelector` and `test_ActivationWorker_WhenStableDispatcherRepairFails_PreservesPreviousSelector`.
 
 Verify with `uv run --no-sync python -m pytest tests/unit/test_managed_runtime_selection.py tests/unit/test_session_daemon_winsec_read.py tests/unit/test_managed_runtime_reader.py -q`.
