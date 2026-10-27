@@ -4,7 +4,9 @@ use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
 mod cli_invocations;
+mod native_multi_pattern;
 use cli_invocations::is_search_version_invocation;
+use native_multi_pattern::collect_native_multi_pattern_matches;
 // Bug #88/#480/#100: `implicit_search_walk_exceeds_ceiling` (the WALK-ceiling probe) moved to
 // `rg_passthrough.rs` (a library module, not this binary crate root) -- see the breadcrumb
 // comment above `parse_early_ripgrep_args`. `WalkBuilder`'s only remaining consumer in THIS file
@@ -24,7 +26,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
@@ -44,8 +46,7 @@ use tensor_grep_rs::gpu_native::{
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
     defaulted_scope_fields, native_json_text_fields, native_search_pattern_compiles,
-    run_native_fixed_multi_pattern_search, run_native_search,
-    smart_case_pattern_is_case_insensitive, NativeOutputTarget, NativeSearchConfig, SearchStats,
+    run_native_search, smart_case_pattern_is_case_insensitive, NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -5376,12 +5377,22 @@ mod tests {
 
     #[test]
     fn ndjson_summary_omits_every_optional_field_when_nothing_is_wrong() {
-        // THE BYTE-IDENTICAL PROMISE. All five optionals must be ABSENT, not present-and-null:
+        // THE BYTE-IDENTICAL PROMISE. Optional fields must be ABSENT, not present-and-null:
         // a `null` is a NEW KEY on the happy path, which is a wire change wearing a default value.
         let value = summary_value(&SearchSummaryNdjson {
             record_type: "summary",
             version: JSON_OUTPUT_VERSION,
             total_matches: 3,
+            routing_backend: None,
+            routing_reason: None,
+            sidecar_used: None,
+            requested_gpu_device_ids: None,
+            routing_gpu_device_ids: None,
+            gpu_evidence_status: None,
+            gpu_proof: None,
+            native_gpu_unavailable: None,
+            not_gpu_proof_reason: None,
+            binary_match_files: None,
             result_incomplete: None,
             incomplete_reason_class: None,
             incomplete_paths_count: None,
@@ -5392,6 +5403,16 @@ mod tests {
         assert_eq!(value["type"], serde_json::json!("summary"));
         assert_eq!(value["total_matches"], serde_json::json!(3));
         for key in [
+            "routing_backend",
+            "routing_reason",
+            "sidecar_used",
+            "requested_gpu_device_ids",
+            "routing_gpu_device_ids",
+            "gpu_evidence_status",
+            "gpu_proof",
+            "native_gpu_unavailable",
+            "not_gpu_proof_reason",
+            "binary_match_files",
             "result_incomplete",
             "incomplete_reason_class",
             "incomplete_paths_count",
@@ -5414,6 +5435,16 @@ mod tests {
             record_type: "summary",
             version: JSON_OUTPUT_VERSION,
             total_matches: 0,
+            routing_backend: Some("NativeCpuBackend"),
+            routing_reason: Some("force_cpu"),
+            sidecar_used: Some(false),
+            requested_gpu_device_ids: Some(Vec::new()),
+            routing_gpu_device_ids: Some(Vec::new()),
+            gpu_evidence_status: None,
+            gpu_proof: None,
+            native_gpu_unavailable: None,
+            not_gpu_proof_reason: None,
+            binary_match_files: Some(2),
             result_incomplete: Some(true),
             incomplete_reason_class: Some("unreadable_path"),
             incomplete_paths_count: Some(2),
@@ -5422,6 +5453,12 @@ mod tests {
         });
 
         assert_eq!(value["result_incomplete"], serde_json::json!(true));
+        assert_eq!(value["binary_match_files"], serde_json::json!(2));
+        assert_eq!(value["routing_backend"], "NativeCpuBackend");
+        assert_eq!(value["routing_reason"], "force_cpu");
+        assert_eq!(value["sidecar_used"], false);
+        assert_eq!(value["requested_gpu_device_ids"], serde_json::json!([]));
+        assert_eq!(value["routing_gpu_device_ids"], serde_json::json!([]));
         assert_eq!(
             value["incomplete_reason_class"],
             serde_json::json!("unreadable_path")
@@ -5441,6 +5478,7 @@ mod tests {
         incomplete_paths_count: Option<usize>,
         path_was_defaulted: Option<bool>,
         scope_note: Option<&'static str>,
+        binary_match_files: Option<usize>,
     ) -> serde_json::Value {
         let payload = SearchResultJson {
             version: JSON_OUTPUT_VERSION,
@@ -5457,6 +5495,7 @@ mod tests {
             path: ".",
             total_files: 0,
             total_matches: 0,
+            binary_match_files,
             matched_file_paths: Vec::new(),
             match_counts_by_file: std::collections::BTreeMap::new(),
             matches: Vec::new(),
@@ -5474,7 +5513,7 @@ mod tests {
     fn aggregate_envelope_omits_every_optional_field_when_nothing_is_wrong() {
         // CONTROL, and the load-bearing half: this is the shape every existing `--json` consumer
         // sees today. A key appearing here is a silent contract change.
-        let value = aggregate_value(None, None, None, None, None);
+        let value = aggregate_value(None, None, None, None, None, None);
 
         for key in [
             "result_incomplete",
@@ -5482,6 +5521,7 @@ mod tests {
             "incomplete_paths_count",
             "path_was_defaulted",
             "scope_note",
+            "binary_match_files",
             "gpu_evidence_status",
             "gpu_proof",
             "native_gpu_unavailable",
@@ -5510,6 +5550,7 @@ mod tests {
             Some(1),
             Some(true),
             Some(DEFAULTED_SCOPE_NOTE),
+            Some(2),
         );
 
         assert_eq!(value["result_incomplete"], serde_json::json!(true));
@@ -5520,6 +5561,7 @@ mod tests {
         assert_eq!(value["incomplete_paths_count"], serde_json::json!(1));
         assert_eq!(value["path_was_defaulted"], serde_json::json!(true));
         assert_eq!(value["scope_note"], serde_json::json!(DEFAULTED_SCOPE_NOTE));
+        assert_eq!(value["binary_match_files"], serde_json::json!(2));
     }
 
     // THE THIRD LITERAL, `GpuNativeSearchResultJson`, IS DELIBERATELY NOT TESTED HERE, and this
@@ -9390,84 +9432,6 @@ fn exit_on_native_multi_pattern_ceiling_refusal(
     std::process::exit(2);
 }
 
-fn collect_native_multi_pattern_matches(
-    patterns: &[String],
-    mut base_config: NativeSearchConfig,
-) -> anyhow::Result<(Vec<SearchMatchJson>, Option<usize>)> {
-    let include_pattern_metadata = patterns.len() > 1;
-    // Task #17: captured BEFORE the per-pattern loop below force-clears `base_config.json` (so
-    // each per-pattern `execute_native_search` call doesn't render its own partial envelope) --
-    // `exit_on_native_multi_pattern_ceiling_refusal` needs the CALLER's original `--json`
-    // request, not that internal "don't render yet" override, or the second call site a few
-    // lines down would always see `json = false` and silently drop the envelope it exists to add.
-    let json_output = base_config.json;
-    let refusal_path = native_search_config_path_display(&base_config.paths);
-    let fast_path_matches = run_native_fixed_multi_pattern_search(base_config.clone(), patterns)
-        .map_err(|err| {
-            exit_on_native_multi_pattern_ceiling_refusal(err, json_output, &refusal_path)
-        })?;
-    if let Some(matches) = fast_path_matches {
-        // The AhoCorasick fast path owns no `SearchStats`, so it genuinely cannot report a
-        // count -- `None`, never `Some(0)`. Tracked as the residual of task 317.
-        return Ok((
-            matches
-                .into_iter()
-                .map(|matched| {
-                    let (text, bytes) = native_json_text_fields(&matched.raw);
-                    let text = text.map(str::to_string);
-                    SearchMatchJson {
-                        file: matched.path.to_string_lossy().into_owned(),
-                        line: matched.line_number as usize,
-                        text,
-                        bytes,
-                        raw: matched.raw,
-                        range: None,
-                        meta_variables: None,
-                        pattern_id: include_pattern_metadata.then_some(matched.pattern_id),
-                        pattern_text: include_pattern_metadata.then_some(matched.pattern_text),
-                    }
-                })
-                .collect(),
-            None,
-        ));
-    }
-
-    base_config.json = false;
-    base_config.ndjson = false;
-    base_config.count = false;
-    base_config.output_target = NativeOutputTarget::Buffer(Arc::new(Mutex::new(Vec::new())));
-
-    let mut matches = Vec::new();
-    // Task 276 finding 5: this loop already HAD `stats` and used only `stats.matches`, so every
-    // per-pattern walk error was discarded right here.
-    let mut walk_errors = 0usize;
-    for (pattern_id, pattern) in patterns.iter().enumerate() {
-        let mut pattern_config = base_config.clone();
-        pattern_config.pattern = pattern.clone();
-        let stats = execute_native_search(pattern_config).map_err(|err| {
-            exit_on_native_multi_pattern_ceiling_refusal(err, json_output, &refusal_path)
-        })?;
-        walk_errors += stats.walk_errors;
-        matches.extend(stats.matches.into_iter().map(|matched| {
-            let (text, bytes) = native_json_text_fields(&matched.raw);
-            let text = text.map(str::to_string);
-            SearchMatchJson {
-                file: matched.path.to_string_lossy().into_owned(),
-                line: matched.line_number.unwrap_or(0) as usize,
-                text,
-                bytes,
-                raw: matched.raw,
-                range: None,
-                meta_variables: None,
-                pattern_id: include_pattern_metadata.then_some(pattern_id),
-                pattern_text: include_pattern_metadata.then(|| pattern.clone()),
-            }
-        }));
-    }
-
-    Ok((matches, Some(walk_errors)))
-}
-
 struct NativeSearchOutputOptions<'a> {
     decision: RoutingDecision,
     query: &'a str,
@@ -9487,8 +9451,9 @@ fn emit_multi_pattern_native_results(
     options: NativeSearchOutputOptions<'_>,
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
+    binary_matches: usize,
 ) -> anyhow::Result<()> {
-    let has_matches = !matches.is_empty();
+    let has_matches = !matches.is_empty() || (options.json || options.ndjson) && binary_matches > 0;
     if options.json {
         emit_json_search_results(
             options.decision,
@@ -9498,6 +9463,7 @@ fn emit_multi_pattern_native_results(
             matches,
             incomplete_paths,
             options.path_was_implicit,
+            (binary_matches > 0).then_some(binary_matches),
         )?;
     } else if options.ndjson {
         emit_ndjson_search_results(
@@ -9508,6 +9474,7 @@ fn emit_multi_pattern_native_results(
             matches,
             incomplete_paths,
             options.path_was_implicit,
+            (binary_matches > 0).then_some(binary_matches),
         )?;
     } else if options.count {
         emit_count_search_matches(options.path, &matches)?;
@@ -9947,22 +9914,23 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 .then(|| command_ripgrep_args(&args, &request));
 
             if request.patterns.len() > 1 {
-                let (matches, incomplete_paths) = match collect_native_multi_pattern_matches(
-                    &request.patterns,
-                    native_search_config_for_command(
-                        &args,
-                        &request.patterns[0],
-                        &request.paths,
-                        request.path_was_implicit,
-                        decision,
-                    ),
-                ) {
-                    Ok(collected) => collected,
-                    Err(err) => {
-                        exit_json_search_runtime_error_if_needed(args.json, args.ndjson, &err);
-                        return Err(err);
-                    }
-                };
+                let (matches, incomplete_paths, binary_match_files) =
+                    match collect_native_multi_pattern_matches(
+                        &request.patterns,
+                        native_search_config_for_command(
+                            &args,
+                            &request.patterns[0],
+                            &request.paths,
+                            request.path_was_implicit,
+                            decision,
+                        ),
+                    ) {
+                        Ok(collected) => collected,
+                        Err(err) => {
+                            exit_json_search_runtime_error_if_needed(args.json, args.ndjson, &err);
+                            return Err(err);
+                        }
+                    };
                 return emit_multi_pattern_native_results(
                     NativeSearchOutputOptions {
                         decision,
@@ -9977,6 +9945,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                     },
                     matches,
                     incomplete_paths,
+                    binary_match_files,
                 );
             }
 
@@ -10282,6 +10251,7 @@ fn run_index_query(
             // count. `None` means "cannot report", NEVER "complete".
             None,
             request.path_was_implicit,
+            None,
         );
     }
 
@@ -10296,6 +10266,7 @@ fn run_index_query(
             // count. `None` means "cannot report", NEVER "complete".
             None,
             request.path_was_implicit,
+            None,
         );
     }
 
@@ -10363,6 +10334,8 @@ struct SearchResultJson<'a> {
     path: &'a str,
     total_files: usize,
     total_matches: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binary_match_files: Option<usize>,
     matched_file_paths: Vec<String>,
     match_counts_by_file: std::collections::BTreeMap<String, usize>,
     matches: Vec<SearchMatchJson>,
@@ -10400,18 +10373,33 @@ struct SearchResultJson<'a> {
     remediation: Option<serde_json::Value>,
 }
 
-/// The `--ndjson` TERMINAL SUMMARY record (task 276 slice B2b).
-///
-/// `--ndjson` emitted one record per match and nothing else, so there was nowhere for an
-/// incompleteness marker to live -- not a missing field, a missing RECORD. Emitted on EVERY
-/// run, complete or not: a summary that appears only when something went wrong is one a
-/// streaming reader never learns to expect. `type` is the discriminator.
+/// Terminal record keeps disclosures available on empty and incomplete scans.
 #[derive(Serialize)]
 struct SearchSummaryNdjson {
     #[serde(rename = "type")]
     record_type: &'static str,
     version: u32,
     total_matches: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    routing_backend: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    routing_reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sidecar_used: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    requested_gpu_device_ids: Option<Vec<i32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    routing_gpu_device_ids: Option<Vec<i32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_evidence_status: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gpu_proof: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_gpu_unavailable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_gpu_proof_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binary_match_files: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     result_incomplete: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -12587,6 +12575,7 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
             // count. `None` means "cannot report", NEVER "complete".
             None,
             path_was_implicit,
+            None,
         )?;
         if match_count == 0 {
             warn_windows_single_quote_ast_pattern(pattern);
@@ -13376,7 +13365,7 @@ fn handle_gpu_unavailable_cpu_fallback(
         emit_verbose_metadata(decision);
     }
     if params.patterns.len() > 1 {
-        let (matches, incomplete_paths) =
+        let (matches, incomplete_paths, binary_match_files) =
             collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
         return emit_multi_pattern_native_results(
             NativeSearchOutputOptions {
@@ -13392,6 +13381,7 @@ fn handle_gpu_unavailable_cpu_fallback(
             },
             matches,
             incomplete_paths,
+            binary_match_files,
         );
     }
     run_native_search_with_optional_rg_fallback(cpu_config, None)
@@ -13839,6 +13829,7 @@ fn execute_gpu_native_route(
             // never "complete", so passing the real count is strictly more honest.
             Some(stats.walk_errors),
             params.path_was_implicit,
+            None,
         )?;
     } else if params.count {
         emit_gpu_native_count_results(params, &stats)?;
@@ -13890,10 +13881,11 @@ fn handle_auto_gpu_search(
                         ));
                     }
                     if params.patterns.len() > 1 {
-                        let (matches, incomplete_paths) = collect_native_multi_pattern_matches(
-                            params.patterns,
-                            cpu_fallback_config,
-                        )?;
+                        let (matches, incomplete_paths, binary_match_files) =
+                            collect_native_multi_pattern_matches(
+                                params.patterns,
+                                cpu_fallback_config,
+                            )?;
                         return emit_multi_pattern_native_results(
                             NativeSearchOutputOptions {
                                 decision: RoutingDecision::native_cpu_gpu_fallback(
@@ -13911,6 +13903,7 @@ fn handle_auto_gpu_search(
                             },
                             matches,
                             incomplete_paths,
+                            binary_match_files,
                         );
                     }
                     run_native_search_with_optional_rg_fallback(cpu_fallback_config, rg_fallback)
@@ -14067,7 +14060,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         emit_verbose_metadata(fallback_decision);
                     }
                     if params.patterns.len() > 1 {
-                        let (matches, incomplete_paths) =
+                        let (matches, incomplete_paths, binary_match_files) =
                             collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
                         return emit_multi_pattern_native_results(
                             NativeSearchOutputOptions {
@@ -14083,6 +14076,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                             },
                             matches,
                             incomplete_paths,
+                            binary_match_files,
                         );
                     }
                     run_native_search_with_optional_rg_fallback(cpu_config, rg_fallback)
@@ -14191,6 +14185,7 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         // report a count. `None` means "cannot report", NEVER "complete".
                         None,
                         params.path_was_implicit,
+                        None,
                     )?;
                 } else if params.json {
                     let normalized = normalize_gpu_sidecar_json(
@@ -14385,6 +14380,7 @@ fn incomplete_envelope_fields(
     (None, None, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_json_search_results(
     decision: RoutingDecision,
     pattern: &str,
@@ -14393,6 +14389,7 @@ fn emit_json_search_results(
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
     path_was_implicit: bool,
+    binary_match_files: Option<usize>,
 ) -> anyhow::Result<()> {
     let proof_fields = gpu_proof_fields(
         requested_gpu_device_ids,
@@ -14408,7 +14405,12 @@ fn emit_json_search_results(
     let matched_file_paths = match_counts_by_file.keys().cloned().collect::<Vec<_>>();
     let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
         incomplete_envelope_fields(incomplete_paths);
-    let (path_was_defaulted, scope_note) = defaulted_scope_fields(path_was_implicit, matches.len());
+    let (path_was_defaulted, scope_note) = defaulted_scope_fields(
+        path_was_implicit,
+        matches
+            .len()
+            .saturating_add(binary_match_files.unwrap_or_default()),
+    );
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.routing_backend(),
@@ -14433,6 +14435,7 @@ fn emit_json_search_results(
         incomplete_paths_count,
         path_was_defaulted,
         scope_note,
+        binary_match_files,
     };
 
     println!("{}", serde_json::to_string(&payload)?);
@@ -14549,30 +14552,8 @@ fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) -> anyhow:
 
 #[cfg(feature = "cuda")]
 fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatchJson> {
-    // task #273: this used to be the one remaining NOT-exempt-but-treated-as-exempt producer --
-    // `GpuNativeSearchMatch.text` was built in `gpu_native.rs` via
-    // `String::from_utf8_lossy(line_bytes).trim_end_matches('\r')`, the identical
-    // lossy-conversion + over-trim defect class task #266/#746 fixed in the CPU native-search
-    // emitter, then routed through `guaranteed_utf8_match_fields` (a straight type-compatibility
-    // wrap that does NOT certify losslessness the way it does for TrigramIndex/AST/the GPU
-    // sidecar). `GpuNativeSearchMatch` now carries `raw: Vec<u8>` instead, produced without any
-    // lossy conversion in `gpu_native.rs`, so this mirrors the multi-pattern native path's own
-    // `native_json_text_fields(&matched.raw)` call below (task #271) rather than
-    // `guaranteed_utf8_match_fields`.
-    //
-    // CI COVERAGE, precisely: `cuda-feature-check` (.github/workflows/ci.yml) runs
-    // `cargo check --features cuda --all-targets`. `test-rust-core` builds DEFAULT features and
-    // never compiles `gpu_native` at all (it is gated at lib.rs by `#[cfg(feature = "cuda")]`),
-    // so this job is the ONLY oracle for cuda-gated code. `--all-targets` is LOAD-BEARING, not
-    // tidiness: a bare `cargo check` compiles only normal targets, leaving `gpu_native.rs`'s
-    // `#[cfg(test)]` module and the `tests/test_gpu_native_*.rs` integration targets entirely
-    // un-type-checked -- which is exactly how eight `.text` reads survived this PR's first cut
-    // and surfaced only as `E0609` once `--all-targets` was added. Do not drop it.
-    //
-    // What that still does NOT buy: those tests are type-checked but NEVER EXECUTED anywhere in
-    // CI -- checking is not running, and no CUDA runner exists. Task #279 tracks whether
-    // `cargo test --features cuda` can link on a GPU-less runner; until it is answered, treat
-    // cuda-gated tests as compile-time protection only.
+    // Preserve raw bytes; lossy conversion corrupts structured output. CUDA CI type-checks these
+    // targets with `--all-targets` but does not execute the CUDA-gated tests.
     stats
         .matches
         .iter()
@@ -14742,6 +14723,7 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_ndjson_search_results(
     decision: RoutingDecision,
     pattern: &str,
@@ -14750,6 +14732,7 @@ fn emit_ndjson_search_results(
     matches: Vec<SearchMatchJson>,
     incomplete_paths: Option<usize>,
     path_was_implicit: bool,
+    binary_match_files: Option<usize>,
 ) -> anyhow::Result<()> {
     let total_matches = matches.len();
     for matched in matches {
@@ -14785,18 +14768,45 @@ fn emit_ndjson_search_results(
 
     let (result_incomplete, incomplete_reason_class, incomplete_paths_count) =
         incomplete_envelope_fields(incomplete_paths);
-    let (path_was_defaulted, scope_note) = defaulted_scope_fields(path_was_implicit, total_matches);
+    let (path_was_defaulted, scope_note) = defaulted_scope_fields(
+        path_was_implicit,
+        total_matches.saturating_add(binary_match_files.unwrap_or_default()),
+    );
+    let summary_proof_fields = binary_match_files.map(|_| {
+        gpu_proof_fields(
+            requested_gpu_device_ids,
+            decision.routing_backend(),
+            decision.sidecar_used(),
+        )
+    });
     println!(
         "{}",
         serde_json::to_string(&SearchSummaryNdjson {
             record_type: "summary",
             version: JSON_OUTPUT_VERSION,
             total_matches,
+            routing_backend: binary_match_files.map(|_| decision.routing_backend()),
+            routing_reason: binary_match_files.map(|_| decision.reason),
+            sidecar_used: binary_match_files.map(|_| decision.sidecar_used()),
+            requested_gpu_device_ids: binary_match_files.map(|_| requested_gpu_device_ids.to_vec()),
+            routing_gpu_device_ids: binary_match_files.map(|_| Vec::new()),
+            gpu_evidence_status: summary_proof_fields
+                .as_ref()
+                .and_then(|fields| fields.gpu_evidence_status),
+            gpu_proof: summary_proof_fields
+                .as_ref()
+                .and_then(|fields| fields.gpu_proof),
+            native_gpu_unavailable: summary_proof_fields
+                .as_ref()
+                .and_then(|fields| fields.native_gpu_unavailable),
+            not_gpu_proof_reason: summary_proof_fields
+                .and_then(|fields| fields.not_gpu_proof_reason),
             result_incomplete,
             incomplete_reason_class,
             incomplete_paths_count,
             path_was_defaulted,
             scope_note,
+            binary_match_files,
         })?
     );
 
@@ -14811,17 +14821,7 @@ fn parse_gpu_sidecar_search_payload(stdout: &str) -> anyhow::Result<GpuSidecarSe
     })
 }
 
-/// Task #26, THE FIFTH ENVELOPE -- and the one a structural sweep cannot see.
-///
-/// The other four (`NativeJsonOutput`, `SearchResultJson`, `SearchSummaryNdjson`,
-/// `GpuNativeSearchResultJson`) are `#[derive(Serialize)]` structs, so adding a field there is a
-/// visible, type-checked edit. This one is a HAND-BUILT `serde_json::json!()` value: it emits the
-/// same document shape while sharing no type with any of them, so it silently kept its pre-#26
-/// shape while all four siblings gained the disclosure. It is also NOT cuda-gated -- it is live in
-/// every build, on the GPU-sidecar route.
-///
-/// The lesson, and the reason this comment is long: **enumerate EMITTERS, not derive-macros.** A
-/// census keyed on `#[derive(Serialize)]` reports "4 of 4 covered" and is wrong by one.
+/// Hand-built sidecar envelope; keep it aligned with the derived emitters in all builds.
 fn normalize_gpu_sidecar_json(
     stdout: &str,
     requested_gpu_device_ids: &[i32],
