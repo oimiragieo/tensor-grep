@@ -455,11 +455,11 @@ def create_new_restricted(path: str, sid: str) -> Any | None:
     return handle
 
 
-def create_directory_restricted(path: str, sid: str) -> bool:
+def create_directory_restricted(path: str, sid: str, *, exist_ok: bool = True) -> bool:
     """``CreateDirectoryW`` with a PROTECTED descriptor ``D:P(A;OICI;FA;;;<sid>)``: the directory (and
     what it will contain) is user-only from the first instant, with no grants inherited from the
     parent (which on a multi-account machine may hand other accounts Modify / delete rights).
-    True if created or it already exists (a race), False on any failure."""
+    True if created, or if it exists and exist_ok is set; False on failure."""
     if sys.platform != "win32":
         return False
     import ctypes
@@ -493,7 +493,7 @@ def create_directory_restricted(path: str, sid: str) -> bool:
         attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
         if k32.CreateDirectoryW(path, ctypes.byref(attrs)):
             return True
-        return int(ctypes.get_last_error()) == 183  # ERROR_ALREADY_EXISTS
+        return exist_ok and int(ctypes.get_last_error()) == 183  # ERROR_ALREADY_EXISTS
     finally:
         k32.LocalFree(descriptor)
 
