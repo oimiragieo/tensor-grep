@@ -137,13 +137,16 @@ def test_SelectedManagedVersion_WhenSelectedNativeIsHardLinked_RefusesGeneration
         selected_managed_windows_version(root)
 
 
-def test_ManagedSelectionPublication_WhenCandidateIsVerified_SelectsGeneration(
+def test_ManagedSelectionPublication_WhenCandidateMatchesSelectedVersion_SelectsGeneration(
     trusted_base_dir, tmp_path
 ):
     root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     generation = "0123456789abcdef0123456789abcdef"
+    _create_generation(root, selected_generation)
     generation_root = _create_generation(root, generation)
     (root / "runtimes").mkdir(exist_ok=True)
+    _write_selection(root, selected_generation, "1.2.3")
 
     with ExitStack() as held:
         _pin_managed_directory(root, held)

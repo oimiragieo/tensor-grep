@@ -11,6 +11,7 @@ from tensor_grep.cli import managed_runtime_candidate, native_frontdoor
 from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli import session_daemon_winsec as winsec
 from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
+from tensor_grep.cli.managed_runtime_selection import ManagedRuntimeSelection, encode_selection
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="managed activation is Windows-only")
 
@@ -80,13 +81,21 @@ def _prepare_worker(monkeypatch, profile, install_native):
     monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", install_native)
 
 
-def test_ActivationWorker_WhenParentHasExited_PublishesThenRepairsStableLauncher(
+def test_ActivationWorker_WhenParentHasExited_RepairsStableLauncherThenPublishes(
     monkeypatch, request, trusted_base_dir, tmp_path
 ):
     profile, root = _trusted_install_root(trusted_base_dir, tmp_path)
     generation = "0123456789abcdef0123456789abcdef"
     _create_generation(root, generation)
-    _prepare_worker(monkeypatch, profile, lambda _version, path: path.write_bytes(b"stable"))
+    _prepare_worker(
+        monkeypatch,
+        profile,
+        lambda _version, path, **kwargs: (
+            path.write_bytes(b"stable")
+            if kwargs == {"verify_destination": False}
+            else pytest.fail(f"unexpected dispatcher install options: {kwargs}")
+        ),
+    )
     parent_handle = _exited_parent_handle(request)
     ready_handle = native_frontdoor._create_activation_ready_event()
 
@@ -102,6 +111,80 @@ def test_ActivationWorker_WhenParentHasExited_PublishesThenRepairsStableLauncher
     assert (root / "bin" / "tg.exe").read_bytes() == b"stable"
     assert (
         (root / "logs" / f"activation-{generation}.log").read_text().startswith("activated 1.2.3")
+    )
+
+
+def test_ActivationWorker_WhenStableDispatcherRepairFails_PreservesPreviousSelector(
+    monkeypatch, request, trusted_base_dir, tmp_path
+):
+    profile, root = _trusted_install_root(trusted_base_dir, tmp_path)
+    old_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    generation = "0123456789abcdef0123456789abcdef"
+    for name in (old_generation, generation):
+        _create_generation(root, name)
+    cli_main.atomic_write_bytes_anchored(
+        root / "runtime-selection.json",
+        encode_selection(ManagedRuntimeSelection(old_generation, "1.1.0")),
+    )
+    previous = (root / "runtime-selection.json").read_bytes()
+
+    def fail_repair(_version, _path, **kwargs):
+        assert kwargs == {"verify_destination": False}
+        raise RuntimeError("stable dispatcher repair failed")
+
+    _prepare_worker(monkeypatch, profile, fail_repair)
+    parent_handle = _exited_parent_handle(request)
+    ready_handle = native_frontdoor._create_activation_ready_event()
+
+    result = native_frontdoor._activate_managed_generation_after_parent(
+        parent_handle, ready_handle, root, generation, "1.2.3"
+    )
+
+    assert result == 1
+    assert (root / "runtime-selection.json").read_bytes() == previous
+    assert (
+        (root / "logs" / f"activation-{generation}.log")
+        .read_text()
+        .startswith("activation failed: RuntimeError")
+    )
+
+
+def test_ActivationWorker_WhenCandidateIsOlder_SkipsStableRepairAndPreservesSelection(
+    monkeypatch, request, trusted_base_dir, tmp_path
+):
+    profile, root = _trusted_install_root(trusted_base_dir, tmp_path)
+    old_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    generation = "0123456789abcdef0123456789abcdef"
+    for name in (old_generation, generation):
+        _create_generation(root, name)
+    cli_main.atomic_write_bytes_anchored(
+        root / "runtime-selection.json",
+        encode_selection(ManagedRuntimeSelection(old_generation, "1.3.0")),
+    )
+    previous = (root / "runtime-selection.json").read_bytes()
+    dispatcher = b"previous stable dispatcher"
+    stable_path = root / "bin" / "tg.exe"
+    stable_path.parent.mkdir()
+    _create_restricted_file(stable_path, dispatcher)
+    _prepare_worker(
+        monkeypatch,
+        profile,
+        lambda _version, path, **_kwargs: path.write_bytes(b"replaced dispatcher"),
+    )
+    parent_handle = _exited_parent_handle(request)
+    ready_handle = native_frontdoor._create_activation_ready_event()
+
+    result = native_frontdoor._activate_managed_generation_after_parent(
+        parent_handle, ready_handle, root, generation, "1.2.3"
+    )
+
+    assert result == 1
+    assert (root / "runtime-selection.json").read_bytes() == previous
+    assert stable_path.read_bytes() == dispatcher
+    assert (
+        (root / "logs" / f"activation-{generation}.log")
+        .read_text()
+        .startswith("activation failed: RuntimeError")
     )
 
 
