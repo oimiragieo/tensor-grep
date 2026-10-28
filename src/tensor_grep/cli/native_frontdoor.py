@@ -433,8 +433,16 @@ def _managed_native_frontdoor_path() -> Path | None:
     return native_path if native_path.is_file() else None
 
 
-def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
+def _download_native_frontdoor_asset(
+    url: str, destination: Path, *, retain_guard: bool = False
+) -> int | None:
     import urllib.request
+
+    from tensor_grep.cli.native_download_guard import (
+        NativeDownloadCleanupError,
+        acquire_guard,
+        dispose_guarded,
+    )
 
     # Claim the temp name ATOMICALLY as a regular file, then stream the WHOLE transfer through
     # that SAME held fd -- mirroring lsp_provider_setup._download, which documents why: `urlretrieve`
@@ -460,10 +468,12 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     # of that ratchet's two H2 deferrals.
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(destination, flags, 0o600)
+    guard: int | None = None
     # urlopen's timeout param replaces the previous process-global socket.setdefaulttimeout(60):
     # equivalent 60s bound on the request, and this function is the only caller that touched the
     # global default, so there is nothing left relying on it being set.
     total = 0
+    transfer_error: BaseException | None = None
     try:
         try:
             with os.fdopen(fd, "wb", closefd=False) as output:
@@ -480,11 +490,47 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
                                 f"(possible oversized or malicious response): {url}"
                             )
                         output.write(chunk)
+        except BaseException as exc:
+            transfer_error = exc
+            raise
         finally:
-            os.close(fd)
-    except BaseException:
-        destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+            try:
+                if retain_guard or sys.platform == "win32":
+                    try:
+                        guard = acquire_guard(destination, fd)
+                    except Exception as exc:
+                        detail = (
+                            f" after {type(transfer_error).__name__}"
+                            if transfer_error is not None
+                            else ""
+                        )
+                        raise NativeDownloadCleanupError(
+                            f"native download failed{detail}; cleanup unverified; temporary may remain"
+                        ) from exc
+            finally:
+                previous_error = sys.exception()
+                try:
+                    os.close(fd)
+                except OSError as close_error:
+                    previous = f"; previous failure: {previous_error}" if previous_error else ""
+                    raise NativeDownloadCleanupError(
+                        f"native writer close failed; cleanup unverified; temporary may remain"
+                        f"{previous}: {close_error}"
+                    ) from close_error
+    except BaseException as exc:
+        if guard is not None:
+            state = f"after {type(exc).__name__}"
+            if isinstance(exc, NativeDownloadCleanupError):
+                state += f": {exc}"
+            dispose_guarded(destination, guard, state=state)
+        elif not retain_guard and sys.platform != "win32":
+            destination.unlink(missing_ok=True)
         raise
+    if retain_guard:
+        return guard
+    if guard is not None:
+        os.close(guard)
+    return None
 
 
 def _native_frontdoor_checksums_url(version: str) -> str:
@@ -629,15 +675,37 @@ def _install_release_native_frontdoor(
             f"CHECKSUMS.txt for v{version}; refusing to install an unverified native binary"
         )
 
+    from tensor_grep.cli.native_download_guard import NativeDownloadCleanupError, dispose_guarded
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     download_errors: list[str] = []
     for candidate, url in candidates:
         temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+        guard: int | None = None
         downloaded = False
+        publication_attempted = False
         try:
             try:
-                _self._download_native_frontdoor_asset(url, temp_path)
-                downloaded = True
+                if sys.platform == "win32":
+                    candidate_guard = _self._download_native_frontdoor_asset(
+                        url, temp_path, retain_guard=True
+                    )
+                    if type(candidate_guard) is not int:
+                        raise NativeDownloadCleanupError(
+                            "native download identity unavailable; temporary may remain"
+                        )
+                    try:
+                        os.fstat(candidate_guard)
+                    except OSError as exc:
+                        raise NativeDownloadCleanupError(
+                            "native download identity invalid; temporary may remain"
+                        ) from exc
+                    guard = candidate_guard
+                else:
+                    _self._download_native_frontdoor_asset(url, temp_path)
+                    downloaded = True
+            except NativeDownloadCleanupError:
+                raise
             except Exception as exc:
                 download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
                 continue
@@ -667,7 +735,9 @@ def _install_release_native_frontdoor(
             # routing through the helper keeps this call site consistent with the reviewed pattern
             # and gives the destination its own explicit symlink-refusal check).
             install_mode = None if sys.platform.startswith("win") else 0o755
-            atomic_write_bytes_anchored(destination, temp_path.read_bytes(), mode=install_mode)
+            candidate_bytes = temp_path.read_bytes()
+            publication_attempted = True
+            atomic_write_bytes_anchored(destination, candidate_bytes, mode=install_mode)
             if verify_destination:
                 installed_version = _self._native_tg_version(destination)
                 if not _self._native_tg_version_matches(version, installed_version):
@@ -731,7 +801,19 @@ def _install_release_native_frontdoor(
                 downgrade_reason=downgrade_reason,
             )
         finally:
-            if downloaded:
+            if guard is not None:
+                state = (
+                    "destination may have changed"
+                    if publication_attempted
+                    else "before installation"
+                )
+                active_error = sys.exception()
+                if active_error is not None:
+                    state += f"; preceding failure: {active_error}"
+                elif download_errors:
+                    state += f"; preceding failure: {download_errors[-1]}"
+                dispose_guarded(temp_path, guard, state=state)
+            elif downloaded:
                 temp_path.unlink(missing_ok=True)
 
     raise RuntimeError(

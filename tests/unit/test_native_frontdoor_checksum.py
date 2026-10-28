@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import main as cli_main
+from tensor_grep.cli.native_download_guard import acquire_guard
 
 
 def _candidate(asset_name: str = "tg-test-asset", flavor: str = "cpu"):
