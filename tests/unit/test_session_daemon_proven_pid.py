@@ -320,6 +320,23 @@ def test_stop_never_signals_a_planted_pid_and_reports_an_unconfirmed_stop_honest
     )
     try:
         with _daemon(root, metadata_pid=victim.pid) as server:
+            # Exercise the signed-proof stop path using a real verified ping response.
+            proven = sd._probe_daemon(root)
+            assert proven is not None
+            assert proven["pid"] == os.getpid()
+            assert proven["pid"] != victim.pid
+            real_probe = sd._probe_daemon
+            first_probe = True
+
+            def _use_established_proof(candidate_root: Path) -> dict[str, Any] | None:
+                nonlocal first_probe
+                if first_probe:
+                    first_probe = False
+                    assert candidate_root == root
+                    return proven
+                return real_probe(candidate_root)
+
+            monkeypatch.setattr(sd, "_probe_daemon", _use_established_proof)
             # The daemon acks "stop" but keeps serving (a wedged / lying shutdown).
             monkeypatch.setattr(server, "shutdown", lambda: None)
             calls: list[Any] = []
@@ -338,6 +355,37 @@ def test_stop_never_signals_a_planted_pid_and_reports_an_unconfirmed_stop_honest
             assert result["stopped"] is False
             assert result["stop_method"] == "none"
             assert sd._read_daemon_metadata(root) is not None  # daemon.json is KEPT
+    finally:
+        victim.kill()
+        victim.wait(timeout=5)
+
+
+def test_real_terminator_refuses_planted_pid_without_signalling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path.resolve()
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        metadata = {"pid": victim.pid, "root": str(root)}
+
+        # Negative control: the real classifier/terminator must reject an unrelated live process.
+        assert sd._terminate_daemon_by_pid(metadata, root=root) is False
+        assert victim.poll() is None
+
+        # Positive control: a positively classified identity reaches the signal primitive. Keep
+        # the primitive mocked so this test never sends an OS signal to any process.
+        identity = object()
+        dispatched: list[Any] = []
+        monkeypatch.setattr(sd, "_classify_daemon_pid", lambda _m, _r: ("ours", identity))
+        monkeypatch.setattr(
+            sd, "_terminate_identified", lambda candidate: dispatched.append(candidate) or True
+        )
+        assert sd._terminate_daemon_by_pid(metadata, root=root) is True
+        assert dispatched == [identity]
+        assert victim.poll() is None
     finally:
         victim.kill()
         victim.wait(timeout=5)
