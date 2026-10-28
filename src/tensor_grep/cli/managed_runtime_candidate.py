@@ -205,6 +205,8 @@ def _run_managed_candidate_install(
                 "install",
                 "--python",
                 str(candidate_python),
+                "--link-mode",
+                "copy",
                 "--upgrade-package",
                 "tensor-grep",
                 package_spec,
@@ -257,6 +259,8 @@ def _install_managed_torch(
         "--python",
         str(candidate_python),
         *packages,
+        "--link-mode",
+        "copy",
         "--index-url",
         index_url,
     ]

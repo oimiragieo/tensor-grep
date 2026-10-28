@@ -1317,7 +1317,15 @@ def stage_managed_windows_runtime(
         venv_path = candidate_python.parent.parent
         try:
             _self.subprocess.run(
-                ["uv", "venv", "--python", str(source_python), str(venv_path)],
+                [
+                    "uv",
+                    "venv",
+                    "--python",
+                    str(source_python),
+                    "--link-mode",
+                    "copy",
+                    str(venv_path),
+                ],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

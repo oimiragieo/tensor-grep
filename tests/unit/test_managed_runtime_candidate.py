@@ -457,6 +457,8 @@ def test_CandidateInstall_WhenUvSucceeds_UsesPinnedCandidatePythonAndPackageSpec
             "install",
             "--python",
             str(python),
+            "--link-mode",
+            "copy",
             "--upgrade-package",
             "tensor-grep",
             "tensor-grep==0.33.0",
@@ -494,6 +496,8 @@ def test_CandidateInstall_WhenCudaProfileMatches_InstallsPinnedCudaAndPackage(
         "--python",
         str(python),
         "torch",
+        "--link-mode",
+        "copy",
         "--index-url",
         "https://download.pytorch.org/whl/cu128",
     ]
@@ -521,6 +525,7 @@ def test_CandidateInstall_WhenCpuProfile_UsesCpuIndexAndCandidatePipFallback(mon
 
     assert commands[0][-2:] == ["--index-url", "https://download.pytorch.org/whl/cpu"]
     assert commands[0][5:7] == ["torch", "torchvision"]
+    assert commands[0][7:9] == ["--link-mode", "copy"]
     assert commands[1][0:5] == [str(python), "-m", "pip", "install", "torch"]
     assert commands[1][-2:] == ["--index-url", "https://download.pytorch.org/whl/cpu"]
 

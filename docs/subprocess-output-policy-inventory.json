@@ -1249,7 +1249,7 @@
     "identity": "cli/managed_runtime_candidate.py:_run_managed_candidate_install:injected.subprocess.run:99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_run_managed_candidate_install",
-    "line": 228,
+    "line": 230,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1263,13 +1263,13 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d",
-    "producer_fingerprint": "22dbed6f04a0a1ddab572823d1cfb381fd8578b3e884cac9c5f5649e88046a0f"
+    "producer_fingerprint": "c3b9287f9a625ac6da4dd5b13389ab7585571cb0cde0e4e81a187ea6773217e9"
   },
   {
     "identity": "cli/managed_runtime_candidate.py:_install_managed_torch:injected.subprocess.run:479c4f6a8862912c3c213778d1572cfa4e838cc7e8649f595f805a1738b1db81:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_install_managed_torch",
-    "line": 265,
+    "line": 269,
     "column": 8,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1283,13 +1283,13 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "479c4f6a8862912c3c213778d1572cfa4e838cc7e8649f595f805a1738b1db81",
-    "producer_fingerprint": "9dde6a729a712c4faf0aec9ad0e6e7ed00e6b08061d02fceea531cc538885d5c"
+    "producer_fingerprint": "5b43fa82fca31ebd37cd2e1ff06b329492b5b9fde4c9869933fbb1217ef828fc"
   },
   {
     "identity": "cli/managed_runtime_candidate.py:_install_managed_torch:injected.subprocess.run:99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_install_managed_torch",
-    "line": 272,
+    "line": 276,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1303,13 +1303,13 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d",
-    "producer_fingerprint": "9dde6a729a712c4faf0aec9ad0e6e7ed00e6b08061d02fceea531cc538885d5c"
+    "producer_fingerprint": "5b43fa82fca31ebd37cd2e1ff06b329492b5b9fde4c9869933fbb1217ef828fc"
   },
   {
     "identity": "cli/managed_runtime_candidate.py:_managed_cuda_profile:injected.subprocess.run:af437808bc55b7b05a74fb781dfc3c146a9e2dc8bbdf631fab1cf2c1584a0bdd:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_managed_cuda_profile",
-    "line": 291,
+    "line": 295,
     "column": 17,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1329,7 +1329,7 @@
     "identity": "cli/managed_runtime_candidate.py:_verify_managed_candidate_python:injected.subprocess.run:33f5d41455886bff3c8e0fdedfdde4676954858367f7cf0041cb1855cb0f1d67:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_verify_managed_candidate_python",
-    "line": 322,
+    "line": 326,
     "column": 17,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1449,7 +1449,7 @@
     "identity": "cli/native_frontdoor.py:_schedule_managed_activation:injected.subprocess.Popen:7020ff7c509e28829d2f3ac986633fee7c6f7db5f1490662cce5591a68543cb0:0",
     "path": "cli/native_frontdoor.py",
     "function": "_schedule_managed_activation",
-    "line": 1066,
+    "line": 1071,
     "column": 16,
     "target": "injected.subprocess.Popen",
     "policy": "no-capture",
@@ -1466,10 +1466,10 @@
     "producer_fingerprint": "009f409a64ee2091aedad52477142dfaed8e3481ad693578e0efaa62f5d34ebc"
   },
   {
-    "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:89dd614eeb28da046850e4ef0e6f50380c18c5a535e38f16c4fce1de4e192ade:0",
+    "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:d40a36e3d5856b2b0bc5132db722e52e303744e13f7579f65dd7335fd06bcd28:0",
     "path": "cli/native_frontdoor.py",
     "function": "stage_managed_windows_runtime",
-    "line": 1314,
+    "line": 1319,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1482,14 +1482,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "89dd614eeb28da046850e4ef0e6f50380c18c5a535e38f16c4fce1de4e192ade",
-    "producer_fingerprint": "b41e287d2fa41b5ced2af26b967595761427dc0d6e45364aab4eb1198a072d60"
+    "call_fingerprint": "d40a36e3d5856b2b0bc5132db722e52e303744e13f7579f65dd7335fd06bcd28",
+    "producer_fingerprint": "b8f7f8e25b1c38418d9b2ebe79574b89998ab32c6a711531471ebc3db9f6c253"
   },
   {
     "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:a3a3890b46df26b3b30a41e4e0b617a4f5aba323f0c587e7827cf367cbed71f6:0",
     "path": "cli/native_frontdoor.py",
     "function": "stage_managed_windows_runtime",
-    "line": 1323,
+    "line": 1336,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1503,7 +1503,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "a3a3890b46df26b3b30a41e4e0b617a4f5aba323f0c587e7827cf367cbed71f6",
-    "producer_fingerprint": "b41e287d2fa41b5ced2af26b967595761427dc0d6e45364aab4eb1198a072d60"
+    "producer_fingerprint": "b8f7f8e25b1c38418d9b2ebe79574b89998ab32c6a711531471ebc3db9f6c253"
   },
   {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",

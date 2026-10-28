@@ -1,6 +1,9 @@
 import logging
 import os
+import shutil
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -124,6 +127,84 @@ def _stub_stage_dependencies(
     monkeypatch.setattr(native_frontdoor, "_open_native_parent_handle", lambda _path: None)
     monkeypatch.setattr(native_frontdoor, "_schedule_managed_activation", lambda *_args: None)
     return venv_calls, installs, verification, candidate_installs
+
+
+def test_ManagedStage_WhenUvSeedsPackages_DoesNotShareCacheFiles(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uv = shutil.which("uv")
+    if uv is None:
+        pytest.skip("uv is not installed")
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    for name in ("pip", "setuptools", "wheel"):
+        wheel = wheels / f"{name}-99.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "x") as archive:
+            archive.writestr(f"{name}/__init__.py", b'PROBE = "before"\n')
+            archive.writestr(
+                f"{name}-99.0.dist-info/METADATA",
+                f"Metadata-Version: 2.1\nName: {name}\nVersion: 99.0\n\n",
+            )
+            archive.writestr(
+                f"{name}-99.0.dist-info/WHEEL",
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n\n",
+            )
+            archive.writestr(f"{name}-99.0.dist-info/RECORD", "")
+
+    cache = tmp_path / "cache"
+    monkeypatch.delenv("UV_NO_CACHE", raising=False)
+    for name, value in {
+        "UV_CACHE_DIR": str(cache),
+        "UV_FIND_LINKS": str(wheels),
+        "UV_NO_INDEX": "1",
+        "UV_OFFLINE": "1",
+        "UV_NO_CONFIG": "1",
+        "UV_VENV_SEED": "1",
+        "UV_LINK_MODE": "hardlink",
+    }.items():
+        monkeypatch.setenv(name, value)
+    run_process = subprocess.run
+
+    def run(*args, **kwargs):
+        kwargs.setdefault("timeout", 60)
+        kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return run_process(*args, **kwargs)
+
+    control = tmp_path / "control"
+    run([uv, "venv", "--python", sys.executable, str(control)], check=True, capture_output=True)
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    executable.write_bytes((control / "Scripts" / "python.exe").read_bytes())
+    shutil.copyfile(control / "pyvenv.cfg", root / ".venv" / "pyvenv.cfg")
+    _stub_stage_dependencies(monkeypatch)
+    monkeypatch.setattr(cli_main.subprocess, "run", run)
+    result = native_frontdoor.stage_managed_windows_runtime(
+        str(executable), "tensor-grep==1.2.3", "1.2.3"
+    )
+
+    control_file = control / "Lib" / "site-packages" / "pip" / "__init__.py"
+    selected_file = (
+        root
+        / "runtimes"
+        / result.generation
+        / ".venv"
+        / "Lib"
+        / "site-packages"
+        / "pip"
+        / "__init__.py"
+    )
+    assert control_file.read_bytes() == selected_file.read_bytes() == b'PROBE = "before"\n'
+    aliases = [path for path in cache.rglob("__init__.py") if os.path.samefile(path, control_file)]
+    assert len(aliases) == 1
+    control_alias = selected_file.with_name("fixture-control.py")
+    os.link(control_file, control_alias)
+    try:
+        assert os.path.samefile(control_file, control_alias)
+        aliases[0].write_bytes(b'PROBE = "changed"\n')
+        assert control_file.read_bytes() == b'PROBE = "changed"\n'
+        assert control_alias.read_bytes() == b'PROBE = "changed"\n'
+        assert selected_file.read_bytes() == b'PROBE = "before"\n'
+    finally:
+        control_alias.unlink()
 
 
 @pytest.mark.parametrize("existing_runtimes", [False, True], ids=["new", "existing"])
@@ -314,6 +395,7 @@ def test_ManagedStage_WhenCandidateVerified_RepairsLauncherThenPublishes(
     assert not result.activation_pending
     assert len(venv_calls) == expected_venv_calls
     assert venv_calls[0][0] == "uv"
+    assert venv_calls[0][4:6] == ["--link-mode", "copy"]
     assert venv_calls[-1][0] == (str(executable) if fallback else "uv")
     assert installs[0][1] == {"verify_destination": False}
     assert installs[1][0] == root / "bin" / "tg.exe"
