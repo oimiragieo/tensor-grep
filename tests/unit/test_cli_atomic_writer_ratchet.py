@@ -82,7 +82,9 @@ Known gaps (stated plainly, not papered over):
   ``dogfood_features._artifact_identity`` adds a fixed isolated metadata/origin probe whose
   literal payload imports the selected installed package and prints JSON, with no writer calls;
   a focused payload test below pins that read-only source shape and plants an unsafe writer.
-  Two of the remaining three surfaced sites (``_install_release_native_frontdoor``'s detached-upgrade
+  ``managed_runtime_candidate._managed_candidate_profile`` adds an isolated managed-interpreter
+  package/torch profile probe; its source and payload are pinned by a focused read-only check below.
+  Two of the remaining generated-source sites (``_install_release_native_frontdoor``'s detached-upgrade
   helper scripts in `_schedule_windows_native_frontdoor_refresh` and
   `_schedule_windows_self_upgrade`) embed their OWN ``os.replace`` /
   ``write_text`` / ``shutil.copy2`` calls for the SAME native-binary-install flow that produced
@@ -1496,6 +1498,7 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     assert sorted(sites) == [
         ("dogfood_features.py", "_artifact_identity"),
         ("main.py", "_schedule_windows_self_upgrade"),
+        ("managed_runtime_candidate.py", "_managed_candidate_profile"),
         ("managed_runtime_candidate.py", "_managed_cuda_profile"),
         ("managed_runtime_candidate.py", "_verify_managed_candidate_python"),
         ("native_frontdoor.py", "_schedule_managed_activation"),
@@ -1507,6 +1510,47 @@ def test_generated_source_c_sites_are_surfaced() -> None:
         "(update the module docstring's Known-gaps section and, ideally, extend the detector to "
         "recurse into it rather than just re-pinning this list)."
     )
+
+
+def test_managed_candidate_profile_probe_payload_has_no_writers_and_mutation_is_detected() -> None:
+    tree = ast.parse(_read(_CLI_SRC / "managed_runtime_candidate.py"))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_managed_candidate_profile"
+    )
+    payload_refs = []
+    for call in ast.walk(function):
+        if (
+            not isinstance(call, ast.Call)
+            or not call.args
+            or not isinstance(call.args[0], ast.List)
+        ):
+            continue
+        argv = call.args[0].elts
+        for index, value in enumerate(argv):
+            if isinstance(value, ast.Constant) and value.value == "-c":
+                payload_refs.append(argv[index + 1])
+    assert len(payload_refs) == 1
+    assert isinstance(payload_refs[0], ast.Name)
+    assert payload_refs[0].id == "_MANAGED_PROFILE_PROBE"
+
+    probe_assignment = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_MANAGED_PROFILE_PROBE"
+            for target in node.targets
+        )
+    )
+    payload = ast.literal_eval(probe_assignment.value)
+    assert isinstance(payload, str)
+    assert "torch_auxiliaries" in payload and "extras" in payload
+    assert scan_source(payload, "managed-runtime-profile-probe") == []
+    unsafe = payload + "\nfrom pathlib import Path\nPath('artifact').write_bytes(b'bad')"
+    candidates = scan_source(unsafe, "managed-runtime-profile-probe")
+    assert len(candidates) == 1 and candidates[0].classification == VIOLATING
 
 
 def test_dogfood_origin_probe_payload_has_no_writers_and_mutation_is_detected() -> None:

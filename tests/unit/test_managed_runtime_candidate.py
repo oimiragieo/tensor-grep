@@ -1,7 +1,7 @@
 import json
 import subprocess
 import sys
-from importlib import metadata, util
+from importlib import util
 
 import pytest
 
@@ -30,20 +30,11 @@ def _candidate_evidence(python, *, version="0.33.0", cuda="12.8", extension=None
     }
 
 
-def test_CandidatePackageSpec_WhenOptionalFeaturesAreInstalled_PreservesAllExtras(
-    monkeypatch,
-):
-    monkeypatch.setattr(util, "find_spec", lambda _name: object())
-    monkeypatch.setattr(
-        metadata,
-        "version",
-        lambda _name: (_ for _ in ()).throw(metadata.PackageNotFoundError()),
+def test_CandidatePackageSpec_WhenOptionalFeaturesAreInstalled_PreservesAllExtras():
+    package_spec = candidate._managed_candidate_package_spec(
+        "tensor-grep==0.33.0",
+        detected_extras=("gpu-win", "nlp", "ast", "semantic", "rerank", "scan"),
     )
-    monkeypatch.setattr(
-        "shutil.which", lambda name: "C:/tools/ast-grep.exe" if name == "ast-grep" else None
-    )
-
-    package_spec = candidate._managed_candidate_package_spec("tensor-grep==0.33.0")
 
     assert package_spec == "tensor-grep[gpu-win,nlp,ast,semantic,rerank,scan]==0.33.0"
 
@@ -92,28 +83,31 @@ def test_CandidateVerification_WhenTorchProfileDoesNotMatch_RejectsCandidate(
         candidate._verify_managed_candidate_python(python, "0.33.0", expected_cuda="12.8")
 
 
-def test_ManagedVersionProbe_WhenTorchIsPresent_ReportsItsProfileAndOrigin(tmp_path):
+def test_ManagedVersionProbe_WhenTorchIsPresent_ReportsItsProfileAndOrigin(monkeypatch, tmp_path):
     runner = r"""
 import importlib.abc as abc
 import importlib.machinery as machinery
 import importlib.metadata as metadata
 import importlib.util
-import json, pathlib, sys, types
+import json, pathlib, shutil, sys, types
 root = pathlib.Path(sys.argv[1])
-broken = sys.argv[2] == 'broken'
+mode = sys.argv[2]
+broken = mode == 'broken'
 for name in ('tensor_grep', 'tensor_grep.cli', 'tensor_grep.cli.main',
              'tensor_grep.cli.native_frontdoor', 'tensor_grep.rust_core'):
     module = types.ModuleType(name)
     module.__file__ = str(root / (name.replace('.', '/') + '.py'))
+    module.__spec__ = machinery.ModuleSpec(name, None, origin=module.__file__)
     module.__path__ = []
     sys.modules[name] = module
     if '.' in name:
         parent, child = name.rsplit('.', 1)
         setattr(sys.modules[parent], child, module)
 torch = types.ModuleType('torch')
-torch.__file__ = str(root / 'site-packages/torch/__init__.py')
+torch.__file__ = str(root.parent / 'outside.py' if mode == 'profile-outside' else
+                     root / 'site-packages/torch/__init__.py')
 torch.__spec__ = machinery.ModuleSpec('torch', None, origin=torch.__file__)
-torch.version = types.SimpleNamespace(cuda='12.8')
+torch.version = types.SimpleNamespace(cuda=None if mode == 'profile' else '12.8')
 sys.modules['torch'] = torch
 if broken:
     class BrokenAuxiliary(abc.MetaPathFinder, abc.Loader):
@@ -130,13 +124,20 @@ else:
     torchvision.__file__ = str(root / 'site-packages/torchvision/__init__.py')
     torchvision.__spec__ = machinery.ModuleSpec('torchvision', None, origin=torchvision.__file__)
     sys.modules['torchvision'] = torchvision
+    torchaudio = types.ModuleType('torchaudio')
+    torchaudio.__file__ = str(root / 'site-packages/torchaudio/__init__.py')
+    torchaudio.__spec__ = machinery.ModuleSpec('torchaudio', None, origin=torchaudio.__file__)
+    sys.modules['torchaudio'] = torchaudio
 # Keep the fixture independent of optional packages installed in the test environment.
 find_spec = importlib.util.find_spec
 importlib.util.find_spec = lambda name, *args, **kwargs: (
-    find_spec(name, *args, **kwargs) if name in ('torch', 'torchvision') else None)
-metadata.version = lambda _: '0.33.0'
+    find_spec(name, *args, **kwargs)
+    if name in ('tensor_grep', 'torch', 'torchvision', 'torchaudio') else None)
+metadata.version = lambda _: '1.132.3'
 metadata.distribution = lambda _: types.SimpleNamespace(
     locate_file=lambda _: root / 'site-packages')
+metadata.distributions = lambda: []
+shutil.which = lambda name: 'C:/tools/ast-grep.exe' if name == 'ast-grep.exe' else None
 exec(sys.argv[3])
 """
     valid, broken = [
@@ -157,10 +158,56 @@ exec(sys.argv[3])
     assert evidence["cuda"] == "12.8"
     assert evidence["torch_path"] == str((tmp_path / "site-packages/torch/__init__.py").resolve())
     assert evidence["torch_auxiliaries"] == {
-        "torchvision": str((tmp_path / "site-packages/torchvision/__init__.py").resolve())
+        "torchvision": str((tmp_path / "site-packages/torchvision/__init__.py").resolve()),
+        "torchaudio": str((tmp_path / "site-packages/torchaudio/__init__.py").resolve()),
     }
     assert broken.returncode != 0
     assert "torchvision ABI mismatch" in broken.stderr
+    python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    real_run = subprocess.run
+    profile_mode = ["profile"]
+
+    def run(command, **_kwargs):
+        assert command == [str(python), "-I", "-c", candidate._MANAGED_PROFILE_PROBE]
+        return real_run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                runner,
+                str(python.parent.parent),
+                profile_mode[0],
+                command[-1],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    monkeypatch.setattr(candidate._self.subprocess, "run", run)
+
+    profile = candidate._managed_candidate_profile(python)
+
+    assert profile == candidate.ManagedCandidateProfile(
+        "1.132.3", ("gpu-win", "scan"), None, ("torchaudio", "torchvision")
+    )
+    profile_mode[0] = "profile-outside"
+    with pytest.raises(RuntimeError, match="torch origin is outside"):
+        candidate._managed_candidate_profile(python)
+
+
+def test_ManagedCandidateProfile_WhenProbeFails_RaisesVerificationError(monkeypatch):
+    def fail_probe(*_args, **_kwargs):
+        raise OSError("source interpreter unavailable")
+
+    monkeypatch.setattr(candidate._self.subprocess, "run", fail_probe)
+
+    with pytest.raises(
+        RuntimeError, match="managed source Python profile could not be verified"
+    ) as caught:
+        candidate._managed_candidate_profile("python.exe")
+
+    assert isinstance(caught.value.__cause__, OSError)
 
 
 def test_CandidateVerification_WhenExtensionOriginEscapesEnvironment_RejectsCandidate(
@@ -387,7 +434,8 @@ def test_CandidateInstall_WhenUvSucceeds_UsesPinnedCandidatePythonAndPackageSpec
 ):
     python = tmp_path / "python.exe"
     commands = []
-    monkeypatch.setattr(candidate, "_managed_candidate_package_spec", lambda spec: spec)
+    monkeypatch.setattr(util, "find_spec", lambda _name: object())
+    monkeypatch.setattr("shutil.which", lambda _name: None)
     monkeypatch.setattr(
         candidate._self.subprocess,
         "run",
@@ -398,7 +446,7 @@ def test_CandidateInstall_WhenUvSucceeds_UsesPinnedCandidatePythonAndPackageSpec
     )
 
     install_method = candidate._run_managed_candidate_install(
-        python, "tensor-grep==0.33.0", source_cuda=None
+        python, "tensor-grep==0.33.0", source_cuda=None, source_extras=()
     )
 
     assert install_method == "uv"

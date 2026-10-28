@@ -1257,7 +1257,11 @@ def _activate_managed_generation_after_parent(
 
 
 def stage_managed_windows_runtime(
-    executable: str, package_spec: str, expected_version: str
+    executable: str,
+    package_spec: str,
+    expected_version: str,
+    *,
+    expected_source_version: str | None = None,
 ) -> ManagedWindowsRuntimeInstall:
     """Install a verified generation beside the active runtime, then select it."""
     from tensor_grep.cli import managed_runtime_candidate as candidate
@@ -1276,6 +1280,17 @@ def stage_managed_windows_runtime(
     selector_attempted = [False]
     try:
         _pin_managed_directory(install_root, held)
+        source_python = Path(executable).absolute()
+        _pin_managed_executable(source_python, held)
+        source_profile = candidate._managed_candidate_profile(source_python)
+        if (
+            expected_source_version is not None
+            and source_profile.version != expected_source_version
+        ):
+            raise RuntimeError("managed source runtime changed during recovery")
+        normalized_spec = candidate._managed_candidate_package_spec(
+            package_spec, detected_extras=source_profile.extras
+        )
         runtimes_root = install_root / "runtimes"
         runtimes_root.mkdir(exist_ok=True)
         _pin_managed_directory(runtimes_root, held)
@@ -1286,7 +1301,7 @@ def stage_managed_windows_runtime(
         venv_path = candidate_python.parent.parent
         try:
             _self.subprocess.run(
-                ["uv", "venv", "--python", str(Path(executable).absolute()), str(venv_path)],
+                ["uv", "venv", "--python", str(source_python), str(venv_path)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -1295,7 +1310,7 @@ def stage_managed_windows_runtime(
             )
         except (FileNotFoundError, _self.subprocess.CalledProcessError):
             _self.subprocess.run(
-                [str(Path(executable).absolute()), "-m", "venv", str(venv_path)],
+                [str(source_python), "-m", "venv", str(venv_path)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -1303,12 +1318,9 @@ def stage_managed_windows_runtime(
                 check=True,
             )
 
-        normalized_spec = candidate._managed_candidate_package_spec(package_spec)
-        source_cuda = (
-            candidate._managed_cuda_profile(executable) if "gpu-win" in normalized_spec else None
-        )
+        source_cuda = source_profile.cuda if "gpu-win" in normalized_spec else None
         source_torch_auxiliaries = (
-            candidate._managed_torch_auxiliaries() if "gpu-win" in normalized_spec else ()
+            source_profile.torch_auxiliaries if "gpu-win" in normalized_spec else ()
         )
         expected_cuda = (source_cuda or "cpu") if "gpu-win" in normalized_spec else None
         install_method = candidate._run_managed_candidate_install(
@@ -1316,6 +1328,7 @@ def stage_managed_windows_runtime(
             normalized_spec,
             source_cuda=source_cuda,
             source_torch_auxiliaries=source_torch_auxiliaries,
+            source_extras=source_profile.extras,
         )
         candidate._verify_managed_candidate_python(
             candidate_python,

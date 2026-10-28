@@ -3461,7 +3461,7 @@
   },
   {
     "module": "cli/managed_runtime_candidate.py",
-    "lineno": 224,
+    "lineno": 300,
     "enclosing_symbol": "_managed_cuda_profile",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3471,7 +3471,7 @@
   },
   {
     "module": "cli/managed_runtime_candidate.py",
-    "lineno": 255,
+    "lineno": 331,
     "enclosing_symbol": "_verify_managed_candidate_python",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3527,6 +3527,16 @@
     "category": "LOGGED-DEGRADE",
     "evidence": "tests/unit/test_managed_runtime_stage.py::test_ManagedStage_WhenHandleCleanupFails_LogsWarning verifies a type-only warning when staged handle cleanup raises OSError.",
     "reason": "Cleanup can run after the activation worker starts or the selector is published, so rollback is unsafe; the warning discloses the secondary failure without exception text or paths. KeyboardInterrupt and SystemExit still propagate because only Exception is caught.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/managed_runtime_candidate.py",
+    "lineno": 116,
+    "enclosing_symbol": "_managed_candidate_profile",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "tests/unit/test_managed_runtime_candidate.py::test_ManagedCandidateProfile_WhenProbeFails_RaisesVerificationError verifies probe failures become a RuntimeError with the original error chained.",
+    "reason": "The managed interpreter profile must be verified before candidate installation; a failed isolated probe refuses the update and preserves the exception as a cause for diagnosis.",
     "hardened_in": null
   }
 ]

@@ -1165,9 +1165,9 @@ def check_repository(rows: list[Sink]) -> list[str]:
         problems.append(
             f"production callsite identity/fingerprint manifest changed; missing={missing}; added={added}; changed={changed}"
         )
-    if len(rows) != 88:
+    if len(rows) != 89:
         problems.append(
-            f"production output-capable sink population changed: expected 88, found {len(rows)}"
+            f"production output-capable sink population changed: expected 89, found {len(rows)}"
         )
     generated = [row for row in rows if row.generated_from is not None]
     if len(generated) != 12:
