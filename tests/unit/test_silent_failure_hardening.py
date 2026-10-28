@@ -206,9 +206,10 @@ _EXCLUDED_MODULES = frozenset({
 # BackendExecutionError with the original cause; ledger records cite injected-failure tests.
 # - 2026-10-26 (managed Windows runtime): +6 disclosed/fail-closed candidate, reader, activation, upgrade, and daemon-restart boundaries; all six have disposition records.
 # - 2026-10-26 (managed staging cleanup): +1 LOGGED-DEGRADE cleanup boundary; ExitStack close errors are disclosed by type, covered by test_stage_managed_windows_runtime_discloses_cleanup_failure.
+# - 2026-10-28 (PR #1278): +1 INTENTIONAL-BOUNDARY in cli/managed_runtime_candidate.py::_managed_candidate_profile; isolated profile-probe failures become a chained RuntimeError and prevent candidate installation, covered by test_ManagedCandidateProfile_WhenProbeFails_RaisesVerificationError and the disposition ledger.
 # - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
 #   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
-TOTAL_BROAD_HANDLERS_CEILING = 353
+TOTAL_BROAD_HANDLERS_CEILING = 354
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
