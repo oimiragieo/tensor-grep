@@ -397,9 +397,9 @@ def test_ManagedStage_WhenCandidateVerified_RepairsLauncherThenPublishes(
     assert venv_calls[0][0] == "uv"
     assert venv_calls[0][4:6] == ["--link-mode", "copy"]
     assert venv_calls[-1][0] == (str(executable) if fallback else "uv")
-    assert installs[0][1] == {"verify_destination": False}
+    assert installs[0][1] == {"verify_destination": False, "_managed_source": True}
     assert installs[1][0] == root / "bin" / "tg.exe"
-    assert installs[1][1] == {"verify_destination": False}
+    assert installs[1][1] == {"verify_destination": False, "_managed_source": True}
     assert verification == [
         (
             root / "runtimes" / result.generation / ".venv" / "Scripts" / "python.exe",
