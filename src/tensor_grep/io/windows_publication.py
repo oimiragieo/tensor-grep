@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import os
+import re
 import sys
 from ctypes import wintypes
 from pathlib import Path
@@ -17,7 +18,7 @@ def _kernel() -> Any:
     return ctypes.WinDLL("kernel32", use_last_error=True)
 
 
-def open_temporary(path: Path) -> int:
+def open_temporary(path: Path, *, restrict_to_sid: str | None = None) -> int:
     """Claim a new leaf and deny other handles write/delete access through publication."""
     if sys.platform != "win32":
         raise OSError("Windows handle publication is unavailable on this platform")
@@ -35,10 +36,57 @@ def open_temporary(path: Path) -> int:
         wintypes.HANDLE,
     ]
     create.restype = wintypes.HANDLE
-    # GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ, CREATE_NEW, OPEN_REPARSE_POINT.
-    handle = create(str(path), 0xC0010000, 1, None, 1, 0x00200080, None)
+    security_descriptor = ctypes.c_void_p()
+    attributes_pointer = None
+    try:
+        if restrict_to_sid is not None:
+            if (
+                type(restrict_to_sid) is not str
+                or len(restrict_to_sid) > 184
+                or re.fullmatch(r"S-1-[0-9]+(?:-[0-9]+){1,15}", restrict_to_sid) is None
+            ):
+                raise ValueError("invalid Windows SID")
+            components = restrict_to_sid.split("-")[2:]
+            limits = (2**48, *([2**32] * (len(components) - 1)))
+            if any(
+                str(int(part)) != part or int(part) >= limit
+                for part, limit in zip(components, limits, strict=True)
+            ):
+                raise ValueError("invalid Windows SID")
+
+            class SecurityAttributes(ctypes.Structure):
+                _fields_ = [
+                    ("nLength", wintypes.DWORD),
+                    ("lpSecurityDescriptor", ctypes.c_void_p),
+                    ("bInheritHandle", wintypes.BOOL),
+                ]
+
+            adv = ctypes.WinDLL("advapi32", use_last_error=True)
+            convert = adv.ConvertStringSecurityDescriptorToSecurityDescriptorW
+            convert.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.c_void_p,
+            ]
+            convert.restype = wintypes.BOOL
+            if not convert(
+                f"D:P(A;;FA;;;{restrict_to_sid})", 1, ctypes.byref(security_descriptor), None
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+            attributes = SecurityAttributes(
+                ctypes.sizeof(SecurityAttributes), security_descriptor, False
+            )
+            attributes_pointer = ctypes.byref(attributes)
+        # GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ, CREATE_NEW, OPEN_REPARSE_POINT.
+        handle = create(str(path), 0xC0010000, 1, attributes_pointer, 1, 0x00200080, None)
+        create_error = ctypes.get_last_error()
+    finally:
+        if security_descriptor.value:
+            kernel.LocalFree.argtypes = [ctypes.c_void_p]
+            kernel.LocalFree(security_descriptor)
     if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(create_error)
     try:
         return msvcrt.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_BINARY", 0))
     except BaseException:

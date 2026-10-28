@@ -1,10 +1,12 @@
 import os
+import subprocess
 import sys
 from contextlib import ExitStack
+from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import session_daemon_trust, session_daemon_winsec
+from tensor_grep.cli import native_frontdoor, session_daemon_trust, session_daemon_winsec
 from tensor_grep.cli._index_lock import index_lock
 from tensor_grep.cli.managed_runtime_reader import read_managed_runtime
 from tensor_grep.cli.managed_runtime_selection import ManagedRuntimeSelection, encode_selection
@@ -14,6 +16,7 @@ from tensor_grep.cli.native_frontdoor import (
     _publish_managed_generation,
     selected_managed_windows_version,
 )
+from tensor_grep.io import windows_publication
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="managed selection is Windows-only")
 
@@ -159,6 +162,120 @@ def test_ManagedSelectionPublication_WhenCandidateMatchesSelectedVersion_Selects
     selected = read_managed_runtime(trusted_root=root)
     assert selected is not None
     assert selected.selection == ManagedRuntimeSelection(generation, "1.2.3")
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []
+
+
+def test_ManagedSelectionPublication_ProtectsSelectorFromInheritedForeignRead(
+    trusted_base_dir, tmp_path
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    candidate_generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    _create_generation(root, selected_generation)
+    candidate_root = _create_generation(root, candidate_generation)
+    _write_selection(root, selected_generation, "1.2.3")
+    old = session_daemon_winsec.open_no_follow(str(root / "runtime-selection.json"), share=5)
+    assert old is not None
+    icacls = Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe"
+    try:
+        for arguments in (
+            [str(root / "runtimes"), "/inheritance:d"],
+            [str(root), "/grant", "*S-1-1-0:(OI)(CI)(IO)(R)"],
+            [str(root), "/grant", "*S-1-1-0:(OI)(CI)(IO)(W)"],
+        ):
+            subprocess.run([str(icacls), *arguments], capture_output=True, check=True, timeout=15)
+        control = root / "ordinary.tmp"
+        control.write_bytes(b"ordinary")
+        handle = session_daemon_winsec.open_no_follow(str(control))
+        assert handle is not None
+        try:
+            assert not session_daemon_trust._windows_handle_trusted(handle, check_dacl=True)
+            details = session_daemon_winsec.owner_and_dacl_entries(handle)
+            assert details is not None
+            assert any(
+                sid == "S-1-1-0" and mask & session_daemon_trust._WIN_WRITE_MASK
+                for sid, mask in details[1]
+            )
+        finally:
+            session_daemon_winsec.close_handle(handle)
+
+        with ExitStack() as held:
+            _pin_managed_directory(candidate_root, held)
+            _pin_managed_generation_executables(candidate_root, held)
+            with index_lock(root / "runtime-selection.json"):
+                _publish_managed_generation(root, candidate_generation, "1.2.4", held)
+
+        assert session_daemon_winsec.read_all(old) == encode_selection(
+            ManagedRuntimeSelection(selected_generation, "1.2.3")
+        )
+        assert read_managed_runtime(trusted_root=root).selection.generation == candidate_generation
+        selector = session_daemon_winsec.open_no_follow(str(root / "runtime-selection.json"))
+        assert selector is not None
+        try:
+            assert session_daemon_trust._windows_handle_trusted(selector, check_dacl=True)
+        finally:
+            session_daemon_winsec.close_handle(selector)
+    finally:
+        session_daemon_winsec.close_handle(old)
+
+
+def test_ManagedSelectionPublication_WhenSidUnavailable_PreservesSelector(
+    trusted_base_dir, tmp_path, monkeypatch
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    candidate_generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    _create_generation(root, selected_generation)
+    candidate_root = _create_generation(root, candidate_generation)
+    _write_selection(root, selected_generation, "1.2.3")
+    original = (root / "runtime-selection.json").read_bytes()
+    monkeypatch.setattr(session_daemon_winsec, "current_user_sid", lambda: None)
+    attempted = [False]
+
+    with ExitStack() as held:
+        _pin_managed_directory(candidate_root, held)
+        _pin_managed_generation_executables(candidate_root, held)
+        with index_lock(root / "runtime-selection.json"):
+            with pytest.raises(RuntimeError, match="selector owner could not be determined"):
+                _publish_managed_generation(root, candidate_generation, "1.2.4", held, attempted)
+
+    assert (root / "runtime-selection.json").read_bytes() == original
+    assert attempted == [False]
+    assert list(root.glob("runtime-selection.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize("failure", ["create", "validate", "replace"])
+def test_ManagedSelectionPublication_WhenTemporaryFails_PreservesSelector(
+    trusted_base_dir, tmp_path, monkeypatch, failure
+):
+    root = _managed_root(trusted_base_dir, tmp_path)
+    selected_generation = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    candidate_generation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    _create_generation(root, selected_generation)
+    candidate_root = _create_generation(root, candidate_generation)
+    _write_selection(root, selected_generation, "1.2.3")
+    original = (root / "runtime-selection.json").read_bytes()
+    attempted = [False]
+
+    def refuse(*_args, **_kwargs):
+        raise OSError(f"injected {failure} failure")
+
+    if failure == "create":
+        monkeypatch.setattr(windows_publication, "open_temporary", refuse)
+    elif failure == "validate":
+        monkeypatch.setattr(native_frontdoor, "_validate_managed_publication_descriptor", refuse)
+    else:
+        monkeypatch.setattr(windows_publication, "replace_open", refuse)
+
+    with ExitStack() as held:
+        _pin_managed_directory(candidate_root, held)
+        _pin_managed_generation_executables(candidate_root, held)
+        with index_lock(root / "runtime-selection.json"):
+            with pytest.raises(OSError, match=f"injected {failure} failure"):
+                _publish_managed_generation(root, candidate_generation, "1.2.4", held, attempted)
+
+    assert (root / "runtime-selection.json").read_bytes() == original
+    assert attempted == [failure == "replace"]
     assert list(root.glob("runtime-selection.json.*.tmp")) == []
 
 

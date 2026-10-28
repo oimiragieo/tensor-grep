@@ -923,7 +923,12 @@ def _publish_managed_generation(
     descriptor = None
     replacement_attempted = False
     try:
-        descriptor = windows_publication.open_temporary(temporary_path)
+        from tensor_grep.cli import session_daemon_winsec as winsec
+
+        sid = winsec.current_user_sid()
+        if sid is None:
+            raise RuntimeError("managed selector owner could not be determined")
+        descriptor = windows_publication.open_temporary(temporary_path, restrict_to_sid=sid)
         with os.fdopen(descriptor, "wb", closefd=False) as output:
             output.write(selector_bytes)
             output.flush()

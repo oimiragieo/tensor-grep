@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import errno
 import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, BinaryIO
 
 import pytest
@@ -112,6 +114,79 @@ def test_ReplaceOpen_UnsupportedRenameClass_PreservesTargetAndSource(
     assert os.fstat(stream.fileno()).st_size == 8
     stream.close()
     assert source.read_bytes() == b"new-pair"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows handle publication")
+@pytest.mark.parametrize(
+    "sid", ["S-1-5-21)(A;;FA;;;WD", "", "S-1-5-" + "9" * 200, "S-1-5-4294967296"]
+)
+def test_OpenTemporary_WhenSidIsInvalid_RefusesBeforeCreatingFile(tmp_path: Path, sid: str) -> None:
+    path = tmp_path / "invalid.tmp"
+    with pytest.raises(ValueError, match="invalid Windows SID"):
+        windows_publication.open_temporary(path, restrict_to_sid=sid)
+    assert not path.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows handle publication")
+def test_OpenTemporary_RestrictedConversionFailureCreatesNoFile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import ctypes
+
+    sid = winsec.current_user_sid()
+    assert sid is not None
+    real_dll = ctypes.WinDLL
+
+    def refuse(*_args):
+        ctypes.set_last_error(87)
+        return 0
+
+    def fake_dll(name, **kwargs):
+        if name == "advapi32":
+            return SimpleNamespace(ConvertStringSecurityDescriptorToSecurityDescriptorW=refuse)
+        return real_dll(name, **kwargs)
+
+    monkeypatch.setattr(ctypes, "WinDLL", fake_dll)
+    path = tmp_path / "failure.tmp"
+    with pytest.raises(OSError) as error:
+        windows_publication.open_temporary(path, restrict_to_sid=sid)
+    assert error.value.winerror == 87
+    assert not path.exists()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows handle publication")
+def test_OpenTemporary_RestrictedCollisionPreservesExistingFile(tmp_path: Path) -> None:
+    sid = winsec.current_user_sid()
+    assert sid is not None
+    path = tmp_path / "existing.tmp"
+    path.write_bytes(b"existing")
+    with pytest.raises(OSError) as error:
+        windows_publication.open_temporary(path, restrict_to_sid=sid)
+    assert error.value.winerror == 80
+    assert path.read_bytes() == b"existing"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires Windows handle publication")
+def test_OpenTemporary_RestrictedDescriptorExhaustionCleansOwnedFile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import msvcrt
+
+    sid = winsec.current_user_sid()
+    assert sid is not None
+    positive = tmp_path / "positive.tmp"
+    os.close(windows_publication.open_temporary(positive, restrict_to_sid=sid))
+
+    def exhausted(*_args):
+        raise OSError(errno.EMFILE, "descriptor exhaustion")
+
+    monkeypatch.setattr(msvcrt, "open_osfhandle", exhausted)
+    path = tmp_path / "failure.tmp"
+    with pytest.raises(OSError) as error:
+        windows_publication.open_temporary(path, restrict_to_sid=sid)
+    assert error.value.errno == errno.EMFILE
+    assert not path.exists()
+    assert positive.exists()
 
 
 def test_ReplaceOpen_NonWindows_RefusesPublication(
