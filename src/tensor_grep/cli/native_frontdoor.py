@@ -1272,6 +1272,7 @@ def stage_managed_windows_runtime(
 ) -> ManagedWindowsRuntimeInstall:
     """Install a verified generation beside the active runtime, then select it."""
     from tensor_grep.cli import managed_runtime_candidate as candidate
+    from tensor_grep.cli import session_daemon_winsec as winsec
     from tensor_grep.cli._index_lock import index_lock
 
     install_root = managed_windows_install_root(executable)
@@ -1299,10 +1300,13 @@ def stage_managed_windows_runtime(
             package_spec, detected_extras=source_profile.extras
         )
         runtimes_root = install_root / "runtimes"
-        runtimes_root.mkdir(exist_ok=True)
+        sid = winsec.current_user_sid()
+        if sid is None or not winsec.create_directory_restricted(str(runtimes_root), sid):
+            raise RuntimeError("managed runtimes directory cannot be created")
         _pin_managed_directory(runtimes_root, held)
         # Failed generations stay unselected; recursive path cleanup races Windows swaps.
-        generation_root.mkdir(exist_ok=False)
+        if not winsec.create_directory_restricted(str(generation_root), sid, exist_ok=False):
+            raise RuntimeError("generation already exists or cannot be created")
         _pin_managed_directory(generation_root, held)
 
         venv_path = candidate_python.parent.parent

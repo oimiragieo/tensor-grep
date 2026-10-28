@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,6 +124,132 @@ def _stub_stage_dependencies(
     monkeypatch.setattr(native_frontdoor, "_open_native_parent_handle", lambda _path: None)
     monkeypatch.setattr(native_frontdoor, "_schedule_managed_activation", lambda *_args: None)
     return venv_calls, installs, verification, candidate_installs
+
+
+@pytest.mark.parametrize("existing_runtimes", [False, True], ids=["new", "existing"])
+def test_ManagedStage_ProtectsNewDirectoriesFromInheritedWriteGrants(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_runtimes: bool
+) -> None:
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    icacls = Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe"
+    subprocess.run(
+        [str(icacls), str(root / ".venv"), "/inheritance:d"],
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    subprocess.run(
+        [str(icacls), str(root), "/grant", "*S-1-1-0:(OI)(CI)(IO)(W)"],
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    control = root / "ordinary-child"
+    control.mkdir()
+    handle = winsec.open_no_follow(str(control), directory=True)
+    assert handle is not None
+    try:
+        details = winsec.owner_and_dacl_entries(handle)
+        assert details is not None
+        assert not trust._windows_parent_dacl_ok(details[1])
+    finally:
+        winsec.close_handle(handle)
+
+    runtimes = root / "runtimes"
+    run = subprocess.run
+    original_acl = None
+    if existing_runtimes:
+        sid = winsec.current_user_sid()
+        assert sid is not None
+        assert winsec.create_directory_restricted(str(runtimes), sid, exist_ok=False)
+        run(
+            [str(icacls), str(runtimes), "/grant", "*S-1-1-0:(OI)(CI)(IO)(W)"],
+            capture_output=True,
+            check=True,
+            timeout=15,
+        )
+        original_acl = run(
+            [str(icacls), str(runtimes)], capture_output=True, check=True, timeout=15
+        ).stdout
+
+    _stub_stage_dependencies(monkeypatch, verify_error=RuntimeError("candidate stop"))
+    with pytest.raises(RuntimeError, match="candidate stop"):
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    if original_acl is not None:
+        assert (
+            run([str(icacls), str(runtimes)], capture_output=True, check=True, timeout=15).stdout
+            == original_acl
+        )
+    generations = list(runtimes.iterdir())
+    assert len(generations) == 1
+    for directory in (runtimes, generations[0], generations[0] / ".venv"):
+        handle = winsec.open_no_follow(str(directory), directory=True)
+        assert handle is not None
+        try:
+            details = winsec.owner_and_dacl_entries(handle)
+            assert details is not None
+            assert trust._windows_parent_dacl_ok(details[1])
+        finally:
+            winsec.close_handle(handle)
+    assert not (root / "runtime-selection.json").exists()
+
+
+def test_RestrictedDirectory_ExistingPathHonorsExclusiveCreation(tmp_path: Path) -> None:
+    sid = winsec.current_user_sid()
+    assert sid is not None
+    path = tmp_path / "candidate"
+    assert winsec.create_directory_restricted(str(path), sid, exist_ok=False)
+    assert winsec.create_directory_restricted(str(path), sid)
+    assert not winsec.create_directory_restricted(str(path), sid, exist_ok=False)
+
+
+@pytest.mark.parametrize("failure", ["no-sid", "create-failed"])
+def test_ManagedStage_WhenDirectoryCreationUnavailable_StopsBeforeCreatingRuntime(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    calls, _installs, _verification, _candidate_installs = _stub_stage_dependencies(monkeypatch)
+    if failure == "no-sid":
+        monkeypatch.setattr(winsec, "current_user_sid", lambda: None)
+    else:
+        monkeypatch.setattr(winsec, "create_directory_restricted", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(RuntimeError, match="managed runtimes directory cannot be created"):
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    assert calls == []
+    assert not (root / "runtimes").exists()
+    assert not (root / "runtime-selection.json").exists()
+
+
+def test_ManagedStage_RefusesExistingRuntimesWithForeignWriteAccess(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    runtimes = root / "runtimes"
+    runtimes.mkdir()
+    icacls = Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe"
+    subprocess.run(
+        [str(icacls), str(runtimes), "/grant", "*S-1-1-0:(W)"],
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    calls, _installs, _verification, _candidate_installs = _stub_stage_dependencies(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="directory ACL is not trusted"):
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+
+    assert calls == []
+    assert list(runtimes.iterdir()) == []
+    assert not (root / "runtime-selection.json").exists()
 
 
 def test_ManagedStage_WhenHandleCleanupFails_LogsWarning(
@@ -414,10 +541,12 @@ def test_ManagedStage_WhenGenerationAlreadyExists_DoesNotDeleteIt(
     sentinel = existing / "owner-data.txt"
     sentinel.write_text("keep", encoding="utf-8")
     monkeypatch.setattr(native_frontdoor, "uuid4", lambda: SimpleNamespace(hex=generation))
+    calls, _installs, _verification, _candidate_installs = _stub_stage_dependencies(monkeypatch)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="generation already exists or cannot be created"):
         native_frontdoor.stage_managed_windows_runtime(
             str(executable), "tensor-grep==1.2.3", "1.2.3"
         )
 
+    assert calls == []
     assert sentinel.read_text(encoding="utf-8") == "keep"
