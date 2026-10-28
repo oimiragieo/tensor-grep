@@ -57,10 +57,12 @@ def _stub_stage_dependencies(
     *,
     fallback: bool = False,
     verify_error: BaseException | None = None,
+    source_cuda: str | None = None,
 ):
     venv_calls: list[list[str]] = []
     installs: list[tuple[Path, dict[str, object]]] = []
-    verification: list[tuple[Path, str, str | None]] = []
+    verification: list[tuple[Path, str, str | None, tuple[str, ...]]] = []
+    candidate_installs: list[tuple[str | None, tuple[str, ...]]] = []
 
     def run(args, **_kwargs):
         venv_calls.append(args)
@@ -71,11 +73,24 @@ def _stub_stage_dependencies(
         python.parent.mkdir(parents=True)
         python.write_bytes(b"candidate python")
 
-    def install(_python: Path, _spec: str) -> str:
+    def install(
+        _python: Path,
+        _spec: str,
+        *,
+        source_cuda: str | None = None,
+        source_torch_auxiliaries: tuple[str, ...] = (),
+    ) -> str:
+        candidate_installs.append((source_cuda, source_torch_auxiliaries))
         return "pip"
 
-    def verify(path: Path, version: str, *, expected_cuda: str | None = None) -> None:
-        verification.append((path, version, expected_cuda))
+    def verify(
+        path: Path,
+        version: str,
+        *,
+        expected_cuda: str | None = None,
+        expected_torch_auxiliaries: tuple[str, ...] = (),
+    ) -> None:
+        verification.append((path, version, expected_cuda, expected_torch_auxiliaries))
         if verify_error is not None:
             raise verify_error
 
@@ -90,6 +105,12 @@ def _stub_stage_dependencies(
     monkeypatch.setattr(
         managed_runtime_candidate, "_managed_candidate_package_spec", lambda spec: spec
     )
+    monkeypatch.setattr(
+        managed_runtime_candidate, "_managed_cuda_profile", lambda _executable: source_cuda
+    )
+    monkeypatch.setattr(
+        managed_runtime_candidate, "_managed_torch_auxiliaries", lambda: ("torchvision",)
+    )
     monkeypatch.setattr(managed_runtime_candidate, "_verify_managed_candidate_python", verify)
     monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", install_native)
     monkeypatch.setattr(
@@ -97,7 +118,7 @@ def _stub_stage_dependencies(
     )
     monkeypatch.setattr(native_frontdoor, "_open_native_parent_handle", lambda _path: None)
     monkeypatch.setattr(native_frontdoor, "_schedule_managed_activation", lambda *_args: None)
-    return venv_calls, installs, verification
+    return venv_calls, installs, verification, candidate_installs
 
 
 def test_ManagedStage_WhenHandleCleanupFails_LogsWarning(
@@ -145,7 +166,9 @@ def test_ManagedStage_WhenCandidateVerified_PublishesThenRepairsLauncher(
     expected_venv_calls: int,
 ) -> None:
     root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
-    venv_calls, installs, verification = _stub_stage_dependencies(monkeypatch, fallback=fallback)
+    venv_calls, installs, verification, _candidate_installs = _stub_stage_dependencies(
+        monkeypatch, fallback=fallback
+    )
 
     result = native_frontdoor.stage_managed_windows_runtime(
         str(executable), "tensor-grep==1.2.3", "1.2.3"
@@ -165,8 +188,33 @@ def test_ManagedStage_WhenCandidateVerified_PublishesThenRepairsLauncher(
     assert installs[1][0] == root / "bin" / "tg.exe"
     assert installs[1][1] == {}
     assert verification == [
-        (root / "runtimes" / result.generation / ".venv" / "Scripts" / "python.exe", "1.2.3", None)
+        (
+            root / "runtimes" / result.generation / ".venv" / "Scripts" / "python.exe",
+            "1.2.3",
+            None,
+            (),
+        )
     ]
+
+
+@pytest.mark.parametrize(("source_cuda", "expected_cuda"), [(None, "cpu"), ("12.8", "12.8")])
+def test_ManagedStage_WhenGpuWinSourceProfileIsKnown_PreservesAndVerifiesIt(
+    trusted_base_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_cuda: str | None,
+    expected_cuda: str,
+) -> None:
+    _root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    _venv_calls, _installs, verification, candidate_installs = _stub_stage_dependencies(
+        monkeypatch, source_cuda=source_cuda
+    )
+
+    native_frontdoor.stage_managed_windows_runtime(str(executable), "tensor-grep[gpu-win]", "1.2.3")
+
+    assert candidate_installs == [(source_cuda, ("torchvision",))]
+    assert verification[0][2] == expected_cuda
+    assert verification[0][3] == ("torchvision",)
 
 
 def test_ManagedActivation_ReadinessBudgetCoversTorchProbeBound() -> None:

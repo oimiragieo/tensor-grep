@@ -28,6 +28,7 @@ This guide helps administrators diagnose and resolve GPU-related issues in tenso
 - **Resolution:**
   - Use a PyTorch build compiled for CUDA 12.8+ (`cu128` or newer) for RTX 50-series / Blackwell `sm_120` compatibility.
   - For managed installs, rerun the current installer or refresh the sidecar so it uses `https://download.pytorch.org/whl/cu128` instead of an older `cu124` wheel index.
+  - Managed runtime updates preserve a CPU-only PyTorch profile using the PyTorch CPU wheel index; CUDA profiles other than 12.8 are refused rather than silently replaced.
   - Use a device supported by the installed runtime, or the CPU path, until the target device has passed correctness and routing checks.
   - Do not promote RTX 50-series device discovery into a performance claim without a passing `benchmarks/run_gpu_benchmarks.py` artifact.
 

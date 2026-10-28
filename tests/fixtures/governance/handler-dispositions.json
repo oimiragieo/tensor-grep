@@ -3461,7 +3461,7 @@
   },
   {
     "module": "cli/managed_runtime_candidate.py",
-    "lineno": 178,
+    "lineno": 224,
     "enclosing_symbol": "_managed_cuda_profile",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3471,7 +3471,7 @@
   },
   {
     "module": "cli/managed_runtime_candidate.py",
-    "lineno": 197,
+    "lineno": 255,
     "enclosing_symbol": "_verify_managed_candidate_python",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

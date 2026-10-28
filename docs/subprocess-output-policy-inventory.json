@@ -1226,26 +1226,6 @@
     "producer_fingerprint": "29f5d9ef77734e7fbc4f4f9c440c747f5bdb138a65c09ef611e3926a9e54f8e4"
   },
   {
-    "identity": "cli/managed_runtime_candidate.py:_run_managed_candidate_install:injected.subprocess.run:e3adce6b8ac5b05d9b8fefd23a693321860571b12e46be52232512e3153e1abe:0",
-    "path": "cli/managed_runtime_candidate.py",
-    "function": "_run_managed_candidate_install",
-    "line": 104,
-    "column": 8,
-    "target": "injected.subprocess.run",
-    "policy": "diagnostic-utf8-replace",
-    "rationale": "Captured human-facing diagnostics use explicit UTF-8 with replacement so malformed bytes remain reportable.",
-    "text": "True",
-    "encoding": "utf-8",
-    "errors": "replace",
-    "universal_newlines": null,
-    "dynamic_kwargs": [],
-    "output_captured": true,
-    "positional_options": false,
-    "generated_from": null,
-    "call_fingerprint": "e3adce6b8ac5b05d9b8fefd23a693321860571b12e46be52232512e3153e1abe",
-    "producer_fingerprint": "4f5cfce3d98fcdfbe97a40f61e2270e05b762f6190ab6e6daedafb59108b383b"
-  },
-  {
     "identity": "cli/managed_runtime_candidate.py:_run_managed_candidate_install:injected.subprocess.run:99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_run_managed_candidate_install",
@@ -1263,13 +1243,53 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d",
-    "producer_fingerprint": "4f5cfce3d98fcdfbe97a40f61e2270e05b762f6190ab6e6daedafb59108b383b"
+    "producer_fingerprint": "300e6be62170b39bc203dada54b0ec13ec98b7a186c48471a57e2ca1bc10d5c7"
+  },
+  {
+    "identity": "cli/managed_runtime_candidate.py:_install_managed_torch:injected.subprocess.run:479c4f6a8862912c3c213778d1572cfa4e838cc7e8649f595f805a1738b1db81:0",
+    "path": "cli/managed_runtime_candidate.py",
+    "function": "_install_managed_torch",
+    "line": 189,
+    "column": 8,
+    "target": "injected.subprocess.run",
+    "policy": "diagnostic-utf8-replace",
+    "rationale": "Captured human-facing diagnostics use explicit UTF-8 with replacement so malformed bytes remain reportable.",
+    "text": "True",
+    "encoding": "utf-8",
+    "errors": "replace",
+    "universal_newlines": null,
+    "dynamic_kwargs": [],
+    "output_captured": true,
+    "positional_options": false,
+    "generated_from": null,
+    "call_fingerprint": "479c4f6a8862912c3c213778d1572cfa4e838cc7e8649f595f805a1738b1db81",
+    "producer_fingerprint": "9dde6a729a712c4faf0aec9ad0e6e7ed00e6b08061d02fceea531cc538885d5c"
+  },
+  {
+    "identity": "cli/managed_runtime_candidate.py:_install_managed_torch:injected.subprocess.run:99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d:0",
+    "path": "cli/managed_runtime_candidate.py",
+    "function": "_install_managed_torch",
+    "line": 196,
+    "column": 12,
+    "target": "injected.subprocess.run",
+    "policy": "diagnostic-utf8-replace",
+    "rationale": "Captured human-facing diagnostics use explicit UTF-8 with replacement so malformed bytes remain reportable.",
+    "text": "True",
+    "encoding": "utf-8",
+    "errors": "replace",
+    "universal_newlines": null,
+    "dynamic_kwargs": [],
+    "output_captured": true,
+    "positional_options": false,
+    "generated_from": null,
+    "call_fingerprint": "99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d",
+    "producer_fingerprint": "9dde6a729a712c4faf0aec9ad0e6e7ed00e6b08061d02fceea531cc538885d5c"
   },
   {
     "identity": "cli/managed_runtime_candidate.py:_managed_cuda_profile:injected.subprocess.run:af437808bc55b7b05a74fb781dfc3c146a9e2dc8bbdf631fab1cf2c1584a0bdd:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_managed_cuda_profile",
-    "line": 171,
+    "line": 215,
     "column": 17,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1289,7 +1309,7 @@
     "identity": "cli/managed_runtime_candidate.py:_verify_managed_candidate_python:injected.subprocess.run:33f5d41455886bff3c8e0fdedfdde4676954858367f7cf0041cb1855cb0f1d67:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_verify_managed_candidate_python",
-    "line": 190,
+    "line": 246,
     "column": 17,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1303,7 +1323,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "33f5d41455886bff3c8e0fdedfdde4676954858367f7cf0041cb1855cb0f1d67",
-    "producer_fingerprint": "ba585169e66a6c6fa8e58ca042eab4be8f910ec035a8fa6dcfe76b284b24cb68"
+    "producer_fingerprint": "bc70fbbc5ddee2bada90cd3fb981e565e69d9abb98d81bfbf96f375dc3f4351d"
   },
   {
     "identity": "cli/managed_runtime_upgrade.py:_restart_managed_session_daemon:injected.subprocess.run:c1d9ba80e2497fe0221d8332f30e6c8d54e62ca00b2749d70f1b70c24d769fe1:0",
@@ -1443,7 +1463,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "d891bc0a965169703611158e6b4f938e4f96d5eb381e423c1bb3910d9523bb4d",
-    "producer_fingerprint": "b509f4d2296a6faf8e96ebcf9c625e0715d3f5fe5644e2e8061bcb7c145baccb"
+    "producer_fingerprint": "c8e2659d50a691f2dbc616cae8746101dcaa029c1f78d8ce26608258983407b3"
   },
   {
     "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:06a51a02619fd42513e17592826d58ee20cd0fdf94c603ca3d86e7e50637c973:0",
@@ -1463,7 +1483,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "06a51a02619fd42513e17592826d58ee20cd0fdf94c603ca3d86e7e50637c973",
-    "producer_fingerprint": "b509f4d2296a6faf8e96ebcf9c625e0715d3f5fe5644e2e8061bcb7c145baccb"
+    "producer_fingerprint": "c8e2659d50a691f2dbc616cae8746101dcaa029c1f78d8ce26608258983407b3"
   },
   {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",

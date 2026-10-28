@@ -1304,10 +1304,24 @@ def stage_managed_windows_runtime(
             )
 
         normalized_spec = candidate._managed_candidate_package_spec(package_spec)
-        expected_cuda = "12.8" if "gpu-win" in normalized_spec else None
-        install_method = candidate._run_managed_candidate_install(candidate_python, normalized_spec)
+        source_cuda = (
+            candidate._managed_cuda_profile(executable) if "gpu-win" in normalized_spec else None
+        )
+        source_torch_auxiliaries = (
+            candidate._managed_torch_auxiliaries() if "gpu-win" in normalized_spec else ()
+        )
+        expected_cuda = (source_cuda or "cpu") if "gpu-win" in normalized_spec else None
+        install_method = candidate._run_managed_candidate_install(
+            candidate_python,
+            normalized_spec,
+            source_cuda=source_cuda,
+            source_torch_auxiliaries=source_torch_auxiliaries,
+        )
         candidate._verify_managed_candidate_python(
-            candidate_python, expected_version, expected_cuda=expected_cuda
+            candidate_python,
+            expected_version,
+            expected_cuda=expected_cuda,
+            expected_torch_auxiliaries=source_torch_auxiliaries,
         )
         native_result = _install_release_native_frontdoor(
             expected_version, native_path, verify_destination=False
