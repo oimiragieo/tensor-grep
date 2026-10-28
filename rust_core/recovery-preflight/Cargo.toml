@@ -1,0 +1,23 @@
+[package]
+name = "tensor-grep-recovery-preflight"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "tg-recovery-preflight"
+path = "../src/bin/tg_recovery_preflight.rs"
+
+[[test]]
+name = "test_recovery_preflight"
+path = "../tests/test_recovery_preflight.rs"
+
+[dependencies]
+sha2 = "=0.10.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"

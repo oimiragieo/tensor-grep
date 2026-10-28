@@ -15,6 +15,11 @@ include = [
     { path = "rust_core/paste-compat/Cargo.toml", format = "sdist" },
     { path = "rust_core/paste-compat/src/lib.rs", format = "sdist" },
     { path = "rust_core/paste-compat/README.md", format = "sdist" },
+    { path = "rust_core/recovery-preflight/Cargo.toml", format = "sdist" },
+    { path = "rust_core/recovery-preflight/Cargo.lock", format = "sdist" },
+    { path = "rust_core/recovery-preflight/README.md", format = "sdist" },
+    { path = "rust_core/tests/test_recovery_preflight.rs", format = "sdist" },
+    { path = "rust_core/rust-toolchain.toml", format = "sdist" },
 ]
 # Private local state must never enter source distributions or wheels.
 exclude = [
@@ -34,6 +39,8 @@ cache-keys = [
     { file = "pyproject.toml" },
     { file = "rust_core/Cargo.toml" },
     { file = "rust_core/Cargo.lock" },
+    { file = "rust_core/recovery-preflight/Cargo.toml" },
+    { file = "rust_core/recovery-preflight/Cargo.lock" },
     { file = "rust_core/src/**/*.rs" },
     { file = "rust_core/paste-compat/Cargo.toml" },
     { file = "rust_core/paste-compat/src/**/*.rs" },

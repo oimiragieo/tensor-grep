@@ -783,6 +783,13 @@ jobs:
         working-directory: rust_core
         run: cargo test --verbose --no-default-features
 
+      - name: Test standalone recovery preflight
+        if: matrix.os == 'windows-latest' && matrix.rust_channel == 'stable'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
+        working-directory: rust_core
+        run: cargo test --locked --manifest-path recovery-preflight/Cargo.toml
+
   # #171 anti-bit-rot gate: today the `cuda` cargo feature (rust_core/Cargo.toml `[features]`)
   # only compiles inside `build-release-native-assets`'s nvidia legs, which are themselves
   # `if:`-skipped unless RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu' (not the default)

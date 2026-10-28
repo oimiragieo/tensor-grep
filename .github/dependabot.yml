@@ -81,6 +81,33 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: "cargo"
+    directory: "/rust_core/recovery-preflight"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 1
+    labels:
+      - "dependencies"
+      - "bot:dependabot"
+      - "rust"
+      - "supply-chain"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      preflight-cargo-safe:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      preflight-cargo-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+
   - package-ecosystem: "npm"
     directory: "/npm"
     schedule:
