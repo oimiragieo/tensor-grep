@@ -172,15 +172,14 @@ def _github_json(url: str, token: str | None = None) -> dict:
     request = urllib.request.Request(url)
     request.add_header("Accept", "application/vnd.github+json")
     if token:
-        request.add_header("Authorization", f"Bearer {token}")
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(request, timeout=30) as resp:
         return json.load(resp)
 
 
 def _download_text(url: str, token: str | None = None) -> str:
     request = urllib.request.Request(url)
-    if token:
-        request.add_header("Authorization", f"Bearer {token}")
+    # Browser download URLs are public and must never receive the API token.
     with urllib.request.urlopen(request, timeout=30) as resp:
         data = resp.read()
     return data.decode("utf-8")
@@ -307,11 +306,11 @@ def verify_release_assets_with_retries(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Verify GitHub release asset matrix and checksum coverage."
+        description="Verify public GitHub release asset matrix and checksum coverage."
     )
     parser.add_argument("--repo", default="oimiragieo/tensor-grep")
     parser.add_argument("--tag", required=True, help="Tag without refs/tags/ prefix (e.g. v1.2.3)")
-    parser.add_argument("--token", help="Optional GitHub token for API/download requests")
+    parser.add_argument("--token", help="Optional GitHub token for the release API request")
     parser.add_argument(
         "--expected-profile",
         choices=sorted(BINARY_ASSET_PROFILES),

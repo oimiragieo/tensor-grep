@@ -112,6 +112,10 @@ install and rollback checks only after the corresponding package is published.
 
 ## Verification Commands
 
+The GitHub release verifier downloads public assets without credentials. Its optional token is used
+only for the initial API request, and is not forwarded on redirects; private releases and moved
+private repositories are not supported by this check.
+
 ```bash
 gh run list --limit 10
 uv run python scripts/validate_release_assets.py
