@@ -12,15 +12,33 @@ install cpu silently. These tests pin the loud stderr downgrade warning.
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from tensor_grep.cli import main as cli_main
+from tensor_grep.cli.native_download_guard import acquire_guard
 
 
 def _candidate(asset_name: str = "tg-test-asset", flavor: str = "cpu"):
     return cli_main._NativeFrontdoorAssetCandidate(flavor=flavor, asset_name=asset_name)
+
+
+def _fake_download(payload):
+    def download(_url, destination, *, retain_guard=False):
+        fd = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            assert os.write(fd, payload) == len(payload)
+            guard = acquire_guard(Path(destination), fd)
+        finally:
+            os.close(fd)
+        if retain_guard:
+            return guard
+        os.close(guard)
+        return None
+
+    return download
 
 
 def test_expected_asset_sha256_parses_checksums_manifest():
@@ -41,7 +59,7 @@ def test_install_release_native_frontdoor_rejects_tampered_asset(tmp_path, monke
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(b"TAMPERED-BINARY"),
+        _fake_download(b"TAMPERED-BINARY"),
     )
     # The published manifest lists the legitimate (different) hash:
     legit_digest = hashlib.sha256(b"LEGIT-BINARY").hexdigest()
@@ -73,7 +91,7 @@ def test_install_release_native_frontdoor_installs_verified_asset(tmp_path, monk
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     digest = hashlib.sha256(asset_bytes).hexdigest()
     monkeypatch.setattr(
@@ -105,7 +123,7 @@ def test_install_release_native_frontdoor_skips_destination_execution_with_check
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     digest = hashlib.sha256(asset_bytes).hexdigest()
     monkeypatch.setattr(
@@ -155,7 +173,7 @@ def test_install_release_native_frontdoor_restores_existing_candidate_on_checksu
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, path: Path(path).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     digest = hashlib.sha256(asset_bytes).hexdigest()
     monkeypatch.setattr(
@@ -192,7 +210,7 @@ def test_install_release_native_frontdoor_refuses_when_checksums_unavailable(tmp
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(b"unverifiable"),
+        _fake_download(b"unverifiable"),
     )
     # CHECKSUMS.txt could not be fetched -> nothing can be verified -> fail closed.
     monkeypatch.setattr(cli_main, "_fetch_native_frontdoor_checksums", lambda version: None)
@@ -241,12 +259,12 @@ def test_install_release_native_frontdoor_warns_on_nvidia_to_cpu_downgrade(
 
     asset_bytes = b"LEGIT-CPU-BINARY"
 
-    def _fake_download(url: str, dest) -> None:
+    def _fake_download_nvidia(url: str, dest, *, retain_guard=False):
         if "nvidia" in url:
             raise RuntimeError("404 Not Found: no nvidia asset for this release")
-        Path(dest).write_bytes(asset_bytes)
+        return _fake_download(asset_bytes)(url, dest, retain_guard=retain_guard)
 
-    monkeypatch.setattr(cli_main, "_download_native_frontdoor_asset", _fake_download)
+    monkeypatch.setattr(cli_main, "_download_native_frontdoor_asset", _fake_download_nvidia)
     _stub_checksum_and_version_gates(
         monkeypatch,
         digest=hashlib.sha256(asset_bytes).hexdigest(),
@@ -285,7 +303,7 @@ def test_install_release_native_frontdoor_silent_on_default_cpu_request(
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     _stub_checksum_and_version_gates(
         monkeypatch,
@@ -323,7 +341,7 @@ def test_install_release_native_frontdoor_silent_when_nvidia_succeeds(
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     _stub_checksum_and_version_gates(
         monkeypatch,
@@ -360,7 +378,7 @@ def test_install_release_native_frontdoor_warns_honestly_when_no_nvidia_candidat
     monkeypatch.setattr(
         cli_main,
         "_download_native_frontdoor_asset",
-        lambda url, dest: Path(dest).write_bytes(asset_bytes),
+        _fake_download(asset_bytes),
     )
     _stub_checksum_and_version_gates(
         monkeypatch,
