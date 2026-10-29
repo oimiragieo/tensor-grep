@@ -61,6 +61,8 @@ Windows activation repairs the stable dispatcher before publishing a new selecto
 
 Guarded Windows native downloads, including ordinary launcher installs, require a current-user SID and create their temporary asset with a private DACL. Managed downloads additionally pin the asset identity and directory chain during checksum validation, the version probe, and the bounded read used for publication. The bytes read are checked again against the release checksum; an unavailable or untrusted pin stops installation. This protects the managed downloaded source during those steps, not every destination publication or rollback race.
 
+For a fresh generation, the native executable is published through its verified temporary handle without replacing an existing destination. A collision fails staging and leaves the existing object and selector in place. Staging checks the published object's identity and checksum again and retains a read pin through activation or the deferred worker's readiness handshake. A later failure can leave an unselected candidate. Stable dispatcher replacement and metadata publication are separate operations.
+
 The synchronous staging and deferred activation paths share this ordering. Staging raises on dispatcher repair failure; deferred activation returns failure and records the exception type in its activation log. See `test_ManagedStage_WhenStableDispatcherRepairFails_PreservesPreviousSelector` and `test_ActivationWorker_WhenStableDispatcherRepairFails_PreservesPreviousSelector`.
 
 Verify with `uv run --no-sync python -m pytest tests/unit/test_managed_runtime_selection.py tests/unit/test_session_daemon_winsec_read.py tests/unit/test_managed_runtime_reader.py -q`.
