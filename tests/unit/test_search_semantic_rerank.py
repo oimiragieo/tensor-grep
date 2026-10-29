@@ -13,7 +13,7 @@ wired with a deterministic stub encoder (or to raise, for the fail-closed paths)
 from __future__ import annotations
 
 import json
-import time
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -84,7 +84,7 @@ def test_rerank_env_off_is_noop(tmp_path: Path, monkeypatch) -> None:  # type: i
 
 
 def test_rerank_budget_exceeded_degrades_with_reason(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """T6: a stub late reranker that sleeps past `TG_RERANK_BUDGET_MS` must degrade to the plain
+    """T6: a stub late reranker blocked past `TG_RERANK_BUDGET_MS` must degrade to the plain
     RRF order (identical to the TG_LATE_RERANK-off baseline) and set `rank_fallback_reason`,
     never silently apply a slow reorder and never crash."""
     monkeypatch.setenv("TG_LATE_RERANK", "1")
@@ -93,8 +93,10 @@ def test_rerank_budget_exceeded_degrades_with_reason(tmp_path: Path, monkeypatch
     _write_corpus(tmp_path)
     monkeypatch.setattr("tensor_grep.core.retrieval_late.late_available", lambda: (True, None))
 
+    release = threading.Event()
+
     def _slow_encode(text: str) -> np.ndarray:
-        time.sleep(0.05)  # 50ms, comfortably over the 1ms budget
+        assert release.wait(5)
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
     monkeypatch.setattr(
@@ -102,7 +104,16 @@ def test_rerank_budget_exceeded_degrades_with_reason(tmp_path: Path, monkeypatch
         lambda *a, **kw: LateReranker(encode=_slow_encode),
     )
 
-    result = CliRunner().invoke(app, ["search", "--semantic", "--json", "invoice", str(tmp_path)])
+    try:
+        result = CliRunner().invoke(
+            app, ["search", "--semantic", "--json", "invoice", str(tmp_path)]
+        )
+    finally:
+        workers = [t for t in threading.enumerate() if t.name == "tg-late-rerank"]
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
     assert result.exit_code == 0, result.output
     assert result.exception is None
     assert "budget exceeded" in result.stderr

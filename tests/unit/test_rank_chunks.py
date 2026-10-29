@@ -13,7 +13,8 @@ INSIDE THE DAEMON WORKER THREAD (reranker.py's ``raise exc`` branch) -- see
 
 from __future__ import annotations
 
-import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -105,29 +106,136 @@ def test_rank_chunks_path_channel_weights_change_fusion_order(monkeypatch) -> No
 
 
 def test_rank_chunks_late_rerank_budget_exceeded_degrades(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """T6: a late reranker whose encode sleeps past TG_RERANK_BUDGET_MS must degrade to the plain
+    """T6: a late reranker blocked past TG_RERANK_BUDGET_MS must degrade to the plain
     RRF order (never apply a slow reorder, never crash) and set late_fallback_reason -- mirrors
     test_search_semantic_rerank.py's test_rerank_budget_exceeded_degrades_with_reason's
     `_slow_encode` pattern, exercised directly against rank_chunks instead of through the CLI."""
     monkeypatch.setenv("TG_RERANK_BUDGET_MS", "1")
     chunks, bm25_index = _build_chunks()
 
+    release = threading.Event()
+
     def _slow_encode(text: str) -> np.ndarray:
-        time.sleep(0.05)  # 50ms, comfortably over the 1ms budget
+        assert release.wait(5)
         return np.array([[1.0]], dtype=np.float32)
 
-    fused_order, late_fallback_reason = rank_chunks(
-        "invoice",
-        chunks,
-        bm25_index=bm25_index,
-        dense_index=None,
-        late_reranker=LateReranker(encode=_slow_encode),
-        k=DEFAULT_K,
-    )
+    try:
+        fused_order, late_fallback_reason = rank_chunks(
+            "invoice",
+            chunks,
+            bm25_index=bm25_index,
+            dense_index=None,
+            late_reranker=LateReranker(encode=_slow_encode),
+            k=DEFAULT_K,
+        )
+    finally:
+        workers = [t for t in threading.enumerate() if t.name == "tg-late-rerank"]
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
 
     assert fused_order == [0]  # unchanged: degrades to the pre-late RRF order
     assert late_fallback_reason is not None
     assert "budget exceeded" in late_fallback_reason
+
+
+def test_late_rerank_timeout_bounds_workers_and_recovers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TG_RERANK_BUDGET_MS", "50")
+    chunks, bm25_index = _build_chunks()
+    entered, release = threading.Event(), threading.Event()
+    calls: list[int] = []
+
+    class BlockingReranker:
+        def rerank(self, query, texts, head):  # type: ignore[no-untyped-def]
+            calls.append(1)
+            entered.set()
+            assert release.wait(5)
+            return head
+
+    late = BlockingReranker()
+
+    def run():  # type: ignore[no-untyped-def]
+        return rank_chunks(
+            "invoice", chunks, bm25_index=bm25_index, dense_index=None, late_reranker=late
+        )
+
+    try:
+        first = run()
+        assert entered.wait(2)
+        assert first[0] == [0] and "budget exceeded" in (first[1] or "")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            results = list(executor.map(lambda _: run(), range(8)))
+        assert len(calls) == 1
+        assert all(order == [0] and "in progress" in (reason or "") for order, reason in results)
+    finally:
+        workers = [t for t in threading.enumerate() if t.name == "tg-late-rerank"]
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+    assert run() == ([0], None)
+    assert len(calls) == 2
+
+
+def test_late_rerank_thread_start_failure_releases_admission(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    chunks, bm25_index = _build_chunks()
+    late = LateReranker(encode=lambda text: np.array([[1.0]], dtype=np.float32))
+
+    def run():  # type: ignore[no-untyped-def]
+        return rank_chunks(
+            "invoice", chunks, bm25_index=bm25_index, dense_index=None, late_reranker=late
+        )
+
+    with monkeypatch.context() as patch:
+
+        def fail_start(self):  # type: ignore[no-untyped-def]
+            raise RuntimeError("start failed")
+
+        patch.setattr(threading.Thread, "start", fail_start)
+        with pytest.raises(RuntimeError, match="start failed"):
+            run()
+    assert run() == ([0], None)
+
+
+def test_late_rerank_start_interrupted_after_worker_started(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    chunks, bm25_index = _build_chunks()
+    entered, release = threading.Event(), threading.Event()
+    workers: list[threading.Thread] = []
+    original_start = threading.Thread.start
+
+    class BlockingReranker:
+        def rerank(self, query, texts, head):  # type: ignore[no-untyped-def]
+            entered.set()
+            assert release.wait(5)
+            return head
+
+    late = BlockingReranker()
+
+    def run():  # type: ignore[no-untyped-def]
+        return rank_chunks(
+            "invoice", chunks, bm25_index=bm25_index, dense_index=None, late_reranker=late
+        )
+
+    def interrupted_start(worker):  # type: ignore[no-untyped-def]
+        original_start(worker)
+        workers.append(worker)
+        assert entered.wait(2)
+        raise KeyboardInterrupt
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(threading.Thread, "start", interrupted_start)
+            with pytest.raises(KeyboardInterrupt):
+                run()
+        order, reason = run()
+        assert order == [0] and "in progress" in (reason or "")
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
+    assert run() == ([0], None)
 
 
 def test_rank_chunks_late_rerank_unavailable_error_degrades() -> None:

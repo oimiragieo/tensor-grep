@@ -1,5 +1,6 @@
 """Tests for BM25 re-ranking of an existing SearchResult."""
 
+import threading
 import time
 from pathlib import Path
 
@@ -212,14 +213,24 @@ def test_late_reranker_budget_exceeded_degrades_to_rrf_order_with_reason(monkeyp
     monkeypatch.setenv("TG_RERANK_BUDGET_MS", "1")
     result, bm25_index = _four_chunk_scenario()
     baseline = rerank_hybrid(result, "q", [], bm25_index=bm25_index)
+    entered, release = threading.Event(), threading.Event()
 
     def _slow_encode(text: str) -> np.ndarray:
-        time.sleep(0.05)  # 50ms, comfortably over the 1ms budget
+        entered.set()
+        assert release.wait(5)
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
-    out = rerank_hybrid(
-        result, "q", [], bm25_index=bm25_index, late_reranker=LateReranker(encode=_slow_encode)
-    )
+    try:
+        out = rerank_hybrid(
+            result, "q", [], bm25_index=bm25_index, late_reranker=LateReranker(encode=_slow_encode)
+        )
+        assert entered.wait(2)
+    finally:
+        workers = [t for t in threading.enumerate() if t.name == "tg-late-rerank"]
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
 
     assert [m.file for m in out.matches] == [m.file for m in baseline.matches]
     assert out.rank_fallback_reason is not None
@@ -249,23 +260,32 @@ def test_late_reranker_hung_encoder_degrades_within_budget_not_blocked(monkeypat
     block `tg search --rank` indefinitely. The old post-hoc `elapsed > budget` check could only
     DISCARD a rerank that had already returned; a wedged encoder never returns, so it hung forever.
     The daemon-thread `join(budget)` bounds it: the call returns near the budget and degrades to the
-    plain RRF order, never after the (here 10s) encode."""
+    plain RRF order, before the blocked encoder is released."""
     monkeypatch.setenv("TG_RERANK_BUDGET_MS", "100")
     result, bm25_index = _four_chunk_scenario()
     baseline = rerank_hybrid(result, "q", [], bm25_index=bm25_index)
+    entered, release = threading.Event(), threading.Event()
 
     def _hung_encode(text: str) -> np.ndarray:
-        time.sleep(10.0)  # simulate a wedged encoder; the join(0.1s) MUST abandon it
+        entered.set()
+        assert release.wait(5)
         return np.array([[1.0, 0.0]], dtype=np.float32)
 
-    start = time.perf_counter()
-    out = rerank_hybrid(
-        result, "q", [], bm25_index=bm25_index, late_reranker=LateReranker(encode=_hung_encode)
-    )
-    elapsed = time.perf_counter() - start
+    try:
+        start = time.perf_counter()
+        out = rerank_hybrid(
+            result, "q", [], bm25_index=bm25_index, late_reranker=LateReranker(encode=_hung_encode)
+        )
+        elapsed = time.perf_counter() - start
+        assert entered.wait(2)
+    finally:
+        workers = [t for t in threading.enumerate() if t.name == "tg-late-rerank"]
+        release.set()
+        for worker in workers:
+            worker.join(5)
+            assert not worker.is_alive()
 
-    # The pre-A3 code would have blocked ~10s (per hung encode); the deadline must bound it well
-    # under that. Generous margin for Windows thread-spawn contention, still far below 10s.
+    # Generous margin for Windows thread-spawn contention, below the encoder's safety timeout.
     assert elapsed < 4.0, f"late rerank ignored the wall-clock deadline (took {elapsed:.1f}s)"
     assert [m.file for m in out.matches] == [m.file for m in baseline.matches]
     assert out.rank_fallback_reason is not None
