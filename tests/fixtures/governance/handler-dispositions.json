@@ -721,7 +721,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 501,
+    "lineno": 490,
     "enclosing_symbol": "_download_native_frontdoor_asset",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -741,7 +741,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 549,
+    "lineno": 538,
     "enclosing_symbol": "_fetch_native_frontdoor_checksums",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -751,8 +751,8 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 709,
-    "enclosing_symbol": "_install_release_native_frontdoor",
+    "lineno": 707,
+    "enclosing_symbol": "_install_release_native_frontdoor_impl",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
     "evidence": "except Exception as exc: download_errors.append(f'{candidate.flavor} asset unavailable: {exc}') -- per-candidate download failures are recorded in download_errors, which the function raises via RuntimeError('\\n'.join(...)) if every candidate is exhausted (see the tail of the loop, not itself a broad handler).",
@@ -821,8 +821,8 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 663,
-    "enclosing_symbol": "_install_release_native_frontdoor",
+    "lineno": 656,
+    "enclosing_symbol": "_install_release_native_frontdoor_impl",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
     "evidence": "except Exception as exc: raise RuntimeError(f'release-native front-door asset install refused: fetching CHECKSUMS.txt for v{version} raised {exc}; refusing to install an unverified native binary') from exc -- newly added in W1-b (2026-08-20, A3 round-1 MEDIUM remediation) so that a checksum-fetch dependency override (test injection, or a future refactor of `_fetch_native_frontdoor_checksums`) that raises instead of returning None still results in a disclosed refusal rather than an unwrapped exception escaping the install path.",
@@ -2921,7 +2921,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1328,
+    "lineno": 1331,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3531,7 +3531,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1474,
+    "lineno": 1480,
     "enclosing_symbol": "stage_managed_windows_runtime",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",

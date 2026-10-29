@@ -1704,7 +1704,7 @@ _EXPECTED_HELPER_BACKED = {
     ),
     (
         "native_frontdoor.py",
-        "_install_release_native_frontdoor",
+        "_install_release_native_frontdoor_impl",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     (
