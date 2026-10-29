@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -397,7 +398,12 @@ def test_ManagedStage_WhenCandidateVerified_RepairsLauncherThenPublishes(
     assert venv_calls[0][0] == "uv"
     assert venv_calls[0][4:6] == ["--link-mode", "copy"]
     assert venv_calls[-1][0] == (str(executable) if fallback else "uv")
-    assert installs[0][1] == {"verify_destination": False, "_managed_source": True}
+    assert isinstance(installs[0][1].pop("_managed_held"), ExitStack)
+    assert installs[0][1] == {
+        "verify_destination": False,
+        "_managed_source": True,
+        "_fresh_destination": True,
+    }
     assert installs[1][0] == root / "bin" / "tg.exe"
     assert installs[1][1] == {"verify_destination": False, "_managed_source": True}
     assert verification == [
@@ -506,6 +512,43 @@ def test_ManagedStage_WhenStableDispatcherRepairFails_PreservesPreviousSelector(
         )
 
     assert (root / "runtime-selection.json").read_bytes() == previous
+
+
+def test_ManagedStage_WhenFreshNativeCollision_PreservesSelector(
+    trusted_base_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import urllib.request
+    from uuid import uuid4
+
+    from tests.unit.test_native_download_collision import _configure
+
+    root, executable = _install_root(trusted_base_dir, tmp_path, monkeypatch)
+    _seed_selected(root, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "1.1.0")
+    previous = (root / "runtime-selection.json").read_bytes()
+    install_native = native_frontdoor._install_release_native_frontdoor
+    _stub_stage_dependencies(monkeypatch)
+    _configure(monkeypatch, b"verified asset")
+    monkeypatch.setattr(native_frontdoor, "uuid4", uuid4)
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *_args, **_kwargs: io.BytesIO(b"verified asset")
+    )
+    monkeypatch.setattr(cli_main, "_native_tg_version", lambda _path: "1.2.3")
+    occupied = []
+
+    def collide(version, destination, **kwargs):
+        destination.write_bytes(b"existing object")
+        occupied.append(destination)
+        return install_native(version, destination, **kwargs)
+
+    monkeypatch.setattr(native_frontdoor, "_install_release_native_frontdoor", collide)
+    with pytest.raises(RuntimeError, match="destination appeared") as failure:
+        native_frontdoor.stage_managed_windows_runtime(
+            str(executable), "tensor-grep==1.2.3", "1.2.3"
+        )
+    assert isinstance(failure.value.__cause__, FileExistsError)
+    assert (root / "runtime-selection.json").read_bytes() == previous
+    assert occupied[0].read_bytes() == b"existing object"
 
 
 def test_ManagedStage_WhenCandidateIsOlder_SkipsStableRepairAndPreservesSelection(

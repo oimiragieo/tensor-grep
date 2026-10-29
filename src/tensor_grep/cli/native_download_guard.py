@@ -7,8 +7,9 @@ import os
 import stat
 import sys
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from uuid import uuid4
 
 
 class NativeDownloadCleanupError(RuntimeError):
@@ -29,6 +30,79 @@ def read_verified_asset(pin: int, limit: int, expected: str | None) -> bytes:
     if total > limit or not expected or hashlib.sha256(data).hexdigest() != expected:
         raise NativeDownloadCleanupError("managed native asset changed after verification")
     return data
+
+
+def publish_fresh_asset(destination: Path, data: bytes, parent_final: str, held: ExitStack) -> None:
+    from tensor_grep.cli import native_frontdoor
+    from tensor_grep.cli import session_daemon_winsec as winsec
+    from tensor_grep.io import windows_publication
+
+    sid = winsec.current_user_sid()
+    if sid is None:
+        raise NativeDownloadCleanupError("native publication owner identity is unavailable")
+    temporary = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+    descriptor = windows_publication.open_temporary(temporary, restrict_to_sid=sid)
+    completed = False
+    guard: int | None = None
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        expected = hashlib.sha256(data).hexdigest()
+        native_frontdoor._validate_managed_publication_descriptor(
+            descriptor, parent_final, temporary.name
+        )
+        read_verified_asset(descriptor, len(data), expected)
+        windows_publication.rename_open(descriptor, destination, replace=False)
+        native_frontdoor._validate_managed_publication_descriptor(
+            descriptor, parent_final, destination.name
+        )
+        read_verified_asset(descriptor, len(data), expected)
+        guard = acquire_guard(destination, descriptor)
+        completed = True
+    finally:
+        prior = sys.exception()
+        errors = []
+        if not completed:
+            try:
+                windows_publication.discard_open(descriptor)
+            except OSError as exc:
+                errors.append(f"native publication cleanup failed: {exc}")
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            errors.append(f"native publication close failed: {exc}")
+        if errors:
+            if guard is not None:
+                try:
+                    os.close(guard)
+                except OSError as exc:
+                    errors.append(f"native publication guard close failed: {exc}")
+            prefix = f"{prior}; " if prior is not None else ""
+            raise NativeDownloadCleanupError(prefix + "; ".join(errors))
+    assert guard is not None
+    try:
+        with ExitStack() as local:
+            pin = local.enter_context(hold_private_asset(destination, guard, parent_final))
+            read_verified_asset(pin, len(data), expected)
+            finished_guard, guard = guard, None
+            try:
+                os.close(finished_guard)
+            except OSError as exc:
+                raise NativeDownloadCleanupError(
+                    f"native publication guard close failed; candidate or guard may remain: {exc}"
+                ) from exc
+            transferred = local.pop_all()
+            try:
+                held.callback(transferred.close)
+            except BaseException:
+                transferred.close()
+                raise
+    finally:
+        if guard is not None:
+            prior = sys.exception()
+            dispose_guarded(destination, guard, state=f"publication handoff failed: {prior}")
 
 
 def _same_file(first: int, second: int) -> bool:

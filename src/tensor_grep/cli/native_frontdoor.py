@@ -65,8 +65,6 @@ class _NativeFrontdoorInstallResult:
     url: str
     flavor: str
     asset_name: str
-    # P0-5 (GPU Phase-0 honesty): defaulted so the single construction site below and any
-    # future caller stay valid without threading these through everywhere.
     requested_flavor: str = "cpu"
     downgrade_reason: str | None = None
 
@@ -212,9 +210,7 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
 def _candidate_versions_from_pypi_indices(
     timeout_seconds: float, headers: dict[str, str]
 ) -> list[str]:
-    # urllib's socket timeout cannot bound trickling headers/body or DNS. Keep
-    # those operations in one killable child, with incremental evidence so a
-    # completed surface survives a later stall. No reader threads are needed.
+    # A killable child bounds DNS and trickling responses and retains partial evidence.
     request = {
         "timeout_seconds": timeout_seconds,
         "urls": [_PYPI_JSON_URL, _PYPI_SIMPLE_URL],
@@ -239,8 +235,7 @@ def _candidate_versions_from_pypi_indices(
     except OSError:
         _LOGGER.debug("doctor freshness HTTP worker failed", exc_info=True)
     candidates: list[str] = []
-    # The child emits at most two short records. Reject unexpected protocol
-    # volume, and ignore an incomplete final record left by deadline cleanup.
+    # Ignore an incomplete final record and reject excess output.
     if output is None or len(output) > 8192:
         return candidates
     for line in output.splitlines():
@@ -265,9 +260,7 @@ def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | Non
     genuinely-offline runs; it is NOT a silent 'clean', it disables the probe)."""
     if os.environ.get("TG_DOCTOR_OFFLINE") == "1":
         return None
-    # All freshness surfaces share one monotonic budget, rather than each
-    # starting its own 15-second wait. Preserve the best version observed even
-    # when a subsequent surface uses the rest of the budget.
+    # Share one monotonic budget while retaining the best completed observation.
     deadline = time.monotonic() + timeout_seconds
     candidates: list[str] = []
     headers = {
@@ -444,8 +437,7 @@ def _download_native_frontdoor_asset(
         dispose_guarded,
     )
 
-    # Create exclusively and stream through the same descriptor; Windows guarded files also
-    # receive a private DACL at creation so inherited permissions cannot expose the download.
+    # Create exclusively with a private Windows DACL and stream through the held descriptor.
     if sys.platform == "win32" and retain_guard:
         from tensor_grep.cli import session_daemon_winsec as winsec
         from tensor_grep.io import windows_publication
@@ -458,9 +450,6 @@ def _download_native_frontdoor_asset(
         flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(destination, flags, 0o600)
     guard: int | None = None
-    # urlopen's timeout param replaces the previous process-global socket.setdefaulttimeout(60):
-    # equivalent 60s bound on the request, and this function is the only caller that touched the
-    # global default, so there is nothing left relying on it being set.
     total = 0
     transfer_error: BaseException | None = None
     try:
@@ -540,12 +529,7 @@ def _fetch_native_frontdoor_checksums(version: str) -> str | None:
 
 
 def _expected_asset_sha256(checksums_text: str, asset_name: str) -> str | None:
-    """Look up the published sha256 for asset_name in a CHECKSUMS.txt manifest.
-
-    Lines are ``<sha256>  <asset>`` (the format emitted by the release tooling and
-    consumed by scripts/install.sh). Tolerates blank/comment lines and a leading
-    ``*`` binary marker on the filename.
-    """
+    """Look up an asset's SHA-256 in a CHECKSUMS.txt manifest."""
     for raw_line in checksums_text.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -623,7 +607,13 @@ def _install_release_native_frontdoor(
     *,
     verify_destination: bool = True,
     _managed_source: bool = False,
+    _fresh_destination: bool = False,
+    _managed_held: ExitStack | None = None,
 ) -> _NativeFrontdoorInstallResult:
+    if _fresh_destination and (not _managed_source or verify_destination or _managed_held is None):
+        raise ValueError(
+            "fresh managed publication requires managed source and checksum verification"
+        )
     if _managed_source:
         if sys.platform != "win32":
             raise RuntimeError("managed native source pin requires Windows")
@@ -634,30 +624,36 @@ def _install_release_native_frontdoor(
                 destination,
                 verify_destination=verify_destination,
                 _managed_parent=parent_final,
+                _fresh_destination=_fresh_destination,
+                _managed_held=_managed_held,
             )
     return _install_release_native_frontdoor_impl(
-        version, destination, verify_destination=verify_destination, _managed_parent=None
+        version,
+        destination,
+        verify_destination=verify_destination,
+        _managed_parent=None,
+        _fresh_destination=False,
+        _managed_held=None,
     )
 
 
 def _install_release_native_frontdoor_impl(
-    version: str, destination: Path, *, verify_destination: bool, _managed_parent: str | None
+    version: str,
+    destination: Path,
+    *,
+    verify_destination: bool,
+    _managed_parent: str | None,
+    _fresh_destination: bool,
+    _managed_held: ExitStack | None,
 ) -> _NativeFrontdoorInstallResult:
     candidates = _self._native_frontdoor_download_candidates(version)
     if not candidates:
         raise RuntimeError("no release-native front-door asset is available for this platform")
 
-    # Audit HIGH (2026-06-24): verify every downloaded asset against the published
-    # CHECKSUMS.txt BEFORE installing/executing it, matching the fail-closed posture
-    # of the installers (scripts/install.sh, install.ps1, npm/install.js). Without
-    # the manifest nothing can be verified, so refuse rather than trust the download.
+    # Verify the published checksum before executing a downloaded asset.
     try:
         checksums_text = _self._fetch_native_frontdoor_checksums(version)
     except Exception as exc:
-        # W1-b MEDIUM hardening (2026-08-20): the real `_fetch_native_frontdoor_checksums`
-        # never raises (it catches internally and returns None), but a caller-supplied
-        # override (test injection, a future refactor) might. Refuse and disclose the
-        # underlying cause rather than letting it escape unwrapped or fall through silently.
         raise RuntimeError(
             "release-native front-door asset install refused: fetching CHECKSUMS.txt for "
             f"v{version} raised {exc}; refusing to install an unverified native binary"
@@ -672,6 +668,7 @@ def _install_release_native_frontdoor_impl(
         NativeDownloadCleanupError,
         dispose_guarded,
         hold_private_asset,
+        publish_fresh_asset,
         read_verified_asset,
     )
 
@@ -737,49 +734,50 @@ def _install_release_native_frontdoor_impl(
                     )
                 else:
                     candidate_bytes = temp_path.read_bytes()
-            previous_bytes = destination.read_bytes() if destination.exists() else None
-            install_mode = None if sys.platform.startswith("win") else 0o755
             publication_attempted = True
-            atomic_write_bytes_anchored(destination, candidate_bytes, mode=install_mode)
-            if verify_destination:
-                installed_version = _self._native_tg_version(destination)
-                if not _self._native_tg_version_matches(version, installed_version):
-                    if previous_bytes is not None:
-                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
-                    else:
-                        destination.unlink(missing_ok=True)
-                    download_errors.append(
-                        f"{candidate.flavor} asset failed install verification: installed native "
-                        f"tg front door reported {installed_version or 'no version'} instead of "
-                        f"{version}"
-                    )
-                    continue
+            if _fresh_destination:
+                assert _managed_parent is not None and _managed_held is not None
+                publish_fresh_asset(destination, candidate_bytes, _managed_parent, _managed_held)
             else:
-                checksum_error = _self._native_frontdoor_checksum_error(
-                    destination, candidate.asset_name, checksums_text
-                )
-                if checksum_error is not None:
-                    if previous_bytes is not None:
-                        atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
-                    else:
-                        destination.unlink(missing_ok=True)
-                    download_errors.append(
-                        f"{candidate.flavor} asset failed install checksum verification: "
-                        f"{checksum_error}"
+                previous_bytes = destination.read_bytes() if destination.exists() else None
+                install_mode = None if sys.platform.startswith("win") else 0o755
+                atomic_write_bytes_anchored(destination, candidate_bytes, mode=install_mode)
+                if verify_destination:
+                    installed_version = _self._native_tg_version(destination)
+                    if not _self._native_tg_version_matches(version, installed_version):
+                        if previous_bytes is not None:
+                            atomic_write_bytes_anchored(
+                                destination, previous_bytes, mode=install_mode
+                            )
+                        else:
+                            destination.unlink(missing_ok=True)
+                        download_errors.append(
+                            f"{candidate.flavor} asset failed install verification: installed native "
+                            f"tg front door reported {installed_version or 'no version'} instead of "
+                            f"{version}"
+                        )
+                        continue
+                else:
+                    checksum_error = _self._native_frontdoor_checksum_error(
+                        destination, candidate.asset_name, checksums_text
                     )
-                    continue
+                    if checksum_error is not None:
+                        if previous_bytes is not None:
+                            atomic_write_bytes_anchored(
+                                destination, previous_bytes, mode=install_mode
+                            )
+                        else:
+                            destination.unlink(missing_ok=True)
+                        download_errors.append(
+                            f"{candidate.flavor} asset failed install checksum verification: "
+                            f"{checksum_error}"
+                        )
+                        continue
             _self._write_native_frontdoor_metadata(
                 destination,
                 version=version,
                 candidate=candidate,
             )
-            # P0-5 (GPU Phase-0 honesty): a requested nvidia flavor that silently
-            # lands cpu (nvidia unavailable, or no nvidia asset exists for this platform at
-            # all) used to be indistinguishable from an ordinary cpu install. Warn loudly on
-            # stderr so a caller sees the downgrade instead of only discovering it later via
-            # `tg doctor`. Silent on the default cpu-request path (requested cpu always
-            # installs cpu, so this never fires there) and never pollutes any --json stream
-            # (stderr only; `tg upgrade` has no --json output).
             requested_flavor = _requested_native_frontdoor_flavor()
             downgrade_reason = _native_frontdoor_downgrade_reason(
                 requested_flavor=requested_flavor,
@@ -787,8 +785,6 @@ def _install_release_native_frontdoor_impl(
                 download_errors=download_errors,
             )
             if downgrade_reason is not None:
-                # Gate-nit C (#172): the house idiom is typer.echo(..., err=True), not a raw
-                # print(..., file=sys.stderr) -- functionally equivalent, ASCII-safe.
                 typer.echo(
                     f"WARNING: requested native tg front-door flavor '{requested_flavor}' "
                     f"was not installed ({downgrade_reason}); installed '{candidate.flavor}' "
@@ -1440,7 +1436,12 @@ def stage_managed_windows_runtime(
             raise RuntimeError("managed native directory already exists or cannot be created")
         _pin_managed_directory(native_path.parent, held)
         native_result = _install_release_native_frontdoor(
-            expected_version, native_path, verify_destination=False, _managed_source=True
+            expected_version,
+            native_path,
+            verify_destination=False,
+            _managed_source=True,
+            _fresh_destination=True,
+            _managed_held=held,
         )
         _pin_managed_generation_executables(generation_root, held)
         stable_path = _pin_stable_launcher_directory(install_root, held)
