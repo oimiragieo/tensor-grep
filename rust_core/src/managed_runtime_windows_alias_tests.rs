@@ -99,12 +99,24 @@ fn short_ancestor_preserves_junction_and_hardlink_refusals() {
         Err(error) => panic!("scratch fixture creation failed: {error}"),
     };
     eprintln!("retained disposable fixture: {}", fixture.display());
+    let parent = open_directory(&fixture).unwrap();
+    let root_id = fixture_id(&parent, FixtureKind::Directory).unwrap();
+    assert!(
+        super::is_held_direct_child(scratch_pin.as_handle(), parent.as_handle(), &fixture).unwrap()
+    );
     let short_root = short_scratch.join(fixture.file_name().unwrap());
     let long_file = fixture.join("launcher.exe");
     let short_file = short_root.join("launcher.exe");
-    fs::write(&long_file, b"fixture").unwrap();
-    let parent = open_directory(&fixture).unwrap();
+    use std::io::Write;
+    let mut created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&long_file)
+        .unwrap();
+    created.write_all(b"fixture").unwrap();
+    close_fixture(created).unwrap();
     let child = super::open_executable(&short_file).unwrap();
+    let file_id = fixture_id(&child, FixtureKind::File).unwrap();
     assert!(
         super::is_held_direct_child(parent.as_handle(), child.as_handle(), &short_file).unwrap()
     );
@@ -113,9 +125,16 @@ fn short_ancestor_preserves_junction_and_hardlink_refusals() {
         open_file_for_identity(&long_file).unwrap().as_handle()
     )
     .unwrap());
-    drop(child);
+    close_fixture(child).unwrap();
     let hardlink = fixture.join("hardlink.exe");
     fs::hard_link(&long_file, &hardlink).unwrap();
+    let hardlink_pin = open_file_for_identity(&hardlink).unwrap();
+    assert_eq!(
+        fixture_id(&hardlink_pin, FixtureKind::File).unwrap(),
+        file_id
+    );
+    assert_eq!(fixture_links(&hardlink_pin).unwrap(), 2);
+    close_fixture(hardlink_pin).unwrap();
     for path in [&long_file, &short_file] {
         assert_eq!(
             super::open_executable(path).unwrap_err().to_string(),
@@ -125,8 +144,22 @@ fn short_ancestor_preserves_junction_and_hardlink_refusals() {
     let target = fixture.join("target");
     let junction = fixture.join("junction");
     fs::create_dir(&target).unwrap();
-    let _target_pin = open_directory(&target).unwrap();
-    fs::write(target.join("canary"), b"preserve").unwrap();
+    let target_pin = open_directory(&target).unwrap();
+    let target_id = fixture_id(&target_pin, FixtureKind::Directory).unwrap();
+    assert!(
+        super::is_held_direct_child(parent.as_handle(), target_pin.as_handle(), &target).unwrap()
+    );
+    let canary = target.join("canary");
+    let mut created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&canary)
+        .unwrap();
+    created.write_all(b"preserve").unwrap();
+    close_fixture(created).unwrap();
+    let canary_pin = open_file_for_identity(&canary).unwrap();
+    let canary_id = fixture_id(&canary_pin, FixtureKind::File).unwrap();
+    close_fixture(canary_pin).unwrap();
     assert_eq!(
         fs::symlink_metadata(&junction).unwrap_err().kind(),
         ErrorKind::NotFound
@@ -166,6 +199,20 @@ fn short_ancestor_preserves_junction_and_hardlink_refusals() {
         "junction creation failed (status {:?})",
         status.code()
     );
+    close_fixture(cmd_pin).unwrap();
+    close_fixture(system_pin).unwrap();
+    let junction_pin = OpenOptions::new()
+        .read(true)
+        .share_mode(7)
+        .custom_flags(0x0220_0000)
+        .open(&junction)
+        .unwrap();
+    let junction_id = fixture_id(&junction_pin, FixtureKind::Junction).unwrap();
+    assert!(
+        super::is_held_direct_child(parent.as_handle(), junction_pin.as_handle(), &junction)
+            .unwrap()
+    );
+    close_fixture(junction_pin).unwrap();
     assert_ne!(
         fs::symlink_metadata(&junction).unwrap().file_attributes() & 0x400,
         0
@@ -176,7 +223,24 @@ fn short_ancestor_preserves_junction_and_hardlink_refusals() {
             "opened path has an unexpected type or is a reparse point"
         );
     }
-    assert_eq!(fs::read(target.join("canary")).unwrap(), b"preserve");
+    assert_eq!(fs::read(&canary).unwrap(), b"preserve");
+    remove_fixture_object(&parent, &junction, junction_id, FixtureKind::Junction).unwrap();
+    assert_eq!(fs::read(&canary).unwrap(), b"preserve");
+    remove_fixture_object(&target_pin, &canary, canary_id, FixtureKind::File).unwrap();
+    close_fixture(target_pin).unwrap();
+    remove_fixture_object(&parent, &target, target_id, FixtureKind::Directory).unwrap();
+    remove_fixture_object(&parent, &hardlink, file_id, FixtureKind::File).unwrap();
+    let survivor = open_file_for_identity(&long_file).unwrap();
+    assert_eq!(fixture_id(&survivor, FixtureKind::File).unwrap(), file_id);
+    assert_eq!(fixture_links(&survivor).unwrap(), 1);
+    assert_eq!(fs::read(&long_file).unwrap(), b"fixture");
+    close_fixture(survivor).unwrap();
+    remove_fixture_object(&parent, &long_file, file_id, FixtureKind::File).unwrap();
+    close_fixture(parent).unwrap();
+    remove_fixture_object(&scratch_pin, &fixture, root_id, FixtureKind::Directory).unwrap();
+    close_fixture(short_pin).unwrap();
+    close_fixture(scratch_pin).unwrap();
+    eprintln!("fixture objects removed by checked handles");
     eprintln!("alias hardlink and junction controls completed");
 }
 

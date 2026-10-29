@@ -238,6 +238,7 @@ mod tests {
 
     const VALID: &[u8] = b"{\"schema_version\":1,\"generation\":\"0123456789abcdef0123456789abcdef\",\"version\":\"1.2.3\"}";
 
+    include!("managed_runtime_windows_fixture_cleanup.rs");
     include!("managed_runtime_windows_alias_tests.rs");
 
     #[test]
