@@ -8,6 +8,7 @@ import pytest
 
 from tensor_grep.cli import main as cli_main
 from tensor_grep.cli import native_download_guard
+from tensor_grep.cli.native_download_guard import NativeDownloadCleanupError
 from tests.unit.test_native_download_collision import _configure
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows handle-bound cleanup")
@@ -27,11 +28,9 @@ def test_NativeDownload_WhenTempNameIsReplaced_DoesNotDeleteReplacement(tmp_path
         return "checksum mismatch"
 
     monkeypatch.setattr(cli_main, "_native_frontdoor_checksum_error", replace_before_refusal)
-    with pytest.raises(
-        RuntimeError, match=r"before installation.*changed; cleanup refused"
-    ) as caught:
+    reason = r"before installation.*changed; cleanup refused"
+    with pytest.raises(RuntimeError, match=reason) as caught:
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert "checksum mismatch" in str(caught.value)
     assert original.read_bytes() == payload
     assert temporary.read_bytes() == b"replacement user data"
@@ -55,7 +54,6 @@ def test_NativeDownload_WhenTempBecomesHardlink_DoesNotDeleteReplacement(tmp_pat
     monkeypatch.setattr(cli_main, "_native_frontdoor_checksum_error", replace_before_refusal)
     with pytest.raises(RuntimeError, match=r"before installation.*changed; cleanup refused"):
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert target.read_bytes() == temporary.read_bytes() == b"other user data"
     assert os.path.samefile(target, temporary)
 
@@ -71,11 +69,9 @@ def test_NativeDownload_WhenGuardAcquisitionFails_ReportsPotentialOrphan(tmp_pat
 
     monkeypatch.setattr(urllib.request, "urlopen", fail_network)
     monkeypatch.setattr(native_download_guard, "acquire_guard", fail_guard)
-    with pytest.raises(
-        RuntimeError, match="after OSError; cleanup unverified; temporary may remain"
-    ):
+    reason = "after OSError; cleanup unverified; temporary may remain"
+    with pytest.raises(RuntimeError, match=reason):
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert (tmp_path / "tg.exe.fixture.tmp").is_file()
     assert not (tmp_path / "tg.exe").exists()
 
@@ -84,11 +80,8 @@ def test_NativeDownload_WhenCleanupIsUnverified_DoesNotTryAnotherCandidate(tmp_p
     _configure(monkeypatch, b"verified asset")
     first = cli_main._NativeFrontdoorAssetCandidate(flavor="nvidia", asset_name="tg-first")
     second = cli_main._NativeFrontdoorAssetCandidate(flavor="cpu", asset_name="tg-second")
-    monkeypatch.setattr(
-        cli_main,
-        "_native_frontdoor_download_candidates",
-        lambda _version: [(first, "first"), (second, "second")],
-    )
+    candidates = [(first, "first"), (second, "second")]
+    monkeypatch.setattr(cli_main, "_native_frontdoor_download_candidates", lambda _: candidates)
     requested = []
 
     def fail_network(url, **_kwargs):
@@ -100,11 +93,8 @@ def test_NativeDownload_WhenCleanupIsUnverified_DoesNotTryAnotherCandidate(tmp_p
 
     monkeypatch.setattr(urllib.request, "urlopen", fail_network)
     monkeypatch.setattr(native_download_guard, "acquire_guard", fail_guard)
-    with pytest.raises(
-        native_download_guard.NativeDownloadCleanupError, match="cleanup unverified"
-    ):
+    with pytest.raises(NativeDownloadCleanupError, match="cleanup unverified"):
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert requested == ["first"]
     assert (tmp_path / "tg.exe.fixture.tmp").is_file()
     assert not (tmp_path / "tg.exe").exists()
@@ -119,11 +109,9 @@ def test_NativeDownload_WhenCleanupAndGuardCloseFail_ReportsBoth(tmp_path, monke
 
     monkeypatch.setattr(native_download_guard, "discard_guarded", fail_cleanup)
     monkeypatch.setattr(native_download_guard.os, "close", fail_close)
-    with pytest.raises(native_download_guard.NativeDownloadCleanupError) as caught:
-        native_download_guard.dispose_guarded(
-            tmp_path / "fixture", 123, state="before installation"
-        )
-
+    with pytest.raises(NativeDownloadCleanupError) as caught:
+        fixture = tmp_path / "fixture"
+        native_download_guard.dispose_guarded(fixture, 123, state="before installation")
     assert "fixture cleanup failure" in str(caught.value)
     assert "fixture close failure" in str(caught.value)
 
@@ -135,11 +123,8 @@ def test_NativeDownload_WhenWriterCloseFails_DoesNotTryAnotherCandidate(
     _configure(monkeypatch, b"verified asset")
     first = cli_main._NativeFrontdoorAssetCandidate(flavor="nvidia", asset_name="tg-first")
     second = cli_main._NativeFrontdoorAssetCandidate(flavor="cpu", asset_name="tg-second")
-    monkeypatch.setattr(
-        cli_main,
-        "_native_frontdoor_download_candidates",
-        lambda _version: [(first, "first"), (second, "second")],
-    )
+    candidates = [(first, "first"), (second, "second")]
+    monkeypatch.setattr(cli_main, "_native_frontdoor_download_candidates", lambda _: candidates)
     requests = []
 
     def response(url, **_kwargs):
@@ -171,9 +156,8 @@ def test_NativeDownload_WhenWriterCloseFails_DoesNotTryAnotherCandidate(
             "acquire_guard",
             lambda *_args: (_ for _ in ()).throw(OSError("fixture guard failure")),
         )
-    with pytest.raises(native_download_guard.NativeDownloadCleanupError, match="writer close"):
+    with pytest.raises(NativeDownloadCleanupError, match="writer close"):
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert requests == ["first"]
     assert not (tmp_path / "tg.exe").exists()
 
@@ -196,9 +180,8 @@ def test_NativeDownload_WhenDeleteHandleCloseFails_PreservesIdentityFailure(tmp_
             raise OSError("fixture delete handle close failure")
 
     monkeypatch.setattr(os, "close", fail_delete_handle_close)
-    with pytest.raises(native_download_guard.NativeDownloadCleanupError) as caught:
+    with pytest.raises(NativeDownloadCleanupError) as caught:
         native_download_guard.dispose_guarded(temporary, guard, state="before installation")
-
     assert "changed; cleanup refused" in str(caught.value)
     assert "fixture delete handle close failure" in str(caught.value)
     assert temporary.read_bytes() == b"replacement user data"
@@ -218,6 +201,5 @@ def test_NativeDownload_WhenCleanupFailsAfterPublish_ReportsDestinationMayHaveCh
     monkeypatch.setattr(native_download_guard, "discard_guarded", fail_cleanup)
     with pytest.raises(RuntimeError, match="destination may have changed: fixture cleanup failure"):
         cli_main._install_release_native_frontdoor("1.2.3", tmp_path / "tg.exe")
-
     assert (tmp_path / "tg.exe").read_bytes() == payload
     assert (tmp_path / "tg.exe.fixture.tmp").read_bytes() == payload
