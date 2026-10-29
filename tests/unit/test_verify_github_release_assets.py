@@ -1,4 +1,6 @@
 import importlib.util
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -10,6 +12,55 @@ def _load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_release_requests_do_not_forward_token_to_other_origins():
+    module = _load_module()
+    received = []
+
+    class Destination(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(("destination", self.headers.get("Authorization")))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *_args):
+            pass
+
+    destination = ThreadingHTTPServer(("127.0.0.1", 0), Destination)
+
+    class Redirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(("origin", self.headers.get("Authorization")))
+            self.send_response(302)
+            self.send_header("Location", f"http://127.0.0.1:{destination.server_port}/asset")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+    threads = [
+        threading.Thread(target=server.serve_forever, daemon=True)
+        for server in (origin, destination)
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        url = f"http://127.0.0.1:{origin.server_port}/release"
+        assert module._github_json(url, token="test-secret") == {}
+        assert received == [("origin", "Bearer test-secret"), ("destination", None)]
+        received.clear()
+        assert module._download_text(url, token="test-secret") == "{}"
+        assert received == [("origin", None), ("destination", None)]
+    finally:
+        for server in (origin, destination):
+            server.shutdown()
+            server.server_close()
+        for thread in threads:
+            thread.join(timeout=5)
+            assert not thread.is_alive()
 
 
 def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix():
