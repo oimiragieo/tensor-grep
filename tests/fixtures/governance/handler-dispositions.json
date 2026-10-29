@@ -720,6 +720,16 @@
     "hardened_in": null
   },
   {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 501,
+    "enclosing_symbol": "_download_native_frontdoor_asset",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "tests/unit/test_native_download_cleanup_identity.py::test_NativeDownload_WhenGuardAcquisitionFails_ReportsPotentialOrphan exercises a failed guard acquisition and checks the disclosed cleanup uncertainty.",
+    "reason": "Guard acquisition failure raises NativeDownloadCleanupError with the guard exception chained, discloses that cleanup is unverified and a temporary may remain, and prevents another candidate from hiding that uncertainty.",
+    "hardened_in": null
+  },
+  {
     "module": "cli/pypi_probe.py",
     "lineno": 55,
     "enclosing_symbol": "probe_indices",
@@ -731,7 +741,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 503,
+    "lineno": 549,
     "enclosing_symbol": "_fetch_native_frontdoor_checksums",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -741,7 +751,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 641,
+    "lineno": 709,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -811,7 +821,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 617,
+    "lineno": 663,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3511,7 +3521,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1246,
+    "lineno": 1328,
     "enclosing_symbol": "_activate_managed_generation_after_parent",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3521,7 +3531,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1392,
+    "lineno": 1474,
     "enclosing_symbol": "stage_managed_windows_runtime",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",

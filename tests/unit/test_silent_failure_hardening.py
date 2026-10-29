@@ -209,7 +209,8 @@ _EXCLUDED_MODULES = frozenset({
 # - 2026-10-28 (PR #1278): +1 INTENTIONAL-BOUNDARY in cli/managed_runtime_candidate.py::_managed_candidate_profile; isolated profile-probe failures become a chained RuntimeError and prevent candidate installation, covered by test_ManagedCandidateProfile_WhenProbeFails_RaisesVerificationError and the disposition ledger.
 # - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
 #   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
-TOTAL_BROAD_HANDLERS_CEILING = 354
+# Native download guard acquisition discloses cleanup uncertainty and fails closed (ledger/test).
+TOTAL_BROAD_HANDLERS_CEILING = 355
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
