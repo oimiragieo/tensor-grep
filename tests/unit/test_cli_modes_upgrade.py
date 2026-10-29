@@ -1199,6 +1199,7 @@ def test_native_frontdoor_asset_candidates_prefer_nvidia_only_when_requested(mon
     ]
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable(
     monkeypatch, tmp_path
 ):
@@ -1282,6 +1283,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
     assert "GPU promotion" not in result.stdout
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     monkeypatch, tmp_path
 ):
@@ -1360,6 +1362,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     assert "Native asset flavor: cpu." in result.stdout
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_restores_previous_native_binary_when_install_verification_fails(
     monkeypatch, tmp_path
 ):
@@ -1429,6 +1432,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
     assert "release-native front-door asset install failed" in result.stderr
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkeypatch, tmp_path):
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"

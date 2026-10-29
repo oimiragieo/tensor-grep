@@ -527,6 +527,7 @@ def test_upgrade_does_not_treat_repo_dev_venv_as_managed_frontdoor(monkeypatch, 
     assert cli_main._managed_native_frontdoor_path_from_env() is None
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monkeypatch, tmp_path):
     install_dir = tmp_path / ".tensor-grep"
     python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
@@ -797,6 +798,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
     assert "Refreshed 1 PATH tg.com bridge to 0.33.0." in result.stdout
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     monkeypatch, tmp_path
 ):
@@ -864,6 +866,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     assert "Native tg front door refreshed to 0.33.0." in result.stdout
 
 
+@pytest.mark.usefixtures("simulated_windows_native_guard")
 def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     monkeypatch, tmp_path
 ):
