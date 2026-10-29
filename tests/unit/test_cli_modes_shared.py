@@ -569,6 +569,8 @@ def _install_simulated_native_guard(monkeypatch, tmp_path, guard):
 
     if os.name == "nt":
         return
+    from tensor_grep.cli import session_daemon_winsec as winsec
+    from tensor_grep.io import windows_publication
 
     def check_path(path):
         path = Path(path)
@@ -577,6 +579,11 @@ def _install_simulated_native_guard(monkeypatch, tmp_path, guard):
     def acquire(path, writer):
         check_path(path)
         return os.dup(writer)
+
+    def create(path, *, restrict_to_sid=None):
+        check_path(path)
+        assert restrict_to_sid == "fixture-user"
+        return os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
 
     def discard(path, pinned):
         check_path(path)
@@ -590,6 +597,8 @@ def _install_simulated_native_guard(monkeypatch, tmp_path, guard):
 
     monkeypatch.setattr(guard, "acquire_guard", acquire)
     monkeypatch.setattr(guard, "discard_guarded", discard)
+    monkeypatch.setattr(winsec, "current_user_sid", lambda: "fixture-user")
+    monkeypatch.setattr(windows_publication, "open_temporary", create)
 
 
 @pytest.fixture

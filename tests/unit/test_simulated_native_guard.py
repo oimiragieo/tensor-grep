@@ -56,3 +56,21 @@ def test_simulation_refuses_replaced_fixture(tmp_path, monkeypatch, replacement)
         assert saved.is_file()
     finally:
         os.close(pinned)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX simulation only")
+def test_simulated_private_creation_is_scoped_and_exclusive(tmp_path, monkeypatch):
+    from tensor_grep.cli import session_daemon_winsec as winsec
+    from tensor_grep.io import windows_publication
+
+    guard = SimpleNamespace(acquire_guard=None, discard_guarded=None)
+    _install_simulated_native_guard(monkeypatch, tmp_path, guard)
+    path = tmp_path / "asset"
+    sid = winsec.current_user_sid()
+    fd = windows_publication.open_temporary(path, restrict_to_sid=sid)
+    os.close(fd)
+    with pytest.raises(FileExistsError):
+        windows_publication.open_temporary(path, restrict_to_sid=sid)
+    with pytest.raises(AssertionError):
+        windows_publication.open_temporary(tmp_path / ".." / "outside", restrict_to_sid=sid)
+    assert path.is_file()
