@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -444,30 +444,19 @@ def _download_native_frontdoor_asset(
         dispose_guarded,
     )
 
-    # Claim the temp name ATOMICALLY as a regular file, then stream the WHOLE transfer through
-    # that SAME held fd -- mirroring lsp_provider_setup._download, which documents why: `urlretrieve`
-    # (the prior implementation here) opens its target with a plain 'wb' AFTER the O_EXCL claim's fd
-    # is closed, reopening the path BY NAME. The O_EXCL claim only guarantees a fresh regular file at
-    # claim time; between that close and urlretrieve's later by-name reopen, the destination can be
-    # replaced with a symlink, and urlretrieve then writes THROUGH it. The payload here is a native
-    # EXECUTABLE the front door later runs, so that close-then-reopen gap is a real hole, not
-    # defence-in-depth. Streaming through the held fd (os.fdopen, never destination.open()/a second
-    # os.open()) removes the reopen entirely -- there is no name lookup after the O_EXCL claim, so no
-    # window for a symlink swap to matter.
-    #
-    # O_EXCL fails if ANYTHING already exists at the path (symlink, hard link, or regular file)
-    # instead of writing through it. Callers pass a `{name}.{uuid4().hex}` temp path, so an attacker
-    # cannot pre-plant a symlink at a name they can predict; O_NOFOLLOW additionally refuses to open
-    # through a symlink even in the (unexpected) case of a name collision. Mode is passed to os.open
-    # rather than chmod-ed afterwards, so there is no window where the file exists with wider
-    # permissions.
-    #
-    # A collision on a uuid4 name is not expected; refusing (rather than truncating) is the honest
-    # response, and it keeps the guard from degrading into "symlinks only", which a hard link would
-    # sidestep. Found by the #859 atomic-writer ratchet; TOCTOU close-then-reopen gap closed as one
-    # of that ratchet's two H2 deferrals.
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(destination, flags, 0o600)
+    # Create exclusively and stream through the same descriptor; Windows guarded files also
+    # receive a private DACL at creation so inherited permissions cannot expose the download.
+    if sys.platform == "win32" and retain_guard:
+        from tensor_grep.cli import session_daemon_winsec as winsec
+        from tensor_grep.io import windows_publication
+
+        sid = winsec.current_user_sid()
+        if sid is None:
+            raise NativeDownloadCleanupError("native download owner identity is unavailable")
+        fd = windows_publication.open_temporary(destination, restrict_to_sid=sid)
+    else:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(destination, flags, 0o600)
     guard: int | None = None
     # urlopen's timeout param replaces the previous process-global socket.setdefaulttimeout(60):
     # equivalent 60s bound on the request, and this function is the only caller that touched the
@@ -573,11 +562,7 @@ def _expected_asset_sha256(checksums_text: str, asset_name: str) -> str | None:
 def _native_frontdoor_checksum_error(
     asset_path: Path, asset_name: str, checksums_text: str
 ) -> str | None:
-    """Return None when asset_path matches its published sha256, else an error string.
-
-    Fail-closed: a missing manifest entry is an error (we refuse to trust an
-    unlisted download), mirroring scripts/install.sh.
-    """
+    """Check the published SHA-256, refusing unlisted downloads."""
     import hashlib
 
     expected = _self._expected_asset_sha256(checksums_text, asset_name)
@@ -592,12 +577,7 @@ def _native_frontdoor_checksum_error(
 def _native_frontdoor_download_error_for_flavor(
     download_errors: list[str], flavor: str
 ) -> str | None:
-    """First download_errors entry attributable to `flavor` (each entry is formatted as
-    "<flavor> asset ...", see _install_release_native_frontdoor), or None if no candidate of
-    that flavor was ever attempted. SF-1: a platform with no NVIDIA asset at all never
-    appends an nvidia candidate to the download loop, so download_errors has no
-    nvidia-flavored entry -- callers must not index into it blindly in that case.
-    """
+    """Return the first download error for this flavor, if one was attempted."""
     prefix = f"{flavor} asset"
     for error in download_errors:
         if error.startswith(prefix):
@@ -608,18 +588,12 @@ def _native_frontdoor_download_error_for_flavor(
 def _native_frontdoor_downgrade_reason(
     *, requested_flavor: str, installed_flavor: str, download_errors: list[str]
 ) -> str | None:
-    """Honest reason the installed native-frontdoor flavor differs from what was requested
-    (TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR), or None when they already agree -- including the
-    default cpu-request path, which must stay silent (requested cpu always installs cpu).
-    """
+    """Explain a flavor downgrade, or return None when the request was met."""
     if installed_flavor == requested_flavor:
         return None
     reason = _native_frontdoor_download_error_for_flavor(download_errors, requested_flavor)
     if reason is not None:
         return reason
-    # SF-1: no candidate of the requested flavor was ever attempted for this platform (e.g.
-    # darwin/non-amd64, where _native_frontdoor_asset_candidates never appends an nvidia
-    # entry) -- state that honestly rather than fabricating a reason nothing recorded.
     return f"no {requested_flavor.upper()} asset is published for this platform"
 
 
@@ -636,11 +610,7 @@ def _write_native_frontdoor_metadata(
         "requested_asset_flavor": _requested_native_frontdoor_flavor(),
         "version": version,
     }
-    # H2 (#859 class ratchet): route through the shared anchored helper rather than a raw
-    # write_text -- the metadata sidecar path is derived from `destination`, a fixed/predictable
-    # install location (unlike the uuid4-suffixed temp paths elsewhere in this module), so a
-    # pre-planted symlink there is a real target. atomic_write_bytes_anchored refuses to write
-    # through a symlinked destination and publishes via a same-directory O_EXCL temp + os.replace.
+    # The predictable sidecar path requires the shared symlink-refusing publisher.
     atomic_write_bytes_anchored(
         native_frontdoor_metadata_path(destination),
         (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
@@ -648,7 +618,30 @@ def _write_native_frontdoor_metadata(
 
 
 def _install_release_native_frontdoor(
-    version: str, destination: Path, *, verify_destination: bool = True
+    version: str,
+    destination: Path,
+    *,
+    verify_destination: bool = True,
+    _managed_source: bool = False,
+) -> _NativeFrontdoorInstallResult:
+    if _managed_source:
+        if sys.platform != "win32":
+            raise RuntimeError("managed native source pin requires Windows")
+        with ExitStack() as held:
+            parent_final = _pin_managed_directory(destination.parent, held)
+            return _install_release_native_frontdoor_impl(
+                version,
+                destination,
+                verify_destination=verify_destination,
+                _managed_parent=parent_final,
+            )
+    return _install_release_native_frontdoor_impl(
+        version, destination, verify_destination=verify_destination, _managed_parent=None
+    )
+
+
+def _install_release_native_frontdoor_impl(
+    version: str, destination: Path, *, verify_destination: bool, _managed_parent: str | None
 ) -> _NativeFrontdoorInstallResult:
     candidates = _self._native_frontdoor_download_candidates(version)
     if not candidates:
@@ -675,7 +668,12 @@ def _install_release_native_frontdoor(
             f"CHECKSUMS.txt for v{version}; refusing to install an unverified native binary"
         )
 
-    from tensor_grep.cli.native_download_guard import NativeDownloadCleanupError, dispose_guarded
+    from tensor_grep.cli.native_download_guard import (
+        NativeDownloadCleanupError,
+        dispose_guarded,
+        hold_private_asset,
+        read_verified_asset,
+    )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     download_errors: list[str] = []
@@ -709,33 +707,38 @@ def _install_release_native_frontdoor(
             except Exception as exc:
                 download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
                 continue
-            checksum_error = _self._native_frontdoor_checksum_error(
-                temp_path, candidate.asset_name, checksums_text
+            if _managed_parent is not None and guard is None:
+                raise NativeDownloadCleanupError("managed native asset identity is unavailable")
+            source = (
+                hold_private_asset(temp_path, guard, _managed_parent)
+                if _managed_parent is not None and guard is not None
+                else nullcontext(None)
             )
-            if checksum_error is not None:
-                download_errors.append(f"{candidate.flavor} asset {checksum_error}")
-                continue
-            if not sys.platform.startswith("win"):
-                temp_path.chmod(0o755)
-            temp_version = _self._native_tg_version(temp_path)
-            if not _self._native_tg_version_matches(version, temp_version):
-                download_errors.append(
-                    f"{candidate.flavor} asset failed smoke test: downloaded native tg "
-                    f"front door reported {temp_version or 'no version'} instead of {version}"
+            with source as pin:
+                checksum_error = _self._native_frontdoor_checksum_error(
+                    temp_path, candidate.asset_name, checksums_text
                 )
-                continue
+                if checksum_error is not None:
+                    download_errors.append(f"{candidate.flavor} asset {checksum_error}")
+                    continue
+                if not sys.platform.startswith("win"):
+                    temp_path.chmod(0o755)
+                temp_version = _self._native_tg_version(temp_path)
+                if not _self._native_tg_version_matches(version, temp_version):
+                    download_errors.append(
+                        f"{candidate.flavor} asset failed smoke test: downloaded native tg "
+                        f"front door reported {temp_version or 'no version'} instead of {version}"
+                    )
+                    continue
+                if pin is not None:
+                    expected = _self._expected_asset_sha256(checksums_text, candidate.asset_name)
+                    candidate_bytes = read_verified_asset(
+                        pin, _self._MAX_NATIVE_ASSET_DOWNLOAD_BYTES, expected
+                    )
+                else:
+                    candidate_bytes = temp_path.read_bytes()
             previous_bytes = destination.read_bytes() if destination.exists() else None
-            # H2 (#859 class ratchet): the raw os.replace/write_bytes pair here was a hand-rolled
-            # duplicate of atomic_write_bytes_anchored's own create-temp/replace flow, operating
-            # on a SINGLE FILE (unlike lsp_provider_setup._ensure_node_runtime's directory-tree
-            # swap, which has no shared-helper equivalent to route through). temp_path itself was
-            # already claimed via the O_EXCL guard in _download_native_frontdoor_asset, so reading
-            # its bytes here and publishing through the shared helper closes the destination-
-            # symlink gap the raw os.replace left open (os.replace alone is non-dereferencing, but
-            # routing through the helper keeps this call site consistent with the reviewed pattern
-            # and gives the destination its own explicit symlink-refusal check).
             install_mode = None if sys.platform.startswith("win") else 0o755
-            candidate_bytes = temp_path.read_bytes()
             publication_attempted = True
             atomic_write_bytes_anchored(destination, candidate_bytes, mode=install_mode)
             if verify_destination:
@@ -1316,7 +1319,7 @@ def _activate_managed_generation_after_parent(
                     _ensure_managed_generation_not_older(install_root, version)
                     if not _stable_dispatcher_matches_release(version, stable_path):
                         _install_release_native_frontdoor(
-                            version, stable_path, verify_destination=False
+                            version, stable_path, verify_destination=False, _managed_source=True
                         )
                     _publish_managed_generation(
                         install_root, generation, version, held, selector_attempted
@@ -1433,8 +1436,11 @@ def stage_managed_windows_runtime(
             expected_cuda=expected_cuda,
             expected_torch_auxiliaries=source_torch_auxiliaries,
         )
+        if not winsec.create_directory_restricted(str(native_path.parent), sid, exist_ok=False):
+            raise RuntimeError("managed native directory already exists or cannot be created")
+        _pin_managed_directory(native_path.parent, held)
         native_result = _install_release_native_frontdoor(
-            expected_version, native_path, verify_destination=False
+            expected_version, native_path, verify_destination=False, _managed_source=True
         )
         _pin_managed_generation_executables(generation_root, held)
         stable_path = _pin_stable_launcher_directory(install_root, held)
@@ -1456,7 +1462,7 @@ def stage_managed_windows_runtime(
             _ensure_managed_generation_not_older(install_root, expected_version)
             if not _stable_dispatcher_matches_release(expected_version, stable_path):
                 _install_release_native_frontdoor(
-                    expected_version, stable_path, verify_destination=False
+                    expected_version, stable_path, verify_destination=False, _managed_source=True
                 )
             _publish_managed_generation(
                 install_root, generation, expected_version, held, selector_attempted

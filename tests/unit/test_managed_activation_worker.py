@@ -92,7 +92,7 @@ def test_ActivationWorker_WhenParentHasExited_RepairsStableLauncherThenPublishes
         profile,
         lambda _version, path, **kwargs: (
             path.write_bytes(b"stable")
-            if kwargs == {"verify_destination": False}
+            if kwargs == {"verify_destination": False, "_managed_source": True}
             else pytest.fail(f"unexpected dispatcher install options: {kwargs}")
         ),
     )
@@ -129,7 +129,7 @@ def test_ActivationWorker_WhenStableDispatcherRepairFails_PreservesPreviousSelec
     previous = (root / "runtime-selection.json").read_bytes()
 
     def fail_repair(_version, _path, **kwargs):
-        assert kwargs == {"verify_destination": False}
+        assert kwargs == {"verify_destination": False, "_managed_source": True}
         raise RuntimeError("stable dispatcher repair failed")
 
     _prepare_worker(monkeypatch, profile, fail_repair)

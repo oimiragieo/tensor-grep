@@ -1449,7 +1449,7 @@
     "identity": "cli/native_frontdoor.py:_schedule_managed_activation:injected.subprocess.Popen:7020ff7c509e28829d2f3ac986633fee7c6f7db5f1490662cce5591a68543cb0:0",
     "path": "cli/native_frontdoor.py",
     "function": "_schedule_managed_activation",
-    "line": 1071,
+    "line": 1147,
     "column": 16,
     "target": "injected.subprocess.Popen",
     "policy": "no-capture",
@@ -1469,7 +1469,7 @@
     "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:d40a36e3d5856b2b0bc5132db722e52e303744e13f7579f65dd7335fd06bcd28:0",
     "path": "cli/native_frontdoor.py",
     "function": "stage_managed_windows_runtime",
-    "line": 1319,
+    "line": 1395,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1483,13 +1483,13 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "d40a36e3d5856b2b0bc5132db722e52e303744e13f7579f65dd7335fd06bcd28",
-    "producer_fingerprint": "b8f7f8e25b1c38418d9b2ebe79574b89998ab32c6a711531471ebc3db9f6c253"
+    "producer_fingerprint": "43990da5fb244326fb166409af58ea0787ef5ec87f7ab028dec54740a1b0f2cc"
   },
   {
     "identity": "cli/native_frontdoor.py:stage_managed_windows_runtime:injected.subprocess.run:a3a3890b46df26b3b30a41e4e0b617a4f5aba323f0c587e7827cf367cbed71f6:0",
     "path": "cli/native_frontdoor.py",
     "function": "stage_managed_windows_runtime",
-    "line": 1336,
+    "line": 1412,
     "column": 12,
     "target": "injected.subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1503,7 +1503,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "a3a3890b46df26b3b30a41e4e0b617a4f5aba323f0c587e7827cf367cbed71f6",
-    "producer_fingerprint": "b8f7f8e25b1c38418d9b2ebe79574b89998ab32c6a711531471ebc3db9f6c253"
+    "producer_fingerprint": "43990da5fb244326fb166409af58ea0787ef5ec87f7ab028dec54740a1b0f2cc"
   },
   {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",
