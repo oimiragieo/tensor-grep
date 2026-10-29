@@ -169,7 +169,8 @@ fn check_output(pipe: Handle) -> io::Result<()> {
 
 /// Extract only the caller's already-verified, held archive into its authorized private stage.
 /// `archive` must be a no-write/no-delete-share pin positioned at offset zero; `stage` must be
-/// a retained, initially empty ordinary protected directory with trusted pinned ancestry.
+/// a retained ordinary protected directory with trusted pinned ancestry, initially empty except
+/// for a verified held anchor if one is used. The caller must establish that precondition.
 /// The caller keeps all handles alive and checks the extracted tree before any use. Any stdout
 /// or stderr fails. No other thread may start a child with unrestricted handle inheritance.
 pub(super) fn extract(archive: &File, stage: &File, timeout: Duration) -> io::Result<()> {
@@ -476,10 +477,10 @@ mod tests {
             if !warning {
                 result.unwrap();
             } else {
-                assert!(result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("system tar produced stdout or stderr"));
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "system tar produced stdout or stderr"
+                );
             }
             assert_eq!(fs::read(stage_path.join("ok")).unwrap(), b"x");
             assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"preserve");
