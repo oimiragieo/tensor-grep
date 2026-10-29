@@ -2921,7 +2921,7 @@
   },
   {
     "module": "cli/ast_workflows.py",
-    "lineno": 1331,
+    "lineno": 1328,
     "enclosing_symbol": "test_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3521,7 +3521,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1328,
+    "lineno": 1331,
     "enclosing_symbol": "_activate_managed_generation_after_parent",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
