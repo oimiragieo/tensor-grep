@@ -13,7 +13,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
     GetFinalPathNameByHandleW, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    FILE_ID_INFO,
+    FILE_ID_INFO, FILE_NAME_OPENED,
 };
 
 const MAX_RECORD_BYTES: usize = 512;
@@ -39,13 +39,17 @@ impl OpenedSelectionFile {
 }
 
 pub fn final_path_for_handle(handle: BorrowedHandle<'_>) -> io::Result<PathBuf> {
+    path_for_handle(handle, 0)
+}
+
+fn path_for_handle(handle: BorrowedHandle<'_>, flags: u32) -> io::Result<PathBuf> {
     let mut buffer = vec![0u16; MAX_FINAL_PATH_UNITS];
     let length = unsafe {
         GetFinalPathNameByHandleW(
             handle.as_raw_handle(),
             buffer.as_mut_ptr(),
             buffer.len() as u32,
-            0,
+            flags,
         )
     };
     if length == 0 {
@@ -59,6 +63,40 @@ pub fn final_path_for_handle(handle: BorrowedHandle<'_>) -> io::Result<PathBuf> 
     Ok(PathBuf::from(OsString::from_wide(
         &buffer[..length as usize],
     )))
+}
+
+fn path_key(path: &Path) -> io::Result<String> {
+    let value = path
+        .to_str()
+        .ok_or_else(|| invalid_data("path is not Unicode"))?
+        .replace('/', "\\");
+    Ok(value
+        .strip_prefix("\\\\?\\")
+        .unwrap_or(&value)
+        .trim_end_matches('\\')
+        .to_ascii_lowercase())
+}
+
+/// The caller must validate the local path, open the child by that exact requested path, and pin
+/// ordinary no-follow parent and child handles. The comparison does not establish ACL trust.
+pub fn is_held_direct_child(
+    parent: BorrowedHandle<'_>,
+    child: BorrowedHandle<'_>,
+    requested: &Path,
+) -> io::Result<bool> {
+    let parent_path = final_path_for_handle(parent)?;
+    let final_path = final_path_for_handle(child)?;
+    let opened_path = path_for_handle(child, FILE_NAME_OPENED)?;
+    let child_parent = final_path
+        .parent()
+        .ok_or_else(|| invalid_data("child has no parent"))?;
+    let parent_matches = path_key(child_parent)? == path_key(&parent_path)?;
+    let name_matches = path_key(&opened_path)? == path_key(requested)?;
+    #[cfg(test)]
+    if !parent_matches || !name_matches {
+        eprintln!("path validation: component_depth={} short_alias_shaped={} normalized_parent_matches={parent_matches} opened_path_matches={name_matches}", requested.components().count(), requested.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.contains('~')));
+    }
+    Ok(parent_matches && name_matches)
 }
 
 impl OpenedSelectionFile {
@@ -199,6 +237,8 @@ mod tests {
     use std::os::windows::process::CommandExt;
 
     const VALID: &[u8] = b"{\"schema_version\":1,\"generation\":\"0123456789abcdef0123456789abcdef\",\"version\":\"1.2.3\"}";
+
+    include!("managed_runtime_windows_alias_tests.rs");
 
     #[test]
     fn open_selector_valid_record_reads_from_opened_file() {
