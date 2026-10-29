@@ -460,40 +460,28 @@ def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
     # of that ratchet's two H2 deferrals.
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(destination, flags, 0o600)
-    # Wrap the fd in a file object IMMEDIATELY, before anything that can raise (urlopen included)
-    # -- `os.fdopen` itself essentially cannot fail here (a fresh, valid fd), so this keeps `fd`
-    # from ever being a bare, unclosed integer if a later step (network open, cap check) raises.
-    # An earlier draft evaluated `urlopen(...)` as part of the SAME `with A() as a, B() as b:`
-    # statement as `os.fdopen(fd, ...)`; when `urlopen` raised during that expression's own
-    # evaluation, `os.fdopen(fd, ...)` was never reached, leaking `fd` -- and the except handler's
-    # `destination.unlink()` then hit a real second bug on Windows, which opens files without
-    # `FILE_SHARE_DELETE` by default: unlinking a path with a live, unclosed fd against it raises
-    # `PermissionError: [WinError 32] ... used by another process`, masking the original error
-    # instead of cleaning up. Opening `output` first and nesting `with output:` around the urlopen
-    # call means ANY failure inside -- including urlopen's own call -- closes `output` (and so
-    # `fd`) via normal `with`-block unwinding before the outer `except` ever runs, so the unlink
-    # below always sees a released fd.
-    output = os.fdopen(fd, "wb")
-
     # urlopen's timeout param replaces the previous process-global socket.setdefaulttimeout(60):
     # equivalent 60s bound on the request, and this function is the only caller that touched the
     # global default, so there is nothing left relying on it being set.
     total = 0
     try:
-        with output, urllib.request.urlopen(url, timeout=60) as response:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                # Byte cap enforced on ACTUAL bytes read, same as the prior reporthook-based check
-                # (audit #5) -- Content-Length is attacker-controlled, so we count real bytes.
-                if total > _self._MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
-                    raise RuntimeError(
-                        f"Native asset download exceeded {_self._MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
-                        f"(possible oversized or malicious response): {url}"
-                    )
-                output.write(chunk)
+        try:
+            with os.fdopen(fd, "wb", closefd=False) as output:
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        # Content-Length is untrusted; cap the bytes actually read.
+                        if total > _self._MAX_NATIVE_ASSET_DOWNLOAD_BYTES:
+                            raise RuntimeError(
+                                f"Native asset download exceeded {_self._MAX_NATIVE_ASSET_DOWNLOAD_BYTES} bytes "
+                                f"(possible oversized or malicious response): {url}"
+                            )
+                        output.write(chunk)
+        finally:
+            os.close(fd)
     except BaseException:
         destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
         raise
@@ -645,9 +633,11 @@ def _install_release_native_frontdoor(
     download_errors: list[str] = []
     for candidate, url in candidates:
         temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+        downloaded = False
         try:
             try:
                 _self._download_native_frontdoor_asset(url, temp_path)
+                downloaded = True
             except Exception as exc:
                 download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
                 continue
@@ -741,7 +731,8 @@ def _install_release_native_frontdoor(
                 downgrade_reason=downgrade_reason,
             )
         finally:
-            temp_path.unlink(missing_ok=True)
+            if downloaded:
+                temp_path.unlink(missing_ok=True)
 
     raise RuntimeError(
         "release-native front-door asset install failed: " + "; ".join(download_errors)

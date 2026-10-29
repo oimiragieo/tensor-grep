@@ -711,7 +711,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 189,
+    "lineno": 206,
     "enclosing_symbol": "_candidate_versions_from_pip_index",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -731,7 +731,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 511,
+    "lineno": 503,
     "enclosing_symbol": "_fetch_native_frontdoor_checksums",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -741,7 +741,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 634,
+    "lineno": 641,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -811,7 +811,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 629,
+    "lineno": 617,
     "enclosing_symbol": "_install_release_native_frontdoor",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3511,7 +3511,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1232,
+    "lineno": 1246,
     "enclosing_symbol": "_activate_managed_generation_after_parent",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3521,7 +3521,7 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 1339,
+    "lineno": 1392,
     "enclosing_symbol": "stage_managed_windows_runtime",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
