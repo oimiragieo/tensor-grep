@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -473,22 +476,102 @@ def _plant_stale_lock(index_path: Path) -> Path:
 
 
 def _count_lock_sleeps(monkeypatch: Any) -> list[float]:
-    """Record every ``time.sleep`` the lock module performs.
-
-    This is the timing-free replacement for a wall-clock bound. `_index_lock.acquire`'s
-    stale-reclaim branch ends in `continue` (`_index_lock.py:239`), so it never reaches the
-    `time.sleep(poll_interval_s)` at `:254`. "Did it WAIT?" is therefore answerable exactly,
-    without asking how many seconds anything took.
-    """
+    """Count this thread's sidecar and legacy lock polling sleeps only."""
     sleeps: list[float] = []
     real_sleep = time.sleep
+    owner = threading.get_ident()
+    pollers = {
+        _index_lock._acquire_sidecar.__code__,
+        _index_lock._legacy_index_lock.__wrapped__.__code__,
+    }
 
     def recording_sleep(seconds: float) -> None:
-        sleeps.append(seconds)
+        if threading.get_ident() == owner and sys._getframe(1).f_code in pollers:
+            sleeps.append(seconds)
         real_sleep(seconds)
 
-    monkeypatch.setattr(_index_lock.time, "sleep", recording_sleep)
+    monkeypatch.setattr(
+        _index_lock,
+        "time",
+        SimpleNamespace(time=time.time, monotonic=time.monotonic, sleep=recording_sleep),
+    )
     return sleeps
+
+
+def test_sleep_probe_ignores_unrelated_same_thread_sleep(monkeypatch: Any) -> None:
+    real_sleep = time.sleep
+    sleeps = _count_lock_sleeps(monkeypatch)
+    assert time.sleep is real_sleep
+    time.sleep(0.001)
+    assert sleeps == []
+
+
+def test_sleep_probe_ignores_other_calls_within_lock_module(monkeypatch: Any) -> None:
+    sleeps = _count_lock_sleeps(monkeypatch)
+    _index_lock.time.sleep(0.001)
+    assert sleeps == []
+
+
+def test_sleep_probe_records_sidecar_wait(monkeypatch: Any, tmp_path: Path) -> None:
+    sleeps = _count_lock_sleeps(monkeypatch)
+    outcomes = iter((None, 99))
+    monkeypatch.setattr(_index_lock, "try_os_file_lock", lambda _path: next(outcomes))
+    fd = _index_lock._acquire_sidecar(
+        tmp_path / "index", tmp_path / "sidecar", time.monotonic() + 5, 5, 0.02
+    )
+    assert fd == 99
+    assert sleeps == [0.02]
+
+
+def test_sleep_probe_ignores_other_thread_lock_wait(monkeypatch: Any, tmp_path: Path) -> None:
+    sleeps = _count_lock_sleeps(monkeypatch)
+    outcomes = iter((None, 99))
+    monkeypatch.setattr(_index_lock, "try_os_file_lock", lambda _path: next(outcomes))
+    result: list[int] = []
+    worker = threading.Thread(
+        target=lambda: result.append(
+            _index_lock._acquire_sidecar(
+                tmp_path / "index", tmp_path / "sidecar", time.monotonic() + 5, 5, 0.02
+            )
+        ),
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert result == [99]
+    assert sleeps == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX subprocess wait loop")
+def test_sleep_probe_ignores_posix_subprocess_wait(monkeypatch: Any) -> None:
+    sleeps = _count_lock_sleeps(monkeypatch)
+    process = subprocess.Popen.__new__(subprocess.Popen)
+    process._child_created = False
+    process._waitpid_lock = threading.Lock()
+    process.returncode = None
+    process.pid = 42
+    outcomes = iter(((0, 0), (42, 0)))
+    monkeypatch.setattr(process, "_try_wait", lambda _flags: next(outcomes))
+    monkeypatch.setattr(process, "_remaining_time", lambda _end: 1.0)
+    observed: list[bool] = []
+    previous_profile = sys.getprofile()
+
+    def profile(frame: Any, event: str, arg: Any) -> None:
+        if (
+            event == "c_call"
+            and arg is time.sleep
+            and frame.f_code is subprocess.Popen._wait.__code__
+        ):
+            observed.append(True)
+
+    try:
+        sys.setprofile(profile)
+        assert process._wait(timeout=2.0) == 0
+    finally:
+        sys.setprofile(previous_profile)
+    assert observed == [True]
+    assert sleeps == []
 
 
 def test_open_session_reclaims_stale_lock(tmp_path: Path, monkeypatch: Any) -> None:
