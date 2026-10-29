@@ -562,6 +562,53 @@ def _agent_capsule_payload_for_query(project: Path, query: str) -> dict[str, obj
 _STUB_ASSET_SHA256 = "a" * 64  # deterministic stand-in used by _allow_native_frontdoor_checksum
 
 
+def _install_simulated_native_guard(monkeypatch, tmp_path, guard):
+    """POSIX test fake; stat/unlink is not an atomic Windows security guarantee."""
+    import os
+    import stat
+
+    if os.name == "nt":
+        return
+
+    def check_path(path):
+        path = Path(path)
+        assert path.is_absolute() and ".." not in path.parts and path.is_relative_to(tmp_path)
+
+    def acquire(path, writer):
+        check_path(path)
+        return os.dup(writer)
+
+    def discard(path, pinned):
+        check_path(path)
+        observed, expected = os.lstat(path), os.fstat(pinned)
+        if not stat.S_ISREG(observed.st_mode) or (observed.st_dev, observed.st_ino) != (
+            expected.st_dev,
+            expected.st_ino,
+        ):
+            raise OSError("fixture identity changed")
+        os.unlink(path)
+
+    monkeypatch.setattr(guard, "acquire_guard", acquire)
+    monkeypatch.setattr(guard, "discard_guarded", discard)
+
+
+@pytest.fixture
+def simulated_windows_native_guard(monkeypatch, tmp_path):
+    import importlib
+    import os
+
+    if os.name == "nt":
+        return
+    name = "tensor_grep.cli.native_download_guard"
+    try:
+        guard = importlib.import_module(name)
+    except ModuleNotFoundError as exc:
+        if exc.name != name:
+            raise
+        return
+    _install_simulated_native_guard(monkeypatch, tmp_path, guard)
+
+
 def _allow_native_frontdoor_checksum(monkeypatch):
     """Audit HIGH (2026-06-24): tg upgrade now verifies the downloaded native asset
     against the published CHECKSUMS.txt and refuses an unverified binary. These
@@ -875,4 +922,5 @@ __all__ = [
     "_write_invoice_service_ambiguity_fixture",
     "_write_mixed_invoice_fixture",
     "_write_scan_results",
+    "simulated_windows_native_guard",
 ]
