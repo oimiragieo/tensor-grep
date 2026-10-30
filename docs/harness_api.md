@@ -106,6 +106,10 @@ mis-call this command.
 | `rank_fallback_reason` | `string \| null` | Explains unavailable ranking legs, partial AST evidence, or late-rerank degradation. A dense-unavailable reason means no model evidence contributed; it does not imply that an enabled AST leg also failed. This field explains a fallback, not necessarily an error. |
 | `rank_fusion` | `object`, optional | Present with `TG_RRF_SYMBOLS=1`: actual fusion method, combination, `k`, weights, lexical/model/parser evidence, parsed/skipped file counts, and matched exact symbol names. MCP contract 1.15.0 adds this field. |
 
+When an optional late rerank exceeds its time budget, subsequent requests use the fused order and
+report that another rerank is in progress until the worker finishes. A permanently stuck worker
+requires a server restart to restore late reranking.
+
 Set `TG_RRF_SYMBOLS=1` for experimental exact-definition fusion in `tg find`,
 `tg search --rank`, `tg search --semantic`, and their MCP equivalents. With a matching
 declaration, BM25, available dense embeddings, and AST symbols use equal weights in

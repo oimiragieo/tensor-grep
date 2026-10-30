@@ -52,6 +52,7 @@ _RERANK_BUDGET_MS_ENV: str = "TG_RERANK_BUDGET_MS"
 _DEFAULT_RERANK_POOL_K: int = 50
 _MAX_RERANK_POOL_K: int = 100
 _DEFAULT_RERANK_BUDGET_MS: int = 2000
+_LATE_RERANK_IN_FLIGHT = threading.Lock()
 
 # #128d (backlog cluster-1 P0-CORRECTNESS, MED-1): retrieval_chunker.MAX_CHUNKS bounds a single
 # chunk_file() call (per FILE). A matched-file set of many small files can still blow past a sane
@@ -348,24 +349,17 @@ def rank_chunks(
         )
         budget_ms = _int_env(_RERANK_BUDGET_MS_ENV, _DEFAULT_RERANK_BUDGET_MS)
         head = fused_order[:pool_k]
-        # Real wall-clock deadline (A3, external audit 2026-07-11): the previous post-hoc
-        # `elapsed > budget` check could only DISCARD a rerank that had already RETURNED -- a HUNG
-        # encoder (a wedged model, an infinite loop in the injected reranker) never returns, so
-        # `late_reranker.rerank` blocked `tg search --rank` indefinitely with no bound. Run it on a
-        # daemon thread and `join` on the budget: if it overruns, abandon the thread (it dies with
-        # this short-lived CLI process) and degrade. The Backend Fail-Closed Contract is PRESERVED
-        # across the thread boundary -- a LateRerankUnavailableError (recoverable) degrades to the
-        # plain RRF order; ANYTHING ELSE (a genuine BackendExecutionError encode fault, or a
-        # KeyboardInterrupt/SystemExit user-abort) is re-raised on this thread so it still
-        # propagates to the CLI boundary (cli/main.py ~:6804-6813), exactly as the synchronous
-        # version did. Capturing BaseException (not just Exception) is deliberate: it keeps a
-        # user-abort from being silently swallowed into an RRF degrade AND guarantees exactly one
-        # of the two result holders is populated when the worker finishes (so the `else` splice
-        # below can never IndexError on an empty result).
         rerank_result: list[list[int]] = []
         rerank_error: list[BaseException] = []
+        handoff = threading.Lock()
+        ownership = "pending"
 
         def _run_late_rerank() -> None:
+            nonlocal ownership
+            with handoff:
+                if ownership == "cancelled":
+                    return
+                ownership = "worker"
             try:
                 rerank_result.append(
                     late_reranker.rerank(query, [chunks[i].text for i in head], head)
@@ -374,15 +368,27 @@ def rank_chunks(
                 BaseException
             ) as exc:  # classified + re-raised (if non-recoverable) by the caller
                 rerank_error.append(exc)
+            finally:
+                _LATE_RERANK_IN_FLIGHT.release()
 
         worker = threading.Thread(target=_run_late_rerank, name="tg-late-rerank", daemon=True)
-        worker.start()
+        if not _LATE_RERANK_IN_FLIGHT.acquire(blocking=False):
+            late_fallback_reason = "late rerank unavailable: another rerank is in progress"
+            sys.stderr.write(f"tg: {late_fallback_reason}\n")
+            reasons = [reason for reason in (symbol_reason, late_fallback_reason) if reason]
+            return fused_order, "; ".join(reasons) or None
+        try:
+            worker.start()
+        except BaseException:
+            with handoff:
+                if ownership == "pending":
+                    ownership = "cancelled"
+                    _LATE_RERANK_IN_FLIGHT.release()
+            raise
         worker.join(timeout=budget_ms / 1000.0)
 
         if worker.is_alive():
-            # Still running at the deadline (hung or merely too slow): do NOT wait -- abandon the
-            # daemon thread and degrade. This is the only branch that bounds a genuinely HUNG
-            # encoder; the old post-hoc check could never run for one.
+            # shortcut: a stuck worker keeps reranking unavailable until restart; use process isolation for recovery.
             late_fallback_reason = (
                 f"late rerank unavailable: budget exceeded (>{budget_ms}ms at pool_k={pool_k})"
             )
