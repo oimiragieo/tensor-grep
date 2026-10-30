@@ -34,7 +34,11 @@ def test_standalone_preflight_uses_shared_source_and_pinned_dependencies() -> No
     assert manifest["dev-dependencies"] == {"tempfile": "=3.27.0"}
     assert manifest["target"]["cfg(windows)"]["dependencies"]["windows-sys"] == {
         "version": "=0.61.2",
-        "features": ["Win32_Foundation", "Win32_Storage_FileSystem"],
+        "features": [
+            "Win32_Foundation",
+            "Win32_Storage_FileSystem",
+            "Win32_System_SystemInformation",
+        ],
     }
     binary = next(item for item in manifest["bin"] if item["name"] == "tg-recovery-preflight")
     assert (crate / binary["path"]).resolve() == root / "rust_core/src/bin/tg_recovery_preflight.rs"
