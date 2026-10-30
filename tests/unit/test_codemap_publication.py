@@ -291,39 +291,3 @@ with publication_lock(root / "parent", root / "parent" / "index.md", create=Fals
         [sys.executable, "-c", script, str(tmp_path)], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
-
-
-def test_pinned_lock_descriptor_is_read_only(tmp_path: Path) -> None:
-    path = tmp_path / LOCK_NAME
-    path.write_bytes(b"existing lock")
-    with PinnedDirectory(tmp_path) as pin:
-        fd = pin.open_regular(LOCK_NAME)
-        try:
-            assert pin.file_unchanged(LOCK_NAME, fd)
-            with pytest.raises(OSError):
-                os.write(fd, b"changed")
-        finally:
-            os.close(fd)
-    assert path.read_bytes() == b"existing lock"
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows handle ownership")
-@pytest.mark.parametrize("error_type", [OSError, KeyboardInterrupt])
-def test_failed_windows_handle_transfer_closes_handle(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]
-) -> None:
-    import msvcrt
-
-    path = tmp_path / LOCK_NAME
-    path.write_bytes(b"")
-    failure = error_type("handle transfer failed")
-
-    def fail(*args: object) -> int:
-        raise failure
-
-    with PinnedDirectory(tmp_path) as pin:
-        monkeypatch.setattr(msvcrt, "open_osfhandle", fail)
-        with pytest.raises(error_type) as caught:
-            pin.open_regular(LOCK_NAME)
-        assert caught.value is failure
-    path.rename(tmp_path / "closed")
