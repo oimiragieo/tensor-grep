@@ -787,8 +787,22 @@ def try_os_file_lock(lock_path: Path) -> int | None:
     """Non-blocking exclusive OS lock on ``lock_path`` (created, never unlinked). Returns the
     held descriptor, or None when another handle/process holds it or the path no longer names the
     file that was locked (identity re-check)."""
+    return _try_os_file_lock_with_opener(
+        lambda: os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600),
+        lambda fd: _lock_identity_matches(fd, lock_path),
+    )
+
+
+def _try_os_file_lock_with_opener(
+    open_fd: Callable[[], int], identity_matches: Callable[[int], bool]
+) -> int | None:
+    """Acquire using caller-supplied opening and identity checks under the fork registry lock.
+
+    ``open_fd`` transfers ownership only when it returns; it must clean up if it raises.
+    Release a returned descriptor with ``release_os_file_lock``.
+    """
     with _REGISTRY_LOCK:
-        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        fd = open_fd()
         handed_off = False
         try:
             try:
@@ -803,7 +817,7 @@ def try_os_file_lock(lock_path: Path) -> int | None:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 return None  # contended: the finally below closes the descriptor
-            if not _lock_identity_matches(fd, lock_path):
+            if not identity_matches(fd):
                 return None
             _register_held_fd(fd)
             handed_off = True  # ownership transfers ONLY on a successful return
