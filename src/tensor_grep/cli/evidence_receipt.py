@@ -152,6 +152,7 @@ def _repo_revision_identity(
     root: Path,
     exclude_prefixes: Sequence[str] | None = None,
     *,
+    exclude_files: Sequence[str] | None = None,
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
     """`git rev-parse HEAD` + `git status --porcelain=v1 -b` -> commit/branch/dirty identity.
@@ -170,6 +171,9 @@ def _repo_revision_identity(
     implementation -- every existing caller that never passes `exclude_prefixes` is provably
     unaffected; see `_repo_revision_identity_excluding` for the separate opt-in branch, which is
     still exactly 1 status call (2 total with the `rev-parse` above).
+
+    `exclude_files` excludes exact repo-relative files using literal Git pathspecs, so an
+    untracked directory containing one excluded file does not hide unrelated siblings.
 
     `deadline_monotonic` (opt-in, default None; tg-codemap 90s-timeout root cause): an optional
     PRE-ANCHORED absolute ``time.monotonic()`` deadline. Both git calls are otherwise bounded
@@ -225,12 +229,13 @@ def _repo_revision_identity(
             "reason": "deadline exceeded before git status could run",
         }
 
-    if exclude_prefixes:
+    if exclude_prefixes or exclude_files:
         return _repo_revision_identity_excluding(
             root,
             commit_sha=commit_sha,
             timeout_seconds=status_call_timeout,
-            exclude_prefixes=exclude_prefixes,
+            exclude_prefixes=exclude_prefixes or (),
+            exclude_files=exclude_files or (),
         )
 
     try:
@@ -351,14 +356,27 @@ def _repo_revision_identity_excluding(
     commit_sha: str,
     timeout_seconds: float,
     exclude_prefixes: Sequence[str],
+    exclude_files: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The `exclude_prefixes`-aware sibling of `_repo_revision_identity`'s status half: a SEPARATE
     `-z` status call (never mixed into the default LF-parsed branch above, so that default branch
     stays byte-for-byte unchanged). Still exactly 1 status call (2 total with the already-issued
     `rev-parse`)."""
     try:
+        status_args = ["git", "-C", str(root), "status", "--porcelain=v1", "-b", "-z"]
+        if exclude_files:
+            in_repo_prefixes = [
+                p
+                for p in exclude_prefixes
+                if p and not Path(p).is_absolute() and ".." not in Path(p).parts
+            ]
+            status_args.extend([
+                "--",
+                ":(top)",
+                *(f":(exclude,literal){p}" for p in (*exclude_files, *in_repo_prefixes)),
+            ])
         status_result = run_subprocess(
-            ["git", "-C", str(root), "status", "--porcelain=v1", "-b", "-z"],
+            status_args,
             timeout_seconds=timeout_seconds,
             capture_output=True,
             text=False,
@@ -377,7 +395,7 @@ def _repo_revision_identity_excluding(
         dirty_records = [
             status.encode("ascii") + b" " + os.fsencode(path)
             for status, path in entries
-            if not _path_excluded(path, exclude_prefixes)
+            if exclude_files or not _path_excluded(path, exclude_prefixes)
         ]
         dirty_tree_sha256 = hashlib.sha256(b"\n".join(sorted(dirty_records))).hexdigest()
     except UnicodeError as exc:

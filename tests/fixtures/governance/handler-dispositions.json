@@ -3031,7 +3031,7 @@
   },
   {
     "module": "cli/evidence_receipt.py",
-    "lineno": 565,
+    "lineno": 583,
     "enclosing_symbol": "_blast_radius_block_recomputed",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
