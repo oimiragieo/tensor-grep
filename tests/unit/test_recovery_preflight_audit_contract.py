@@ -1,13 +1,19 @@
+import importlib.util
 from copy import deepcopy
 from pathlib import Path
 
 import yaml
 
-from scripts._release_assets_checks.ci_workflow import validate_ci_workflow_content
-from scripts._release_assets_checks.workflow_checks import (
-    validate_audit_workflow_content,
-    validate_dependabot_config,
+_SPEC = importlib.util.spec_from_file_location(
+    "validate_release_assets",
+    Path(__file__).resolve().parents[2] / "scripts/validate_release_assets.py",
 )
+assert _SPEC is not None and _SPEC.loader is not None
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+validate_ci_workflow_content = _MODULE.validate_ci_workflow_content
+validate_audit_workflow_content = _MODULE.validate_audit_workflow_content
+validate_dependabot_config = _MODULE.validate_dependabot_config
 
 
 def test_standalone_preflight_ci_step_is_required() -> None:
