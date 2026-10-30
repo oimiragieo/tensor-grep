@@ -142,6 +142,31 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
 
         jobs = parsed_ci.get("jobs")
         if isinstance(jobs, dict):
+            rust_job = jobs.get("test-rust-core", {})
+            rust_steps = rust_job.get("steps", []) if isinstance(rust_job, dict) else []
+            preflight = (
+                [
+                    step
+                    for step in rust_steps
+                    if isinstance(step, dict)
+                    and step.get("name") == "Test standalone recovery preflight"
+                ]
+                if isinstance(rust_steps, list)
+                else []
+            )
+            if len(preflight) != 1 or any((
+                preflight[0].get("if")
+                != "matrix.os == 'windows-latest' && matrix.rust_channel == 'stable'",
+                preflight[0].get("run")
+                != "cargo test --locked --manifest-path recovery-preflight/Cargo.toml",
+                preflight[0].get("working-directory") != "rust_core",
+                preflight[0].get("env") != {"RUSTUP_TOOLCHAIN": "${{ matrix.rust_channel }}"},
+                preflight[0].get("continue-on-error", False) is not False,
+            )):
+                errors.append(
+                    "CI workflow standalone preflight step must run on Windows stable with its locked manifest"
+                )
+
             static_analysis_job = jobs.get("static-analysis")
             if isinstance(static_analysis_job, dict):
                 static_analysis_steps = static_analysis_job.get("steps", [])
