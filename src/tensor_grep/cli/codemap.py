@@ -1385,6 +1385,7 @@ def check_codemap_freshness(
                 root,
                 exclude_prefixes=_revision_exclude_prefixes(out_dir, root),
                 exclude_files=_revision_exclude_files(index_path, out_dir, root),
+                no_optional_locks=True,
             )
         if live_revision.get("status") == "present":
             if (
