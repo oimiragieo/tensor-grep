@@ -120,3 +120,50 @@ class PinnedDirectory:
             return data
         finally:
             os.close(fd)
+
+    def open_regular(self, name: str) -> int:
+        """Return an owned read-only descriptor beneath this pin, refusing non-regular files."""
+        if Path(name).name != name or name in {"", ".", ".."}:
+            raise OSError("invalid output filename")
+        if sys.platform == "win32":
+            import msvcrt
+
+            from tensor_grep.cli import session_daemon_winsec as winsec
+
+            handle = winsec.open_no_follow(str(self.path / name))
+            if handle is None:
+                raise OSError("cannot open existing regular output file")
+            try:
+                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            except BaseException:
+                winsec.close_handle(handle)
+                raise
+        else:
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=self._fds[-1],
+            )
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("output is not a regular file")
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    def file_unchanged(self, name: str, fd: int) -> bool:
+        """Check that a pinned regular-file descriptor still names the same directory entry."""
+        try:
+            current = (
+                os.stat(self.path / name, follow_symlinks=False)
+                if sys.platform == "win32"
+                else os.stat(name, dir_fd=self._fds[-1], follow_symlinks=False)
+            )
+            opened = os.fstat(fd)
+            return stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (
+                opened.st_dev,
+                opened.st_ino,
+            )
+        except OSError:
+            return False
