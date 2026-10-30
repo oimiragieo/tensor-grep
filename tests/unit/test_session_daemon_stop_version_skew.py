@@ -207,10 +207,23 @@ def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -
     but never takes effect (wedged shutdown). Returns (server, real_shutdown)."""
     monkeypatch.setattr(trust, "_daemon_running_version", lambda: "0.0.0-stale-fixture")
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
+    ready = threading.Event()
+    # This proves the service loop ran; it is not an authenticated ping.
+    monkeypatch.setattr(server, "service_actions", ready.set)
     thread = threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
     )
     thread.start()
+    if not ready.wait(session_daemon._DAEMON_START_TIMEOUT_SECONDS):
+        stopper = threading.Thread(target=server.shutdown, daemon=True)
+        stopper.start()
+        server.server_close()
+        thread.join(timeout=1)
+        stopper.join(timeout=1)
+        pytest.fail(
+            "daemon listener did not reach its serving loop; "
+            f"server_thread_alive={thread.is_alive()} stopper_thread_alive={stopper.is_alive()}"
+        )
     real_shutdown = server.shutdown
     monkeypatch.setattr(server, "shutdown", lambda: None)  # ack `stop`, keep serving
     host, port = server.server_address
@@ -228,6 +241,70 @@ def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -
         },
     )
     return server, real_shutdown
+
+
+def test_listener_readiness_timeout_requests_bounded_cleanup(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.stopped = threading.Event()
+            self.closed = False
+
+        def service_actions(self) -> None:
+            pass
+
+        def serve_forever(self, *, poll_interval: float) -> None:
+            self.stopped.wait(5)
+
+        def shutdown(self) -> None:
+            self.stopped.set()
+
+        def server_close(self) -> None:
+            self.closed = True
+
+    fake = FakeServer()
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(session_daemon, "_ThreadedSessionDaemon", lambda *a, **k: fake)
+    with pytest.raises(pytest.fail.Exception, match="did not reach its serving loop"):
+        _skewed_serving_daemon(tmp_path.resolve(), monkeypatch, metadata_pid=0)
+    assert fake.stopped.is_set() and fake.closed
+
+
+def test_listener_readiness_timeout_reports_unresponsive_cleanup(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.release = threading.Event()
+            self.server_done = threading.Event()
+            self.stopper_done = threading.Event()
+
+        def service_actions(self) -> None:
+            pass
+
+        def serve_forever(self, *, poll_interval: float) -> None:
+            self.release.wait(5)
+            self.server_done.set()
+
+        def shutdown(self) -> None:
+            self.release.wait(5)
+            self.stopper_done.set()
+
+        def server_close(self) -> None:
+            pass
+
+    fake = FakeServer()
+    monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(session_daemon, "_ThreadedSessionDaemon", lambda *a, **k: fake)
+    try:
+        with pytest.raises(
+            pytest.fail.Exception, match="server_thread_alive=True stopper_thread_alive=True"
+        ):
+            _skewed_serving_daemon(tmp_path.resolve(), monkeypatch, metadata_pid=0)
+    finally:
+        fake.release.set()
+        assert fake.server_done.wait(1) and fake.stopper_done.wait(1)
 
 
 def test_verified_listener_that_acks_stop_but_keeps_serving_is_not_reported_stopped(
@@ -283,6 +360,35 @@ def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted
     root = tmp_path.resolve()
     monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0.6)
     targets: list[Any] = []
+    stages: list[tuple[str, object]] = []
+
+    def observe(name: str) -> None:
+        original = getattr(session_daemon, name)
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            result = original(*args, **kwargs)
+            if len(stages) < 32:
+                if name == "_probe_daemon":
+                    detail: object = result is not None
+                else:
+                    known = {
+                        "absent",
+                        "ineligible",
+                        "not_listening",
+                        "unverified",
+                        "current_version",
+                        "cooperative",
+                        "unresponsive",
+                        "pid",
+                    }
+                    detail = (result[0] is not None, result[1] if result[1] in known else "other")
+                stages.append((name, detail))
+            return result
+
+        monkeypatch.setattr(session_daemon, name, wrapped)
+
+    for name in ("_probe_daemon", "_stop_rejected_daemon"):
+        observe(name)
     monkeypatch.setattr(
         session_daemon,
         "_terminate_daemon_by_pid",
@@ -291,8 +397,9 @@ def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted
     planted = os.getpid() + 7
     server, real_shutdown = _skewed_serving_daemon(root, monkeypatch, metadata_pid=planted)
     try:
-        session_daemon.stop_session_daemon(str(root))
-        assert targets == [os.getpid()], targets  # the in-process daemon's own (proven) pid
+        result = session_daemon.stop_session_daemon(str(root))
+        diagnostics = {key: result.get(key) for key in ("running", "stopped", "stop_method")}
+        assert targets == [os.getpid()], (targets, diagnostics, stages)
         assert planted not in targets
     finally:
         real_shutdown()
