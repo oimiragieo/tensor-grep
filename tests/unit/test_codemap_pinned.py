@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli.codemap_pinned import PinnedDirectory
+from tensor_grep.cli.codemap_publication import LOCK_NAME, Publication
 from tensor_grep.cli.diff_impact_git import BlobOverCap
 
 
@@ -81,3 +82,56 @@ def test_pinned_directory_detects_ancestor_swap(tmp_path: Path) -> None:
         assert pin.read("page.md", 4) == b"good"
         assert pin.unchanged() is False
     parked.rename(ancestor)
+
+
+def test_pinned_lock_descriptor_is_read_only(tmp_path: Path) -> None:
+    path = tmp_path / LOCK_NAME
+    path.write_bytes(b"existing lock")
+    with PinnedDirectory(tmp_path) as pin:
+        fd = pin.open_regular(LOCK_NAME)
+        try:
+            assert pin.file_unchanged(LOCK_NAME, fd)
+            with pytest.raises(OSError):
+                os.write(fd, b"changed")
+        finally:
+            os.close(fd)
+    assert path.read_bytes() == b"existing lock"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows handle ownership")
+@pytest.mark.parametrize("error_type", [OSError, KeyboardInterrupt])
+def test_failed_windows_handle_transfer_closes_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]
+) -> None:
+    import msvcrt
+
+    path = tmp_path / LOCK_NAME
+    path.write_bytes(b"")
+    failure = error_type("handle transfer failed")
+
+    def fail(*args: object) -> int:
+        raise failure
+
+    with PinnedDirectory(tmp_path) as pin:
+        monkeypatch.setattr(msvcrt, "open_osfhandle", fail)
+        with pytest.raises(error_type) as caught:
+            pin.open_regular(LOCK_NAME)
+        assert caught.value is failure
+    path.rename(tmp_path / "closed")
+
+
+@pytest.mark.parametrize("index_exists", [False, True])
+def test_publication_state_active_lifecycle(tmp_path: Path, index_exists: bool) -> None:
+    (tmp_path / LOCK_NAME).write_bytes(b"existing lock")
+    index = tmp_path / "index.md"
+    if index_exists:
+        index.write_bytes(b"index")
+    with PinnedDirectory(tmp_path) as pin:
+        fd = pin.open_regular(LOCK_NAME)
+        try:
+            state = Publication(pin, pin, [(pin, fd)], os.getpid(), index)
+            assert state.unchanged()
+            state._active = False
+            assert not state.unchanged(), "inactive publication state must be refused"
+        finally:
+            os.close(fd)
