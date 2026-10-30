@@ -159,6 +159,16 @@ def _revision_exclude_prefixes(out_dir: Path, root: Path) -> list[str]:
     return [_repo_relative_posix(str(out_dir), root)]
 
 
+def _revision_exclude_files(index_path: Path, out_dir: Path, root: Path) -> list[str]:
+    try:
+        index_rel = index_path.relative_to(root)
+    except ValueError:
+        return []
+    if _resolved_path_is_within(index_path, out_dir):
+        return []
+    return [index_rel.as_posix()]
+
+
 def _resolved_path_is_within(resolved_path: Path, resolved_directory: Path) -> bool:
     """Pure comparison: BOTH arguments must already be `.resolve()`d by the caller -- no
     filesystem syscall here at all. Use this (not `_is_under_resolved_dir` below) whenever the
@@ -1074,6 +1084,7 @@ def build_codemap(
         revision = _evidence_receipt._repo_revision_identity(
             root,
             exclude_prefixes=_revision_exclude_prefixes(out_dir, root),
+            exclude_files=_revision_exclude_files(index_path, out_dir, root),
             deadline_monotonic=deadline_monotonic,
         )
     now = _now() if _now is not None else datetime.now(UTC)
@@ -1371,7 +1382,9 @@ def check_codemap_freshness(
             live_revision = _revision_identity(root)
         else:
             live_revision = _evidence_receipt._repo_revision_identity(
-                root, exclude_prefixes=_revision_exclude_prefixes(out_dir, root)
+                root,
+                exclude_prefixes=_revision_exclude_prefixes(out_dir, root),
+                exclude_files=_revision_exclude_files(index_path, out_dir, root),
             )
         if live_revision.get("status") == "present":
             if (
