@@ -39,6 +39,115 @@ def test_persistent_locks_and_read_only_pins(tmp_path: Path) -> None:
     assert (output / LOCK_NAME).read_bytes() == (index.parent / LOCK_NAME).read_bytes() == b""
 
 
+@pytest.mark.parametrize("create", [False, True])
+@pytest.mark.parametrize(
+    "name", [LOCK_NAME, ".CODEMAP.LOCK", ".codemap.lock. ", ".codemap.lock:stream"]
+)
+def test_index_lock_name_is_refused_before_side_effects(
+    tmp_path: Path, create: bool, name: str
+) -> None:
+    if sys.platform != "win32" and name != LOCK_NAME:
+        pytest.skip("Windows path alias")
+    before = _snapshot(tmp_path)
+    with pytest.raises(OSError, match="index conflicts with publication lock"):
+        with publication_lock(tmp_path / "output", tmp_path / "custom" / name, create=create):
+            pytest.fail("reserved lock path accepted")
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("create", [False, True])
+def test_index_hardlink_to_output_lock_is_refused_without_writes(
+    tmp_path: Path, create: bool
+) -> None:
+    output, index = tmp_path / "output", tmp_path / "custom" / "index.md"
+    output.mkdir()
+    index.parent.mkdir()
+    lock = output / LOCK_NAME
+    lock.write_bytes(b"existing lock")
+    os.link(lock, index)
+    before = _snapshot(tmp_path)
+    with pytest.raises(OSError, match="index conflicts with publication lock"):
+        with publication_lock(output, index, create=create):
+            pytest.fail("index aliased to lock accepted")
+    assert _snapshot(tmp_path) == before
+    assert lock.read_bytes() == index.read_bytes() == b"existing lock"
+
+
+def test_index_symlink_to_output_lock_is_refused_without_writes(tmp_path: Path) -> None:
+    output, index = tmp_path / "output", tmp_path / "custom" / "index.md"
+    output.mkdir()
+    index.parent.mkdir()
+    lock = output / LOCK_NAME
+    lock.write_bytes(b"existing lock")
+    try:
+        index.symlink_to(lock)
+    except OSError:
+        if os.environ.get("TG_REQUIRE_SYMLINK_TESTS") == "1":
+            raise
+        pytest.skip("file symlinks unavailable")
+    before = _snapshot(tmp_path)
+    with pytest.raises(OSError, match="index conflicts with publication lock"):
+        with publication_lock(output, index, create=True):
+            pytest.fail("index symlink to lock accepted")
+    assert _snapshot(tmp_path) == before
+    assert lock.read_bytes() == b"existing lock"
+
+
+def test_index_alias_created_during_acquisition_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output, index = tmp_path / "a", tmp_path / "z" / "index.md"
+    before = locks._HELD_LOCK_FDS.copy()
+    original = PinnedDirectory.open_regular
+
+    def create_alias(pin: PinnedDirectory, name: str) -> int:
+        if os.path.normcase(str(pin.path)) == os.path.normcase(str(output)):
+            index.parent.mkdir()
+            os.link(output / LOCK_NAME, index)
+        return original(pin, name)
+
+    monkeypatch.setattr(PinnedDirectory, "open_regular", create_alias)
+    with pytest.raises(OSError, match="index conflicts with publication lock"):
+        with publication_lock(output, index, create=True):
+            pytest.fail("new lock alias accepted")
+    assert locks._HELD_LOCK_FDS == before
+    assert os.path.samefile(output / LOCK_NAME, index)
+
+
+def test_unchanged_refuses_index_alias_created_after_acquisition(tmp_path: Path) -> None:
+    output, index = tmp_path / "output", tmp_path / "custom" / "index.md"
+    with publication_lock(output, index, create=True) as state:
+        assert state.unchanged()
+        os.link(output / LOCK_NAME, index)
+        assert not state.unchanged()
+
+
+def test_unchanged_refuses_uninspectable_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with publication_lock(tmp_path / "output", tmp_path / "index.md", create=True) as state:
+
+        def fail(*args: object, **kwargs: object) -> None:
+            raise PermissionError("cannot inspect index")
+
+        monkeypatch.setattr(Path, "stat", fail)
+        assert not state.unchanged()
+
+
+def test_alias_check_errors_fail_before_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: object) -> bool:
+        raise PermissionError("cannot inspect index")
+
+    before = _snapshot(tmp_path)
+    monkeypatch.setattr(os.path, "samefile", fail)
+    with pytest.raises(PermissionError, match="cannot inspect index"):
+        with publication_lock(tmp_path / "output", tmp_path / "custom" / "index.md", create=True):
+            pytest.fail("uninspectable index accepted")
+    assert _snapshot(tmp_path) == before
+
+
 @pytest.mark.parametrize("existing", ["directory", "invalid-lock", "nothing"])
 def test_reader_refuses_missing_or_invalid_locks_without_writes(
     tmp_path: Path, existing: str

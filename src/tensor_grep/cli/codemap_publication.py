@@ -3,6 +3,7 @@
 Both output locations remain pinned and exclusively locked until the context exits.
 Callers must check ``unchanged()`` before publication or reporting freshness. An inherited
 fork context is unusable; the child must acquire its own context. Build/check wiring is separate.
+shortcut: index identity can change after a check; pin the publication target before wiring writes.
 """
 
 from __future__ import annotations
@@ -20,20 +21,35 @@ from tensor_grep.cli.codemap_pinned import PinnedDirectory
 LOCK_NAME = ".codemap.lock"
 
 
+def _index_conflicts(index_path: Path, held: list[tuple[PinnedDirectory, int]]) -> bool:
+    try:
+        index_stat = index_path.stat()
+    except FileNotFoundError:
+        return False
+    return any(os.path.samestat(index_stat, os.fstat(fd)) for _, fd in held)
+
+
 @dataclass
 class Publication:
     output: PinnedDirectory
     index_parent: PinnedDirectory
     _held: list[tuple[PinnedDirectory, int]]
     _owner_pid: int
+    _index_path: Path
     _active: bool = True
 
     def unchanged(self) -> bool:
-        return (
-            self._active
-            and locks._outer_release_allowed(self._owner_pid)
-            and all(pin.unchanged() and pin.file_unchanged(LOCK_NAME, fd) for pin, fd in self._held)
-        )
+        try:
+            return (
+                self._active
+                and locks._outer_release_allowed(self._owner_pid)
+                and all(
+                    pin.unchanged() and pin.file_unchanged(LOCK_NAME, fd) for pin, fd in self._held
+                )
+                and not _index_conflicts(self._index_path, self._held)
+            )
+        except OSError:
+            return False
 
 
 def _release(owner_pid: int, fd: int) -> None:
@@ -53,8 +69,20 @@ def publication_lock(out_dir: Path, index_path: Path, *, create: bool) -> Iterat
     output, index_parent = (
         Path(os.path.normcase(os.path.abspath(path))) for path in (out_dir, index_path.parent)
     )
+    index_path = Path(os.path.abspath(index_path))
+    index_name = index_path.name
+    if os.name == "nt":
+        index_name = index_name.split(":", 1)[0].rstrip(" .")
+    if os.path.normcase(index_name) == os.path.normcase(LOCK_NAME):
+        raise OSError("codemap index conflicts with publication lock")
     if any(len(path.parts) > 256 for path in (output, index_parent)):
         raise OSError("overly deep codemap publication directory")
+    for path in {output, index_parent}:
+        try:
+            if os.path.samefile(index_path, path / LOCK_NAME):
+                raise OSError("codemap index conflicts with publication lock")
+        except FileNotFoundError:
+            pass
     pinned: dict[Path, PinnedDirectory] = {}
     held: list[tuple[PinnedDirectory, int]] = []
     with ExitStack() as directories, ExitStack() as acquired:
@@ -85,8 +113,10 @@ def publication_lock(out_dir: Path, index_path: Path, *, create: bool) -> Iterat
                 raise OSError(
                     f"codemap publication lock unavailable at {path / LOCK_NAME}: {exc}"
                 ) from exc
-        publication = Publication(pinned[output], pinned[index_parent], held, owner_pid)
+        publication = Publication(pinned[output], pinned[index_parent], held, owner_pid, index_path)
         try:
+            if _index_conflicts(index_path, held):
+                raise OSError("codemap index conflicts with publication lock")
             if not publication.unchanged():
                 raise OSError("codemap publication directories or locks changed")
             yield publication
