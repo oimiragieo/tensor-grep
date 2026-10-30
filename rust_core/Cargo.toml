@@ -76,6 +76,10 @@ path = "src/main.rs"
 name = "tg-search-fast"
 path = "src/bin/tg_search_fast.rs"
 
+[[bin]]
+name = "tg-recovery-preflight"
+path = "src/bin/tg_recovery_preflight.rs"
+
 
 
 

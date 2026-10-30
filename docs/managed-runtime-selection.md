@@ -44,6 +44,10 @@ Windows primitives in [session_daemon_winsec.py](https://github.com/oimiragieo/t
 
 Windows integration tests use actual protected directories and handles: replacement preserves the old reader and exposes a new pair afterward. Replacement before final-path validation may refuse safely. A held managed-root handle blocks rename with sharing error 32; rename succeeds after closure.
 
+An experimental source-build-only `tg-recovery-preflight` binary checks two explicitly supplied local Windows x64 artifacts against pinned size and SHA-256 values: the [CPython 3.12.16 standalone archive](https://github.com/astral-sh/python-build-standalone/releases/tag/20261026) and the [uv 0.13.4 Windows wheel](https://pypi.org/project/uv/0.13.4/#files). It performs no recovery, does not inspect the existing installation, and does not establish trust in a later extraction or execution. It is not yet included in release assets. The caller must independently authenticate the binary, launch it from a protected location and working directory, and impose an external timeout. A successful check is not an authorization receipt: inputs must be reopened and verified again before use.
+
+For a Windows x64 source build, `cargo rustc --manifest-path rust_core/Cargo.toml --locked --release --bin tg-recovery-preflight -- -C target-feature=+crt-static` requests a static CRT. Verification refuses a non-static-CRT build; that check runs after the Windows loader, so it does not make an untrusted binary or directory safe. Inspect the actual release's imports and loaded modules before relying on it.
+
 | Spec ID | Behavior | CL # | File Link | Unit Test |
 |---|---|---|---|---|
 | UPD-SEL-001 | Strict schema and canonical encoding | UPD-1a | [src/tensor_grep/cli/managed_runtime_selection.py](https://github.com/oimiragieo/tensor-grep/blob/main/src/tensor_grep/cli/managed_runtime_selection.py) | `test_DecodeSelection_InvalidRecord_RaisesSanitizedValueError`; `test_EncodeSelection_ValidRecord_ReturnsCanonicalBytes` |
