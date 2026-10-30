@@ -709,7 +709,7 @@
     "identity": "cli/evidence_receipt.py:_repo_revision_identity:run_subprocess:c884766b9a39839fb43ed85970dba1182e09869c750e8cff4aeae650ad98a540:0",
     "path": "cli/evidence_receipt.py",
     "function": "_repo_revision_identity",
-    "line": 202,
+    "line": 203,
     "column": 24,
     "target": "run_subprocess",
     "policy": "strict-protocol",
@@ -723,13 +723,13 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "c884766b9a39839fb43ed85970dba1182e09869c750e8cff4aeae650ad98a540",
-    "producer_fingerprint": "d2a1d50049e2b56be496c415dd94adb47fdaa854ced168c25729b8eb9e0ba9fa"
+    "producer_fingerprint": "f9bf02eb39fc8a4272ce97060b80a3ad1596d06c96202c0eaa11fd16257ba9de"
   },
   {
-    "identity": "cli/evidence_receipt.py:_repo_revision_identity:run_subprocess:043d685a1964e31bcac12339fefb97a31ee3fdfa0dc26f2896b5b401c34affd3:0",
+    "identity": "cli/evidence_receipt.py:_repo_revision_identity:run_subprocess:e277c837da121db053ca3ac4944aeb6bb8d295bdcee640bb62c546e6608f9bcf:0",
     "path": "cli/evidence_receipt.py",
     "function": "_repo_revision_identity",
-    "line": 242,
+    "line": 244,
     "column": 24,
     "target": "run_subprocess",
     "policy": "strict-protocol",
@@ -742,14 +742,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "043d685a1964e31bcac12339fefb97a31ee3fdfa0dc26f2896b5b401c34affd3",
-    "producer_fingerprint": "d2a1d50049e2b56be496c415dd94adb47fdaa854ced168c25729b8eb9e0ba9fa"
+    "call_fingerprint": "e277c837da121db053ca3ac4944aeb6bb8d295bdcee640bb62c546e6608f9bcf",
+    "producer_fingerprint": "f9bf02eb39fc8a4272ce97060b80a3ad1596d06c96202c0eaa11fd16257ba9de"
   },
   {
     "identity": "cli/evidence_receipt.py:_repo_revision_identity_excluding:run_subprocess:2f32a0c7eb28125efa20842bcb17a47beac4490be906063eb189bfafda8c4473:0",
     "path": "cli/evidence_receipt.py",
     "function": "_repo_revision_identity_excluding",
-    "line": 378,
+    "line": 398,
     "column": 24,
     "target": "run_subprocess",
     "policy": "filesystem-path-bytes",
@@ -763,7 +763,7 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "2f32a0c7eb28125efa20842bcb17a47beac4490be906063eb189bfafda8c4473",
-    "producer_fingerprint": "685e97c31ea23a1b4362f2aebf6787003cb5ee7b206788673cf88e090be41efa"
+    "producer_fingerprint": "1c84fc9c1bdd22e41394b0b676220475ec8a4ff55a1e48bb7bfbe5d6bee05311"
   },
   {
     "identity": "cli/lsp_provider_setup.py:_run_checked:subprocess.run:d9e2f308f5535a257fa254cbdf13e653d8d0ce375d56d9ab3e57ccd25e72dd7d:0",

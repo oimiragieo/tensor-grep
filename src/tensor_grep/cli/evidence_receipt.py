@@ -154,6 +154,7 @@ def _repo_revision_identity(
     *,
     exclude_files: Sequence[str] | None = None,
     deadline_monotonic: float | None = None,
+    no_optional_locks: bool = False,
 ) -> dict[str, Any]:
     """`git rev-parse HEAD` + `git status --porcelain=v1 -b` -> commit/branch/dirty identity.
 
@@ -236,11 +237,20 @@ def _repo_revision_identity(
             timeout_seconds=status_call_timeout,
             exclude_prefixes=exclude_prefixes or (),
             exclude_files=exclude_files or (),
+            no_optional_locks=no_optional_locks,
         )
 
     try:
         status_result = run_subprocess(
-            ["git", "-C", str(root), "status", "--porcelain=v1", "-b"],
+            [
+                "git",
+                *(["--no-optional-locks"] if no_optional_locks else []),
+                "-C",
+                str(root),
+                "status",
+                "--porcelain=v1",
+                "-b",
+            ],
             timeout_seconds=status_call_timeout,
             capture_output=True,
             text=False,
@@ -357,13 +367,23 @@ def _repo_revision_identity_excluding(
     timeout_seconds: float,
     exclude_prefixes: Sequence[str],
     exclude_files: Sequence[str] = (),
+    no_optional_locks: bool = False,
 ) -> dict[str, Any]:
     """The `exclude_prefixes`-aware sibling of `_repo_revision_identity`'s status half: a SEPARATE
     `-z` status call (never mixed into the default LF-parsed branch above, so that default branch
     stays byte-for-byte unchanged). Still exactly 1 status call (2 total with the already-issued
     `rev-parse`)."""
     try:
-        status_args = ["git", "-C", str(root), "status", "--porcelain=v1", "-b", "-z"]
+        status_args = [
+            "git",
+            *(["--no-optional-locks"] if no_optional_locks else []),
+            "-C",
+            str(root),
+            "status",
+            "--porcelain=v1",
+            "-b",
+            "-z",
+        ]
         if exclude_files:
             in_repo_prefixes = [
                 p
