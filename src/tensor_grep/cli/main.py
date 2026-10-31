@@ -5029,6 +5029,7 @@ def codemap(
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
     from tensor_grep.cli.codemap import build_codemap, check_codemap_freshness
+    from tensor_grep.cli.codemap_artifacts import CodemapOutputError
 
     if check:
         try:
@@ -5062,6 +5063,15 @@ def codemap(
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
         typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except (OSError, CodemapOutputError) as exc:
+        typer.echo(f"tg codemap: {exc}", err=True)
+        hint = (
+            "Choose non-conflicting --out/--index paths or narrow PATH, then regenerate."
+            if isinstance(exc, CodemapOutputError)
+            else "Check destination permissions or wait for another codemap process, then retry."
+        )
+        typer.echo(hint, err=True)
         raise typer.Exit(1) from exc
 
     if json_output:

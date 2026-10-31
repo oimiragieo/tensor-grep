@@ -39,6 +39,7 @@ from tensor_grep.cli import evidence_receipt as _evidence_receipt
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli import orient_capsule as _orient_capsule
 from tensor_grep.cli import repo_map as _repo_map
+from tensor_grep.cli.codemap_artifacts import CodemapOutputError
 from tensor_grep.cli.codemap_publication import LOCK_NAME, Publication, publication_lock
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
@@ -1060,9 +1061,9 @@ def build_codemap(
     if os.name == "nt":
         index_name = index_name.split(":", 1)[0].rstrip(" .")
     if index_name in {LOCK_NAME, _COVERAGE_FILENAME}:
-        raise ValueError("codemap index conflicts with reserved metadata")
+        raise CodemapOutputError("codemap index conflicts with reserved metadata")
     if index_path == out_dir or index_path.is_dir():
-        raise ValueError("codemap index must be a file destination")
+        raise CodemapOutputError("codemap index must be a file destination")
 
     # capability P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
     # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into every phase below --
@@ -1168,9 +1169,9 @@ def _build_codemap_locked(
     if index_path.parent == out_dir:
         reserved.add(index_path.name.casefold())
     if len(names) != len(page_paths) or names & reserved:
-        raise ValueError("codemap output filenames collide")
+        raise CodemapOutputError("codemap output filenames collide")
     if len(page_paths) > _artifacts.MAX_PAGES:
-        raise ValueError("codemap output exceeds verification page limit")
+        raise CodemapOutputError("codemap output exceeds verification page limit")
     central_files = _top_central_files(rm)
 
     scan_limit = rm.get("scan_limit")
@@ -1383,7 +1384,7 @@ def _build_codemap_locked(
     )
     stamp = (json.dumps(persisted, indent=2, sort_keys=True) + "\n").encode("utf-8")
     if len(stamp) > _artifacts.MAX_STAMP_BYTES:
-        raise ValueError("codemap stamp exceeds verification byte limit")
+        raise CodemapOutputError("codemap stamp exceeds verification byte limit")
     publication.output.write(_COVERAGE_FILENAME, stamp, validate=validate)
     written_files.append(coverage_path)
 

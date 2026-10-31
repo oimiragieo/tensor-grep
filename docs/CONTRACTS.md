@@ -229,6 +229,9 @@ Known current limitations:
 - Broad generated roots remain agent-hostile when callers opt in to them. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact SYMBOL` is a broader planning signal and can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact checks.
 
+- `tg codemap` generation reports expected destination, publication, and verification-limit
+  refusals on stderr with exit `1`, including with `--json`; partial output retains exit `2`.
+
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)
 The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs. `tensor-grep search --format rg --json` is a compatibility route for ripgrep's JSON Lines event schema, so consumers should use rg's event contract rather than the tensor-grep envelope for that mode.
 - Existing fields (for example `file`, `line`, `match`, `context`) will not be renamed or removed without a major version bump.
