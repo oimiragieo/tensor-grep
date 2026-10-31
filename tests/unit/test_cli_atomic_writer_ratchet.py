@@ -203,6 +203,7 @@ class Candidate:
 _APPROVED_HELPERS = {
     "tensor_grep.cli._index_lock.atomic_write_bytes",
     "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
     "tensor_grep.cli._index_lock.atomic_write_json",
 }
 
@@ -1627,6 +1628,12 @@ def test_population_has_zero_unresolved() -> None:
 # plus every OTHER helper-backed writer surfaced once the census widened from the original 3-file
 # scope (main.py/_index_lock.py/codemap.py) to the full `_CLI_SRC` walk.
 _EXPECTED_HELPER_BACKED = {
+    ("codemap_pinned.py", "write", "tensor_grep.cli._index_lock.atomic_write_bytes_confined"),
+    (
+        "codemap_publication.py",
+        "publication_lock",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
+    ),
     (
         "ast_scan.py",
         "_write_json_refuse_symlink",

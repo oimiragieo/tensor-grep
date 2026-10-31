@@ -1,10 +1,11 @@
-"""Pin codemap output directories while bounded generated-file reads are in progress."""
+"""Pin codemap output directories during bounded reads and confined writes."""
 
 from __future__ import annotations
 
 import os
 import stat
 import sys
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -120,6 +121,22 @@ class PinnedDirectory:
             return data
         finally:
             os.close(fd)
+
+    def write(self, name: str, data: bytes, *, validate: Callable[[], None]) -> None:
+        """Publish through this pin; the caller's validator must raise if its context is invalid."""
+        from tensor_grep.cli._index_lock import atomic_write_bytes_confined
+
+        if Path(name).name != name or name in {"", ".", ".."}:
+            raise OSError("invalid output filename")
+        validate()
+        atomic_write_bytes_confined(
+            self.path,
+            self.path / name,
+            data,
+            parent_fd=None if sys.platform == "win32" else self._fds[-1],
+            before_publish=validate,
+        )
+        validate()
 
     def open_regular(self, name: str) -> int:
         """Return an owned read-only descriptor beneath this pin, refusing non-regular files."""
