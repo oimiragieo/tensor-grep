@@ -34,10 +34,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import codemap_artifacts as _artifacts
 from tensor_grep.cli import evidence_receipt as _evidence_receipt
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli import orient_capsule as _orient_capsule
 from tensor_grep.cli import repo_map as _repo_map
+from tensor_grep.cli.codemap_publication import LOCK_NAME, Publication, publication_lock
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
@@ -160,13 +162,15 @@ def _revision_exclude_prefixes(out_dir: Path, root: Path) -> list[str]:
 
 
 def _revision_exclude_files(index_path: Path, out_dir: Path, root: Path) -> list[str]:
-    try:
-        index_rel = index_path.relative_to(root)
-    except ValueError:
-        return []
-    if _resolved_path_is_within(index_path, out_dir):
-        return []
-    return [index_rel.as_posix()]
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in {index_path, *_metadata_files(out_dir, index_path)}
+        if path.is_relative_to(root) and not path.is_relative_to(out_dir)
+    )
+
+
+def _metadata_files(out_dir: Path, index_path: Path) -> frozenset[Path]:
+    return frozenset({out_dir / LOCK_NAME, index_path.parent / LOCK_NAME})
 
 
 def _resolved_path_is_within(resolved_path: Path, resolved_directory: Path) -> bool:
@@ -512,7 +516,9 @@ def _excluded_by_output_str(
     # `resolved` is ALREADY resolved (via the cache) -- the pure comparison, never re-resolve it.
     if _resolved_path_is_within(resolved, resolved_out_dir):
         return True
-    return resolved == resolved_index_path
+    return resolved == resolved_index_path or resolved in _metadata_files(
+        resolved_out_dir, resolved_index_path
+    )
 
 
 def _exclude_output_paths(rm: dict[str, Any], *, out_dir: Path, index_path: Path) -> dict[str, Any]:
@@ -691,13 +697,16 @@ def _self_verify_universe_coverage(universe: list[str], folders: dict[str, list[
 # ---------------------------------------------------------------------------
 
 
-def _walk_only_universe(root: Path, *, max_repo_files: int) -> list[str]:
+def _walk_only_universe(
+    root: Path, *, max_repo_files: int, exclude_files: frozenset[Path] = frozenset()
+) -> list[str]:
     """The exact file universe `build_repo_map`'s parse loop would consume, computed WITHOUT
     parsing a single file: reuses `build_repo_map`'s own walk (`_iter_repo_files`) and its
     pre-parse suffix/hidden-file gate (`_is_repo_context_file`)."""
     context_root = root if root.is_dir() else root.parent
+    options: dict[str, Any] = {"exclude_files": exclude_files} if exclude_files else {}
     try:
-        all_files = _repo_map._iter_repo_files(root, max_files=max_repo_files)
+        all_files = _repo_map._iter_repo_files(root, max_files=max_repo_files, **options)
     except OSError:
         return []
     return [str(f) for f in all_files if _repo_map._is_repo_context_file(f, context_root)]
@@ -710,6 +719,7 @@ def _all_folder_paths(
     deadline_monotonic: float | None = None,
     deadline_hit: _repo_map._DeadlineBreakFlag | None = None,
     unreadable_hit: _repo_map._UnreadablePathFlag | None = None,
+    exclude_files: frozenset[Path] = frozenset(),
 ) -> set[str]:
     """Every folder (repo-relative POSIX, "" for repo root) containing >=1 file the walk reaches,
     regardless of mapped-suffix status -- used only to report how many folders were excluded from
@@ -719,12 +729,14 @@ def _all_folder_paths(
     to accept no deadline at all, so it could keep walking a huge/multi-root tree past --deadline
     on its own. ``_iter_repo_files`` already supports both params (task #52) -- just forward them.
     """
+    options: dict[str, Any] = {"exclude_files": exclude_files} if exclude_files else {}
     try:
         all_files = _repo_map._iter_repo_files(
             root,
             max_files=max_repo_files,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
+            **options,
         )
     except OSError:
         return set()
@@ -1028,34 +1040,12 @@ def build_codemap(
     _revision_identity: Callable[[Path], dict[str, Any]] | None = None,
     _now: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
-    """Build + persist the browsable code map. Returns the coverage/summary payload (also written
-    to ``<out>/_coverage.json``, minus the ``written_files`` key added only to the return value /
-    ``--json`` output). ``_revision_identity``/``_now`` are injectable so callers (tests) can force
-    byte-identical output across repeated runs -- default to the real git oracle / real UTC clock.
+    """Persist the browsable map under exclusive publication locks.
 
-    ``ignore`` drops matching files (basename or repo-relative path glob, repeatable) before the
-    folder grouping -- the same ``orient_capsule._apply_ignore_globs`` helper `tg orient`/`tg
-    agent` already use, so the exclusion semantics stay identical across commands. ``deadline_seconds``
-    bounds the underlying repo scan's wall-clock time (mirrors ``build_symbol_impact`` et al.): a
-    cutoff sets the existing ``partial``/``partial_reason`` fields (``partial_reason="deadline"``)
-    instead of inventing a new field, and still returns a valid (partial) result -- never hangs,
-    never crashes. Both are additive no-ops at their defaults (``()``/``None``).
-
-    ``deadline_monotonic`` (closes #197/#200 front-door residual): an optional PRE-ANCHORED
-    absolute ``time.monotonic()`` deadline, used AS-IS instead of being recomputed from
-    ``deadline_seconds`` when supplied. The CLI cold path (``main.codemap``) anchors it at command
-    entry, before the lazy import, so front-door time is budgeted the same way scan time already
-    is. Existing ``deadline_seconds``-only callers are unaffected: the fallback computation below is
-    byte-identical to the prior behavior.
-
-    tg-codemap 90s-timeout root cause: this anchor is now computed BEFORE the revision-identity
-    git calls (previously computed after) and threaded into them plus the post-scan tracked-file
-    exclusion below -- both are git subprocess calls otherwise bounded only by
-    ``TG_GIT_TIMEOUT_SECONDS`` (120s default each), a budget entirely decoupled from
-    ``--deadline``. On a large/slow working tree ``git status`` alone can take tens of seconds,
-    which previously ran BEFORE build_repo_map's own (already deadline-bounded) walk even started
-    -- so a 60s ``--deadline`` could still observe 100s+ of wall time from git calls alone. See
-    ``evidence_receipt._repo_revision_identity`` / ``_tracked_file_set`` for the capping mechanism.
+    The stamp includes an internal output manifest; the public summary excludes it and adds
+    ``written_files``. Injected revision/clock functions allow deterministic output. ``ignore``
+    uses the shared basename/repo-relative glob semantics. Deadlines preserve partial results;
+    a pre-anchored ``deadline_monotonic`` takes precedence and includes CLI cold-start time.
     """
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -1064,11 +1054,15 @@ def build_codemap(
         raise NotADirectoryError(f"tg codemap requires a directory, got a file: {root}")
 
     out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
-    index_path = _resolve_index_path(out_dir, index).resolve()
-    # tg-codemap 90s-timeout root cause (dogfood 2026-07-19): resolved ONCE and reused by both
-    # _exclude_output_paths (via its own internal resolve, same value since out_dir is invariant)
-    # and the tail folder-census filter below -- see _is_under_resolved_dir's docstring.
-    resolved_out_dir = _resolved_or_self(out_dir)
+    index_path = _resolve_index_path(out_dir, index)
+    index_path = index_path.parent.resolve() / index_path.name
+    index_name = index_path.name.casefold()
+    if os.name == "nt":
+        index_name = index_name.split(":", 1)[0].rstrip(" .")
+    if index_name in {LOCK_NAME, _COVERAGE_FILENAME}:
+        raise ValueError("codemap index conflicts with reserved metadata")
+    if index_path == out_dir or index_path.is_dir():
+        raise ValueError("codemap index must be a file destination")
 
     # capability P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
     # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into every phase below --
@@ -1077,6 +1071,40 @@ def build_codemap(
     # (closes #197/#200) takes precedence over recomputing from deadline_seconds.
     if deadline_monotonic is None:
         deadline_monotonic = _repo_map._deadline_monotonic_from_seconds(deadline_seconds)
+
+    with publication_lock(out_dir, index_path, create=True) as publication:
+        return _build_codemap_locked(
+            root,
+            out_dir,
+            index_path,
+            publication,
+            max_repo_files,
+            max_symbols_per_file,
+            ignore,
+            deadline_monotonic,
+            _revision_identity,
+            _now,
+        )
+
+
+def _build_codemap_locked(
+    root: Path,
+    out_dir: Path,
+    index_path: Path,
+    publication: Publication,
+    max_repo_files: int,
+    max_symbols_per_file: int,
+    ignore: tuple[str, ...],
+    deadline_monotonic: float | None,
+    _revision_identity: Callable[[Path], dict[str, Any]] | None,
+    _now: Callable[[], datetime] | None,
+) -> dict[str, Any]:
+    resolved_out_dir = _resolved_or_self(out_dir)
+    metadata = _metadata_files(out_dir, index_path)
+
+    def validate() -> None:
+        if not publication.unchanged():
+            raise OSError("codemap publication directories or locks changed")
 
     if _revision_identity is not None:
         revision = _revision_identity(root)
@@ -1092,7 +1120,10 @@ def build_codemap(
     stamp_line = _format_stamp_line(revision, now_iso)
 
     rm = _repo_map.build_repo_map(
-        root, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
+        root,
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        exclude_files=metadata,
     )
     rm = _orient_capsule._apply_ignore_globs(rm, ignore)
     rm = _exclude_output_paths(rm, out_dir=out_dir, index_path=index_path)
@@ -1132,6 +1163,14 @@ def build_codemap(
     page_paths: dict[str, Path] = {
         folder: out_dir / f"{_folder_slug(folder)}.md" for folder in folders
     }
+    names = {path.name.casefold() for path in page_paths.values()}
+    reserved = {LOCK_NAME, _COVERAGE_FILENAME}
+    if index_path.parent == out_dir:
+        reserved.add(index_path.name.casefold())
+    if len(names) != len(page_paths) or names & reserved:
+        raise ValueError("codemap output filenames collide")
+    if len(page_paths) > _artifacts.MAX_PAGES:
+        raise ValueError("codemap output exceeds verification page limit")
     central_files = _top_central_files(rm)
 
     scan_limit = rm.get("scan_limit")
@@ -1232,6 +1271,7 @@ def build_codemap(
             deadline_monotonic=deadline_monotonic,
             deadline_hit=all_folders_deadline_hit,
             unreadable_hit=post_walk_unreadable,
+            exclude_files=metadata,
         )
         all_folders = {
             f
@@ -1243,6 +1283,9 @@ def build_codemap(
     except OSError:
         coverage["folders_with_no_mapped_files"] = 0
 
+    publication.output.write(_COVERAGE_FILENAME, b'{"partial": true}\n', validate=validate)
+    page_digests: dict[str, str] = {}
+    total_bytes = 0
     written_files: list[Path] = []
     per_page_tokens: dict[str, int] = {}
     rendered_folders: dict[str, list[str]] = {}
@@ -1262,7 +1305,9 @@ def build_codemap(
             index_path=index_path,
             page_path=page_path,
         )
-        _atomic_write_text(page_path, page_text)
+        total_bytes = _artifacts.add_size(page_text, total_bytes)
+        publication.output.write(page_path.name, page_text.encode("utf-8"), validate=validate)
+        page_digests[page_path.name] = _artifacts.digest(page_text)
         written_files.append(page_path)
         per_page_tokens[str(page_path)] = _repo_map._estimate_tokens(page_text)
         rendered_folders[folder] = files
@@ -1320,14 +1365,26 @@ def build_codemap(
         page_paths=page_paths,
         index_path=index_path,
     )
-    _atomic_write_text(index_path, index_text)
+    _artifacts.add_size(index_text, total_bytes)
+    publication.index_parent.write(index_path.name, index_text.encode("utf-8"), validate=validate)
     written_files.append(index_path)
     per_page_tokens[str(index_path)] = _repo_map._estimate_tokens(index_text)
 
     coverage["per_page_token_estimates"] = per_page_tokens
 
     coverage_path = out_dir / _COVERAGE_FILENAME
-    _atomic_write_text(coverage_path, json.dumps(coverage, indent=2, sort_keys=True) + "\n")
+    persisted = dict(
+        coverage,
+        artifact_manifest={
+            "version": 1,
+            "index": {"path": str(index_path), "sha256": _artifacts.digest(index_text)},
+            "pages": page_digests,
+        },
+    )
+    stamp = (json.dumps(persisted, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(stamp) > _artifacts.MAX_STAMP_BYTES:
+        raise ValueError("codemap stamp exceeds verification byte limit")
+    publication.output.write(_COVERAGE_FILENAME, stamp, validate=validate)
     written_files.append(coverage_path)
 
     result = dict(coverage)
@@ -1359,7 +1416,8 @@ def check_codemap_freshness(
         raise NotADirectoryError(f"tg codemap requires a directory, got a file: {root}")
 
     out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
-    index_path = _resolve_index_path(out_dir, index).resolve()
+    index_path = _resolve_index_path(out_dir, index)
+    index_path = index_path.parent.resolve() / index_path.name
     coverage_path = out_dir / _COVERAGE_FILENAME
 
     try:
@@ -1417,7 +1475,9 @@ def check_codemap_freshness(
     try:
         live_universe = [
             f
-            for f in _walk_only_universe(root, max_repo_files=walk_cap)
+            for f in _walk_only_universe(
+                root, max_repo_files=walk_cap, exclude_files=_metadata_files(out_dir, index_path)
+            )
             if not _excluded_by_output_str(
                 f,
                 resolved_out_dir=resolved_out_dir,
