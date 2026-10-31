@@ -15,8 +15,10 @@ from uuid import uuid4
 
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
+    _is_link_or_junction,
     atomic_write_bytes,
     atomic_write_json,
+    dir_identity,
     index_lock,
 )
 
@@ -1328,9 +1330,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
     # --- STAGING PHASE (copy into temp dir, no working-tree mutations yet) ---
     #
-    # Build a staging area inside the system temp dir.  All copies happen here first;
-    # only after every copy succeeds do we swap files into the working tree.  This
-    # ensures that a crash or error mid-copy cannot leave a partially-restored tree.
+    # Stage every snapshot before attempting working-tree mutations; commit rollback is best effort.
 
     scope_kind = str(metadata.get("scope", "tree"))
     if scope_kind == "file":
@@ -1386,7 +1386,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # failure can recreate a file it already unlinked. Previously the revert had only the path
         # and permanently lost the content.
         committed_removes: list[tuple[Path, bytes]] = []
-        committed_overwrites: list[tuple[Path, bytes]] = []
+        committed_overwrites: list[tuple[Path, bytes | None, tuple[int, int]]] = []
 
         try:
             # Remove files that exist in the current tree but not in the snapshot.
@@ -1426,26 +1426,23 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     prior_bytes = _bytes_or_abort_undo(target, checkpoint_id)
 
                 target.parent.mkdir(parents=True, exist_ok=True)
+                # Journal before copy2: content or metadata copying can fail after mutation.
+                committed_overwrites.append((target, prior_bytes, dir_identity(target.parent)))
                 shutil.copy2(staged, target, follow_symlinks=False)
-                if prior_bytes is not None:
-                    committed_overwrites.append((target, prior_bytes))
 
         except Exception:
-            # Best-effort revert: undo any working-tree mutations already committed.
-            #
-            # H2 (#859 class ratchet): both restores below used to call `Path.write_bytes`
-            # directly, which ALWAYS follows a destination symlink (unlike the `shutil.copy2(...,
-            # follow_symlinks=False)` used for the forward copies above, or `os.replace`'s
-            # non-dereferencing rename). `target`/`removed_path` were containment-checked against
-            # `root` during pre-flight, but that check is not re-proven at revert time, so a
-            # symlink planted at either path between pre-flight and this best-effort revert would
-            # have been written through. `atomic_write_bytes` refuses a symlinked destination and
-            # publishes via a same-directory O_EXCL temp + `os.replace`; any refusal is caught by
-            # the existing `except OSError: pass` below, preserving the prior best-effort
-            # semantics (a failed restore was already silently swallowed).
-            for path_to_restore, prior_bytes in reversed(committed_overwrites):
+            # Restore bytes without following leaf links; keep the initiating exception.
+            for path_to_restore, prior_bytes, parent_identity in reversed(committed_overwrites):
                 try:
-                    atomic_write_bytes(path_to_restore, prior_bytes)
+                    if prior_bytes is not None:
+                        atomic_write_bytes(path_to_restore, prior_bytes)
+                    elif (
+                        path_to_restore.parent.resolve().is_relative_to(root_resolved)
+                        and dir_identity(path_to_restore.parent) == parent_identity
+                        and not _is_link_or_junction(path_to_restore.parent)
+                        and not _is_link_or_junction(path_to_restore)
+                    ):
+                        path_to_restore.unlink(missing_ok=True)
                 except OSError:
                     pass
             for removed_path, removed_bytes in reversed(committed_removes):

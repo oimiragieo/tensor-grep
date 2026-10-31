@@ -416,3 +416,145 @@ def test_corrupt_checkpoint_reports_its_own_error_code_not_not_found(tmp_path: P
         "a corrupt snapshot must not masquerade as a missing checkpoint"
     )
     assert payload["ok"] is False
+
+
+@pytest.mark.parametrize("prior", [b"current user work", b"", None])
+def test_undo_partial_copy_recovers_current_target(tmp_path, monkeypatch, prior):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot"})
+    created = checkpoint_store.create_checkpoint(str(root))
+    target = root / "a.py"
+    if prior is None:
+        target.unlink()
+    else:
+        target.write_bytes(prior)
+    copy2 = checkpoint_store.shutil.copy2
+    failure = OSError("commit partial copy")
+    reached = []
+
+    def partial_copy(source, destination, **kwargs):
+        if Path(destination) == target:
+            reached.append(target)
+            target.write_bytes(b"partial")
+            raise failure
+        return copy2(source, destination, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store.shutil, "copy2", partial_copy)
+    with pytest.raises(OSError) as caught:
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert caught.value is failure
+    assert reached == [target]
+    if prior is None:
+        assert not target.exists()
+    else:
+        assert target.read_bytes() == prior
+
+
+def test_undo_success_preserves_snapshot_metadata(tmp_path):
+    import os
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot"})
+    target = root / "a.py"
+    os.utime(target, ns=(1_600_000_000_000_000_000,) * 2)
+    created = checkpoint_store.create_checkpoint(str(root))
+    snapshot = checkpoint_store._snapshot_path(root, created.checkpoint_id) / "a.py"
+    target.write_bytes(b"current")
+    (root / "extra.py").write_bytes(b"extra")
+    result = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert target.read_bytes() == b"snapshot"
+    assert not (root / "extra.py").exists()
+    assert result.restored_files == 1
+    assert result.removed_paths == 1
+    assert target.stat().st_mtime_ns == snapshot.stat().st_mtime_ns
+    assert target.stat().st_mode == snapshot.stat().st_mode
+
+
+def test_undo_metadata_copy_failure_recovers_bytes(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot"})
+    created = checkpoint_store.create_checkpoint(str(root))
+    target = root / "a.py"
+    target.write_bytes(b"current")
+    # Exercise copy2's portable content-then-metadata path on Windows too.
+    monkeypatch.setattr(checkpoint_store.shutil, "_winapi", None, raising=False)
+    copystat = checkpoint_store.shutil.copystat
+    failure = OSError("commit metadata copy")
+    reached = []
+
+    def fail_metadata(source, destination, **kwargs):
+        if Path(destination) == target:
+            reached.append(target.read_bytes())
+            raise failure
+        return copystat(source, destination, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store.shutil, "copystat", fail_metadata)
+    with pytest.raises(OSError) as caught:
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert caught.value is failure
+    assert reached == [b"snapshot"]
+    assert target.read_bytes() == b"current"
+
+
+@pytest.mark.parametrize("first_absent", [False, True])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_undo_later_partial_copy_recovers_prior_mutations(
+    tmp_path, monkeypatch, first_absent, cleanup_fails
+):
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot a", "b.py": "snapshot b"})
+    created = checkpoint_store.create_checkpoint(str(root))
+    first, later, extra = (root / name for name in ("a.py", "b.py", "extra.py"))
+    if first_absent:
+        first.unlink()
+    else:
+        first.write_bytes(b"current a")
+    if cleanup_fails:
+        later.unlink()
+    else:
+        later.write_bytes(b"current b")
+    extra.write_bytes(b"extra")
+    copy2 = checkpoint_store.shutil.copy2
+    unlink = Path.unlink
+    failure = OSError("later partial copy")
+    reached = []
+    cleanup_attempts = []
+
+    def partial_copy(source, destination, **kwargs):
+        destination = Path(destination)
+        if destination in (first, later):
+            reached.append(destination)
+            assert not extra.exists()
+            if destination == later:
+                assert first.read_bytes() == b"snapshot a"
+                later.write_bytes(b"partial")
+                raise failure
+        return copy2(source, destination, **kwargs)
+
+    def fail_cleanup(path, *args, **kwargs):
+        if path == later:
+            cleanup_attempts.append(path)
+            raise OSError("cleanup unavailable")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store.shutil, "copy2", partial_copy)
+    if cleanup_fails:
+        monkeypatch.setattr(Path, "unlink", fail_cleanup)
+    with pytest.raises(OSError) as caught:
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert caught.value is failure
+    assert reached == [first, later]
+    assert extra.read_bytes() == b"extra"
+    if first_absent:
+        assert not first.exists()
+    else:
+        assert first.read_bytes() == b"current a"
+    if cleanup_fails:
+        assert cleanup_attempts == [later]
+        assert later.read_bytes() == b"partial"
+    else:
+        assert later.read_bytes() == b"current b"
