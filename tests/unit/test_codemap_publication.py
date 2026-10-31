@@ -39,6 +39,45 @@ def test_persistent_locks_and_read_only_pins(tmp_path: Path) -> None:
     assert (output / LOCK_NAME).read_bytes() == (index.parent / LOCK_NAME).read_bytes() == b""
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-sensitive directories")
+def test_distinct_case_sensitive_directories_are_locked_separately(tmp_path: Path) -> None:
+    fsutil = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "fsutil.exe"
+    result = subprocess.run(
+        [str(fsutil), "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode:
+        pytest.skip("case-sensitive NTFS directory unavailable")
+    output = tmp_path / "Output"
+    index_parent = tmp_path / "output"
+    output.mkdir()
+    index_parent.mkdir()
+    (output / "marker").write_bytes(b"upper")
+    (index_parent / "marker").write_bytes(b"lower")
+    assert not os.path.samefile(output, index_parent)
+    with publication_lock(output, index_parent / "index.md", create=True) as state:
+        assert state.output.read("marker", 5) == b"upper"
+        assert state.index_parent.read("marker", 5) == b"lower"
+        assert state.output is not state.index_parent
+        assert state.unchanged()
+    assert (output / LOCK_NAME).is_file()
+    assert (index_parent / LOCK_NAME).is_file()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-insensitive directory aliases")
+def test_case_aliases_of_one_directory_share_a_lock(tmp_path: Path) -> None:
+    output = tmp_path / "Output"
+    output.mkdir()
+    alias = tmp_path / "output"
+    if not alias.exists() or not os.path.samefile(output, alias):
+        pytest.skip("case-insensitive directory unavailable")
+    with publication_lock(output, alias / "index.md", create=True) as state:
+        assert state.output is state.index_parent
+        assert state.unchanged()
+
+
 @pytest.mark.parametrize("create", [False, True])
 @pytest.mark.parametrize(
     "name", [LOCK_NAME, ".CODEMAP.LOCK", ".codemap.lock. ", ".codemap.lock:stream"]

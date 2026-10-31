@@ -108,6 +108,8 @@ def _confined_relative_parts(
 ) -> tuple[str, ...]:
     """Validate lexical containment before observing any filesystem metadata."""
     parts = path.relative_to(root).parts
+    if os.name == "nt" and path.parts[: len(root.parts)] != root.parts:
+        raise OSError("confined path must use the exact trusted root spelling")
     if ".." in parts:
         raise OSError("confined path contains parent traversal")
     if not parts and not allow_root:

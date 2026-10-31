@@ -192,9 +192,8 @@ _WRITE_SCOPE: ContextVar[WriteScope | None] = ContextVar("tg_write_scope", defau
 
 
 def _authorization_key(path: str | Path) -> str:
-    """Lexical key: absolute + normalized, deliberately NOT ``resolve()``d, so a swapped parent
-    can never map a write onto a different (unauthorized) key."""
-    return os.path.normcase(os.path.abspath(str(path)))
+    """Keep absolute path spelling; case-folding can merge distinct Windows entries."""
+    return os.path.abspath(str(path))
 
 
 def file_identity(path: Path) -> tuple[int, int, int, int]:
@@ -259,7 +258,7 @@ def _plan_missing_parents(path: Path, auth: WriteAuthorization, scope: WriteScop
             )
         components: list[Path] = []
         probe = path.parent
-        while os.path.normcase(str(probe)) != os.path.normcase(ancestor_path):
+        while os.path.abspath(probe) != os.path.abspath(ancestor_path):
             components.append(probe)
             if probe.parent == probe:
                 raise WriteAuthorizationError(f"{label} parent is outside its ancestor (refused)")
@@ -267,7 +266,7 @@ def _plan_missing_parents(path: Path, auth: WriteAuthorization, scope: WriteScop
         missing: list[Path] = []
         for component in reversed(components):
             if os.path.lexists(component):
-                recorded = scope.created_dirs.get(os.path.normcase(str(component)))
+                recorded = scope.created_dirs.get(os.path.abspath(component))
                 if (
                     recorded is None
                     or missing  # an existing child under a still-missing parent: inconsistent
@@ -308,7 +307,7 @@ def _create_missing_parents(
             real = os.path.normcase(os.path.realpath(component))
             if os.path.commonpath([real, real_ancestor]) != real_ancestor:
                 raise WriteAuthorizationError(f"{label} parent escaped its ancestor (refused)")
-            scope.created_dirs[os.path.normcase(str(component))] = dir_identity(component)
+            scope.created_dirs[os.path.abspath(component)] = dir_identity(component)
         return _dc_replace(auth, parent_identity=dir_identity(path.parent))
     except WriteAuthorizationError:
         raise
@@ -477,18 +476,16 @@ def atomic_write_bytes_confined(
     """Publish authorized bytes; a borrowed POSIX parent must already exist and stays open."""
     if parent_fd is not None and os.name != "posix":
         raise OSError("borrowed parent descriptors require POSIX")
-    root = Path(os.path.normcase(os.path.abspath(root)))
-    path = Path(os.path.normcase(os.path.abspath(path)))
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        raise OSError(f"confined output escapes trusted root: {path}") from None
-    if not relative.parts:
-        raise OSError(f"confined output must be below trusted root: {path}")
-
-    scope, auth, effective_replace = _prepare_write_authorization(path, replace)
+    root = Path(os.path.abspath(root))
+    path = Path(os.path.abspath(path))
     from tensor_grep.io import confined
 
+    try:
+        confined._confined_relative_parts(root, path)
+    except (OSError, ValueError):
+        raise OSError(f"confined output escapes trusted root: {path}") from None
+
+    scope, auth, effective_replace = _prepare_write_authorization(path, replace)
     confined.validate_confined_parent_prefix(root, path)
     if parent_fd is None:
         auth = _prepare_authorized_parent(path, scope, auth)
