@@ -41,7 +41,7 @@ def _publish_windows(
     identity: tuple[int, int, int, int] | None,
     before_publish: Callable[[], None] | None,
     on_published: Callable[[], None] | None,
-) -> None:
+) -> tuple[int, int]:
     """Publish under pinned directory handles, refusing new-destination races atomically."""
     from tensor_grep.io.windows_publication import discard_open, open_temporary, rename_open
 
@@ -49,6 +49,8 @@ def _publish_windows(
     descriptor = open_temporary(temporary)
     published = False
     try:
+        opened = os.fstat(descriptor)
+        owned_identity = (opened.st_dev, opened.st_ino)
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
@@ -61,6 +63,7 @@ def _publish_windows(
         published = True
         if on_published is not None:
             on_published()
+        return owned_identity
     finally:
         try:
             if not published:
@@ -258,7 +261,7 @@ def publish_confined(
     before_publish: Callable[[], None] | None = None,
     on_published: Callable[[], None] | None = None,
     parent_fd: int | None = None,
-) -> None:
+) -> tuple[int, int]:
     """Publish rebuildable advisory bytes; this is not a same-user filesystem CAS boundary.
 
     Absent targets use atomic no-clobber publication. Existing-target identity is checked,
@@ -283,7 +286,7 @@ def publish_confined(
     _verify_parents(parents)
     with _pin_windows_parents(parents):
         if os.name == "nt":
-            _publish_windows(path, data, identity, before_publish, on_published)
+            owned_identity = _publish_windows(path, data, identity, before_publish, on_published)
         else:
             temporary = f".{path.name}.{uuid4().hex}.tmp"
             descriptor = None
@@ -304,6 +307,8 @@ def publish_confined(
                     0o600,
                     dir_fd=parent_fd,
                 )
+                opened = os.fstat(descriptor)
+                owned_identity = (opened.st_dev, opened.st_ino)
                 with os.fdopen(descriptor, "wb", closefd=False) as stream:
                     stream.write(data)
                     stream.flush()
@@ -338,6 +343,7 @@ def publish_confined(
                         os.close(descriptor)
                     os.close(parent_fd)
     _verify_parents(parents)
+    return owned_identity
 
 
 def prepare_directory(root: Path, directory: Path) -> None:

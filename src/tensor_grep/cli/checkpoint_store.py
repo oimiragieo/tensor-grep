@@ -16,7 +16,7 @@ from uuid import uuid4
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
     _is_link_or_junction,
-    atomic_write_bytes,
+    atomic_write_bytes_confined,
     atomic_write_json,
     dir_identity,
     index_lock,
@@ -39,6 +39,12 @@ from tensor_grep.cli.checkpoint_scope import (
     resolved_rel_within,
     scope_violation,
     undo_prune_candidates,
+)
+from tensor_grep.cli.checkpoint_undo_io import (
+    check_restore_target,
+    read_for_rollback,
+    rollback_overwrites,
+    rollback_removes,
 )
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
@@ -1385,8 +1391,8 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # round-7 rank-6: store (path, prior_bytes) -- NOT just the path -- so a commit-phase
         # failure can recreate a file it already unlinked. Previously the revert had only the path
         # and permanently lost the content.
-        committed_removes: list[tuple[Path, bytes]] = []
-        committed_overwrites: list[tuple[Path, bytes | None, tuple[int, int]]] = []
+        committed_removes: list[tuple[Path, bytes, tuple[int, int]]] = []
+        committed_overwrites: list[tuple[Path, bytes | None, tuple[int, int], tuple[int, int]]] = []
 
         try:
             # Remove files that exist in the current tree but not in the snapshot.
@@ -1399,9 +1405,11 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     # exact permanent loss the round-7 rank-6 note above says was fixed. Aborting
                     # here is strictly better: the `except Exception` handler rolls back every
                     # mutation already applied and re-raises, so the tree stays consistent.
-                    removed_bytes = _bytes_or_abort_undo(current_path, checkpoint_id)
+                    removed_bytes, removed_parent, _ = read_for_rollback(
+                        root, current_path, checkpoint_id, _bytes_or_abort_undo
+                    )
                     current_path.unlink()
-                    committed_removes.append((current_path, removed_bytes))
+                    committed_removes.append((current_path, removed_bytes, removed_parent))
                     removed_paths += 1
 
             # Remove files that the snapshot records as deleted.
@@ -1410,56 +1418,44 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     target = resolved_targets[rel_path]
                     if target.exists():
                         # Task #297, same reasoning as the branch above.
-                        removed_bytes = _bytes_or_abort_undo(target, checkpoint_id)
+                        removed_bytes, removed_parent, _ = read_for_rollback(
+                            root, target, checkpoint_id, _bytes_or_abort_undo
+                        )
                         target.unlink()
-                        committed_removes.append((target, removed_bytes))
+                        committed_removes.append((target, removed_bytes, removed_parent))
                         removed_paths += 1
 
             # Swap staged copies into the working tree.
             for staged, target in staging_pairs:
                 # Record pre-existing content for revert.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                parent_identity = dir_identity(target.parent)
                 prior_bytes: bytes | None = None
                 if target.exists():
                     # Task #297: an unreadable target used to be OVERWRITTEN with
                     # `prior_bytes = None`, so its original content never reached
                     # `committed_overwrites` and the revert left it clobbered for good.
-                    prior_bytes = _bytes_or_abort_undo(target, checkpoint_id)
-
-                target.parent.mkdir(parents=True, exist_ok=True)
+                    prior_bytes, parent_identity, leaf_identity = read_for_rollback(
+                        root, target, checkpoint_id, _bytes_or_abort_undo
+                    )
+                else:
+                    # Claim the absent leaf without clobbering a concurrent arrival.
+                    leaf_identity = atomic_write_bytes_confined(root, target, b"", replace=False)
                 # Journal before copy2: content or metadata copying can fail after mutation.
-                committed_overwrites.append((target, prior_bytes, dir_identity(target.parent)))
+                committed_overwrites.append((target, prior_bytes, parent_identity, leaf_identity))
+                check_restore_target(root, target, parent_identity, leaf_identity)
                 shutil.copy2(staged, target, follow_symlinks=False)
 
         except Exception:
-            # Restore bytes without following leaf links; keep the initiating exception.
-            for path_to_restore, prior_bytes, parent_identity in reversed(committed_overwrites):
-                try:
-                    if prior_bytes is not None:
-                        atomic_write_bytes(path_to_restore, prior_bytes)
-                    elif (
-                        path_to_restore.parent.resolve().is_relative_to(root_resolved)
-                        and dir_identity(path_to_restore.parent) == parent_identity
-                        and not _is_link_or_junction(path_to_restore.parent)
-                        and not _is_link_or_junction(path_to_restore)
-                    ):
-                        path_to_restore.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            for removed_path, removed_bytes in reversed(committed_removes):
-                # round-7 rank-6: recreate files unlinked earlier in THIS commit phase from the
-                # bytes snapshotted before their unlink, so a partial commit does not lose data.
-                try:
-                    removed_path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_bytes(removed_path, removed_bytes)
-                except OSError:
-                    pass
+            rollback_overwrites(root, committed_overwrites)
+            rollback_removes(root, committed_removes)
             raise
 
     finally:
         staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
-        for directory in undo_prune_candidates(root, [p for p, _ in committed_removes]):
+        for directory in undo_prune_candidates(root, [p for p, _, _ in committed_removes]):
             # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
             # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
             # directory symlink (or, on some platforms, act through it) -- the symlink-follow
