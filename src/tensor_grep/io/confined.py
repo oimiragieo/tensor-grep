@@ -255,6 +255,7 @@ def publish_confined(
     only_if_missing: bool = False,
     before_publish: Callable[[], None] | None = None,
     on_published: Callable[[], None] | None = None,
+    parent_fd: int | None = None,
 ) -> None:
     """Publish rebuildable advisory bytes; this is not a same-user filesystem CAS boundary.
 
@@ -264,7 +265,11 @@ def publish_confined(
     Windows binds the source through its held rename handle. POSIX detects source substitution
     after publication and refuses success, but cannot guarantee arbitrary same-user mutation
     was never briefly visible. Cooperative cache writers must use cache_lock.
+
+    A supplied POSIX parent descriptor is borrowed: only its owned duplicate is closed.
     """
+    if parent_fd is not None and os.name != "posix":
+        raise OSError("borrowed parent descriptors require POSIX")
     parents = _real_components(root, path)
     identity = _file_identity(path) if os.path.lexists(path) else None
     if identity is not None:
@@ -278,12 +283,16 @@ def publish_confined(
         if os.name == "nt":
             _publish_windows(path, data, identity, before_publish, on_published)
         else:
-            parent_fd = os.open(
-                path.parent,
-                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-            )
             temporary = f".{path.name}.{uuid4().hex}.tmp"
             descriptor = None
+            parent_fd = (
+                os.open(
+                    path.parent,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                )
+                if parent_fd is None
+                else os.dup(parent_fd)
+            )
             try:
                 _verify_open_directory(parent_fd, parents)
                 _verify_parents(parents)

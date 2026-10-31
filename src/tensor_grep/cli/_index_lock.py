@@ -466,9 +466,17 @@ def atomic_write_bytes_anchored(
 
 
 def atomic_write_bytes_confined(
-    root: Path, path: Path, data: bytes, *, replace: bool = True
+    root: Path,
+    path: Path,
+    data: bytes,
+    *,
+    replace: bool = True,
+    parent_fd: int | None = None,
+    before_publish: Callable[[], None] | None = None,
 ) -> None:
-    """Publish bytes beneath a real root while honoring any active write authorization."""
+    """Publish authorized bytes; a borrowed POSIX parent must already exist and stays open."""
+    if parent_fd is not None and os.name != "posix":
+        raise OSError("borrowed parent descriptors require POSIX")
     root = Path(os.path.normcase(os.path.abspath(root)))
     path = Path(os.path.normcase(os.path.abspath(path)))
     try:
@@ -482,26 +490,37 @@ def atomic_write_bytes_confined(
     from tensor_grep.io import confined
 
     confined.validate_confined_parent_prefix(root, path)
-    auth = _prepare_authorized_parent(path, scope, auth)
-    if auth is None:
-        confined.prepare_directory(root, path.parent)
-    before_publish = None
+    if parent_fd is None:
+        auth = _prepare_authorized_parent(path, scope, auth)
+        if auth is None:
+            confined.prepare_directory(root, path.parent)
+    elif scope is not None and auth is not None:
+        if auth.parent_identity is None:
+            if _plan_missing_parents(path, auth, scope):
+                raise WriteAuthorizationError(f"{auth.label} borrowed parent is missing (refused)")
+            auth = _dc_replace(auth, parent_identity=dir_identity(path.parent))
+        _enforce_parent(path, auth)
+    check_before_publish = before_publish
     on_published = None
     if scope is not None and auth is not None:
 
-        def before_publish() -> None:
+        def check_before_publish() -> None:
+            if before_publish is not None:
+                before_publish()
             _enforce_authorization(path, auth)
 
         def on_published() -> None:
             scope.written.append(auth.label)
 
+    options: dict[str, Any] = {"parent_fd": parent_fd} if parent_fd is not None else {}
     confined.publish_confined(
         root,
         path,
         data,
         only_if_missing=not effective_replace,
-        before_publish=before_publish,
+        before_publish=check_before_publish,
         on_published=on_published,
+        **options,
     )
 
 
