@@ -1,23 +1,11 @@
-"""`tg codemap`: a persisted, browsable folder->file->symbol code map (lean index + per-folder
-drill-down pages), built ENTIRELY on top of the existing `repo_map.build_repo_map()` extraction.
+"""Persisted, browsable folder->file->symbol maps built on ``repo_map.build_repo_map``.
 
-Positioning (no overlap with sibling commands): `tg orient` is a ranked, bounded, ephemeral
-capsule; `tg map` is a raw JSON dump; `tg codemap` is an exhaustive, persisted, browsable
-inventory meant to be committed/read like docs. It never re-implements AST/tree-sitter parsing --
-that IS the point: a from-scratch code-map generator would duplicate `build_repo_map`'s extraction,
-so this module formats that extraction's output instead. Every enrichment here (signature,
-docstring-first-sentence, Class.method attribution, folder blurbs) is a FORMATTING pass over data
-`build_repo_map` already computed, or a read of the already-content-addressed-cached AST
-(`repo_map._cached_ast_parse`) -- never a second, independent `ast.parse`/tree-sitter parse, and
-never a new field on the shared `_symbol_record` payload (that payload also backs `tg map`/`tg
-agent`/`tg orient`/`tg context` and is pinned by their own contract tests; enrichment here is
-joined on ``(file, start_line)`` and stays local to this module).
+Enrichment formats existing extraction or cached AST data, joined on ``(file, start_line)``;
+it neither reparses sources nor extends the shared symbol-record contract. Unlike the ranked,
+ephemeral ``orient`` capsule and raw ``map`` JSON, codemap is a browsable documentation inventory.
 
-Freshness is a CORRECTNESS requirement, not a nicety: every generated map is stamped with a dual
-oracle (git revision identity + a content-addressed tree manifest hash), and `tg codemap --check`
-is a READ-ONLY (no re-parse) verifier that fails CLOSED -- an unverifiable map reads as stale, a
-partial map never reads as fresh, and any drift (edited/added/removed file, or a changed git
-commit/dirty-state) flips the check from fresh to stale.
+Freshness checks are read-only and fail closed: a source oracle (Git revision or content manifest)
+and bounded generated-output verification must both pass under the publication locks.
 """
 
 from __future__ import annotations
@@ -152,12 +140,10 @@ def _repo_relative_posix(file_path: str, root: Path) -> str:
 
 
 def _revision_exclude_prefixes(out_dir: Path, root: Path) -> list[str]:
-    """The single repo-relative POSIX exclude-prefix for `_repo_revision_identity`'s git-dirty
-    oracle: the map's own `--out` directory, so regenerating a persisted, committed map never
-    reads as a dirty change against itself (the `tg codemap --check` false-positive). Computed
-    fresh from the SAME `out_dir` input at BOTH the stamp site (`build_codemap`) and the `--check`
-    site (`check_codemap_freshness`) -- symmetric by construction, never hardcoded to the
-    `docs/code-map` default (a custom `--out` is excluded too)."""
+    """Exclude the map's own output from the Git source oracle, including custom output roots.
+
+    Generation and checking use the same input so regenerated pages cannot dirty their source.
+    """
     return [_repo_relative_posix(str(out_dir), root)]
 
 
@@ -831,22 +817,9 @@ def _format_stamp_line(revision: dict[str, Any], now_iso: str) -> str:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    """Write ``content`` to ``path``, refusing a symlinked destination.
+    """Write UTF-8 through the shared guarded writer, refusing a symlinked destination.
 
-    Delegates to the shared guarded writer instead of hand-rolling temp+replace. This module wrote
-    its own for years and therefore skipped the symlink refusal that `atomic_write_bytes` exists to
-    provide (`O_CREAT|O_EXCL|O_NOFOLLOW`, mode-at-create, same-directory temp, fsync).
-
-    THIRD instance of one class, which is why the fix is delegation rather than another precheck:
-    #847 closed the read side (`DirectoryScanner` yielding symlinked files), #852 closed the
-    `--apply` write side (`backend_ast::direct_write_file`), and this closed the doc-generation
-    write side. Each earlier fix patched its own site; a hand-rolled writer anywhere is how the
-    next instance gets written, so new publish sites must call the shared helper.
-
-    Severity is LOW and stated deliberately: `replace()` swaps the LINK ENTRY, leaving the target's
-    content intact, so this is an integrity/doc-generation surface rather than #852's
-    content-overwrite. Fixed anyway -- a write surface that bypasses the guarded writer is a
-    standing invitation.
+    Retained for direct callers; generation uses the held publication directory pins.
     """
     from tensor_grep.cli._index_lock import atomic_write_bytes
 
@@ -1415,18 +1388,42 @@ def check_codemap_freshness(
     if not root.is_dir():
         raise NotADirectoryError(f"tg codemap requires a directory, got a file: {root}")
 
-    out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
-    index_path = _resolve_index_path(out_dir, index)
-    index_path = index_path.parent.resolve() / index_path.name
-    coverage_path = out_dir / _COVERAGE_FILENAME
+    try:
+        out_dir = (
+            Path(out).expanduser().resolve() if out is not None else root / "docs" / "code-map"
+        )
+        index_path = _resolve_index_path(out_dir, index)
+        index_path = index_path.parent.resolve() / index_path.name
+        with publication_lock(out_dir, index_path, create=False) as publication:
+            return _check_codemap_locked(
+                root, out_dir, index_path, max_repo_files, _revision_identity, publication
+            )
+    except (OSError, ValueError) as exc:
+        return {
+            "fresh": False,
+            "reason": f"codemap publication metadata missing or unavailable: {exc}",
+        }
 
+
+def _check_codemap_locked(
+    root: Path,
+    out_dir: Path,
+    index_path: Path,
+    max_repo_files: int,
+    revision_identity: Callable[[Path], dict[str, Any]] | None,
+    publication: Publication,
+) -> dict[str, Any]:
+    raw = _artifacts.read_stamp(publication.output, _COVERAGE_FILENAME)
+    if raw is None:
+        return {
+            "fresh": False,
+            "reason": f"{_COVERAGE_FILENAME} missing or unreadable at {out_dir}",
+        }
     try:
-        raw = coverage_path.read_text(encoding="utf-8")
-    except OSError:
-        return {"fresh": False, "reason": f"{_COVERAGE_FILENAME} missing at {coverage_path}"}
-    try:
-        coverage = json.loads(raw)
-    except json.JSONDecodeError:
+        coverage = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        return {"fresh": False, "reason": f"{_COVERAGE_FILENAME} is not valid UTF-8"}
+    except (ValueError, RecursionError):
         return {"fresh": False, "reason": f"{_COVERAGE_FILENAME} is not valid JSON"}
     if not isinstance(coverage, dict):
         return {"fresh": False, "reason": f"{_COVERAGE_FILENAME} is not a JSON object"}
@@ -1434,10 +1431,19 @@ def check_codemap_freshness(
     if coverage.get("partial"):
         return {"fresh": False, "reason": "map was written partial (truncated at generation)"}
 
+    def fresh(reason: str) -> dict[str, Any]:
+        if not _artifacts.verify(
+            coverage, out_dir, index_path, publication.output, publication.index_parent
+        ):
+            return {"fresh": False, "reason": "generated outputs missing, changed, or unverifiable"}
+        if not publication.unchanged():
+            return {"fresh": False, "reason": "codemap publication directories or locks changed"}
+        return {"fresh": True, "reason": reason}
+
     stamped_revision = coverage.get("revision")
     if isinstance(stamped_revision, dict) and stamped_revision.get("status") == "present":
-        if _revision_identity is not None:
-            live_revision = _revision_identity(root)
+        if revision_identity is not None:
+            live_revision = revision_identity(root)
         else:
             live_revision = _evidence_receipt._repo_revision_identity(
                 root,
@@ -1452,7 +1458,7 @@ def check_codemap_freshness(
                 and live_revision.get("dirty_tree_sha256")
                 == stamped_revision.get("dirty_tree_sha256")
             ):
-                return {"fresh": True, "reason": "git revision identity matches"}
+                return fresh("git revision identity matches")
             return {"fresh": False, "reason": "git revision identity changed since generation"}
         # Git was available at generation time but is unavailable now -> fall through to the
         # git-independent tree manifest instead of guessing.
@@ -1465,10 +1471,7 @@ def check_codemap_freshness(
     walk_cap = (
         int(stamped_cap) if isinstance(stamped_cap, int) and stamped_cap > 0 else max_repo_files
     )
-    # Mirrors _exclude_output_paths's own setup (codemap.py, ~line 517): resolve out_dir/
-    # index_path ONCE and memoize per-candidate resolution -- this is the SECOND call site of
-    # _excluded_by_output_str's resolved-kwarg contract (missed in the original fix; caught by
-    # independent gate review on PR #674 -- see git history for the TypeError it produced here).
+    # Resolve output roots once; memoize candidate resolution across both source filters.
     resolved_out_dir = _resolved_or_self(out_dir)
     resolved_index_path = _resolved_or_self(index_path)
     resolve_cache: dict[str, Path | None] = {}
@@ -1490,5 +1493,5 @@ def check_codemap_freshness(
         return {"fresh": False, "reason": "could not re-walk the tree to verify (unverifiable)"}
 
     if live_manifest == stamped_manifest:
-        return {"fresh": True, "reason": "tree manifest matches"}
+        return fresh("tree manifest matches")
     return {"fresh": False, "reason": "tree manifest changed since generation"}
