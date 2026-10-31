@@ -66,27 +66,29 @@ def publication_lock(out_dir: Path, index_path: Path, *, create: bool) -> Iterat
     Output and custom-index parents are deduplicated and acquired in stable lexical order.
     """
     owner_pid = os.getpid()
-    output, index_parent = (
-        Path(os.path.normcase(os.path.abspath(path))) for path in (out_dir, index_path.parent)
-    )
+    output, index_parent = (os.path.abspath(path) for path in (out_dir, index_path.parent))
     index_path = Path(os.path.abspath(index_path))
     index_name = index_path.name
     if os.name == "nt":
         index_name = index_name.split(":", 1)[0].rstrip(" .")
     if os.path.normcase(index_name) == os.path.normcase(LOCK_NAME):
         raise OSError("codemap index conflicts with publication lock")
-    if any(len(path.parts) > 256 for path in (output, index_parent)):
+    if any(len(Path(path).parts) > 256 for path in (output, index_parent)):
         raise OSError("overly deep codemap publication directory")
-    for path in {output, index_parent}:
+    for path_text in {output, index_parent}:
+        path = Path(path_text)
         try:
             if os.path.samefile(index_path, path / LOCK_NAME):
                 raise OSError("codemap index conflicts with publication lock")
         except FileNotFoundError:
             pass
-    pinned: dict[Path, PinnedDirectory] = {}
+    pinned: dict[str, PinnedDirectory] = {}
     held: list[tuple[PinnedDirectory, int]] = []
     with ExitStack() as directories, ExitStack() as acquired:
-        for path in sorted({output, index_parent}):
+        for path_text in sorted(
+            {output, index_parent}, key=lambda value: (os.path.normcase(value), value)
+        ):
+            path = Path(path_text)
             try:
                 if create:
                     try:
@@ -96,6 +98,13 @@ def publication_lock(out_dir: Path, index_path: Path, *, create: bool) -> Iterat
                     except FileExistsError:
                         pass
                 pin = directories.enter_context(PinnedDirectory(path))
+                existing = next(
+                    (item for item in pinned.values() if os.path.samefile(pin.path, item.path)),
+                    None,
+                )
+                if existing is not None:
+                    pinned[path_text] = existing
+                    continue
                 fd = locks._try_os_file_lock_with_opener(
                     partial(pin.open_regular, LOCK_NAME),
                     partial(pin.file_unchanged, LOCK_NAME),
@@ -107,7 +116,7 @@ def publication_lock(out_dir: Path, index_path: Path, *, create: bool) -> Iterat
                 except BaseException:
                     _release(owner_pid, fd)
                     raise
-                pinned[path] = pin
+                pinned[path_text] = pin
                 held.append((pin, fd))
             except OSError as exc:
                 raise OSError(

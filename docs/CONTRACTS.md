@@ -2,6 +2,10 @@
 
 This document defines the backward-compatibility guarantees for data structures and CLI outputs used by enterprise integrations, IDEs, and editor-plane agents.
 
+On Windows, confined file operations require the target to use the exact spelling of the trusted
+root, and authorized writes require the exact approved absolute path spelling. A different-case
+alias is refused even on a case-insensitive directory because another directory may distinguish it.
+
 CSV search output prefixes match text and filenames with an apostrophe when the value begins
 with tab, carriage return, or line feed, or when its first non-whitespace character is an ASCII
 or fullwidth `=`, `+`, `-`, or `@`. This changes those cell values to reduce spreadsheet formula

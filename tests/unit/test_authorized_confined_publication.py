@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,6 +39,90 @@ def _race_no_clobber_publish(monkeypatch: pytest.MonkeyPatch, path: Path) -> Non
             link(source, destination, **kwargs)
 
         monkeypatch.setattr(confined.os, "link", raced)
+
+
+def _require_case_sensitive_directory(path: Path) -> None:
+    if sys.platform != "win32":
+        pytest.skip("requires Windows case-sensitive directories")
+    fsutil = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "fsutil.exe"
+    result = subprocess.run(
+        [str(fsutil), "file", "setCaseSensitiveInfo", str(path), "enable"],
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode:
+        pytest.skip("case-sensitive NTFS directory unavailable")
+
+
+def test_confined_root_case_sibling_is_refused_before_writes(tmp_path: Path) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    root, sibling = tmp_path / "Output", tmp_path / "output"
+    root.mkdir()
+    sibling.mkdir()
+    assert not os.path.samefile(root, sibling)
+    with pytest.raises(OSError):
+        _index_lock.atomic_write_bytes_confined(root, sibling / "unlisted", b"wrong")
+    assert list(root.iterdir()) == []
+    assert list(sibling.iterdir()) == []
+
+
+@pytest.mark.parametrize("operation", ["read", "publish"])
+def test_confined_io_refuses_distinct_case_sibling(tmp_path: Path, operation: str) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    root, sibling = tmp_path / "Output", tmp_path / "output"
+    root.mkdir()
+    sibling.mkdir()
+    (sibling / "source").write_bytes(b"outside")
+    assert not os.path.samefile(root, sibling)
+    with pytest.raises(OSError):
+        if operation == "read":
+            confined.read_confined(root, sibling / "source", 32)
+        else:
+            confined.publish_confined(root, sibling / "new", b"outside")
+    assert not (sibling / "new").exists()
+    assert (sibling / "source").read_bytes() == b"outside"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows directory aliases")
+def test_confined_io_refuses_unverified_case_alias_even_if_same_directory(tmp_path: Path) -> None:
+    root, alias = tmp_path / "Output", tmp_path / "output"
+    root.mkdir()
+    if not alias.exists() or not os.path.samefile(root, alias):
+        pytest.skip("case-insensitive directory unavailable")
+    (root / "source").write_bytes(b"same")
+    with pytest.raises(OSError, match="exact trusted root spelling"):
+        confined.read_confined(root, alias / "source", 4)
+    assert confined.read_confined(root, root / "source", 4) == b"same"
+
+
+def test_scoped_case_sibling_is_not_an_authorized_output(tmp_path: Path) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    approved = tmp_path / "Approved.json"
+    unlisted = tmp_path / "approved.json"
+    scope = _index_lock.write_authorizations([_authorization(tmp_path, approved, "approved")])
+    with scope, pytest.raises(_index_lock.WriteAuthorizationError):
+        _index_lock.atomic_write_bytes_confined(tmp_path, unlisted, b"wrong")
+    assert not approved.exists()
+    assert not unlisted.exists()
+
+
+def test_missing_parent_case_sibling_is_outside_authorized_ancestor(tmp_path: Path) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    root, sibling = tmp_path / "Output", tmp_path / "output"
+    root.mkdir()
+    sibling.mkdir()
+    target = sibling / "missing" / "state.json"
+    auth = _index_lock.WriteAuthorization(
+        str(target), None, None, "state", (str(root), _index_lock.dir_identity(root))
+    )
+    with (
+        _index_lock.write_authorizations([auth]),
+        pytest.raises(_index_lock.WriteAuthorizationError),
+    ):
+        _index_lock.atomic_write_bytes_anchored(target, b"wrong")
+    assert not target.parent.exists()
+    assert list(root.iterdir()) == []
 
 
 def test_AtomicConfinedWrite_UnlistedTarget_IsRefusedBeforeCreation(tmp_path: Path) -> None:
