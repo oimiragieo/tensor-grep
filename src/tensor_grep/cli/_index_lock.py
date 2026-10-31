@@ -472,7 +472,7 @@ def atomic_write_bytes_confined(
     replace: bool = True,
     parent_fd: int | None = None,
     before_publish: Callable[[], None] | None = None,
-) -> None:
+) -> tuple[int, int]:
     """Publish authorized bytes; a borrowed POSIX parent must already exist and stays open."""
     if parent_fd is not None and os.name != "posix":
         raise OSError("borrowed parent descriptors require POSIX")
@@ -510,7 +510,7 @@ def atomic_write_bytes_confined(
             scope.written.append(auth.label)
 
     options: dict[str, Any] = {"parent_fd": parent_fd} if parent_fd is not None else {}
-    confined.publish_confined(
+    return confined.publish_confined(
         root,
         path,
         data,
