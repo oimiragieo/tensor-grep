@@ -1445,20 +1445,17 @@ def _iter_repo_files(
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
     unreadable_hit: _UnreadablePathFlag | None = None,
+    exclude_files: frozenset[Path] = frozenset(),
 ) -> list[Path]:
-    """Walk *root* for repo files, optionally bounded by a file-count cap AND/OR a wall-clock
-    ``deadline_monotonic`` (task #52, loop A). ``deadline_hit`` is the mutable out-signal (mirrors
-    ``_DeadlineBreakFlag`` sibling seams in this module) so a caller whose own local is declared
-    AFTER this call can still learn "did the walk itself break early on --deadline" and fold that
-    into its partial/deadline_limit stamp. Both new params default to None -> byte-identical to the
-    pre-fix walk for every one of the ~12 existing call sites that do not pass them.
+    """Walk with optional count/deadline bounds, excluding exact absolute paths before the cap.
 
-    ``unreadable_hit`` (task #276 slice 1): same mutable-out-param pattern as ``deadline_hit``,
-    for an `os.scandir()` failure (permission denied, since-deleted) instead of a wall-clock
-    bound. Defaults to None -> a complete no-op for every existing call site."""
+    Mutable deadline and unreadable signals preserve distinct reasons for an incomplete walk.
+    Callers normalize ``exclude_files`` once; child paths are never resolved individually.
+    """
     with _profiling_phase(_profiling_collector, "file_walk"):
         if root.is_file():
-            return [root.resolve()]
+            current = root.resolve()
+            return [] if current in exclude_files else [current]
 
         files: list[Path] = []
         normalized_root = root.resolve()
@@ -1510,22 +1507,27 @@ def _iter_repo_files(
                 while active_buckets and len(selected) < limit:
                     next_buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
                     for key, iterator in active_buckets:
-                        # task #52 loop A: one deadline check per next() = the file-granularity
-                        # this walk otherwise has no time bound at all (only the max_files COUNT
-                        # bound above), so a huge bucket could burn the whole --deadline budget.
-                        if (
-                            deadline_monotonic is not None
-                            and time.monotonic() >= deadline_monotonic
-                        ):
-                            walk_deadline_exceeded = True
+                        # Consume exclusions within this turn to preserve bucket fairness.
+                        # Check every advance so an excluded prefix cannot evade the deadline.
+                        while True:
+                            if (
+                                deadline_monotonic is not None
+                                and time.monotonic() >= deadline_monotonic
+                            ):
+                                walk_deadline_exceeded = True
+                                break
+                            try:
+                                current = next(iterator)
+                            except StopIteration:
+                                break
+                            if current in exclude_files:
+                                continue
+                            selected.append(current)
+                            if len(selected) < limit:
+                                next_buckets.append((key, iterator))
                             break
-                        try:
-                            selected.append(next(iterator))
-                        except StopIteration:
-                            continue
-                        if len(selected) >= limit:
+                        if walk_deadline_exceeded or len(selected) >= limit:
                             break
-                        next_buckets.append((key, iterator))
                     if walk_deadline_exceeded:
                         break
                     active_buckets = next_buckets
@@ -1540,7 +1542,8 @@ def _iter_repo_files(
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
                 walk_deadline_exceeded = True
                 break
-            files.append(current)
+            if current not in exclude_files:
+                files.append(current)
         if walk_deadline_exceeded and deadline_hit is not None:
             deadline_hit.hit = True
         files.sort(key=lambda path: _repo_walk_path_sort_key(path, normalized_root))
@@ -4192,11 +4195,15 @@ def build_repo_map(
     extra_files: list[Path] | None = None,
     deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    exclude_files: frozenset[Path] = frozenset(),
 ) -> dict[str, Any]:
+    """Build repository context, optionally excluding exact lexically absolute file paths."""
     root = Path(path).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
     normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
+    exclude_files = frozenset(Path(os.path.abspath(current)) for current in exclude_files)
+    walk_options: dict[str, Any] = {"exclude_files": exclude_files} if exclude_files else {}
 
     with _profiling_phase(_profiling_collector, "repo_map_build"):
         context_root = root if root.is_dir() else root.parent
@@ -4211,16 +4218,9 @@ def build_repo_map(
             deadline=deadline_monotonic,
         )
         payload = _envelope(root)
-        # #52 fix (loop A): the file WALK itself had no time bound (only max_repo_files COUNT),
-        # so a huge/slow tree could burn the whole --deadline budget before the parse loop below
-        # ever got a chance to run. Share the same absolute deadline + fold the walk's own
-        # early-break signal into the parse loop's `deadline_hit` local just below.
+        # Walking and parsing share the deadline; either phase can make the result partial.
         repo_walk_deadline_hit = _DeadlineBreakFlag()
-        # Task #276 slice 1: the same silent-swallow defect `directory_scanner.py` had for
-        # `tg search --cpu` -- `_iter_repo_files`/`_iter_repo_bucket_files` wrap `os.scandir()`
-        # in a bare `except OSError` -- exists here too, on the SEPARATE walker `tg orient`/
-        # `tg map`/`tg agent`/etc. actually use. Thread the same mutable-out-signal pattern as
-        # `deadline_hit` above to make an unreadable subtree visible instead of invisible.
+        # Unreadable subtrees must remain visible independently of count/time bounds.
         repo_walk_unreadable_hit = _UnreadablePathFlag()
         if _profiling_collector is None:
             all_files = _self._iter_repo_files(
@@ -4229,6 +4229,7 @@ def build_repo_map(
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=repo_walk_deadline_hit,
                 unreadable_hit=repo_walk_unreadable_hit,
+                **walk_options,
             )
         else:
             all_files = _self._iter_repo_files(
@@ -4238,11 +4239,14 @@ def build_repo_map(
                 deadline_hit=repo_walk_deadline_hit,
                 _profiling_collector=_profiling_collector,
                 unreadable_hit=repo_walk_unreadable_hit,
+                **walk_options,
             )
         capped_file_count = len(all_files)
         if extra_files:
             seen_files = {str(_safe_resolve(current)) for current in all_files}
             for extra_file in extra_files:
+                if exclude_files and Path(os.path.abspath(extra_file)) in exclude_files:
+                    continue
                 normalized_extra_file = _safe_resolve(extra_file)
                 if str(normalized_extra_file) not in seen_files:
                     all_files.append(normalized_extra_file)
@@ -4258,15 +4262,7 @@ def build_repo_map(
 
         imports: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
-        # capability P0-6: a supplied ABSOLUTE monotonic deadline stops the CPU-bound per-file parse loop
-        # early and returns partial results (partial:true + deadline_limit) instead of running
-        # unbounded, so a huge repo degrades gracefully instead of the caller's hard timeout
-        # discarding all work. The file LIST above is already walked cheaply; only symbol/import
-        # PARSING is bounded here. Break + keep what we have -- never raise, never zero the results.
-        # #52 fix (loop A): seed from the walk's OWN early-break flag -- a deadline-truncated file
-        # LIST is itself a reason this whole result is partial, even if the parse loop that follows
-        # never gets to run (or completes trivially over a truncated list without tripping its own
-        # check).
+        # Preserve parsed results on timeout; a truncated walk is partial before parsing starts.
         deadline_hit = repo_walk_deadline_hit.hit
         files_scanned = 0
         for current in context_files:
@@ -4318,21 +4314,11 @@ def build_repo_map(
                 # the full picture.
                 "possibly_truncated": _truncated,
                 "truncation_cause": _cause if _capped else None,
-                # Gated on `_capped`, NOT on `_truncated` (#336). `_truncated` is deliberately
-                # narrow -- see the comment above: True only for dropped project files. An
-                # `unreadable-path` cap therefore has `_truncated is False`, and gating there
-                # would withhold the flag in exactly the case a consumer most needs it -- the one
-                # cause no budget can fix, which is the wrong-knob advice #283 exists to prevent.
-                # Keying on `_capped` means the flag appears whenever a cause does, so a COMPLETE
-                # scan emits neither and stays byte-identical.
+                # Use _capped: unreadable-path has no dropped-project flag but still needs a remedy.
                 **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
             }
             payload["scan_remediation"] = _SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None
-        # capability P0-6: signal a deadline-truncated parse as a top-level `partial` flag (the one field
-        # an agent's parser checks) plus a `deadline_limit` sibling. Kept SEPARATE from scan_limit
-        # on purpose: scan_limit means "the FILE LIST was capped by max_repo_files" (remedy: raise
-        # --max-repo-files), a deadline means "PARSING ran out of time" (remedy: raise --deadline /
-        # scope the query) -- conflating the two causes gives wrong-knob advice.
+        # Keep count and deadline limits distinct: their remedies differ.
         if deadline_hit:
             payload["partial"] = True
             payload["deadline_limit"] = {
@@ -4340,13 +4326,7 @@ def build_repo_map(
                 "files_scanned": files_scanned,
                 "files_total": len(context_files),
             }
-        # Task #276 slice 1: purely additive -- a NEW key, never previously present, so this is
-        # a no-op for every existing `build_repo_map` consumer that doesn't look for it (and
-        # OMITTED entirely on a complete scan, matching the omit-when-complete convention the
-        # `tg search --json` envelope already follows for `result_incomplete`). Kept separate
-        # from `scan_limit`/`partial`/`deadline_limit` on purpose (same reasoning as the
-        # deadline-vs-scan_limit split above): "more budget" is the correct remedy for those
-        # two, but NOT for an unreadable path, so conflating them would give wrong-knob advice.
+        # More budget cannot fix unreadable paths; omit this separate field on complete scans.
         if repo_walk_unreadable_hit.hit:
             payload["unreadable_paths"] = {
                 "count": repo_walk_unreadable_hit.count,
