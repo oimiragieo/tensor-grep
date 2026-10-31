@@ -2,8 +2,8 @@
 
 Both output locations remain pinned and exclusively locked until the context exits.
 Callers must check ``unchanged()`` before publication or reporting freshness. An inherited
-fork context is unusable; the child must acquire its own context. Build/check wiring is separate.
-shortcut: index identity can change after a check; pin the publication target before wiring writes.
+fork context is unusable; the child must acquire its own context. Generation holds this context
+through the final stamp; freshness callers must also retain it through verification.
 """
 
 from __future__ import annotations
