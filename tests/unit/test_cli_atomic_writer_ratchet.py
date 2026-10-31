@@ -1687,7 +1687,17 @@ _EXPECTED_HELPER_BACKED = {
     (
         "checkpoint_store.py",
         "undo_checkpoint",
-        "tensor_grep.cli._index_lock.atomic_write_bytes",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
+    ),
+    (
+        "checkpoint_undo_io.py",
+        "rollback_overwrites",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
+    ),
+    (
+        "checkpoint_undo_io.py",
+        "rollback_removes",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
     ),
     (
         "lsp_provider_setup.py",
@@ -1958,18 +1968,19 @@ def test_population_includes_previously_unscanned_checkpoint_store_write_bytes()
     an ImportError/NameError -- a missing-module red proves nothing) and passes once the census
     walks the whole ``_CLI_SRC`` directory.
 
-    H2 (backlog closeout) routed this exact site through ``atomic_write_bytes`` (see
-    ``_EXPECTED_HELPER_BACKED`` above), so the identity this test asserts changed from
-    ``Path.write_bytes`` to the helper-backed operation string -- updated here rather than
-    deleted, since the test's REAL purpose (prove `checkpoint_store.py` is walked by the
-    directory-wide census, not a hardcoded file list) still holds and is still worth guarding."""
+    Checkpoint rollback now uses confined writers in a dedicated module. Assert both that
+    module and the store's no-clobber claim remain visible to the directory-wide census."""
     candidates = _scan_all_scoped_files()
     identities = {(c.module, c.outer_function, c.operation) for c in candidates}
-    assert (
-        "checkpoint_store.py",
-        "undo_checkpoint",
-        "tensor_grep.cli._index_lock.atomic_write_bytes",
-    ) in identities, (
-        f"checkpoint_store.py's undo_checkpoint write_bytes site is missing from the census -- "
+    expected = {
+        (module, function, "tensor_grep.cli._index_lock.atomic_write_bytes_confined")
+        for module, function in (
+            ("checkpoint_store.py", "undo_checkpoint"),
+            ("checkpoint_undo_io.py", "rollback_overwrites"),
+            ("checkpoint_undo_io.py", "rollback_removes"),
+        )
+    }
+    assert expected <= identities, (
+        f"checkpoint publication sites are missing from the census -- "
         f"the population walk is still scoped to a hardcoded file list. identities={identities}"
     )
