@@ -15,7 +15,6 @@ from uuid import uuid4
 
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
-    _is_link_or_junction,
     atomic_write_bytes_confined,
     atomic_write_json,
     dir_identity,
