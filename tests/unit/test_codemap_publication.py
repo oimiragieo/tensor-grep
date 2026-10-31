@@ -76,6 +76,7 @@ def test_build_codemap_preserves_requested_case_and_sibling_bytes(tmp_path: Path
     _require_case_sensitive_directory(tmp_path)
     repo = tmp_path / "repo"
     repo.mkdir()
+    _require_case_sensitive_directory(repo)
     (repo / "alpha.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
     output, sibling = repo / "Output", repo / "output"
     output.mkdir()
