@@ -37,9 +37,17 @@ jobs:
         # RUSTSEC-2026-0176/0177; the gate now runs with no ignores.
         run: cargo audit
 
+      - name: Audit recovery preflight lockfile
+        working-directory: rust_core
+        run: cargo audit --file recovery-preflight/Cargo.lock
+
       - name: Run cargo deny
         working-directory: rust_core
         run: cargo deny check
+
+      - name: Check recovery preflight dependencies
+        working-directory: rust_core
+        run: cargo deny --locked --manifest-path recovery-preflight/Cargo.toml check
 
       - name: Verify Foldhash license exception scope
         run: python3 scripts/verify_foldhash_license_scope.py

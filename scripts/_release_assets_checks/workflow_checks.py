@@ -60,6 +60,7 @@ def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
         ("github-actions", "/"): {"labels": {"github-actions"}},
         ("uv", "/"): {"labels": {"python"}},
         ("cargo", "/rust_core"): {"labels": {"rust"}},
+        ("cargo", "/rust_core/recovery-preflight"): {"labels": {"rust"}},
         ("npm", "/npm"): {"labels": {"npm"}},
     }
 
@@ -427,6 +428,28 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
                 run = step.get("run")
                 if isinstance(run, str):
                     audit_runs_by_name[name] = run
+
+            for name, command in (
+                (
+                    "Audit recovery preflight lockfile",
+                    "cargo audit --file recovery-preflight/Cargo.lock",
+                ),
+                (
+                    "Check recovery preflight dependencies",
+                    "cargo deny --locked --manifest-path recovery-preflight/Cargo.toml check",
+                ),
+            ):
+                step = audit_steps_by_name.get(name)
+                if (
+                    step is None
+                    or step.get("working-directory") != "rust_core"
+                    or step.get("run") != command
+                    or "if" in step
+                    or step.get("continue-on-error", False) is not False
+                ):
+                    errors.append(
+                        f"Audit workflow recovery preflight step `{name}` must run unconditionally against the pinned files"
+                    )
 
             install_uv_step = audit_steps_by_name.get("Install uv")
             if install_uv_step is None:
