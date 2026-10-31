@@ -44,6 +44,7 @@ def _require_case_sensitive_directory(tmp_path: Path) -> None:
     fsutil = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "fsutil.exe"
     result = subprocess.run(
         [str(fsutil), "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         capture_output=True,
         timeout=10,
         check=False,
