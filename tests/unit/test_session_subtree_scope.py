@@ -205,3 +205,43 @@ def test_recorded_file_scope_remains_a_file(tmp_path: Path) -> None:
     refreshed = session_store.get_session(opened.session_id, str(root))
     assert refreshed["repo_map"]["path"] == str(target)
     assert refreshed["repo_map"]["files"] == [str(target)]
+
+
+@pytest.mark.parametrize("resolved_scope", ["root", "narrow", "sibling", "parent", "unchanged"])
+def test_recorded_scope_resolution_must_remain_canonical(
+    tmp_path: Path, monkeypatch, resolved_scope: str
+) -> None:
+    root, scope = _project(tmp_path)
+    selected = scope / "selected"
+    selected.mkdir()
+    destinations = {
+        "root": root,
+        "narrow": selected / "nested",
+        "sibling": root / "other",
+        "parent": scope,
+        "unchanged": selected,
+    }
+    destinations["narrow"].mkdir()
+    payload = {"root": str(root), "repo_map": {"path": str(selected)}}
+    original_resolve = Path.resolve
+
+    def resolve(current, *args, **kwargs):
+        if current == selected:
+            return destinations[resolved_scope]
+        return original_resolve(current, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    if resolved_scope == "unchanged":
+        assert session_store._session_scan_target(payload, root) == selected
+    else:
+        with pytest.raises(ValueError, match="scope"):
+            session_store._session_scan_target(payload, root)
+        monkeypatch.setattr(session_store, "get_session", lambda *args: payload)
+
+        def unexpected(*args, **kwargs):
+            pytest.fail("changed scope resolution reached a scan or build")
+
+        for name in ("_iter_repo_files", "build_repo_map", "build_repo_map_incremental"):
+            monkeypatch.setattr(session_store, name, unexpected)
+        with pytest.raises(ValueError, match="scope"):
+            session_store.refresh_session("controlled-scope", str(root))

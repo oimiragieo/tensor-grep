@@ -186,6 +186,8 @@ def _session_scan_target(payload: dict[str, Any], root: Path) -> Path:
     if not isinstance(recorded, str) or not recorded or not Path(recorded).is_absolute():
         raise ValueError("Session scan scope must be an absolute path")
     target = Path(recorded).resolve()
+    if target != Path(recorded):
+        raise ValueError("Session scan scope no longer resolves to its recorded path")
     if not target.is_relative_to(root):
         raise ValueError("Session scan scope is outside the project root")
     if not target.exists():
