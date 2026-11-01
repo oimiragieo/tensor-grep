@@ -3,9 +3,12 @@ and must not orphan a daemon it could not stop by deleting its daemon.json."""
 
 from __future__ import annotations
 
+import json
 import os
+import queue
 import socket
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -354,8 +357,13 @@ def test_a_signal_delivered_to_a_verified_daemon_that_keeps_serving_is_not_a_sto
 
 
 def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted_one(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path,
+    monkeypatch: Any,
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from tests.unit.test_session_daemon_signed_version import _StopTrace
+
     # council wave-2b r3/r24: the pid used for any fallback is the one in the SIGNED reply.
     root = tmp_path.resolve()
     monkeypatch.setattr(session_daemon, "_DAEMON_START_TIMEOUT_SECONDS", 0.6)
@@ -395,12 +403,155 @@ def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted
         lambda md, **_k: targets.append(md["pid"]) or False,
     )
     planted = os.getpid() + 7
+    trace = _StopTrace(request.node.nodeid)
+    observer_errors: list[BaseException] = []
+    callbacks: queue.Queue[threading.Event] = queue.Queue(maxsize=128)
+    original_add = trace.add
+
+    def observe_safely(action: Any) -> Any:
+        try:
+            return action()
+        except BaseException as error:
+            if len(observer_errors) < 32:
+                observer_errors.append(error)
+            return None
+
+    def record(name: str, **fields: Any) -> None:
+        observe_safely(lambda: original_add(name, **fields))
+
+    def wrap_call(original: Any, label: str) -> Any:
+        def observed(*args: Any, **kwargs: Any) -> Any:
+            done = threading.Event()
+            observe_safely(lambda: callbacks.put_nowait(done))
+            started = observe_safely(time.monotonic)
+            record(f"{label}_begin")
+            try:
+                try:
+                    value = original(*args, **kwargs)
+                except BaseException as error:
+                    fields = observe_safely(lambda: trace._error_fields(error)) or {}
+                    record(f"{label}_error", **fields)
+                    raise
+                elapsed = observe_safely(lambda: time.monotonic() - started)
+                record(f"{label}_end", available=value is not None, elapsed=elapsed)
+                return value
+            finally:
+                observe_safely(done.set)
+
+        return observed
+
     server, real_shutdown = _skewed_serving_daemon(root, monkeypatch, metadata_pid=planted)
+    result: object = None
+    primary: BaseException | None = None
+    primary_tb: Any = None
+    cleanup_errors: list[BaseException] = []
     try:
+        trace.endpoint = (str(server.server_address[0]), int(server.server_address[1]))
+        monkeypatch.setattr(trace, "add", record)
+        trace.install_protocol_spies(monkeypatch)
+        for name in ("_read_user_secret", "_load_or_create_user_secret"):
+            monkeypatch.setattr(trust, name, wrap_call(getattr(trust, name), name))
+        monkeypatch.setattr(
+            session_daemon,
+            "_ping_proof_fields",
+            wrap_call(session_daemon._ping_proof_fields, "fields"),
+        )
         result = session_daemon.stop_session_daemon(str(root))
         diagnostics = {key: result.get(key) for key in ("running", "stopped", "stop_method")}
         assert targets == [os.getpid()], (targets, diagnostics, stages)
         assert planted not in targets
+        if not observer_errors:
+            assert any(event["event"] == "_read_user_secret_end" for event in trace.events)
+            assert not any(event["event"] == "signal_seam_reached" for event in trace.events)
+    except BaseException as error:
+        primary, primary_tb = error, error.__traceback__
     finally:
-        real_shutdown()
-        server.server_close()
+        before = observe_safely(trace.event_snapshot)
+        projection = observe_safely(lambda: trace.serialize_result(result))
+        try:
+            real_shutdown()
+        except BaseException as error:
+            cleanup_errors.append(error)
+        finally:
+            try:
+                server.server_close()
+            except BaseException as error:
+                cleanup_errors.append(error)
+
+        def wait_callbacks() -> bool:
+            # shortcut: entered observation callbacks only; track request threads for lifecycle claims.
+            deadline = time.monotonic() + 5.0
+            complete = True
+            while True:
+                try:
+                    done = callbacks.get_nowait()
+                except queue.Empty:
+                    return complete
+                complete = done.wait(max(0.0, deadline - time.monotonic())) and complete
+
+        callbacks_done = observe_safely(wait_callbacks) is True
+        snapshot = observe_safely(trace.event_snapshot)
+        incomplete = bool(
+            observer_errors
+            or cleanup_errors
+            or not callbacks_done
+            or not snapshot
+            or snapshot["incomplete"]
+            or not projection
+            or projection["result_serialization"] != "ok"
+        )
+        payload = {
+            "node": request.node.nodeid,
+            "trace": snapshot,
+            "before_cleanup": before,
+            "result_before_cleanup": projection,
+            "registered_callbacks_complete": callbacks_done,
+            "callback_wait_scope": "registered wrappers only; request-thread settlement unverified",
+            "diagnostic_incomplete": incomplete,
+            "failure_type": type(primary).__name__ if primary else None,
+            "cleanup_error_types": [type(error).__name__ for error in cleanup_errors],
+            "observer_error_types": [type(error).__name__ for error in observer_errors],
+        }
+
+        def emit() -> None:
+            with capsys.disabled():
+                print(
+                    "DAEMON_ESCALATION_DIAGNOSTIC=" + json.dumps(payload, sort_keys=True),
+                    flush=True,
+                )
+
+        observe_safely(emit)
+    if primary is not None:
+        for error in cleanup_errors + observer_errors:
+            primary.add_note(f"diagnostic secondary error: {type(error).__name__}")
+        raise primary.with_traceback(primary_tb)
+    if cleanup_errors or observer_errors:
+        raise (cleanup_errors + observer_errors)[0]
+    assert not incomplete, "daemon escalation diagnostic is incomplete"
+
+
+@pytest.mark.parametrize("fail_primary", [False, True])
+def test_escalation_diagnostic_preserves_observer_and_primary_failures(
+    tmp_path: Path,
+    monkeypatch: Any,
+    request: pytest.FixtureRequest,
+    capsys: pytest.CaptureFixture[str],
+    fail_primary: bool,
+) -> None:
+    from tests.unit.test_session_daemon_signed_version import _StopTrace
+
+    def fail_recording(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("observer-control")
+
+    monkeypatch.setattr(_StopTrace, "add", fail_recording)
+    if fail_primary:
+        monkeypatch.setattr(session_daemon, "stop_session_daemon", lambda *_a: {"running": True})
+    expected = AssertionError if fail_primary else RuntimeError
+    with pytest.raises(expected) as caught:
+        test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted_one(
+            tmp_path, monkeypatch, request, capsys
+        )
+    if fail_primary:
+        assert any("RuntimeError" in note for note in caught.value.__notes__)
+    else:
+        assert "observer-control" in str(caught.value)
