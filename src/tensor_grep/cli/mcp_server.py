@@ -37,6 +37,7 @@ from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli import mcp_search_scope as _search_scope
 from tensor_grep.cli import mcp_serial_execution as _serial_execution
 from tensor_grep.cli import mcp_tool_contract as _tool_contract
+from tensor_grep.cli.checkpoint_store import CheckpointNotFoundError
 from tensor_grep.cli.citations import (
     mcp_agent_capsule_call,
     mcp_context_render_call,
@@ -812,17 +813,13 @@ _TRUSTED_EXCEPTION_CLASSES: dict[type, str] = {
     subprocess.TimeoutExpired: "TimeoutExpired",
     # Framework exceptions
     BackendExecutionError: "BackendExecutionError",
+    CheckpointNotFoundError: "FileNotFoundError",
     ConfigurationError: "ConfigurationError",
 }
 
 
 def _safe_exception_class_name(exc: BaseException) -> str:
-    """Strictly non-throwing classification of exception type for MCP wire transmission.
-
-    Never invokes user-controlled properties or `__class__` accessors; uses `type(exc)`
-    and validates strictly by exact type-object identity against `_TRUSTED_EXCEPTION_CLASSES`.
-    Any synthesized, spoofed, dynamic, or untrusted class identity degrades safely to 'InternalError'.
-    """
+    """Classify by exact trusted type identity, without invoking custom accessors."""
     try:
         raw_type = type(exc)
         # Verify raw_type is a standard class, not an object with a spoofed metaclass

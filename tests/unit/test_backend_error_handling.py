@@ -74,3 +74,86 @@ def test_cli_cpu_fallback_returns_real_matches(tmp_path: Path) -> None:
     )
     assert result.total_matches >= 1
     assert any("ERROR" in m.text for m in result.matches)
+    assert result.fallback_reason and "retried on the CPU" in result.fallback_reason
+
+
+def test_streamed_failure_refuses_cpu_retry(tmp_path, monkeypatch, capsys):
+    from tensor_grep.backends.base import PassthroughExecutionError
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.cli.backend_fallback import search_with_cpu_fallback
+
+    monkeypatch.setattr(CPUBackend, "search", lambda *a, **k: pytest.fail("CPU retry"))
+    error = PassthroughExecutionError("exit status 2")
+    with pytest.raises(PassthroughExecutionError) as caught:
+        search_with_cpu_fallback(_make_file(tmp_path), "ERROR", SearchConfig(), error)
+    assert caught.value is error
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_cli_streamed_failure_is_an_error(tmp_path, monkeypatch, json_mode):
+    import json
+
+    from typer.testing import CliRunner
+
+    from tensor_grep.backends.base import PassthroughExecutionError
+    from tensor_grep.cli.main import app
+
+    calls = []
+
+    class FailedBackend:
+        def search(self, *args, **kwargs):
+            calls.append(True)
+            raise PassthroughExecutionError("native ripgrep exit status 2")
+
+    class Pipeline:
+        selected_backend_name = "RustCoreBackend"
+        selected_backend_reason = "test_route"
+        selected_gpu_device_ids = ()
+
+        def __init__(self, **kwargs):
+            pass
+
+        def get_backend(self):
+            return FailedBackend()
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", Pipeline)
+    # The native resolver may already be cached by an earlier test in the full suite.
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    args = ["search", "ERROR", _make_file(tmp_path)] + (["--json"] if json_mode else ["--stats"])
+    result = CliRunner().invoke(app, args)
+    assert calls == [True], (result.exit_code, result.output, result.exception)
+    assert result.exit_code == 2
+    assert "retried on the CPU" not in result.output
+    if json_mode:
+        payload = json.loads(result.stdout)
+        assert payload["error"] == "backend_error"
+        assert "exit status 2" in payload["detail"]
+        assert "total_matches" not in payload
+    else:
+        assert "exit status 2" in result.output
+
+
+@pytest.mark.parametrize("structured", [False, True])
+def test_mcp_streamed_failure_is_not_a_no_match(tmp_path, monkeypatch, structured):
+    from unittest.mock import MagicMock
+
+    from tensor_grep.backends.base import PassthroughExecutionError
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.cli import mcp_server
+
+    source = _make_file(tmp_path)
+    pipeline = MagicMock()
+    pipeline.selected_backend_name = "RustCoreBackend"
+    pipeline.selected_backend_reason = "test_route"
+    pipeline.selected_gpu_device_ids = []
+    pipeline.selected_gpu_chunk_plan_mb = []
+    pipeline.get_backend.return_value.search.side_effect = PassthroughExecutionError("private path")
+    monkeypatch.setattr(mcp_server, "Pipeline", lambda **kwargs: pipeline)
+    monkeypatch.setattr(CPUBackend, "search", lambda *a, **k: pytest.fail("CPU retry"))
+    monkeypatch.chdir(tmp_path)
+    output = mcp_server.tg_search("ERROR", source, structured_json=structured)
+    pipeline.get_backend.return_value.search.assert_called_once()
+    assert output.startswith("tg_search failed: internal error (")
+    assert "private path" not in output
+    assert "total_matches" not in output and "No matches" not in output

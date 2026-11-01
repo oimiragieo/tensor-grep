@@ -15,8 +15,9 @@ from uuid import uuid4
 
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
-    atomic_write_bytes,
+    atomic_write_bytes_confined,
     atomic_write_json,
+    dir_identity,
     index_lock,
 )
 
@@ -37,6 +38,12 @@ from tensor_grep.cli.checkpoint_scope import (
     resolved_rel_within,
     scope_violation,
     undo_prune_candidates,
+)
+from tensor_grep.cli.checkpoint_undo_io import (
+    check_restore_target,
+    read_for_rollback,
+    rollback_overwrites,
+    rollback_removes,
 )
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
@@ -84,6 +91,10 @@ _NON_GIT_IGNORED_DIRS = {
     "target",
 }
 _DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
+
+
+class CheckpointNotFoundError(FileNotFoundError):
+    """Raised only when checkpoint record resolution establishes absence."""
 
 
 class CheckpointCorruptError(RuntimeError):
@@ -745,6 +756,15 @@ def _metadata_path(root: Path, checkpoint_id: str) -> Path:
     return _checkpoint_dir(root, checkpoint_id) / _METADATA_FILE
 
 
+def _existing_metadata_path(root: Path, checkpoint_id: str) -> Path:
+    metadata_path = _metadata_path(root, checkpoint_id)
+    try:
+        metadata_path.lstat()
+    except FileNotFoundError as exc:
+        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}") from exc
+    return metadata_path
+
+
 def _write_checkpoint_metadata(
     root: Path,
     result: CheckpointCreateResult,
@@ -1178,7 +1198,7 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
         deduped.append(child_scope)
     discovered = deduped
     if not discovered:
-        raise FileNotFoundError(f"No checkpoints found under {resolved}.")
+        raise CheckpointNotFoundError(f"No checkpoints found under {resolved}.")
     if len(discovered) > 1:
         roots = ", ".join(scope.root for scope in discovered[:5])
         suffix = "" if len(discovered) <= 5 else f", ... ({len(discovered)} total)"
@@ -1199,9 +1219,7 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
 
 def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, Any]:
     root, _mode = _detect_checkpoint_root(Path(path))
-    metadata_path = _metadata_path(root, checkpoint_id)
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+    metadata_path = _existing_metadata_path(root, checkpoint_id)
 
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1255,9 +1273,7 @@ def _paths_modified_since_checkpoint(
 
 def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult:
     root, mode = _detect_checkpoint_root(Path(path))
-    metadata_path = _metadata_path(root, checkpoint_id)
-    if not metadata_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+    metadata_path = _existing_metadata_path(root, checkpoint_id)
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     entries: dict[str, bool] = metadata["entries"]
@@ -1328,9 +1344,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
     # --- STAGING PHASE (copy into temp dir, no working-tree mutations yet) ---
     #
-    # Build a staging area inside the system temp dir.  All copies happen here first;
-    # only after every copy succeeds do we swap files into the working tree.  This
-    # ensures that a crash or error mid-copy cannot leave a partially-restored tree.
+    # Stage every snapshot before attempting working-tree mutations; commit rollback is best effort.
 
     scope_kind = str(metadata.get("scope", "tree"))
     if scope_kind == "file":
@@ -1385,8 +1399,8 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # round-7 rank-6: store (path, prior_bytes) -- NOT just the path -- so a commit-phase
         # failure can recreate a file it already unlinked. Previously the revert had only the path
         # and permanently lost the content.
-        committed_removes: list[tuple[Path, bytes]] = []
-        committed_overwrites: list[tuple[Path, bytes]] = []
+        committed_removes: list[tuple[Path, bytes, tuple[int, int]]] = []
+        committed_overwrites: list[tuple[Path, bytes | None, tuple[int, int], tuple[int, int]]] = []
 
         try:
             # Remove files that exist in the current tree but not in the snapshot.
@@ -1399,9 +1413,11 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     # exact permanent loss the round-7 rank-6 note above says was fixed. Aborting
                     # here is strictly better: the `except Exception` handler rolls back every
                     # mutation already applied and re-raises, so the tree stays consistent.
-                    removed_bytes = _bytes_or_abort_undo(current_path, checkpoint_id)
+                    removed_bytes, removed_parent, _ = read_for_rollback(
+                        root, current_path, checkpoint_id, _bytes_or_abort_undo
+                    )
                     current_path.unlink()
-                    committed_removes.append((current_path, removed_bytes))
+                    committed_removes.append((current_path, removed_bytes, removed_parent))
                     removed_paths += 1
 
             # Remove files that the snapshot records as deleted.
@@ -1410,59 +1426,44 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     target = resolved_targets[rel_path]
                     if target.exists():
                         # Task #297, same reasoning as the branch above.
-                        removed_bytes = _bytes_or_abort_undo(target, checkpoint_id)
+                        removed_bytes, removed_parent, _ = read_for_rollback(
+                            root, target, checkpoint_id, _bytes_or_abort_undo
+                        )
                         target.unlink()
-                        committed_removes.append((target, removed_bytes))
+                        committed_removes.append((target, removed_bytes, removed_parent))
                         removed_paths += 1
 
             # Swap staged copies into the working tree.
             for staged, target in staging_pairs:
                 # Record pre-existing content for revert.
+                target.parent.mkdir(parents=True, exist_ok=True)
+                parent_identity = dir_identity(target.parent)
                 prior_bytes: bytes | None = None
                 if target.exists():
                     # Task #297: an unreadable target used to be OVERWRITTEN with
                     # `prior_bytes = None`, so its original content never reached
                     # `committed_overwrites` and the revert left it clobbered for good.
-                    prior_bytes = _bytes_or_abort_undo(target, checkpoint_id)
-
-                target.parent.mkdir(parents=True, exist_ok=True)
+                    prior_bytes, parent_identity, leaf_identity = read_for_rollback(
+                        root, target, checkpoint_id, _bytes_or_abort_undo
+                    )
+                else:
+                    # Claim the absent leaf without clobbering a concurrent arrival.
+                    leaf_identity = atomic_write_bytes_confined(root, target, b"", replace=False)
+                # Journal before copy2: content or metadata copying can fail after mutation.
+                committed_overwrites.append((target, prior_bytes, parent_identity, leaf_identity))
+                check_restore_target(root, target, parent_identity, leaf_identity)
                 shutil.copy2(staged, target, follow_symlinks=False)
-                if prior_bytes is not None:
-                    committed_overwrites.append((target, prior_bytes))
 
         except Exception:
-            # Best-effort revert: undo any working-tree mutations already committed.
-            #
-            # H2 (#859 class ratchet): both restores below used to call `Path.write_bytes`
-            # directly, which ALWAYS follows a destination symlink (unlike the `shutil.copy2(...,
-            # follow_symlinks=False)` used for the forward copies above, or `os.replace`'s
-            # non-dereferencing rename). `target`/`removed_path` were containment-checked against
-            # `root` during pre-flight, but that check is not re-proven at revert time, so a
-            # symlink planted at either path between pre-flight and this best-effort revert would
-            # have been written through. `atomic_write_bytes` refuses a symlinked destination and
-            # publishes via a same-directory O_EXCL temp + `os.replace`; any refusal is caught by
-            # the existing `except OSError: pass` below, preserving the prior best-effort
-            # semantics (a failed restore was already silently swallowed).
-            for path_to_restore, prior_bytes in reversed(committed_overwrites):
-                try:
-                    atomic_write_bytes(path_to_restore, prior_bytes)
-                except OSError:
-                    pass
-            for removed_path, removed_bytes in reversed(committed_removes):
-                # round-7 rank-6: recreate files unlinked earlier in THIS commit phase from the
-                # bytes snapshotted before their unlink, so a partial commit does not lose data.
-                try:
-                    removed_path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_bytes(removed_path, removed_bytes)
-                except OSError:
-                    pass
+            rollback_overwrites(root, committed_overwrites)
+            rollback_removes(root, committed_removes)
             raise
 
     finally:
         staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
-        for directory in undo_prune_candidates(root, [p for p, _ in committed_removes]):
+        for directory in undo_prune_candidates(root, [p for p, _, _ in committed_removes]):
             # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
             # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
             # directory symlink (or, on some platforms, act through it) -- the symlink-follow

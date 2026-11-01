@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import _index_lock as locks
+from tensor_grep.cli import codemap
 from tensor_grep.cli.codemap_pinned import PinnedDirectory
 from tensor_grep.cli.codemap_publication import LOCK_NAME, publication_lock
 
@@ -37,6 +38,76 @@ def test_persistent_locks_and_read_only_pins(tmp_path: Path) -> None:
             assert state.index_parent.read(index.name, 5) == b"index"
     assert _snapshot(tmp_path) == before
     assert (output / LOCK_NAME).read_bytes() == (index.parent / LOCK_NAME).read_bytes() == b""
+
+
+def _require_case_sensitive_directory(tmp_path: Path) -> None:
+    fsutil = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "fsutil.exe"
+    result = subprocess.run(
+        [str(fsutil), "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode:
+        pytest.skip("case-sensitive NTFS directory unavailable")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-sensitive directories")
+def test_distinct_case_sensitive_directories_are_locked_separately(tmp_path: Path) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    output = tmp_path / "Output"
+    index_parent = tmp_path / "output"
+    output.mkdir()
+    index_parent.mkdir()
+    (output / "marker").write_bytes(b"upper")
+    (index_parent / "marker").write_bytes(b"lower")
+    assert not os.path.samefile(output, index_parent)
+    with publication_lock(output, index_parent / "index.md", create=True) as state:
+        assert state.output.read("marker", 5) == b"upper"
+        assert state.index_parent.read("marker", 5) == b"lower"
+        assert state.output is not state.index_parent
+        assert state.unchanged()
+    assert (output / LOCK_NAME).is_file()
+    assert (index_parent / LOCK_NAME).is_file()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-sensitive directories")
+def test_build_codemap_preserves_requested_case_and_sibling_bytes(tmp_path: Path) -> None:
+    _require_case_sensitive_directory(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _require_case_sensitive_directory(repo)
+    (repo / "alpha.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
+    output, sibling = repo / "Output", repo / "output"
+    output.mkdir()
+    sibling.mkdir()
+    assert not output.samefile(sibling)
+    for name in ("_root.md", "_coverage.json", "index.md"):
+        (sibling / name).write_bytes(b"preserve lower sibling")
+    before = {path.name: path.read_bytes() for path in sibling.iterdir()}
+    codemap.build_codemap(
+        repo,
+        out=output,
+        index=output / "index.md",
+        _revision_identity=lambda _: {"status": "unavailable"},
+    )
+    assert (output / "_root.md").is_file()
+    assert (output / "_coverage.json").is_file()
+    assert (output / "index.md").is_file()
+    assert {path.name: path.read_bytes() for path in sibling.iterdir()} == before
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows case-insensitive directory aliases")
+def test_case_aliases_of_one_directory_share_a_lock(tmp_path: Path) -> None:
+    output = tmp_path / "Output"
+    output.mkdir()
+    alias = tmp_path / "output"
+    if not alias.exists() or not os.path.samefile(output, alias):
+        pytest.skip("case-insensitive directory unavailable")
+    with publication_lock(output, alias / "index.md", create=True) as state:
+        assert state.output is state.index_parent
+        assert state.unchanged()
 
 
 @pytest.mark.parametrize("create", [False, True])
