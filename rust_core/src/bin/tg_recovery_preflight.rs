@@ -7,6 +7,11 @@ mod windows_file;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[allow(dead_code)]
+#[path = "../managed_runtime_acl_policy.rs"]
+mod managed_runtime_acl_policy;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
 #[path = "../managed_runtime_acl_reader.rs"]
 mod managed_runtime_acl_reader;
 #[cfg(all(windows, target_arch = "x86_64"))]
@@ -21,6 +26,11 @@ mod managed_runtime_windows_token;
 #[allow(dead_code)]
 #[path = "../recovery_directory_create.rs"]
 mod recovery_directory_create;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../recovery_trusted_parent.rs"]
+mod recovery_trusted_parent;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[path = "../recovery_python_tree.rs"]

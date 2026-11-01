@@ -51,6 +51,11 @@ pub fn parent_is_trusted(
     managed_grants_are_safe(grants, user_sid)
 }
 
+/// Trust grants on a legacy parent without checking its owner.
+pub fn parent_grants_are_trusted(grants: Option<&[(String, u32)]>, user_sid: &str) -> bool {
+    !user_sid.is_empty() && grants.is_some_and(|grants| managed_grants_are_safe(grants, user_sid))
+}
+
 /// Trust a non-secret executable, allowing foreign read-only grants.
 /// A NULL, unavailable, or unparsed DACL must be passed as `None` and is rejected.
 pub fn integrity_file_is_trusted(
@@ -122,7 +127,8 @@ fn is_broad_sid(sid: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ancestor_is_trusted, integrity_file_is_trusted, parent_is_trusted, selector_is_trusted,
+        ancestor_is_trusted, integrity_file_is_trusted, parent_grants_are_trusted,
+        parent_is_trusted, selector_is_trusted,
     };
 
     const USER: &str = "S-1-5-21-111-222-333-1001";
@@ -291,6 +297,7 @@ mod tests {
         assert!(!ancestor);
         assert!(!parent);
         assert!(!selector);
+        assert!(!parent_grants_are_trusted(Some(&[]), ""));
     }
     #[test]
     fn ancestor_foreign_owner_is_refused() {

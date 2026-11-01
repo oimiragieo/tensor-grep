@@ -108,7 +108,7 @@ fn check_anchor(stage: &AnchoredDirectory, root: &Path, root_final: &Path) -> io
     Ok(())
 }
 
-fn pin_root(path: &Path) -> io::Result<Vec<File>> {
+pub(super) fn pin_root(path: &Path) -> io::Result<Vec<File>> {
     let (mut current, parts) = windows::local_parts(path)?;
     let mut pins = vec![windows_file::open_directory(&current)?];
     let root_final = windows_file::final_path_for_handle(pins[0].as_handle())?;
