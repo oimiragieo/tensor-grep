@@ -177,6 +177,22 @@ def require_existing_path(path: str | Path) -> Path:
     return resolved
 
 
+def _session_scan_target(payload: dict[str, Any], root: Path) -> Path:
+    """Use the authenticated map's literal scope, without widening a missing subtree."""
+    repo_map = payload.get("repo_map")
+    if not isinstance(repo_map, dict) or "path" not in repo_map:
+        return root
+    recorded = repo_map["path"]
+    if not isinstance(recorded, str) or not recorded or not Path(recorded).is_absolute():
+        raise ValueError("Session scan scope must be an absolute path")
+    target = Path(recorded).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError("Session scan scope is outside the project root")
+    if not target.exists():
+        raise FileNotFoundError(f"Session scan scope not found: {target}")
+    return target
+
+
 def _sessions_dir(root: Path) -> Path:
     return root / _TG_DIRNAME / _SESSIONS_SUBDIR
 
