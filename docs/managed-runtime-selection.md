@@ -72,3 +72,5 @@ For a fresh generation, the native executable is published through its verified 
 The synchronous staging and deferred activation paths share this ordering. Staging raises on dispatcher repair failure; deferred activation returns failure and records the exception type in its activation log. See `test_ManagedStage_WhenStableDispatcherRepairFails_PreservesPreviousSelector` and `test_ActivationWorker_WhenStableDispatcherRepairFails_PreservesPreviousSelector`.
 
 Verify with `uv run --no-sync python -m pytest tests/unit/test_managed_runtime_selection.py tests/unit/test_session_daemon_winsec_read.py tests/unit/test_managed_runtime_reader.py -q`.
+
+The source-build recovery preflight also compiles an internal directory-creation primitive; no CLI mode calls it yet. Callers must independently trust and pin the parent ancestry. It requires `CreateDirectory2W` (no pathname fallback), creates a new current-user-owned directory with a protected user-only DACL, and retains its handle. Existing paths are refused; validation failure may leave a new directory. This primitive does not authorize execution, activate a runtime, or complete recovery.

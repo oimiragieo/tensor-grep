@@ -38,6 +38,10 @@ def test_standalone_preflight_uses_shared_source_and_pinned_dependencies() -> No
             "Win32_Foundation",
             "Win32_Storage_FileSystem",
             "Win32_System_SystemInformation",
+            "Win32_Security_Authorization",
+            "Win32_System_LibraryLoader",
+            "Win32_System_Threading",
+            "Win32_UI_Shell",
         ],
     }
     binary = next(item for item in manifest["bin"] if item["name"] == "tg-recovery-preflight")
