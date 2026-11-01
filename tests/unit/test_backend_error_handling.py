@@ -118,10 +118,11 @@ def test_cli_streamed_failure_is_an_error(tmp_path, monkeypatch, json_mode):
             return FailedBackend()
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", Pipeline)
-    monkeypatch.setenv("TG_DISABLE_NATIVE_TG", "1")
+    # The native resolver may already be cached by an earlier test in the full suite.
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
     args = ["search", "ERROR", _make_file(tmp_path)] + (["--json"] if json_mode else ["--stats"])
     result = CliRunner().invoke(app, args)
-    assert calls == [True]
+    assert calls == [True], (result.exit_code, result.output, result.exception)
     assert result.exit_code == 2
     assert "retried on the CPU" not in result.output
     if json_mode:
