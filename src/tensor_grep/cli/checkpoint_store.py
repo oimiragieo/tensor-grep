@@ -756,6 +756,15 @@ def _metadata_path(root: Path, checkpoint_id: str) -> Path:
     return _checkpoint_dir(root, checkpoint_id) / _METADATA_FILE
 
 
+def _existing_metadata_path(root: Path, checkpoint_id: str) -> Path:
+    metadata_path = _metadata_path(root, checkpoint_id)
+    try:
+        metadata_path.lstat()
+    except FileNotFoundError as exc:
+        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}") from exc
+    return metadata_path
+
+
 def _write_checkpoint_metadata(
     root: Path,
     result: CheckpointCreateResult,
@@ -1210,9 +1219,7 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
 
 def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, Any]:
     root, _mode = _detect_checkpoint_root(Path(path))
-    metadata_path = _metadata_path(root, checkpoint_id)
-    if not metadata_path.exists():
-        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+    metadata_path = _existing_metadata_path(root, checkpoint_id)
 
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1266,9 +1273,7 @@ def _paths_modified_since_checkpoint(
 
 def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult:
     root, mode = _detect_checkpoint_root(Path(path))
-    metadata_path = _metadata_path(root, checkpoint_id)
-    if not metadata_path.exists():
-        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+    metadata_path = _existing_metadata_path(root, checkpoint_id)
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     entries: dict[str, bool] = metadata["entries"]

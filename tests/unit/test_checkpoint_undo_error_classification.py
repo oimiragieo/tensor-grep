@@ -73,6 +73,49 @@ def test_existing_checkpoint_io_failure_is_undo_failed(project, monkeypatch, fai
     assert target.read_text(encoding="utf-8") == "after"
 
 
+@pytest.mark.parametrize("failure_type", [OSError, FileNotFoundError])
+@pytest.mark.parametrize("entrypoint", ["undo", "load", "cli"])
+def test_metadata_entry_inspection_preserves_failure_origin(
+    project, monkeypatch, failure_type, entrypoint
+):
+    created = checkpoint_store.create_checkpoint(str(project))
+    metadata = checkpoint_store._metadata_path(project, created.checkpoint_id)
+    lstat = Path.lstat
+    calls = []
+    failure = failure_type("owned metadata inspection failure")
+
+    def fail_inspection(path):
+        if path == metadata:
+            calls.append(path)
+            raise failure
+        return lstat(path)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(Path, "lstat", fail_inspection)
+        if entrypoint == "cli":
+            result, payload = _undo(project, created.checkpoint_id)
+            assert result.exit_code == 1
+            assert payload["error"] == (
+                "checkpoint_not_found" if failure_type is FileNotFoundError else "undo_failed"
+            )
+        else:
+            operation = (
+                checkpoint_store.undo_checkpoint
+                if entrypoint == "undo"
+                else checkpoint_store.load_checkpoint_metadata
+            )
+            with pytest.raises(OSError) as caught:
+                operation(created.checkpoint_id, str(project))
+            if failure_type is FileNotFoundError:
+                assert isinstance(caught.value, checkpoint_store.CheckpointNotFoundError)
+                assert caught.value.__cause__ is failure
+            else:
+                assert caught.value is failure
+    assert calls == [metadata]
+    assert metadata.exists()
+    assert (project / "sample.txt").read_text(encoding="utf-8") == "before"
+
+
 def test_missing_record_retains_not_found_and_library_compatibility(project):
     for operation in (checkpoint_store.undo_checkpoint, checkpoint_store.load_checkpoint_metadata):
         with pytest.raises(FileNotFoundError) as caught:
