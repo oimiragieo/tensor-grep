@@ -489,18 +489,19 @@ mod tests {
     #[test]
     fn anchored_tree_refuses_foreign_anchor_grants() {
         use super::super::{
-            managed_runtime_windows_sid::LocalAllocation, managed_runtime_windows_token,
+            managed_runtime_acl_reader, managed_runtime_windows_sid::LocalAllocation,
+            managed_runtime_windows_token,
         };
+        use std::os::windows::io::AsHandle;
         use std::ptr::null_mut;
         use windows_sys::Win32::Security::Authorization::{
-            ConvertSecurityDescriptorToStringSecurityDescriptorW,
-            ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SetSecurityInfo,
-            SE_FILE_OBJECT,
+            ConvertStringSecurityDescriptorToSecurityDescriptorW, SetSecurityInfo, SE_FILE_OBJECT,
         };
         use windows_sys::Win32::Security::{
-            GetSecurityDescriptorControl, GetSecurityDescriptorDacl, DACL_SECURITY_INFORMATION,
+            GetSecurityDescriptorDacl, DACL_SECURITY_INFORMATION,
             PROTECTED_DACL_SECURITY_INFORMATION,
         };
+        use windows_sys::Win32::Storage::FileSystem::FILE_READ_DATA;
         let (_fixture, stage, path) = anchored_fixture();
         drop(verify_anchored_expected(&path, &stage, &FIXTURE).unwrap());
         let writer = OpenOptions::new()
@@ -509,55 +510,6 @@ mod tests {
             .open(path.join(super::ANCHOR))
             .unwrap();
         let user = managed_runtime_windows_token::current_token_sids().unwrap();
-        let inspect = |label: &str| {
-            let mut descriptor = null_mut();
-            assert_eq!(
-                unsafe {
-                    GetSecurityInfo(
-                        writer.as_raw_handle(),
-                        SE_FILE_OBJECT,
-                        DACL_SECURITY_INFORMATION,
-                        null_mut(),
-                        null_mut(),
-                        null_mut(),
-                        null_mut(),
-                        &mut descriptor,
-                    )
-                },
-                0
-            );
-            let _descriptor = unsafe { LocalAllocation::from_raw(descriptor.cast()) }.unwrap();
-            let (mut control, mut revision) = (0u16, 0u32);
-            assert_ne!(
-                unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) },
-                0
-            );
-            let (mut text, mut length) = (null_mut(), 0u32);
-            assert_ne!(
-                unsafe {
-                    ConvertSecurityDescriptorToStringSecurityDescriptorW(
-                        descriptor,
-                        1,
-                        DACL_SECURITY_INFORMATION,
-                        &mut text,
-                        &mut length,
-                    )
-                },
-                0
-            );
-            let _text = unsafe { LocalAllocation::from_raw(text.cast()) }.unwrap();
-            assert!((1..=4096).contains(&length));
-            let value =
-                String::from_utf16(unsafe { std::slice::from_raw_parts(text, length as usize) })
-                    .unwrap();
-            eprintln!(
-                "owned-anchor ACL {label}: control={control:#x} {}",
-                value
-                    .trim_end_matches('\0')
-                    .replace(user.user_sid(), "<USER>")
-            );
-        };
-        inspect("before");
         let apply = |text: &str| {
             let sddl: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
             let mut descriptor = null_mut();
@@ -598,9 +550,13 @@ mod tests {
             );
         };
         let good = format!("D:P(A;OICI;FA;;;{})", user.user_sid());
-        let bad = format!("{good}(A;OICIIO;FA;;;WD)");
+        let bad = format!("{good}(A;;FR;;;WD)");
         apply(&bad);
-        inspect("foreign");
+        let foreign = managed_runtime_acl_reader::read_handle_acl(writer.as_handle()).unwrap();
+        assert!(foreign
+            .allow_grants
+            .iter()
+            .any(|(sid, mask)| sid == "S-1-1-0" && *mask & FILE_READ_DATA != 0));
         assert_eq!(
             verify_anchored_expected(&path, &stage, &FIXTURE)
                 .err()
@@ -609,8 +565,24 @@ mod tests {
             "DACL differs from the protected user-only descriptor"
         );
         apply(&good);
-        inspect("restored");
+        let restored = managed_runtime_acl_reader::read_handle_acl(writer.as_handle()).unwrap();
+        assert_eq!(restored.owner, user.user_sid());
+        assert!(!restored.allow_grants.is_empty());
+        assert!(restored
+            .allow_grants
+            .iter()
+            .all(|(sid, _)| sid == user.user_sid()));
+        // Windows normalized the descriptor: removing the grant is not exact descriptor repair.
+        assert_eq!(
+            verify_anchored_expected(&path, &stage, &FIXTURE)
+                .err()
+                .unwrap()
+                .to_string(),
+            "DACL differs from the protected user-only descriptor"
+        );
         drop(writer);
+        drop(stage);
+        let (_fresh, stage, path) = anchored_fixture();
         drop(verify_anchored_expected(&path, &stage, &FIXTURE).unwrap());
     }
 
