@@ -2006,8 +2006,6 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
 
 def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles resolver failure without leaking poison."""
-    import asyncio
-
     from tensor_grep.cli import mcp_server
 
     poison = r"SEC007_RESOLVER_SECRET at C:\private\tg.exe"
@@ -2017,8 +2015,9 @@ def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monke
         raise OSError(poison)
 
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", _raise_resolver_poison)
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: False)
 
-    content, data = asyncio.run(
+    content, data = call_mcp_tool_parts(
         mcp_server.mcp.call_tool(
             "tg_rewrite_plan",
             {
@@ -2029,6 +2028,7 @@ def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monke
             },
         )
     )
+    assert json.loads(content[0].text)["error"]["code"] == "unavailable"
     wire = content[0].text + "\n" + json.dumps(data, default=str)
     assert poison not in wire, f"Resolver poison leaked to wire: {wire}"
     captured = capsys.readouterr()
