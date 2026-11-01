@@ -246,6 +246,46 @@ def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -
     return server, real_shutdown
 
 
+def test_skew_fixture_prepares_signing_key_before_listening_without_worker_reload(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path.resolve()
+    main_thread = threading.get_ident()
+    loads: list[int] = []
+    original_load = trust._load_or_create_user_secret
+    original_server = session_daemon._ThreadedSessionDaemon
+
+    def load() -> bytes | None:
+        loads.append(threading.get_ident())
+        return original_load()
+
+    def construct(*args: Any, **kwargs: Any) -> Any:
+        assert loads == [main_thread], "skew fixture listened before preparing its signing key"
+        return original_server(*args, **kwargs)
+
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", load)
+    monkeypatch.setattr(session_daemon, "_ThreadedSessionDaemon", construct)
+    planted = os.getpid() + 7
+    server, real_shutdown = _skewed_serving_daemon(root, monkeypatch, metadata_pid=planted)
+    try:
+        host, port = server.server_address
+        nonce = "c" * 32
+        reply = session_daemon._daemon_request(
+            str(host), int(port), {"command": "ping", "nonce": nonce}, token="test-token"
+        )
+        assert reply["ok"] is True
+        assert reply["pid"] == os.getpid() and reply["pid"] != planted
+        assert trust._verify_ping_reply(reply, nonce, root, int(port))
+        assert trust._signed_ping_version(reply, nonce, root, int(port)) == (
+            True,
+            "0.0.0-stale-fixture",
+        )
+        assert loads == [main_thread], "skew fixture reloaded its signing key on a request worker"
+    finally:
+        real_shutdown()
+        server.server_close()
+
+
 def test_listener_readiness_timeout_requests_bounded_cleanup(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
