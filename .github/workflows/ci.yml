@@ -60,6 +60,7 @@ jobs:
           fetch-depth: 0
       - id: code
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # `scripts` and `benchmarks` added 2026-08-19. Their omission was a hole,
             # not a saving: scripts/ holds validate_release_assets.py (gates the
@@ -80,7 +81,7 @@ jobs:
             # TEST changed but not when its FIXTURE did, so a PR editing only the ledger
             # reported green having never run the test that consumes it. Measured on PR #1089,
             # whose whole purpose was to fix that test: every test-python lane SKIPPED.
-            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows docs/audits pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)
+            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows docs/audits pyproject.toml Cargo.toml Cargo.lock uv.lock)
           else
             CODE_FILES="main-push"
           fi
@@ -97,8 +98,9 @@ jobs:
       # including ignored files that someone explicitly force-added.
       - id: docs
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DOC_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- docs .claude .gitignore mkdocs.yml README.md AGENTS.md CLAUDE.md CONTRIBUTING.md 2>/dev/null || true)
+            DOC_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- docs .claude .gitignore mkdocs.yml README.md AGENTS.md CLAUDE.md CONTRIBUTING.md)
           else
             DOC_FILES="main-push"
           fi
