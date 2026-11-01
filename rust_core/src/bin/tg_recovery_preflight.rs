@@ -6,6 +6,10 @@
 mod windows_file;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
+#[path = "../recovery_python_tree.rs"]
+mod recovery_python_tree;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
 mod windows {
     use super::windows_file;
     use sha2::{Digest, Sha256};
@@ -32,7 +36,7 @@ mod windows {
         io::Error::new(io::ErrorKind::InvalidData, message)
     }
 
-    fn path_key(path: &Path) -> io::Result<String> {
+    pub(super) fn path_key(path: &Path) -> io::Result<String> {
         let value = path
             .to_str()
             .ok_or_else(|| refusal("path is not Unicode"))?
@@ -44,7 +48,7 @@ mod windows {
             .to_ascii_lowercase())
     }
 
-    fn safe_component(name: &OsStr) -> bool {
+    pub(super) fn safe_component(name: &OsStr) -> bool {
         let Some(name) = name.to_str() else {
             return false;
         };
@@ -80,7 +84,7 @@ mod windows {
         true
     }
 
-    fn local_parts(path: &Path) -> io::Result<(PathBuf, Vec<std::ffi::OsString>)> {
+    pub(super) fn local_parts(path: &Path) -> io::Result<(PathBuf, Vec<std::ffi::OsString>)> {
         let text = path
             .to_str()
             .ok_or_else(|| refusal("path is not Unicode"))?;
@@ -182,6 +186,12 @@ mod windows {
     }
 
     pub fn run(args: Vec<std::ffi::OsString>) -> Result<(), &'static str> {
+        if args.len() == 2 && args[0] == "--verify-python-tree" {
+            super::recovery_python_tree::verify(&PathBuf::from(&args[1]))
+                .map_err(|_| "Python tree verification failed")?;
+            println!("Enumerated Python file bytes match the pinned manifest. Concurrent changes may be missed; this does not authorize later execution.");
+            return Ok(());
+        }
         let mut archive = None;
         let mut wheel = None;
         let mut args = args.into_iter();
@@ -218,6 +228,15 @@ mod windows {
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::process::CommandExt;
         use std::path::Path;
+
+        #[test]
+        fn tree_verification_rejects_missing_directory() {
+            let args = ["--verify-python-tree", "C:\\definitely-missing\\tree"]
+                .into_iter()
+                .map(Into::into)
+                .collect();
+            assert_eq!(run(args), Err("Python tree verification failed"));
+        }
 
         #[test]
         fn ordinary_local_file_is_readable_and_verified() {
@@ -419,7 +438,7 @@ mod windows {
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && (args[0] == "--help" || args[0] == "-h") {
-        println!("Usage: tg-recovery-preflight --python-archive ABSOLUTE_PATH --uv-wheel ABSOLUTE_PATH\nVerifies pinned local inputs only; does not perform recovery.");
+        println!("Usage: tg-recovery-preflight --python-archive ABSOLUTE_PATH --uv-wheel ABSOLUTE_PATH\n       tg-recovery-preflight --verify-python-tree ABSOLUTE_EXTRACTION_PARENT\nRead-only checks; does not perform recovery or authorize execution.");
         return;
     }
     #[cfg(all(windows, target_arch = "x86_64"))]
