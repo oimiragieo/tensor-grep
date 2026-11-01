@@ -63,7 +63,11 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_root import (
     _SESSION_NEARBY_LOOKUP_ENV as _SESSION_NEARBY_LOOKUP_ENV,
 )
-from tensor_grep.cli.session_root import _carry_last_prepare, _snapshot_generation
+from tensor_grep.cli.session_root import (
+    _carry_last_prepare,
+    _session_scan_target,
+    _snapshot_generation,
+)
 from tensor_grep.cli.session_root import (
     _find_project_root as _find_project_root,
 )
@@ -527,7 +531,8 @@ def _stale_changeset(
     walk_unverified: list[str] = []
     current_paths: dict[str, Path] = {}
     if detect_added_files:
-        context_root = root if root.is_dir() else root.parent
+        scan_target = _session_scan_target(payload, root)
+        context_root = scan_target if scan_target.is_dir() else scan_target.parent
         # M3 : bound the added-file probe walk to the session's
         # own recorded scan cap (or the shared default) instead of an unbounded full
         # recursive enumeration -- this is reachable from MCP on every tg_session_* call
@@ -537,7 +542,7 @@ def _stale_changeset(
         current_files = [
             current
             for current in _iter_repo_files(
-                root,
+                scan_target,
                 max_files=probe_max_files,
                 deadline_monotonic=reconciliation_deadline,
                 deadline_hit=walk_deadline,
@@ -548,7 +553,7 @@ def _stale_changeset(
         current_paths = {str(current): current for current in current_files}
         added = sorted(path for path in current_paths if path not in snapshot_by_path)
         if walk_deadline.hit or walk_unreadable.hit:
-            walk_unverified.append(str(root))
+            walk_unverified.append(str(scan_target))
 
     removed: list[str] = []
     modified: list[str] = []
@@ -834,6 +839,7 @@ def refresh_session(
         except SessionStaleError:
             existing = {"root": str(root)}
         verified_existing = False
+    scan_target = _session_scan_target(existing, root) if verified_existing else root
     effective_max_repo_files = _effective_session_max_repo_files(
         max_repo_files,
         existing if verified_existing else None,
@@ -855,7 +861,7 @@ def refresh_session(
         if changeset is not None:
             try:
                 repo_map = build_repo_map_incremental(
-                    cast(dict[str, Any], existing["repo_map"]),
+                    {**existing["repo_map"], "path": str(scan_target)},
                     changeset,
                     max_repo_files=effective_max_repo_files,
                     deadline_monotonic=deadline_monotonic,
@@ -864,7 +870,7 @@ def refresh_session(
             except Exception:
                 logger.warning("Incremental session refresh failed; performing a full rebuild")
                 repo_map = build_repo_map(
-                    root,
+                    scan_target,
                     max_repo_files=effective_max_repo_files,
                     deadline_monotonic=deadline_monotonic,
                 )
@@ -872,7 +878,7 @@ def refresh_session(
                 refresh_fallback_reason = "incremental_failed"
         else:
             repo_map = build_repo_map(
-                root,
+                scan_target,
                 max_repo_files=effective_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
             )
