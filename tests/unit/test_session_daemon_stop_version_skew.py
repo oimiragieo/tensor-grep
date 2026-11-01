@@ -208,6 +208,9 @@ def test_stop_cleans_metadata_of_a_dead_daemon(tmp_path: Path) -> None:
 def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -> Any:
     """A real in-process daemon for `root` whose metadata is version-skewed and whose `stop` is ACKED
     but never takes effect (wedged shutdown). Returns (server, real_shutdown)."""
+    secret = trust._load_or_create_user_secret()
+    assert isinstance(secret, bytes) and len(secret) == 32, "skew fixture requires a prepared key"
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", lambda: secret)
     monkeypatch.setattr(trust, "_daemon_running_version", lambda: "0.0.0-stale-fixture")
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
     ready = threading.Event()
@@ -542,6 +545,7 @@ def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted
         )
         payload = {
             "node": request.node.nodeid,
+            "fixture_secret_provider": "prepared canonical key snapshot; client secret reads remain real",
             "trace": snapshot,
             "before_cleanup": before,
             "result_before_cleanup": projection,
