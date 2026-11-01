@@ -429,7 +429,7 @@ def test_escalation_for_a_skewed_daemon_targets_the_proven_pid_never_the_planted
                 try:
                     value = original(*args, **kwargs)
                 except BaseException as error:
-                    fields = observe_safely(lambda: trace._error_fields(error)) or {}
+                    fields = observe_safely(lambda error=error: trace._error_fields(error)) or {}
                     record(f"{label}_error", **fields)
                     raise
                 elapsed = observe_safely(lambda: time.monotonic() - started)
