@@ -9634,6 +9634,7 @@ def checkpoint_undo(
     """Restore a checkpoint."""
     from tensor_grep.cli.checkpoint_store import (
         CheckpointCorruptError,
+        CheckpointNotFoundError,
         CheckpointUndoUnsafeError,
         resolve_latest_checkpoint,
         undo_checkpoint,
@@ -9664,22 +9665,11 @@ def checkpoint_undo(
             payload = undo_checkpoint(checkpoint_id, path)
     except Exception as exc:
         message = str(exc)
-        # This handler once labelled EVERY undo failure `checkpoint_not_found`. Two independent
-        # fixes corrected that, and both are folded in here:
-        #   #297 -- an undo ABORTED because it could not be reverted safely. The checkpoint was
-        #     found and is perfectly good; the working tree is what blocked it. Reporting
-        #     not-found sent the reader hunting a missing checkpoint instead of at the unreadable
-        #     file named in `detail`.
-        #   #298 -- a CORRUPT checkpoint, where the record was found perfectly well but its
-        #     snapshot blobs are missing or unreadable. Reporting not-found hid the only fact
-        #     that matters: the snapshot cannot restore your tree.
-        # #297 deliberately left the corrupt case alone ("a JSON-contract change, filed
-        # separately rather than smuggled into a data-loss fix") -- that separate filing is #298,
-        # and this is where the two meet. `tests/unit/test_checkpoint_atomic_undo.py` describes
-        # the mislabel as the symptom of the OLD buggy shape, so until now the code contradicted
-        # its own test's prose.
-        error_code = "checkpoint_not_found"
-        if isinstance(exc, CheckpointCorruptError):
+        # A downstream FileNotFoundError does not establish that the checkpoint was absent.
+        error_code = "undo_failed"
+        if isinstance(exc, CheckpointNotFoundError):
+            error_code = "checkpoint_not_found"
+        elif isinstance(exc, CheckpointCorruptError):
             error_code = "checkpoint_corrupt"
         elif isinstance(exc, CheckpointUndoUnsafeError):
             error_code = "undo_unsafe"

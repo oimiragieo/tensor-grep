@@ -93,6 +93,10 @@ _NON_GIT_IGNORED_DIRS = {
 _DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
 
 
+class CheckpointNotFoundError(FileNotFoundError):
+    """Raised only when checkpoint record resolution establishes absence."""
+
+
 class CheckpointCorruptError(RuntimeError):
     """Raised when a checkpoint snapshot is missing or unreadable.
 
@@ -1185,7 +1189,7 @@ def resolve_latest_checkpoint(path: str = ".") -> CheckpointLatestResult:
         deduped.append(child_scope)
     discovered = deduped
     if not discovered:
-        raise FileNotFoundError(f"No checkpoints found under {resolved}.")
+        raise CheckpointNotFoundError(f"No checkpoints found under {resolved}.")
     if len(discovered) > 1:
         roots = ", ".join(scope.root for scope in discovered[:5])
         suffix = "" if len(discovered) <= 5 else f", ... ({len(discovered)} total)"
@@ -1208,7 +1212,7 @@ def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, A
     root, _mode = _detect_checkpoint_root(Path(path))
     metadata_path = _metadata_path(root, checkpoint_id)
     if not metadata_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}")
 
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1264,7 +1268,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     root, mode = _detect_checkpoint_root(Path(path))
     metadata_path = _metadata_path(root, checkpoint_id)
     if not metadata_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+        raise CheckpointNotFoundError(f"Checkpoint not found: {checkpoint_id}")
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     entries: dict[str, bool] = metadata["entries"]

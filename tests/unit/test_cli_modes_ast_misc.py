@@ -411,7 +411,8 @@ def test_checkpoint_undo_existing_path_reports_last_hint_json(tmp_path: Path):
     assert result.exit_code == 1
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
-    assert payload["error"] == "checkpoint_not_found"
+    # Passing a path as an ID fails validation before record absence can be established.
+    assert payload["error"] == "undo_failed"
     assert payload["checkpoint_id"] == str(project)
     assert payload["path"] == "."
     assert "parsed as CHECKPOINT_ID" in payload["detail"]
