@@ -5030,7 +5030,12 @@ def codemap(
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
-    from tensor_grep.cli.codemap import build_codemap, check_codemap_freshness
+    from tensor_grep.cli.codemap import (
+        CodemapRootNotDirectoryError,
+        CodemapRootNotFoundError,
+        build_codemap,
+        check_codemap_freshness,
+    )
     from tensor_grep.cli.codemap_artifacts import CodemapOutputError
 
     if check:
@@ -5063,7 +5068,7 @@ def codemap(
             deadline_seconds=effective_deadline,
             deadline_monotonic=deadline_monotonic,
         )
-    except (FileNotFoundError, NotADirectoryError) as exc:
+    except (CodemapRootNotFoundError, CodemapRootNotDirectoryError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     except (OSError, CodemapOutputError) as exc:

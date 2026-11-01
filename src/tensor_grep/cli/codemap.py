@@ -1023,9 +1023,12 @@ def _render_index(
     return "\n".join(lines).rstrip() + "\n"
 
 
-# ---------------------------------------------------------------------------
-# Orchestration: generation + the read-only freshness check.
-# ---------------------------------------------------------------------------
+class CodemapRootNotFoundError(FileNotFoundError):
+    """Generation's explicit missing-root validation failure."""
+
+
+class CodemapRootNotDirectoryError(NotADirectoryError):
+    """Generation's explicit non-directory-root validation failure."""
 
 
 def build_codemap(
@@ -1050,9 +1053,9 @@ def build_codemap(
     """
     root = Path(path).expanduser().resolve()
     if not root.exists():
-        raise FileNotFoundError(f"Path not found: {root}")
+        raise CodemapRootNotFoundError(f"Path not found: {root}")
     if not root.is_dir():
-        raise NotADirectoryError(f"tg codemap requires a directory, got a file: {root}")
+        raise CodemapRootNotDirectoryError(f"tg codemap requires a directory, got a file: {root}")
 
     out_dir = Path(out).expanduser().resolve() if out is not None else (root / "docs" / "code-map")
     index_path = _resolve_index_path(out_dir, index)

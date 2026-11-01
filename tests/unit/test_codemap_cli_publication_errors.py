@@ -179,6 +179,53 @@ def test_unexpected_programming_errors_propagate(project, monkeypatch, error_typ
     assert _snapshot(project[0]) == before
 
 
+def test_regular_file_output_reports_actionable_publication_error(project):
+    assert _invoke(project).exit_code == 0
+    repo, _, index = project
+    output = repo / "blocked-output"
+    output.write_bytes(b"existing ordinary file")
+    before = _snapshot(repo)
+    _refused(_invoke((repo, output, index), "--json"), "Check destination permissions")
+    assert _snapshot(repo) == before
+
+
+@pytest.mark.parametrize("error_type", [FileNotFoundError, NotADirectoryError])
+def test_downstream_path_errors_report_actionable_publication_error(
+    project, monkeypatch, error_type
+):
+    def fail(*args, **kwargs):
+        raise error_type("ordinary publication source disappeared")
+
+    monkeypatch.setattr(cm, "build_codemap", fail)
+    before = _snapshot(project[0])
+    result = _invoke(project, "--json")
+    _refused(result, "ordinary publication source disappeared")
+    assert "Check destination permissions" in result.stderr
+    assert _snapshot(project[0]) == before
+
+
+@pytest.mark.parametrize("kind", ["missing", "file"])
+def test_input_root_errors_keep_plain_diagnostics_and_library_types(project, kind):
+    repo, output, index = project
+    root = repo / "input-root"
+    if kind == "file":
+        root.write_bytes(b"ordinary input file")
+    before = _snapshot(repo)
+    error = FileNotFoundError if kind == "missing" else NotADirectoryError
+    message = (
+        f"Path not found: {root.resolve()}"
+        if kind == "missing"
+        else f"tg codemap requires a directory, got a file: {root.resolve()}"
+    )
+    with pytest.raises(error) as caught:
+        cm.build_codemap(root, out=output, index=index)
+    assert str(caught.value) == message
+    result = _invoke((root, output, index), "--json")
+    assert result.exit_code == 1 and result.stdout == ""
+    assert result.stderr == message + "\n"
+    assert _snapshot(repo) == before
+
+
 def test_actual_entrypoint_reserved_and_contended_publication(project):
     generated = _subprocess(project, "--json")
     assert generated.returncode == 0, generated.stderr

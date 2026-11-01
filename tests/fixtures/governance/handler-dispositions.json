@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8545,
+    "lineno": 8564,
     "enclosing_symbol": "session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1031,7 +1031,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8686,
+    "lineno": 8705,
     "enclosing_symbol": "session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9448,
+    "lineno": 9467,
     "enclosing_symbol": "checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
