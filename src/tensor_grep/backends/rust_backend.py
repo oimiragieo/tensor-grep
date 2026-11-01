@@ -1,7 +1,11 @@
 import re
 from pathlib import Path
 
-from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.base import (
+    BackendExecutionError,
+    ComputeBackend,
+    PassthroughExecutionError,
+)
 from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
@@ -331,6 +335,11 @@ class RustCoreBackend(ComputeBackend):
                     null=config.null if config else False,
                     null_data=config.null_data if config else False,
                 )
+                if exit_code not in (0, 1):
+                    raise PassthroughExecutionError(
+                        f"Native ripgrep search on {file_path} failed with exit status {exit_code}; "
+                        "output may be partial; refusing to retry the streamed search."
+                    )
                 # Results are emitted directly to stdout by the ripgrep binary, so the exact match
                 # count is unknowable here. Reflect FOUND-vs-NOT-FOUND via rg's exit code (0 = at
                 # least one match) so the CLI reports the correct exit status / is_empty instead of
@@ -344,6 +353,8 @@ class RustCoreBackend(ComputeBackend):
                     routing_distributed=False,
                     routing_worker_count=1,
                 )
+            except PassthroughExecutionError:
+                raise
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc

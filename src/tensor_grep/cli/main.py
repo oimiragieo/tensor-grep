@@ -3191,7 +3191,7 @@ def search_command(
     # for backends.base's transitive core.config/core.result chain. search_command is the sole
     # runtime user of BackendExecutionError in this module (except-clauses further below), and
     # this sits before any loop, so it costs exactly one import per invocation, not per iteration.
-    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.base import BackendExecutionError, PassthroughExecutionError
 
     # Just forward to CPU backend for now as a stub.
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
@@ -4040,6 +4040,8 @@ def search_command(
                     span.set_attribute("path", current_file)
                 try:
                     result = backend.search(current_file, pattern, config=config)
+                except PassthroughExecutionError as exc:
+                    _self._exit_search_error("backend_error", str(exc), json_mode=json)
                 except BackendExecutionError as exc:
                     # A native backend failed at runtime; retry once on the always-
                     # available CPU backend so the search returns correct results instead

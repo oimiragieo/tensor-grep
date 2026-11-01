@@ -14,6 +14,10 @@ class BackendExecutionError(RuntimeError):
     """
 
 
+class PassthroughExecutionError(BackendExecutionError):
+    """A streamed child search failed; retrying could duplicate output or change semantics."""
+
+
 class ComputeBackend(Protocol):
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
