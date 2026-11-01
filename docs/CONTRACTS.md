@@ -94,7 +94,7 @@ Current validated rows:
 - `--ndjson`
 - `-F/--fixed-strings`
 - `-w/--word-regexp`
-- `-m/--max-count`
+- `-m/--max-count` (zero returns no matching lines, including Torch literal searches)
 - `--files`
 - `-t/--type`
 - `-./--hidden`
