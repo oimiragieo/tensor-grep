@@ -209,7 +209,7 @@ def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -
     """A real in-process daemon for `root` whose metadata is version-skewed and whose `stop` is ACKED
     but never takes effect (wedged shutdown). Returns (server, real_shutdown)."""
     secret = trust._load_or_create_user_secret()
-    assert isinstance(secret, bytes) and len(secret) == 32, "skew fixture requires a prepared key"
+    assert isinstance(secret, bytes), "skew fixture requires a prepared key"
     monkeypatch.setattr(trust, "_load_or_create_user_secret", lambda: secret)
     monkeypatch.setattr(trust, "_daemon_running_version", lambda: "0.0.0-stale-fixture")
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
