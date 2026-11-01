@@ -492,7 +492,9 @@ mod tests {
         let canary = outside.path().join("canary");
         fs::write(&canary, b"preserve").unwrap();
         let junction = root.path().join("linked");
-        let cmd = Path::new(&std::env::var_os("SystemRoot").unwrap()).join("System32/cmd.exe");
+        let cmd = Path::new(&std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("cmd.exe");
         let result = std::process::Command::new(cmd)
             .creation_flags(0x08000000)
             .args(["/d", "/c", "mklink", "/J"])
@@ -500,7 +502,13 @@ mod tests {
             .arg(outside.path())
             .output()
             .unwrap();
-        assert!(result.status.success());
+        assert!(
+            result.status.success(),
+            "junction fixture command failed: {:?}; stdout={:?}; stderr={:?}",
+            result.status,
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
         let parent = windows_file::open_directory(root.path()).unwrap();
         let error = super::create_anchored_child(&parent, "linked")
             .err()
