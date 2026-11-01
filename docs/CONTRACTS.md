@@ -260,15 +260,16 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
 
 - **`deadline_limit`'s scanned/total pairs name WHICH stage ran out of budget; `deadline_exceeded` alone cannot.** `deadline_exceeded` is a single shared boolean, and several stages read the same clock, so a caller seeing it knows only THAT the budget expired. Each deadline-bounded stage therefore contributes its own pair, emitted additively and only when that stage actually ran: `files_scanned`/`files_total` (repo-map collection), `caller_files_scanned`/`caller_files_total` (`tg callers`), `reference_files_scanned`/`reference_files_total` (`tg refs`), `importer_candidates_scanned`/`importer_candidates_total` (reverse-import walk), `source_candidates_examined`/`source_candidates_total` (definition preference), and `test_candidates_scanned`/`test_candidates_total` (the whole-repo test-relevance scorer on the callers/impact/refs paths). A pair's ABSENCE means that stage did not run, not that it completed. **`test_candidates_*` additionally SUMS ACROSS SCANS**: `tg callers` reaches the test-relevance scorer twice **when the symbol has callers** (the second scan sits behind an `if caller_files:` guard; `tg impact` and `tg refs` reach it once), so a 6-test repo typically reports `test_candidates_total: 12`, and `6/12` there means the first scan completed and the second never started -- NOT 50% coverage of the repo's tests. Read the pair as "candidate slots walked out of slots this command was going to walk", never as a count of distinct test files. **`scanned` may legitimately be `0` against a non-zero `total`** — the stage was reached and stopped before its first item, which is still an honest attribution; `total` is stamped before the loop so this reports `0/N` rather than a `0/0` that would read as "never ran". Reason a pair is missing, not a `scanned` of zero.
 
-- `tg checkpoint undo --json` distinguishes a MISSING checkpoint from a CORRUPT one.
-  `error: "checkpoint_not_found"` means the record could not be resolved. `error:
-  "checkpoint_corrupt"` (added in this change) means the record WAS found and its snapshot blobs
-  are missing or unreadable, so undo refused before touching a single working-tree file. Both
-  exit `1`. Before this, every undo failure reported `checkpoint_not_found`, which sent the reader
-  hunting a checkpoint that was sitting right there and hid the only fact that mattered -- the
-  snapshot cannot restore the tree. Treat this as ADDITIVE: a consumer that only knows
-  `checkpoint_not_found` still sees `ok: false` and a human-readable `detail`, and the new value
-  appears exactly where the old one was wrong.
+- `tg checkpoint undo --json` distinguishes missing records from failed undo operations.
+  `error: "checkpoint_not_found"` means record resolution established absence, including an empty
+  `--last` scope. `checkpoint_corrupt` means snapshot preflight found missing or unreadable blobs
+  and refused before working-tree mutation; `undo_unsafe` means required rollback bytes could not
+  be captured. Other errors use `undo_failed`, including metadata read/parse failures and restore
+  I/O failures, even a downstream `FileNotFoundError`. This does not promise successful rollback
+  after execution failure. All retain exit `1`, `ok: false`, human-readable `detail`, checkpoint ID,
+  path, and schema version `1`. `undo_failed` is an additive error value; consumers must handle
+  unfamiliar values as failures. The library's explicit missing-record exception remains a
+  `FileNotFoundError` subclass. MCP retains its existing sanitized error envelope.
 
 - `tg checkpoint create [PATH] --label TEXT` accepts an optional trimmed label of 1-120 printable
   Unicode characters. The label is carried in create/list JSON and human-readable list output,
