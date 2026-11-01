@@ -1,3 +1,6 @@
+import json
+import os
+import sys
 import types
 from typing import ClassVar
 from unittest.mock import patch
@@ -182,6 +185,68 @@ def test_torch_backend_should_fanout_work_to_executor_when_multi_gpu(tmp_path):
     assert result.routing_gpu_chunk_plan_mb == []
     assert result.routing_distributed is True
     assert result.routing_worker_count == 2
+
+
+@pytest.mark.parametrize("device_ids,chunks", [([0], None), ([7, 3], None), ([7, 3], [3, 1])])
+@pytest.mark.parametrize("limit,expected", [(0, 0), (None, 3), (1, 1), (2, 2)])
+def test_torch_backend_respects_literal_match_limits(tmp_path, device_ids, chunks, limit, expected):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "limited.log"
+    path.write_text("ERROR one\nINFO\nERROR two\nERROR three\n", encoding="utf-8")
+    backend = TorchBackend(device_ids=device_ids, chunk_sizes_mb=chunks)
+    fake_torch = _FakeTorch()
+    _FakeExecutor.submitted_devices = []
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+        patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _FakeExecutor),
+        patch.object(
+            backend, "_contains_literal_torch", wraps=backend._contains_literal_torch
+        ) as matcher,
+    ):
+        result = backend.search(
+            str(path), "ERROR", SearchConfig(fixed_strings=True, max_count=limit)
+        )
+    assert result.total_matches == expected
+    assert result.total_files == int(expected > 0)
+    assert [match.line_number for match in result.matches] == [1, 3, 4][:expected]
+    assert result.routing_backend == "TorchBackend"
+    assert result.routing_gpu_device_ids == device_ids
+    assert result.routing_gpu_chunk_plan_mb == (
+        list(zip(device_ids, chunks, strict=True)) if chunks else []
+    )
+    assert result.routing_worker_count == len(device_ids)
+    assert result.routing_distributed is (len(device_ids) > 1)
+    assert result.routing_reason == (
+        "torch_multi_gpu_fanout" if len(device_ids) > 1 else "torch_single_gpu"
+    )
+    if limit == 0:
+        assert fake_torch.tensor_device_calls == []
+        assert _FakeExecutor.submitted_devices == []
+        matcher.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "no-devices", "missing-file"])
+def test_torch_zero_limit_keeps_validation_failures(tmp_path, failure):
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "ordinary.log"
+    if failure != "missing-file":
+        path.write_text("ERROR\n", encoding="utf-8")
+    backend = TorchBackend(device_ids=[] if failure == "no-devices" else [0])
+    expected = {
+        "unavailable": "CUDA-enabled PyTorch",
+        "no-devices": "concrete CUDA device IDs",
+        "missing-file": "TorchBackend compute failed",
+    }[failure]
+    with (
+        patch.object(TorchBackend, "is_available", return_value=failure != "unavailable"),
+        patch.dict("sys.modules", {"torch": _FakeTorch()}),
+        pytest.raises(BackendExecutionError, match=expected),
+    ):
+        backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True, max_count=0))
 
 
 def test_torch_backend_should_prefer_enumerate_device_ids_when_available(tmp_path):
@@ -549,3 +614,74 @@ def test_torch_backend_empty_pattern_should_preserve_routing_metadata(tmp_path):
     assert result.routing_gpu_chunk_plan_mb == [(7, 3), (3, 1)]
     assert result.routing_distributed is True
     assert result.routing_worker_count == 2
+
+
+@pytest.mark.parametrize("limit,expected,exit_code", [(0, 0, 1), (2, 2, 0)])
+def test_python_bootstrap_torch_literal_limit(
+    tmp_path, monkeypatch, capsys, limit, expected, exit_code
+):
+    from tensor_grep.backends.torch_backend import TorchBackend
+    from tensor_grep.cli import bootstrap
+
+    path = tmp_path / "bootstrap.log"
+    path.write_text("ERROR one\nERROR two\nERROR three\n", encoding="utf-8")
+    fake_torch = _FakeTorch()
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    clean_env = {key: value for key, value in os.environ.items() if not key.startswith("TG_")}
+    clean_env["TG_REEXEC_GUARD"] = "1"
+    observed = []
+    original_search = TorchBackend.search
+
+    def search(self, file_path, pattern, config=None):
+        observed.append((file_path, pattern, config.max_count, self.device_ids))
+        return original_search(self, file_path, pattern, config)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tg",
+            "search",
+            "ERROR",
+            str(path),
+            "--gpu-device-ids",
+            "0",
+            "--max-count",
+            str(limit),
+            "--json",
+        ],
+    )
+    with (
+        patch.dict(os.environ, clean_env, clear=True),
+        patch.dict(sys.modules, {"torch": fake_torch}),
+        patch("tensor_grep.core.pipeline.RipgrepBackend.is_available", return_value=False),
+        patch("tensor_grep.core.pipeline.RustCoreBackend.is_available", return_value=False),
+        patch("tensor_grep.core.pipeline.CuDFBackend.is_available", return_value=False),
+        patch("tensor_grep.core.pipeline.StringZillaBackend.is_available", return_value=False),
+        patch(
+            "tensor_grep.core.hardware.device_detect.DeviceDetector.enumerate_device_ids",
+            return_value=[0],
+        ),
+        patch(
+            "tensor_grep.core.hardware.memory_manager.MemoryManager.get_device_chunk_plan_mb",
+            return_value=[(0, 1)],
+        ),
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.object(TorchBackend, "search", search),
+    ):
+        try:
+            bootstrap.main_entry()
+        except SystemExit as error:
+            actual_exit = error.code
+        else:
+            actual_exit = 0
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert observed == [(str(path), "ERROR", limit, [0])]
+    assert payload["routing_backend"] == "TorchBackend"
+    assert payload["total_matches"] == expected
+    assert len(payload["matches"]) == expected
+    assert payload["total_files"] == int(expected > 0)
+    assert payload.get("fallback_reason") is None
+    assert not payload.get("result_incomplete", False)
+    assert actual_exit == exit_code, output.err
