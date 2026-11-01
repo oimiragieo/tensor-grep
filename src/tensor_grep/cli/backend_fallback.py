@@ -43,8 +43,13 @@ def search_with_cpu_fallback(
 
     A runtime backend failure (native panic, IO/encoding error, version skew, GPU/OOM
     fault) must never surface to the user as a clean no-match. The CPU backend is pure
-    Python and always available, so it is the safe last-resort engine (audit B2/I1).
+    Python and always available, except a failed streamed child must not be retried:
+    it may have emitted partial output and used semantics the CPU cannot preserve.
     """
+    from tensor_grep.backends.base import PassthroughExecutionError
+
+    if isinstance(exc, PassthroughExecutionError):
+        raise exc
     from tensor_grep.backends.cpu_backend import CPUBackend
 
     sys.stderr.write(
