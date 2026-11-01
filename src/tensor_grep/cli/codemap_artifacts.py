@@ -18,6 +18,10 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _PAGE_NAME = re.compile(r"[A-Za-z0-9_.-]+\.md\Z")
 
 
+class CodemapOutputError(ValueError):
+    """Expected codemap destination or verification-limit refusal."""
+
+
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -25,7 +29,7 @@ def digest(text: str) -> str:
 def add_size(text: str, total: int) -> int:
     size = len(text.encode("utf-8"))
     if size > MAX_ARTIFACT_BYTES or total + size > MAX_TOTAL_BYTES:
-        raise ValueError("codemap output exceeds verification byte limits")
+        raise CodemapOutputError("codemap output exceeds verification byte limits")
     return total + size
 
 
