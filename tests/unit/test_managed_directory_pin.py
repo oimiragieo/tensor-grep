@@ -58,8 +58,8 @@ def _fake_directory_handles(
     monkeypatch.setattr(session_daemon_trust, "_parent_handle_ok", lambda _handle: parent_handle_ok)
     monkeypatch.setattr(
         session_daemon_trust,
-        "_windows_handle_trusted",
-        lambda _handle, *, check_dacl: file_trusted and check_dacl,
+        "_windows_integrity_handle_trusted",
+        lambda _handle: file_trusted,
     )
     return calls, closed
 

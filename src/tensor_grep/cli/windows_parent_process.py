@@ -78,6 +78,20 @@ def _windows_process_parent_pid(kernel: Any, process_id: int) -> int:
     raise RuntimeError("managed generation was absent from the Windows process snapshot")
 
 
+def _windows_parent_pid_for_handle(kernel: Any, process_id: int, handle: int) -> int:
+    """Bind a Toolhelp ancestry lookup to the process object held by ``handle``."""
+    from ctypes import wintypes
+
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    if kernel.WaitForSingleObject(handle, 0) != 0x00000102:
+        raise RuntimeError("launcher process exited during ancestry verification")
+    parent_pid = _windows_process_parent_pid(kernel, process_id)
+    if kernel.WaitForSingleObject(handle, 0) != 0x00000102:
+        raise RuntimeError("launcher process exited during ancestry verification")
+    return parent_pid
+
+
 def _windows_process_creation_time(kernel: Any, handle: int) -> int:
     import ctypes
     from ctypes import wintypes
@@ -117,6 +131,7 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
     direct_parent_pid = os.getppid()
     direct_parent = kernel.OpenProcess(0x00100000 | 0x1000, False, direct_parent_pid)
     if not direct_parent:
@@ -125,6 +140,10 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
     intermediate_handle = None
     stable_handle = None
     try:
+        current_created = _windows_process_creation_time(kernel, kernel.GetCurrentProcess())
+        direct_parent_created = _windows_process_creation_time(kernel, direct_parent)
+        if direct_parent_created >= current_created:
+            raise RuntimeError("native launcher PID was reused before Python startup")
         kernel.QueryFullProcessImageNameW.argtypes = [
             wintypes.HANDLE,
             wintypes.DWORD,
@@ -142,8 +161,10 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
         if sidecar is not None and _canonical_windows_path(sidecar) == _canonical_windows_path(
             image.value
         ):
-            sidecar_created = _windows_process_creation_time(kernel, direct_parent)
-            direct_parent_pid = _windows_process_parent_pid(kernel, direct_parent_pid)
+            sidecar_created = direct_parent_created
+            direct_parent_pid = _windows_parent_pid_for_handle(
+                kernel, direct_parent_pid, direct_parent
+            )
             intermediate_handle = kernel.OpenProcess(0x00100000 | 0x1000, False, direct_parent_pid)
             if not intermediate_handle:
                 raise RuntimeError("cannot pin the native launcher above the Python sidecar")
@@ -158,10 +179,12 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
             ):
                 raise RuntimeError("cannot verify the native launcher above the Python sidecar")
 
-        def pin_stable_ancestor(launcher_pid: int, generation_created: int) -> None:
+        def pin_stable_ancestor(
+            launcher_pid: int, launcher_handle: int, generation_created: int
+        ) -> None:
             nonlocal stable_handle
 
-            stable_pid = _windows_process_parent_pid(kernel, launcher_pid)
+            stable_pid = _windows_parent_pid_for_handle(kernel, launcher_pid, launcher_handle)
             stable_handle = kernel.OpenProcess(0x00100000 | 0x1000, False, stable_pid)
             if not stable_handle:
                 raise RuntimeError(
@@ -187,7 +210,7 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
                     "native launcher environment does not match the actual parent image"
                 )
             generation_created = _windows_process_creation_time(kernel, direct_parent)
-            pin_stable_ancestor(direct_parent_pid, generation_created)
+            pin_stable_ancestor(direct_parent_pid, direct_parent, generation_created)
         elif _native_parent_matches_stable(stable_path, image.value, advertised):
             stable_handle = direct_parent
             direct_parent = None
