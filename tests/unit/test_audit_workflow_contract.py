@@ -10,7 +10,7 @@ def test_audit_workflow_requires_repo_owned_cargo_deny_policy() -> None:
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
 
     assert "working-directory: rust_core" in workflow
-    assert "cargo deny check" in workflow
+    assert '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check' in workflow
     assert (repo_root / "rust_core" / "deny.toml").exists()
 
 
@@ -89,7 +89,7 @@ def test_AuditWorkflow_FoldhashScopeVerifier_FollowsFullCargoDenyCheck() -> None
     repo_root = Path(__file__).resolve().parents[2]
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
 
-    full_check = "run: cargo deny check"
+    full_check = "run: '\"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny\" deny check'"
     scoped_check = "run: python3 scripts/verify_foldhash_license_scope.py"
 
     assert full_check in workflow
