@@ -45,6 +45,56 @@ def test_coverage_added_file_is_stale_and_unindexed(tmp_path: Path) -> None:
     assert "added.py" in payload["unindexed"]
 
 
+def test_coverage_file_scope_ignores_deleted_sibling(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "a.py"
+    sibling = project / "b.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    sibling.write_text("value = 2\n", encoding="utf-8")
+    runner = CliRunner()
+    opened = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+    sibling.unlink()
+
+    result = runner.invoke(app, ["coverage", str(target), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["files_total"] == 1
+    assert payload["stale"] == []
+    assert payload["unindexed"] == []
+    assert payload["complete"] is True
+
+
+def test_coverage_directory_scope_reports_deleted_sibling(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("value = 1\n", encoding="utf-8")
+    sibling = project / "b.py"
+    sibling.write_text("value = 2\n", encoding="utf-8")
+    runner = CliRunner()
+    opened = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+    sibling.unlink()
+
+    result = runner.invoke(app, ["coverage", str(project), "--json"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert {"path": "b.py", "reason": "deleted"} in payload["stale"]
+    assert payload["complete"] is False
+
+
+def test_coverage_missing_path_keeps_cli_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.py"
+
+    result = CliRunner().invoke(app, ["coverage", str(missing), "--json"])
+
+    assert result.exit_code == 1
+    assert "Path not found:" in result.output
+
+
 def test_coverage_exact_repo_map_limit_does_not_report_a_hit(tmp_path: Path, monkeypatch) -> None:
     from tensor_grep.cli import repo_map
 

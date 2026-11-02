@@ -217,7 +217,8 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     root = path.expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
-    scope = root if root.is_dir() else root.parent
+    is_directory = root.is_dir()
+    scope = root if is_directory else root.parent
     floor = confinement_root.resolve() if confinement_root is not None else None
     cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
     unreadable = repo_map._UnreadablePathFlag()
@@ -254,11 +255,12 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
             digest = ""
         if digest and digest != old_digest:
             stale.append({"path": name, "reason": "modified"})
-    for name in receipts:
-        if floor is not None and not _under_confinement(Path(name), floor):
-            continue
-        if name not in current_absolute and not Path(name).exists():
-            stale.append({"path": _display_path(Path(name), scope), "reason": "deleted"})
+    if is_directory:
+        for name in receipts:
+            if floor is not None and not _under_confinement(Path(name), floor):
+                continue
+            if name not in current_absolute and not Path(name).exists():
+                stale.append({"path": _display_path(Path(name), scope), "reason": "deleted"})
 
     unparsed = _unparsed_files(files, scope)
     caps = ["max_repo_files"] if cap_hit else []
