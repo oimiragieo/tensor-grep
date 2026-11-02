@@ -1789,25 +1789,25 @@ jobs:
         env:
           RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
         run: |
-          uv run python scripts/validate_release_binary_artifacts.py \
+          uv run --no-project --python 3.12 -- python scripts/validate_release_binary_artifacts.py \
             --artifacts-dir artifacts/native \
             --checksums-out artifacts/CHECKSUMS.txt \
             --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"
 
       - name: Build package-manager publish bundle
         run: |
-          uv run python scripts/prepare_package_manager_release.py \
+          uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/prepare_package_manager_release.py \
             --output-dir artifacts/package-manager-bundle \
             --release-checksums artifacts/CHECKSUMS.txt
 
       - name: Verify package-manager bundle checksums
         run: |
-          uv run python scripts/verify_package_manager_bundle_checksums.py \
+          uv run --no-project --python 3.12 -- python scripts/verify_package_manager_bundle_checksums.py \
             --bundle-dir artifacts/package-manager-bundle
 
       - name: Smoke-test package-manager bundle contracts
         run: |
-          uv run python scripts/smoke_test_package_manager_bundle.py \
+          uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/smoke_test_package_manager_bundle.py \
             --bundle-dir artifacts/package-manager-bundle \
             --expected-version "${{ needs.release.outputs.release_version }}"
 
@@ -1828,7 +1828,7 @@ jobs:
         env:
           RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
         run: |
-          uv run python scripts/verify_github_release_assets.py \
+          uv run --no-project --python 3.12 -- python scripts/verify_github_release_assets.py \
             --repo "${{ github.repository }}" \
             --tag "v${{ needs.release.outputs.release_version }}" \
             --token "${{ secrets.GITHUB_TOKEN }}" \
