@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli import repo_map
+from tensor_grep.cli import lang_registry, repo_map
 from tensor_grep.cli.agent_capsule_constants import (
     _BEST_EFFORT_PRIMARY_SCAN_CAP as _BEST_EFFORT_PRIMARY_SCAN_CAP,
 )
@@ -599,11 +599,18 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
                 best_symbol = symbol
         if best_symbol is not None:
             # Extraction provenance belongs to the selected record, not the empty primary.
-            provenance = (
-                str(best_symbol["provenance"])
-                if "provenance" in best_symbol
-                else (repo_map._symbol_navigation_provenance_for_path(str(best_symbol["file"])))
-            )
+            provenance = str(best_symbol.get("provenance", "heuristic"))
+            if "provenance" not in best_symbol:
+                spec = lang_registry.spec_for_path(str(best_symbol["file"]))
+                # Mixed parser/regex producers do not retain the selected row's origin.
+                if (
+                    spec is not None
+                    and spec.extract_imports_and_symbols is not None
+                    and spec.provenance_when_missing in {"python-ast", "grammar-missing"}
+                ):
+                    provenance = repo_map._symbol_navigation_provenance_for_path(
+                        str(best_symbol["file"])
+                    )
             evidence = ["heuristic"]
             if repo_map._is_parser_backed_provenance(provenance):
                 evidence.insert(0, "parser-backed")
