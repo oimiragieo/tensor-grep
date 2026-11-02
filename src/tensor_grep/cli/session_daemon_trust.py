@@ -784,9 +784,7 @@ def _windows_ancestor_dacl_ok(entries: list[tuple[str, int]], user_sid: str | No
 
 
 def _windows_parent_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None = None) -> bool:
-    """The SECRET'S OWN directory: any principal other than the user / SYSTEM / Administrators holding
-    delete-child, delete, write-DAC, write-owner or create/write rights could delete or replace the
-    secret, so such a grant is refused (read-only grants to anyone are fine)."""
+    """Refuse foreign write/delete grants on directories and integrity-protected files."""
     user = user_sid or _win_current_user_sid()
     if user is None:
         return False
@@ -796,6 +794,17 @@ def _windows_parent_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None
         if sid != user and sid not in _WIN_TRUSTED_PRINCIPALS and mask & _WIN_WRITE_MASK:
             return False
     return True
+
+
+def _windows_integrity_handle_trusted(handle: Any) -> bool:
+    """Trust managed runtime files and directories when foreign access is read-only at most."""
+    user_sid = _win_current_user_sid()
+    queried = _win_dacl_entries(handle)
+    if user_sid is None or queried is None:
+        return False
+    owner_sid, entries = queried
+    owner_is_trusted = owner_sid in _our_owners(user_sid) or _windows_owner_ok(owner_sid, user_sid)
+    return owner_is_trusted and _windows_parent_dacl_ok(entries, user_sid)
 
 
 def _posix_dir_ok(st: os.stat_result) -> bool:

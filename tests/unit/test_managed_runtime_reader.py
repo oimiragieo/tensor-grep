@@ -22,6 +22,7 @@ from tests.unit.managed_runtime_win32_fixture import (
 
 _USER = "S-1-5-21-111-222-333-1001"
 _FOREIGN = "S-1-5-21-111-222-333-1999"
+_ADMINS = "S-1-5-32-544"
 _EVERYONE = "S-1-1-0"
 _FULL = 0x1F01FF
 _BAD_OWNER = (_FOREIGN, [(_FOREIGN, _FULL)])
@@ -68,6 +69,16 @@ def test_ReadManagedRuntime_ValidProtectedChain_ReturnsLiteralPairAndClosesRever
     assert result == _EXPECTED_RESULT
     assert boundary.open_calls == _CALLS_ALL
     assert boundary.read_calls == [(_LEAF_HANDLE, 512)]
+    assert tuple(boundary.closed) == _CLOSED_ALL
+
+
+def test_ReadManagedRuntime_ForeignReadOnlyRootGrant_IsAccepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    boundary = _install_reader_boundary(monkeypatch)
+    boundary.security[_ROOT_HANDLE] = (_ADMINS, [(_USER, _FULL), (_FOREIGN, 0x1200A9)])
+
+    assert reader.read_managed_runtime(trusted_root=_ROOT) == _EXPECTED_RESULT
     assert tuple(boundary.closed) == _CLOSED_ALL
 
 
@@ -258,7 +269,7 @@ def test_ReadManagedRuntime_FinalPathRefusal_ClosesHandles(
         pytest.param(_ROOT_HANDLE, _BAD_OWNER, _CALLS_THROUGH_ROOT, _CLOSED_ROOT, id="root-owner"),
         pytest.param(
             _ROOT_HANDLE,
-            _BROAD_WRITE,
+            (_ADMINS, [(_USER, _FULL), (_EVERYONE, _FULL)]),
             _CALLS_THROUGH_ROOT,
             _CLOSED_ROOT,
             id="root-write",

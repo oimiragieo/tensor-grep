@@ -913,7 +913,7 @@ def _pin_managed_directory(path: Path, held: ExitStack) -> str:
         if parent_final is not None and not reader._is_direct_child(final, parent_final, component):
             raise RuntimeError("managed runtime directory identity changed during validation")
         if current == path:
-            if not trust._parent_handle_ok(handle):
+            if not trust._windows_integrity_handle_trusted(handle):
                 raise RuntimeError("managed runtime directory ACL is not trusted")
         else:
             details = winsec.owner_and_dacl_entries(handle)
@@ -933,7 +933,7 @@ def _validate_managed_leaf_handle(handle: int, parent_final: str, name: str) -> 
     from tensor_grep.cli import session_daemon_trust as trust
     from tensor_grep.cli import session_daemon_winsec as winsec
 
-    if not trust._windows_handle_trusted(handle, check_dacl=True):
+    if not trust._windows_integrity_handle_trusted(handle):
         raise RuntimeError(f"managed runtime executable ACL is not trusted: {name}")
     if winsec.link_count(handle) != 1:
         raise RuntimeError(f"managed runtime executable must have one hard link: {name}")

@@ -56,10 +56,14 @@ def _fake_directory_handles(
         session_daemon_trust, "_windows_ancestor_dacl_ok", lambda *_args: ancestor_dacl_ok
     )
     monkeypatch.setattr(session_daemon_trust, "_parent_handle_ok", lambda _handle: parent_handle_ok)
+
+    def integrity_handle_trusted(handle):
+        return parent_handle_ok if opened[handle][1] else file_trusted
+
     monkeypatch.setattr(
         session_daemon_trust,
-        "_windows_handle_trusted",
-        lambda _handle, *, check_dacl: file_trusted and check_dacl,
+        "_windows_integrity_handle_trusted",
+        integrity_handle_trusted,
     )
     return calls, closed
 

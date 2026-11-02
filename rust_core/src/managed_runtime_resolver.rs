@@ -2,7 +2,7 @@
 #![cfg(windows)]
 
 use crate::managed_runtime_acl_policy::{
-    ancestor_is_trusted, parent_is_trusted, selector_is_trusted,
+    ancestor_is_trusted, integrity_file_is_trusted, parent_is_trusted, selector_is_trusted,
 };
 use crate::managed_runtime_acl_reader::read_handle_acl;
 use crate::managed_runtime_selection::{decode_selection, ManagedRuntimeSelection};
@@ -241,7 +241,7 @@ fn open_trusted_executable(
         return Err(invalid_root("selected executable is not a direct child"));
     }
     let acl = read_handle_acl(executable.as_handle())?;
-    if !selector_is_trusted(
+    if !integrity_file_is_trusted(
         &acl.owner,
         Some(&acl.allow_grants),
         user_sid,

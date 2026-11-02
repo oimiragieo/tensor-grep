@@ -34,7 +34,7 @@ pub fn ancestor_is_trusted(owner: &str, grants: Option<&[(String, u32)]>, user_s
     })
 }
 
-/// Trust the selector's parent directory; owner may also be the verified token default owner.
+/// Trust managed directories; trusted system owners and token default owners are accepted.
 /// A NULL, unavailable, or unparsed DACL must be passed as `None` and is rejected.
 pub fn parent_is_trusted(
     owner: &str,
@@ -42,15 +42,30 @@ pub fn parent_is_trusted(
     user_sid: &str,
     token_owner_sid: Option<&str>,
 ) -> bool {
-    if !valid_owner(owner, user_sid, token_owner_sid) {
+    if !valid_managed_owner(owner, user_sid, token_owner_sid) {
         return false;
     }
     let Some(grants) = grants else {
         return false;
     };
-    grants.iter().all(|(sid, mask)| {
-        sid == user_sid || is_trusted_grant_sid(sid) || mask & WIN_WRITE_MASK == 0
-    })
+    managed_grants_are_safe(grants, user_sid)
+}
+
+/// Trust a non-secret executable, allowing foreign read-only grants.
+/// A NULL, unavailable, or unparsed DACL must be passed as `None` and is rejected.
+pub fn integrity_file_is_trusted(
+    owner: &str,
+    grants: Option<&[(String, u32)]>,
+    user_sid: &str,
+    token_owner_sid: Option<&str>,
+) -> bool {
+    if !valid_managed_owner(owner, user_sid, token_owner_sid) {
+        return false;
+    }
+    let Some(grants) = grants else {
+        return false;
+    };
+    managed_grants_are_safe(grants, user_sid)
 }
 
 /// Trust the selector file; only the user, SYSTEM, or Administrators may have an allow grant.
@@ -80,6 +95,19 @@ fn valid_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str>) -> bo
                 .is_some_and(|token_owner| !token_owner.is_empty() && owner == token_owner))
 }
 
+fn valid_managed_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str>) -> bool {
+    valid_owner(owner, user_sid, token_owner_sid)
+        || owner == SID_SYSTEM
+        || owner == SID_ADMINISTRATORS
+        || owner == SID_TRUSTED_INSTALLER
+}
+
+fn managed_grants_are_safe(grants: &[(String, u32)], user_sid: &str) -> bool {
+    grants.iter().all(|(sid, mask)| {
+        sid == user_sid || is_trusted_grant_sid(sid) || mask & WIN_WRITE_MASK == 0
+    })
+}
+
 fn is_trusted_grant_sid(sid: &str) -> bool {
     sid == SID_SYSTEM
         || sid == SID_ADMINISTRATORS
@@ -93,7 +121,9 @@ fn is_broad_sid(sid: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ancestor_is_trusted, parent_is_trusted, selector_is_trusted};
+    use super::{
+        ancestor_is_trusted, integrity_file_is_trusted, parent_is_trusted, selector_is_trusted,
+    };
 
     const USER: &str = "S-1-5-21-111-222-333-1001";
     const OTHER: &str = "S-1-5-21-444-555-666-1001";
@@ -176,6 +206,13 @@ mod tests {
     }
 
     #[test]
+    fn parent_administrator_owner_with_foreign_read_grant_is_allowed() {
+        let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), 0x001200A9)];
+
+        assert!(parent_is_trusted(ADMIN, Some(&grants), USER, None));
+    }
+
+    #[test]
     fn parent_token_default_administrator_owner_is_allowed() {
         let trusted = parent_is_trusted(ADMIN, Some(&[]), USER, Some(ADMIN));
 
@@ -205,6 +242,21 @@ mod tests {
         let trusted = selector_is_trusted(USER, Some(&grants), USER, None);
 
         assert!(!trusted);
+    }
+
+    #[test]
+    fn integrity_file_foreign_read_execute_grant_is_allowed_but_selector_stays_strict() {
+        let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), 0x001200A9)];
+
+        assert!(integrity_file_is_trusted(USER, Some(&grants), USER, None));
+        assert!(!selector_is_trusted(USER, Some(&grants), USER, None));
+    }
+
+    #[test]
+    fn integrity_file_foreign_write_grant_is_refused() {
+        let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), 0x2)];
+
+        assert!(!integrity_file_is_trusted(USER, Some(&grants), USER, None));
     }
 
     #[test]
@@ -278,10 +330,10 @@ mod tests {
     }
 
     #[test]
-    fn parent_trustedinstaller_owner_without_token_owner_is_refused() {
+    fn parent_trustedinstaller_owner_without_token_owner_is_allowed() {
         let trusted = parent_is_trusted(TRUSTED_INSTALLER, Some(&[]), USER, None);
 
-        assert!(!trusted);
+        assert!(trusted);
     }
 
     #[test]

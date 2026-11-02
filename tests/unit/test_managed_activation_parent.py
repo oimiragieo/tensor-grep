@@ -25,6 +25,13 @@ class _Kernel:
     def __init__(self, image_path, *, query_result=True, inherited=True):
         self.open_calls = []
         self.inherit_calls = []
+        self.GetCurrentProcess = _WinFunction(lambda: 1000)
+        self.GetProcessTimes = _WinFunction(
+            lambda handle, creation, *_args: (
+                setattr(creation._obj, "low", {112: 10, 1000: 20}[handle]) or True
+            )
+        )
+        self.WaitForSingleObject = _WinFunction(lambda _handle, _timeout: 0x00000102)
         self.OpenProcess = _WinFunction(
             lambda access, inherit, pid: self.open_calls.append((access, inherit, pid)) or 112
         )
@@ -201,7 +208,9 @@ def _generation_parent_kernel(stable, generation, closed, *, stable_is_older=Tru
 
     def process_times(handle, creation, *_args):
         creation._obj.low = (
-            10 if handle == 113 and stable_is_older else (30 if handle == 113 else 20)
+            10
+            if handle == 113 and stable_is_older
+            else (30 if handle == 113 else (40 if handle == 1000 else 20))
         )
         return True
 
@@ -278,6 +287,152 @@ def test_open_native_parent_handle_when_generation_ancestry_is_missing_fails_clo
         native_frontdoor._open_native_parent_handle(stable)
 
     assert sorted(closed) == [112, 999]
+
+
+def test_open_native_parent_handle_when_python_launcher_is_between_tg_and_python(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    sidecar = tmp_path / ".tensor-grep" / ".venv" / "Scripts" / "python.exe"
+    closed = []
+    kernel = _Kernel(str(sidecar))
+    handles = {321: 112, 654: 113}
+    images = {112: str(sidecar), 113: str(stable)}
+    kernel.OpenProcess = _WinFunction(
+        lambda access, inherit, pid: (
+            kernel.open_calls.append((access, inherit, pid)) or handles[pid]
+        )
+    )
+
+    def query(handle, _flags, image, image_size):
+        image.value = images[handle]
+        image_size._obj.value = len(image.value)
+        return True
+
+    kernel.QueryFullProcessImageNameW = _WinFunction(query)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setattr(
+        windows_parent_process, "_windows_process_parent_pid", lambda _kernel, _pid: 654
+    )
+    monkeypatch.setattr(
+        windows_parent_process,
+        "_windows_process_creation_time",
+        lambda _kernel, handle: {112: 20, 113: 10, 1000: 30}[handle],
+    )
+    monkeypatch.setenv("TG_SIDECAR_PYTHON", str(sidecar))
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    assert native_frontdoor._open_native_parent_handle(stable) == 113
+    assert kernel.open_calls == [
+        (0x00100000 | 0x1000, False, 321),
+        (0x00100000 | 0x1000, False, 654),
+    ]
+    assert kernel.inherit_calls == [(113, 1, 1)]
+    assert closed == [112]
+
+
+def test_open_native_parent_handle_when_python_launcher_precedes_managed_tg(monkeypatch, tmp_path):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    sidecar = (
+        tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / ".venv" / "Scripts" / "python.exe"
+    )
+    closed = []
+    kernel = _Kernel(str(sidecar))
+    handles = {321: 112, 654: 113, 987: 114}
+    images = {112: str(sidecar), 113: str(generation), 114: str(stable)}
+    parent_pids = {321: 654, 654: 987}
+    kernel.OpenProcess = _WinFunction(
+        lambda access, inherit, pid: (
+            kernel.open_calls.append((access, inherit, pid)) or handles[pid]
+        )
+    )
+
+    def query(handle, _flags, image, image_size):
+        image.value = images[handle]
+        image_size._obj.value = len(image.value)
+        return True
+
+    kernel.QueryFullProcessImageNameW = _WinFunction(query)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setattr(
+        windows_parent_process,
+        "_windows_process_parent_pid",
+        lambda _kernel, pid: parent_pids[pid],
+    )
+    monkeypatch.setattr(
+        windows_parent_process,
+        "_windows_process_creation_time",
+        lambda _kernel, handle: {112: 30, 113: 20, 114: 10, 1000: 40}[handle],
+    )
+    monkeypatch.setenv("TG_SIDECAR_PYTHON", str(sidecar))
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(generation))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    assert native_frontdoor._open_native_parent_handle(stable) == 114
+    assert kernel.open_calls == [
+        (0x00100000 | 0x1000, False, 321),
+        (0x00100000 | 0x1000, False, 654),
+        (0x00100000 | 0x1000, False, 987),
+    ]
+    assert kernel.inherit_calls == [(114, 1, 1)]
+    assert sorted(closed) == [112, 113]
+
+
+def test_open_native_parent_handle_when_direct_parent_pid_was_reused_refuses_activation(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / "tg.exe"
+    kernel = _Kernel(str(stable))
+    closed = []
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setattr(
+        windows_parent_process,
+        "_windows_process_creation_time",
+        lambda _kernel, handle: {112: 30, 1000: 20}[handle],
+    )
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    with pytest.raises(RuntimeError, match="PID was reused before Python startup"):
+        native_frontdoor._open_native_parent_handle(stable)
+
+    assert kernel.inherit_calls == []
+    assert closed == [112]
+
+
+def test_open_native_parent_handle_when_sidecar_exits_during_ancestry_lookup_refuses(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    sidecar = tmp_path / ".tensor-grep" / ".venv" / "Scripts" / "python.exe"
+    kernel = _Kernel(str(sidecar))
+    closed = []
+    wait_results = iter([0x00000102, 0x00000000])
+    kernel.WaitForSingleObject = _WinFunction(lambda _handle, _timeout: next(wait_results))
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setattr(
+        windows_parent_process, "_windows_process_parent_pid", lambda _kernel, _pid: 654
+    )
+    monkeypatch.setenv("TG_SIDECAR_PYTHON", str(sidecar))
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    with pytest.raises(RuntimeError, match="exited during ancestry verification"):
+        native_frontdoor._open_native_parent_handle(stable)
+
+    assert kernel.inherit_calls == []
+    assert kernel.open_calls == [(0x00100000 | 0x1000, False, 321)]
+    assert closed == [112]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="requires Windows Toolhelp process APIs")
