@@ -106,7 +106,7 @@ def test_CiSourceReleasePreflight_BeforeRustBuild_UsesPinnedIsolatedPython() -> 
     _, final_validation = _ci_job_step(
         "release-readiness", "Validate release/package asset consistency"
     )
-    assert final_validation["run"] == "uv run python scripts/validate_release_assets.py"
+    assert final_validation["run"] == step["run"].removeprefix("timeout 120 ")
 
 
 def test_should_require_ci_terminal_publish_success_gate():

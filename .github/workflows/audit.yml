@@ -22,32 +22,66 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Fingerprint audit toolchain and platform
+        id: audit-toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust=$(rustc -vV)
+          image=$(cat /etc/os-release)
+          abi=$(getconf GNU_LIBC_VERSION)
+          test -n "$rust"
+          test -n "$image"
+          test -n "$abi"
+          fingerprint=$(printf '%s\n' "$rust" "$image" "$abi" | sha256sum | cut -d' ' -f1)
+          [[ "$fingerprint" =~ ^[0-9a-f]{64}$ ]]
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Cache compiled cargo audit tools
+        id: audit-tools-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/tg-audit-tools/bin
+          key: audit-tools-${{ runner.os }}-${{ runner.arch }}-audit-0.22.2-deny-0.20.2-${{ steps.audit-toolchain.outputs.fingerprint }}-v1
+
       - name: Install cargo-audit and cargo-deny
         # --locked is load-bearing: an unpinned `cargo install` resolves NEWEST transitive deps, and
         # cargo-audit 0.22.2 then fails to compile (2026-06-27); --locked uses its vetted Cargo.lock,
         # which builds. We must stay on 0.22.x (not downgrade) because the RustSec advisory DB now
         # ships CVSS 4.0 entries that older cargo-audit cannot parse ("unsupported CVSS version: 4.0").
+        # Cache executables only; advisory databases remain outside this directory.
+        shell: bash
         run: |
-          cargo install cargo-audit --version 0.22.2 --locked
-          cargo install cargo-deny --locked
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/tg-audit-tools"
+          if [ "${{ steps.audit-tools-cache.outputs.cache-hit }}" != true ]; then
+            cargo install cargo-audit --version 0.22.2 --locked --force --root "$tool_root"
+            cargo install cargo-deny --version 0.20.2 --locked --force --root "$tool_root"
+          fi
+          audit_version=$("$tool_root/bin/cargo-audit" --version)
+          test "$audit_version" = "cargo-audit 0.22.2"
+          deny_version=$("$tool_root/bin/cargo-deny" --version)
+          test "$deny_version" = "cargo-deny 0.20.2"
+          # The later Foldhash verifier resolves cargo-deny through PATH.
+          echo "$tool_root/bin" >> "$GITHUB_PATH"
 
       - name: Run cargo audit
         working-directory: rust_core
         # pyo3 was bumped to 0.29 (pyo3-arrow 0.19 + arrow 59 + numpy 0.29), clearing
         # RUSTSEC-2026-0176/0177; the gate now runs with no ignores.
-        run: cargo audit
+        run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit'
 
       - name: Audit recovery preflight lockfile
         working-directory: rust_core
-        run: cargo audit --file recovery-preflight/Cargo.lock
+        run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit --file recovery-preflight/Cargo.lock'
 
       - name: Run cargo deny
         working-directory: rust_core
-        run: cargo deny check
+        run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check'
 
       - name: Check recovery preflight dependencies
         working-directory: rust_core
-        run: cargo deny --locked --manifest-path recovery-preflight/Cargo.toml check
+        run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny --locked --manifest-path recovery-preflight/Cargo.toml check'
 
       - name: Verify Foldhash license exception scope
         run: python3 scripts/verify_foldhash_license_scope.py

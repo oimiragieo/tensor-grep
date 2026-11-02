@@ -20,8 +20,10 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -504,29 +506,56 @@ def test_a_pid_that_no_longer_exists_still_cleans_up_stale_metadata(
     assert sd._read_daemon_metadata(root) is None
 
 
+@contextmanager
+def _probed_root_binding_daemon(root: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    secret = trust._load_or_create_user_secret()
+    assert isinstance(secret, bytes), "root-binding fixture requires a prepared key"
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", lambda: secret)
+    server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
+    thread: threading.Thread | None = None
+    stopper: threading.Thread | None = None
+    try:
+        real_shutdown = server.shutdown
+        ready = threading.Event()
+        monkeypatch.setattr(server, "service_actions", ready.set)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
+        thread.start()
+        assert ready.wait(timeout=5), "root-binding fixture did not reach its serving loop"
+        sd._write_daemon_metadata(
+            root,
+            {
+                "version": 1,
+                "package_version": _expected_tg_version(),
+                "root": str(root),
+                "host": "127.0.0.1",
+                "port": int(server.server_address[1]),
+                "pid": 1,
+                "started_at": "x",
+                "token": "tok",
+            },
+        )
+        monkeypatch.setattr(server, "shutdown", lambda: None)  # ack stop, keep serving
+        yield
+    finally:
+        try:
+            if thread is not None and thread.is_alive():
+                stopper = threading.Thread(target=real_shutdown, daemon=True)
+                stopper.start()
+                stopper.join(timeout=5)
+        finally:
+            server.server_close()
+            if thread is not None and thread.ident is not None:
+                thread.join(timeout=5)
+        assert thread is None or not thread.is_alive(), "root-binding listener did not settle"
+        assert stopper is None or not stopper.is_alive(), "root-binding shutdown did not settle"
+
+
 def test_the_probed_branch_passes_its_root_to_the_terminate_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import threading
-
     root = tmp_path.resolve()
-    server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
-    real_shutdown = server.shutdown
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    sd._write_daemon_metadata(
-        root,
-        {
-            "version": 1,
-            "package_version": _expected_tg_version(),
-            "root": str(root),
-            "host": "127.0.0.1",
-            "port": int(server.server_address[1]),
-            "pid": 1,
-            "started_at": "x",
-            "token": "tok",
-        },
-    )
-    monkeypatch.setattr(server, "shutdown", lambda: None)  # ack stop, keep serving
     seen: list[Any] = []
 
     def _record(metadata: Any, **kwargs: Any) -> bool:
@@ -534,10 +563,78 @@ def test_the_probed_branch_passes_its_root_to_the_terminate_call(
         return False
 
     monkeypatch.setattr(sd, "_terminate_daemon_by_pid", _record)
-    try:
-        sd.stop_session_daemon(str(root))
-    finally:
-        real_shutdown()
-        server.server_close()
-    assert seen
+    with _probed_root_binding_daemon(root, monkeypatch):
+        result = sd.stop_session_daemon(str(root))
+    assert seen, result
     assert all(Path(str(r)) == root for r in seen), seen
+
+
+def test_probed_fixture_prepares_signing_key_before_listening_without_worker_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    main_thread = threading.get_ident()
+    loads: list[int] = []
+    verified: list[bool] = []
+    original_load = trust._load_or_create_user_secret
+    original_server = sd._ThreadedSessionDaemon
+    original_verify = sd._verify_ping_reply
+    original_reader = trust._read_user_secret
+
+    def load() -> bytes | None:
+        loads.append(threading.get_ident())
+        return original_load()
+
+    def construct(*args: Any, **kwargs: Any) -> Any:
+        assert loads == [main_thread], (
+            "root-binding fixture listened before preparing its signing key"
+        )
+        return original_server(*args, **kwargs)
+
+    def verify(*args: Any, **kwargs: Any) -> bool:
+        assert trust._read_user_secret is original_reader, "client key reads must remain real"
+        accepted = original_verify(*args, **kwargs)
+        verified.append(accepted)
+        return accepted
+
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", load)
+    monkeypatch.setattr(sd, "_ThreadedSessionDaemon", construct)
+    monkeypatch.setattr(sd, "_verify_ping_reply", verify)
+    test_the_probed_branch_passes_its_root_to_the_terminate_call(tmp_path, monkeypatch)
+    assert verified and all(verified), "fixture never completed a real signed TCP probe"
+    assert loads == [main_thread], "root-binding fixture reloaded its key on a request worker"
+
+
+@pytest.mark.parametrize("stage", ["thread-start", "metadata"])
+def test_root_binding_fixture_closes_listener_when_setup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    created: list[Any] = []
+    starts: list[threading.Thread] = []
+    original_server = sd._ThreadedSessionDaemon
+
+    def construct(*args: Any, **kwargs: Any) -> Any:
+        server = original_server(*args, **kwargs)
+        created.append(server)
+        if stage == "thread-start":
+            monkeypatch.setattr(threading.Thread, "start", fail_start)
+            monkeypatch.setattr(
+                server, "shutdown", lambda: pytest.fail("shutdown before serving started")
+            )
+        return server
+
+    def fail_start(thread: threading.Thread) -> None:
+        starts.append(thread)
+        raise RuntimeError("injected fixture setup failure")
+
+    def fail_metadata(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("injected fixture setup failure")
+
+    monkeypatch.setattr(sd, "_ThreadedSessionDaemon", construct)
+    if stage == "metadata":
+        monkeypatch.setattr(sd, "_write_daemon_metadata", fail_metadata)
+    with pytest.raises(RuntimeError, match="injected fixture setup failure"):
+        with _probed_root_binding_daemon(tmp_path.resolve(), monkeypatch):
+            pytest.fail("fixture yielded after its setup failed")
+    assert len(created) == 1 and created[0].socket.fileno() == -1
+    if stage == "thread-start":
+        assert len(starts) == 1, "shutdown was attempted for a listener that never started"

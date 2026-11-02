@@ -46,6 +46,7 @@ query-independent centrality -> None).
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,8 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
         tmp_path, file_name="impl.py", symbol_name="process_widget_report"
     )
     rm = repo_map.build_repo_map(project)
+    parsed = [symbol for symbol in rm["symbols"] if symbol.get("name") == "process_widget_report"]
+    assert len(parsed) == 1 and parsed[0]["file"] == str((project / "impl.py").resolve())
     monkeypatch.setattr(
         repo_map,
         "build_context_render_from_map",
@@ -132,6 +135,7 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
     assert primary["partial_primary"] is True
     assert primary["primary_basis"] == "deadline_truncated_best_effort"
     assert "deadline-truncated-best-effort" in primary["evidence"]
+    assert primary["evidence"] == ["parser-backed", "heuristic", "deadline-truncated-best-effort"]
 
     # The exit-2 / honesty contract must survive the substitution untouched.
     assert result["partial"] is True
@@ -480,6 +484,7 @@ def test_best_effort_helper_prefers_symbol_name_match_over_file_path() -> None:
         "symbol": "process_widget_report",
         "kind": "function",
         "line": 42,
+        "evidence": ["parser-backed", "heuristic"],
     }
 
 
@@ -498,6 +503,7 @@ def test_best_effort_helper_falls_back_to_file_path_match_when_no_symbol_matches
         "symbol": None,
         "kind": "unknown",
         "line": 1,
+        "evidence": ["heuristic"],
     }
 
 
@@ -520,4 +526,222 @@ def test_best_effort_helper_falls_back_to_centrality_when_nothing_matches() -> N
         rm, "zzz_completely_unrelated_term"
     )
 
-    assert candidate == {"file": "/repo/hub.py", "symbol": None, "kind": "unknown", "line": 1}
+    assert candidate == {
+        "file": "/repo/hub.py",
+        "symbol": None,
+        "kind": "unknown",
+        "line": 1,
+        "evidence": ["heuristic"],
+    }
+
+
+@pytest.mark.parametrize("query", ["billing report", "zzz_unrelated_query"])
+def test_file_only_best_effort_target_has_only_heuristic_evidence(tmp_path, monkeypatch, query):
+    project = tmp_path / "docs"
+    project.mkdir()
+    (project / ".git").mkdir()
+    document = project / "billing_report.md"
+    document.write_text("Ordinary billing report notes.\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(project)
+    assert rm["symbols"] == []
+    assert str(document.resolve()) in rm["files"]
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_from_map",
+        lambda *args, **kwargs: _truncated_empty_primary_payload(),
+    )
+    result = agent_capsule.build_agent_capsule_from_map(
+        rm, query, deadline_monotonic=time.monotonic() - 5, max_tokens=8000
+    )
+    primary = result["primary_target"]
+    assert {key: primary[key] for key in ("file", "symbol", "kind", "line")} == {
+        "file": str(document.resolve()),
+        "symbol": None,
+        "kind": "unknown",
+        "line": 1,
+    }
+    assert primary["partial_primary"] is True
+    assert primary["primary_basis"] == "deadline_truncated_best_effort"
+    assert primary["confidence"] <= 0.55 and result["confidence"]["overall"] <= 0.55
+    assert result["ask_user_before_editing"]["required"] is True
+    assert result["context_consistency"]["capsule_primary_file_in_snippets"] is False
+    assert result["context_consistency"]["capsule_primary_file_omitted"] is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+    assert result["partial"] is True and _scan_incomplete(result) is True
+    assert primary["evidence"] == ["heuristic", "deadline-truncated-best-effort"]
+
+
+@pytest.mark.parametrize(
+    "provenance,evidence",
+    [
+        ("regex-heuristic", ["heuristic"]),
+        ("heuristic", ["heuristic"]),
+        ("unknown", ["heuristic"]),
+        (None, ["heuristic"]),
+        ("lsp-confirmed", ["heuristic"]),
+        ("graph-derived", ["graph-derived", "heuristic"]),
+        (" PYTHON-AST ", ["parser-backed", "heuristic"]),
+    ],
+)
+def test_best_effort_selected_explicit_provenance_takes_precedence(
+    monkeypatch, provenance, evidence
+):
+    selected = {**_fake_symbol("widget", "/repo/widget.py"), "provenance": provenance}
+    rm = {"symbols": [selected], "files": [selected["file"]], "imports": []}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("explicit provenance must not consult parser availability")
+
+    monkeypatch.setattr(repo_map.lang_registry, "spec_for_path", forbidden)
+    target = agent_capsule._best_effort_primary_target_from_map(rm, "widget")
+    assert target["file"] == selected["file"] and target["symbol"] == "widget"
+    assert target["evidence"] == evidence
+
+
+def test_best_effort_missing_optional_parser_never_reads_source(monkeypatch):
+    selected = _fake_symbol("widget", "/repo/widget.js")
+    rm = {"symbols": [selected], "files": [selected["file"]], "imports": []}
+    monkeypatch.setattr(repo_map, "_javascript_parser", lambda: None)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("best-effort provenance must not read source")
+
+    monkeypatch.setattr(Path, "open", forbidden)
+    monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", forbidden)
+    target = agent_capsule._best_effort_primary_target_from_map(rm, "widget")
+    assert target["file"] == selected["file"] and target["symbol"] == "widget"
+    assert target["evidence"] == ["heuristic"]
+
+
+@pytest.mark.requires_grammar
+@pytest.mark.parametrize(
+    "suffix,declaration",
+    [
+        ("js", "function documented_widget() {}"),
+        ("ts", "function documented_widget() {}"),
+        ("rs", "fn documented_widget() {}"),
+    ],
+)
+def test_real_parser_available_regex_only_row_stays_heuristic(
+    tmp_path, monkeypatch, suffix, declaration
+):
+    (tmp_path / ".git").mkdir()
+    source = tmp_path / ("notes." + suffix)
+    source.write_text("/*\n" + declaration + "\n*/\n", encoding="utf-8")
+    spec = repo_map.lang_registry.spec_for_path(source)
+    assert spec.parser_for_path(source) is not None
+    parser_rows = (
+        repo_map._rust_parser_symbols(source)
+        if suffix == "rs"
+        else repo_map._js_ts_parser_symbols(source)
+    )
+    assert parser_rows == []
+    _, regex_rows = repo_map._regex_imports_and_symbols(source)
+    assert [row["name"] for row in regex_rows] == ["documented_widget"]
+    rm = repo_map.build_repo_map(tmp_path)
+    assert [row["name"] for row in rm["symbols"]] == ["documented_widget"]
+    assert "provenance" not in rm["symbols"][0]
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_from_map",
+        lambda *args, **kwargs: _truncated_empty_primary_payload(),
+    )
+    result = agent_capsule.build_agent_capsule_from_map(
+        rm, "documented_widget", deadline_monotonic=time.monotonic() - 5, max_tokens=8000
+    )
+    primary = result["primary_target"]
+    assert {key: primary[key] for key in ("file", "symbol", "kind", "line")} == {
+        "file": str(source.resolve()),
+        "symbol": "documented_widget",
+        "kind": "function",
+        "line": 2,
+    }
+    assert primary["partial_primary"] is True and primary["confidence"] <= 0.55
+    assert result["confidence"]["overall"] <= 0.55
+    assert result["ask_user_before_editing"]["required"] is True
+    assert primary["evidence"] == ["heuristic", "deadline-truncated-best-effort"]
+
+
+def _partial_result(rm, query, monkeypatch):
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_from_map",
+        lambda *args, **kwargs: _truncated_empty_primary_payload(),
+    )
+    result = agent_capsule.build_agent_capsule_from_map(
+        rm, query, deadline_monotonic=time.monotonic() - 5, max_tokens=8000
+    )
+    assert result["primary_target"]["partial_primary"] is True
+    assert result["primary_target"]["confidence"] <= 0.55
+    assert result["ask_user_before_editing"]["required"] is True
+    return result["primary_target"]
+
+
+@pytest.mark.requires_grammar
+def test_real_parser_only_optional_map_preserves_parser_evidence(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    source = tmp_path / "widget.go"
+    source.write_text("package sample\n\nfunc Widget() int { return 1 }\n", encoding="utf-8")
+    spec = repo_map.lang_registry.spec_for_path(source)
+    assert spec.parser_for_path(source) is not None
+    _, parsed = spec.extract_imports_and_symbols(source)
+    assert any(row["name"] == "Widget" for row in parsed)
+    rm = repo_map.build_repo_map(tmp_path)
+    assert any(row["name"] == "Widget" and "provenance" not in row for row in rm["symbols"])
+    primary = _partial_result(rm, "Widget", monkeypatch)
+    assert primary["file"] == str(source.resolve()) and primary["symbol"] == "Widget"
+    assert primary["evidence"] == ["parser-backed", "heuristic", "deadline-truncated-best-effort"]
+
+
+@pytest.mark.requires_grammar
+def test_real_mixed_parsed_row_needs_explicit_origin_even_after_cache_hit(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    source = tmp_path / "widget.js"
+    source.write_text("function widget() {\n  return 1;\n}\n", encoding="utf-8")
+    assert repo_map._javascript_parser() is not None
+    parsed = repo_map._js_ts_parser_symbols(source)
+    assert len(parsed) == 1 and parsed[0]["name"] == "widget"
+    cold = repo_map.build_repo_map(tmp_path)
+    warm = repo_map.build_repo_map(tmp_path)
+    assert warm["symbol_cache"]["hits"] == 1, warm["symbol_cache"]
+    assert warm["symbols"] == cold["symbols"] == parsed
+    assert "provenance" not in warm["symbols"][0]
+    for rm in (cold, warm):
+        primary = _partial_result(rm, "widget", monkeypatch)
+        assert primary["file"] == str(source.resolve()) and primary["symbol"] == "widget"
+        assert primary["evidence"] == ["heuristic", "deadline-truncated-best-effort"]
+    # Explicit-provenance input contract, not telemetry today's mixed producer records.
+    associated = {**warm, "symbols": [{**parsed[0], "provenance": "tree-sitter"}]}
+    primary = _partial_result(associated, "widget", monkeypatch)
+    assert primary["evidence"] == ["parser-backed", "heuristic", "deadline-truncated-best-effort"]
+
+
+@pytest.mark.parametrize("policy", ["mixed", "unknown", "missing-extractor", "unregistered"])
+def test_unlabelled_unproven_rows_never_consult_parser_or_source(monkeypatch, policy):
+    spec = repo_map.lang_registry.spec_for_path("widget.js")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unproven row must not query availability or read source")
+
+    spec = replace(spec, parser_for_path=forbidden)
+    if policy == "unknown":
+        spec = replace(spec, provenance_when_missing="unrecognized")
+    if policy == "missing-extractor":
+        spec = replace(
+            spec, provenance_when_missing="grammar-missing", extract_imports_and_symbols=None
+        )
+    lookups = []
+
+    def lookup(path):
+        lookups.append(path)
+        return None if policy == "unregistered" else spec
+
+    monkeypatch.setattr(repo_map.lang_registry, "spec_for_path", lookup)
+    monkeypatch.setattr(Path, "open", forbidden)
+    selected = _fake_symbol("widget", "/repo/widget.js", line=7)
+    candidate = agent_capsule._best_effort_primary_target_from_map(
+        {"symbols": [selected]}, "widget"
+    )
+    assert candidate["file"] == selected["file"] and candidate["line"] == 7
+    assert candidate["evidence"] == ["heuristic"]
+    assert lookups == [selected["file"]]  # Resolver would perform a second registry lookup.
