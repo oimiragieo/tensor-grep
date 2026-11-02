@@ -337,11 +337,7 @@ def build_agent_capsule_from_map(
             target["partial_primary"] = True
             target["primary_basis"] = _BEST_EFFORT_PRIMARY_BASIS
             target["evidence"] = _dedupe([
-                *[
-                    str(item)
-                    for item in target.get("evidence", [])
-                    if item is not None and str(item)
-                ],
+                *best_effort_target["evidence"],
                 _BEST_EFFORT_PRIMARY_EVIDENCE,
             ])
     # NIT-2 : `partial_primary`/`primary_basis` live on `primary_target` ONLY -- `edit_

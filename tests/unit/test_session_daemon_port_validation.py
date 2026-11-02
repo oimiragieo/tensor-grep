@@ -6,15 +6,19 @@ planted daemon.json used to reach ``_daemon_request`` with those or crash the pr
 
 from __future__ import annotations
 
+import inspect
 import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import FunctionType, SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
 from tensor_grep.cli import session_daemon as sd
+from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 _DAEMON_REQUEST_FUNCTION = sd._daemon_request
@@ -133,21 +137,146 @@ def _observe_substep(
     return observed
 
 
-@pytest.fixture
-def _running_daemon(
-    tmp_path: Path,
-) -> Iterator[tuple[Path, sd._ThreadedSessionDaemon]]:
-    root = tmp_path.resolve()
-    server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+def _prepared_ping_handler(secret: bytes, diagnostics: dict[str, dict[str, Any]]) -> type:
+    real_proof = trust._ping_proof_fields
+    proof = FunctionType(
+        real_proof.__code__,
+        {
+            **real_proof.__globals__,
+            "_load_or_create_user_secret": _observe_substep(
+                lambda: secret, diagnostics, "proof_secret"
+            ),
+            "_daemon_running_version": _observe_substep(
+                trust._daemon_running_version, diagnostics, "proof_version"
+            ),
+        },
+        argdefs=real_proof.__defaults__,
+        closure=real_proof.__closure__,
+    )
+    real_handle = sd._SessionDaemonHandler.handle
+
+    class PreparedHandler(sd._SessionDaemonHandler):
+        handle = FunctionType(
+            real_handle.__code__,
+            {
+                **real_handle.__globals__,
+                "_ping_proof_fields": _observe_call(proof, diagnostics, "proof_fields"),
+            },
+            argdefs=real_handle.__defaults__,
+            closure=real_handle.__closure__,
+        )
+
+    return PreparedHandler
+
+
+def _settle_daemon(server: Any, listener: Any, workers: list[Any]) -> None:
+    errors: list[str] = []
+
+    def shutdown() -> None:
+        try:
+            server.shutdown()
+        except BaseException as error:
+            errors.append(type(error).__name__)
+
+    stopper = threading.Thread(target=shutdown, daemon=True)
     try:
-        yield root, server
-    finally:
-        server.shutdown()
+        if listener.ident is not None:
+            stopper.start()
+            stopper.join(timeout=2.0)
+    except BaseException as error:
+        errors.append(type(error).__name__)
+    try:
         server.server_close()
-        thread.join(timeout=2.0)
-        assert not thread.is_alive(), "daemon server thread did not stop within 2 seconds"
+    except BaseException as error:
+        errors.append(type(error).__name__)
+    for thread in [listener, *workers]:
+        try:
+            if thread.ident is not None:
+                thread.join(timeout=2.0)
+        except BaseException as error:
+            errors.append(type(error).__name__)
+    alive = [thread.is_alive() for thread in [stopper, listener, *workers]]
+    assert not errors and not any(alive), (
+        f"daemon settlement failed: errors={errors}, alive={alive}"
+    )
+
+
+@pytest.fixture
+def _running_daemon(tmp_path: Path) -> Iterator[tuple[Path, sd._ThreadedSessionDaemon, dict]]:
+    secret = trust._load_or_create_user_secret()
+    assert isinstance(secret, bytes)
+    diagnostics: dict[str, dict[str, Any]] = {}
+    handler = _prepared_ping_handler(secret, diagnostics)
+    root = tmp_path.resolve()
+    workers: list[Any] = []
+    thread = threading.Thread(target=lambda: server.serve_forever(), daemon=True)
+    server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
+    primary: BaseException | None = None
+    try:
+        server.RequestHandlerClass = handler
+        # Track daemon workers before start; settle them ourselves with bounded joins.
+        server._threads = SimpleNamespace(append=workers.append, join=lambda: None)
+        thread.start()
+        yield root, server, diagnostics
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            _settle_daemon(server, thread, workers)
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            primary.add_note(f"daemon cleanup failed: {type(cleanup).__name__}")
+
+
+def test_prepared_handler_owns_actual_proof_code_without_global_signer_patch() -> None:
+    key = b"fixture-owned-test-key"
+    handler = _prepared_ping_handler(key, {})
+    observed = handler.handle.__globals__["_ping_proof_fields"]
+    proof = inspect.getclosurevars(observed).nonlocals["real"]
+    assert handler.handle.__code__ is sd._SessionDaemonHandler.handle.__code__
+    assert proof.__code__ is trust._ping_proof_fields.__code__
+    for bound, original, changed in (
+        (handler.handle, sd._SessionDaemonHandler.handle, {"_ping_proof_fields"}),
+        (
+            proof,
+            trust._ping_proof_fields,
+            {"_load_or_create_user_secret", "_daemon_running_version"},
+        ),
+    ):
+        assert bound.__defaults__ is original.__defaults__
+        assert bound.__closure__ is original.__closure__
+        assert {
+            name
+            for name in original.__globals__
+            if bound.__globals__[name] is not original.__globals__[name]
+        } == changed
+    assert proof.__globals__["_load_or_create_user_secret"]() is key
+
+
+@pytest.mark.parametrize("failure", [None, "worker", "close"])
+def test_settlement_is_bounded_and_reports_incomplete_cleanup(
+    monkeypatch: pytest.MonkeyPatch, failure: str | None
+) -> None:
+    server = Mock()
+    listener, worker, stopper = (Mock(ident=1) for _ in range(3))
+    for thread in (listener, worker, stopper):
+        thread.is_alive.return_value = False
+    worker.is_alive.return_value = failure == "worker"
+    stopper.start.side_effect = server.shutdown
+    if failure == "close":
+        server.server_close.side_effect = OSError("private cleanup detail")
+    monkeypatch.setattr(f"{__name__}.threading", SimpleNamespace(Thread=Mock(return_value=stopper)))
+    if failure:
+        with pytest.raises(AssertionError, match="daemon settlement failed") as raised:
+            _settle_daemon(server, listener, [worker])
+        assert "private cleanup detail" not in str(raised.value)
+    else:
+        _settle_daemon(server, listener, [worker])
+    server.server_close.assert_called_once_with()
+    for thread in (listener, worker, stopper):
+        thread.join.assert_called_once_with(timeout=2.0)
 
 
 class _RequestBoundaryConnection:
@@ -253,38 +382,33 @@ def test_valid_daemon_port_is_exactly_an_int_in_range(value: Any, expected: Any)
 
 
 def test_a_valid_int_port_is_still_accepted(
-    _running_daemon: tuple[Path, sd._ThreadedSessionDaemon],
+    _running_daemon: tuple[Path, sd._ThreadedSessionDaemon, dict],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tensor_grep.cli import session_daemon_trust as trust
-
     # POSITIVE CONTROL: the rejections above would pass against a probe that rejects everything.
-    root, server = _running_daemon
-    _plant(root, int(server.server_address[1]))
-    meta = sd._read_daemon_metadata(root)
-    assert meta is not None
-    meta["token"] = "tok"
-    sd._write_daemon_metadata(root, meta)
-
-    diagnostics: dict[str, dict[str, Any]] = {}
+    root, server, diagnostics = _running_daemon
+    port = int(server.server_address[1])
+    sd._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "package_version": _expected_tg_version(),
+            "root": str(root),
+            "host": "127.0.0.1",
+            "port": port,
+            "started_at": "x",
+            "token": "tok",
+        },
+    )
     real_metadata = sd._read_daemon_metadata
     real_request = sd._daemon_request
     real_verify = sd._verify_ping_reply
-    real_proof_fields = sd._ping_proof_fields
-    real_secret = trust._load_or_create_user_secret
-    real_running_version = trust._daemon_running_version
     metadata_observer = _observe_call(real_metadata, diagnostics, "metadata")
     request_observer = _observe_call(real_request, diagnostics, "request")
     verify_observer = _observe_call(real_verify, diagnostics, "verification")
-    proof_fields_observer = _observe_call(real_proof_fields, diagnostics, "proof_fields")
-    secret_observer = _observe_substep(real_secret, diagnostics, "proof_secret")
-    version_observer = _observe_substep(real_running_version, diagnostics, "proof_version")
-    monkeypatch.setattr(trust, "_load_or_create_user_secret", secret_observer)
-    monkeypatch.setattr(trust, "_daemon_running_version", version_observer)
     monkeypatch.setattr(sd, "_read_daemon_metadata", metadata_observer)
     monkeypatch.setattr(sd, "_daemon_request", request_observer)
     monkeypatch.setattr(sd, "_verify_ping_reply", verify_observer)
-    monkeypatch.setattr(sd, "_ping_proof_fields", proof_fields_observer)
 
     observed = sd._probe_daemon(root)
     assert observed is not None, f"sanitized daemon probe diagnostics: {diagnostics!r}"
