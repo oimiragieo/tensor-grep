@@ -356,8 +356,8 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
         "pull_request:",
         "workflow_dispatch:",
         "Dependency & License Audit",
-        "cargo audit",
-        "cargo deny check",
+        '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit',
+        '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check',
         "pip-audit",
         "report-audit-status:",
         "if: always() && github.event_name == 'schedule'",
@@ -432,11 +432,11 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
             for name, command in (
                 (
                     "Audit recovery preflight lockfile",
-                    "cargo audit --file recovery-preflight/Cargo.lock",
+                    '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit --file recovery-preflight/Cargo.lock',
                 ),
                 (
                     "Check recovery preflight dependencies",
-                    "cargo deny --locked --manifest-path recovery-preflight/Cargo.toml check",
+                    '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny --locked --manifest-path recovery-preflight/Cargo.toml check',
                 ),
             ):
                 step = audit_steps_by_name.get(name)

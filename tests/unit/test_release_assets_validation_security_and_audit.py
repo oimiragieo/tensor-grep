@@ -354,8 +354,8 @@ def test_should_require_audit_workflow_issue_remediation_contract():
         name: Dependency & License Audit
         runs-on: ubuntu-latest
         steps:
-          - run: cargo audit
-          - run: cargo deny check
+          - run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit'
+          - run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check'
           - run: uv run pip-audit
       report-audit-status:
         if: github.event_name == 'schedule'
@@ -392,8 +392,8 @@ def test_should_require_audit_workflow_managed_issue_title_contract():
         name: Dependency & License Audit
         runs-on: ubuntu-latest
         steps:
-          - run: cargo audit
-          - run: cargo deny check
+          - run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit'
+          - run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check'
           - run: uv run pip-audit
       report-audit-status:
         if: always() && github.event_name == 'schedule'
@@ -547,9 +547,9 @@ def test_should_require_audit_workflow_locked_requirements_export_before_pip_aud
         runs-on: ubuntu-latest
         steps:
           - name: Run cargo audit
-            run: cargo audit
+            run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-audit" audit'
           - name: Run cargo deny
-            run: cargo deny check
+            run: '"$RUNNER_TEMP/tg-audit-tools/bin/cargo-deny" deny check'
           - name: Install uv
             uses: astral-sh/setup-uv@v8.0.0
           - name: Setup Python
