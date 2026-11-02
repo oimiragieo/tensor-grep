@@ -190,6 +190,16 @@ def test_managed_executable_trust_allows_foreign_read_only_but_rejects_write(
     assert trust._windows_integrity_handle_trusted(object()) is False
 
 
+def test_managed_executable_trust_accepts_a_trusted_administrator_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seams(monkeypatch, owner=_ADMINS, token_owner=_USER)
+    acl = [(_USER, 0x1F01FF), (_FOREIGN, 0x1200A9)]
+    monkeypatch.setattr(trust, "_win_dacl_entries", lambda _h: (_ADMINS, acl))
+
+    assert trust._windows_integrity_handle_trusted(object()) is True
+
+
 def test_the_created_secret_may_be_owned_by_the_elevated_tokens_default_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

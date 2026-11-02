@@ -80,7 +80,7 @@ def read_managed_runtime(*, trusted_root: Path) -> ManagedRuntimePaths | None:
                 if not _is_direct_child(child_final, parent_final, component):
                     raise OSError(_REFUSAL)
                 if current == root:
-                    if not trust._parent_handle_ok(child):
+                    if not trust._windows_integrity_handle_trusted(child):
                         raise OSError(_REFUSAL)
                 else:
                     queried = winsec.owner_and_dacl_entries(child)

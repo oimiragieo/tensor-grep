@@ -797,13 +797,14 @@ def _windows_parent_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None
 
 
 def _windows_integrity_handle_trusted(handle: Any) -> bool:
-    """Trust a non-secret file when foreign principals have read-only access at most."""
+    """Trust managed runtime files and directories when foreign access is read-only at most."""
     user_sid = _win_current_user_sid()
     queried = _win_dacl_entries(handle)
     if user_sid is None or queried is None:
         return False
     owner_sid, entries = queried
-    return owner_sid in _our_owners(user_sid) and _windows_parent_dacl_ok(entries, user_sid)
+    owner_is_trusted = owner_sid in _our_owners(user_sid) or _windows_owner_ok(owner_sid, user_sid)
+    return owner_is_trusted and _windows_parent_dacl_ok(entries, user_sid)
 
 
 def _posix_dir_ok(st: os.stat_result) -> bool:

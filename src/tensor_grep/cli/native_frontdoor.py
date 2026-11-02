@@ -913,7 +913,7 @@ def _pin_managed_directory(path: Path, held: ExitStack) -> str:
         if parent_final is not None and not reader._is_direct_child(final, parent_final, component):
             raise RuntimeError("managed runtime directory identity changed during validation")
         if current == path:
-            if not trust._parent_handle_ok(handle):
+            if not trust._windows_integrity_handle_trusted(handle):
                 raise RuntimeError("managed runtime directory ACL is not trusted")
         else:
             details = winsec.owner_and_dacl_entries(handle)
