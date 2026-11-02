@@ -234,7 +234,7 @@ class TorchBackend(ComputeBackend):
                 routing_chunk_plan_mb = list(
                     zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
                 )
-            if not pattern_bytes:
+            if not pattern_bytes or cfg.max_count == 0:
                 return SearchResult(
                     matches=[],
                     total_files=0,

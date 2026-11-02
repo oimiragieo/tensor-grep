@@ -849,7 +849,10 @@ class TestPipeline:
         assert pipeline.backend.__class__.__name__ == "CPUBackend"
         assert pipeline.selected_backend_reason == "python_cpu_semantics_required"
 
-    def test_should_preserve_explicit_multi_gpu_ids_through_torch_execution(self, tmp_path):
+    @pytest.mark.parametrize("max_count,expected", [(None, 4), (0, 0), (2, 2)])
+    def test_should_preserve_explicit_multi_gpu_ids_through_torch_execution(
+        self, tmp_path, max_count, expected
+    ):
         import types
 
         path = tmp_path / "torch_pipeline.log"
@@ -916,6 +919,7 @@ class TestPipeline:
             query_pattern="ERROR",
             fixed_strings=False,
             gpu_device_ids=[7, 3],
+            max_count=max_count,
         )
 
         with (
@@ -942,7 +946,8 @@ class TestPipeline:
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
         assert pipeline.selected_gpu_device_ids == [7, 3]
         assert pipeline.selected_gpu_chunk_plan_mb == [(7, 3), (3, 1)]
-        assert result.total_matches == 4
+        assert result.total_matches == expected
+        assert [match.line_number for match in result.matches] == list(range(1, expected + 1))
         assert result.routing_backend == "TorchBackend"
         assert result.routing_reason == "torch_multi_gpu_fanout"
         assert result.routing_gpu_device_ids == [7, 3]
