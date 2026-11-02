@@ -106,7 +106,7 @@ def _windows_process_creation_time(kernel: Any, handle: int) -> int:
 
 
 def _open_native_parent_handle(stable_path: Path) -> int | None:
-    """Return an inheritable wait handle only when the direct parent is this stable tg.exe."""
+    """Return an inheritable wait handle for the stable tg.exe above this Python process."""
     import ctypes
     from ctypes import wintypes
 
@@ -122,6 +122,7 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
     if not direct_parent:
         raise RuntimeError("cannot pin the running native launcher process for deferred activation")
 
+    intermediate_handle = None
     stable_handle = None
     try:
         kernel.QueryFullProcessImageNameW.argtypes = [
@@ -136,15 +137,31 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
         if not kernel.QueryFullProcessImageNameW(direct_parent, 0, image, ctypes.byref(image_size)):
             raise RuntimeError("cannot verify the running native launcher's image")
         advertised = os.environ.get("TG_NATIVE_TG_BINARY")
-        if _native_image_is_managed_generation(stable_path, image.value):
-            if advertised is not None and _canonical_windows_path(
-                advertised
-            ) != _canonical_windows_path(image.value):
-                raise RuntimeError(
-                    "native launcher environment does not match the actual parent image"
-                )
-            generation_created = _windows_process_creation_time(kernel, direct_parent)
-            stable_pid = _windows_process_parent_pid(kernel, direct_parent_pid)
+        sidecar = os.environ.get("TG_SIDECAR_PYTHON")
+
+        if sidecar is not None and _canonical_windows_path(sidecar) == _canonical_windows_path(
+            image.value
+        ):
+            sidecar_created = _windows_process_creation_time(kernel, direct_parent)
+            direct_parent_pid = _windows_process_parent_pid(kernel, direct_parent_pid)
+            intermediate_handle = kernel.OpenProcess(0x00100000 | 0x1000, False, direct_parent_pid)
+            if not intermediate_handle:
+                raise RuntimeError("cannot pin the native launcher above the Python sidecar")
+            if _windows_process_creation_time(kernel, intermediate_handle) >= sidecar_created:
+                raise RuntimeError("native launcher PID was reused before sidecar startup")
+            winsec.close_handle(direct_parent)
+            direct_parent = intermediate_handle
+            intermediate_handle = None
+            image_size = wintypes.DWORD(len(image))
+            if not kernel.QueryFullProcessImageNameW(
+                direct_parent, 0, image, ctypes.byref(image_size)
+            ):
+                raise RuntimeError("cannot verify the native launcher above the Python sidecar")
+
+        def pin_stable_ancestor(launcher_pid: int, generation_created: int) -> None:
+            nonlocal stable_handle
+
+            stable_pid = _windows_process_parent_pid(kernel, launcher_pid)
             stable_handle = kernel.OpenProcess(0x00100000 | 0x1000, False, stable_pid)
             if not stable_handle:
                 raise RuntimeError(
@@ -161,12 +178,24 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
                 raise RuntimeError(
                     "stable launcher PID was reused after managed generation startup"
                 )
+
+        if _native_image_is_managed_generation(stable_path, image.value):
+            if advertised is not None and _canonical_windows_path(
+                advertised
+            ) != _canonical_windows_path(image.value):
+                raise RuntimeError(
+                    "native launcher environment does not match the actual parent image"
+                )
+            generation_created = _windows_process_creation_time(kernel, direct_parent)
+            pin_stable_ancestor(direct_parent_pid, generation_created)
         elif _native_parent_matches_stable(stable_path, image.value, advertised):
             stable_handle = direct_parent
             direct_parent = None
         else:
             return None
 
+        if stable_handle is None:
+            raise RuntimeError("cannot pin the native launcher process for deferred activation")
         kernel.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
         kernel.SetHandleInformation.restype = wintypes.BOOL
         if not kernel.SetHandleInformation(stable_handle, 1, 1):
@@ -179,5 +208,7 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
     finally:
         if stable_handle is not None:
             winsec.close_handle(stable_handle)
+        if intermediate_handle is not None:
+            winsec.close_handle(intermediate_handle)
         if direct_parent is not None:
             winsec.close_handle(direct_parent)
