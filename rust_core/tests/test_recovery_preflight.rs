@@ -1,5 +1,6 @@
 #![cfg(all(windows, target_arch = "x86_64", not(target_feature = "crt-static")))]
 
+use std::os::windows::process::CommandExt;
 use std::{fs, process::Command};
 
 #[test]
@@ -11,6 +12,7 @@ fn dynamic_crt_build_refuses_verification_before_opening_inputs() {
         fs::write(poison.join(name), b"not an executable").unwrap();
     }
     let output = Command::new(env!("CARGO_BIN_EXE_tg-recovery-preflight"))
+        .creation_flags(0x08000000)
         .current_dir(dir.path())
         .env("PATH", &poison)
         .env("TG_SIDECAR_PYTHON", poison.join("python.exe"))
