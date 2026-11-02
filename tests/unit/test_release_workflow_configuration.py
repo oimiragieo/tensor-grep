@@ -1,5 +1,8 @@
 import re
+import shlex
 from pathlib import Path
+
+import yaml
 
 
 def _job_section(workflow: str, job_name: str) -> str:
@@ -260,3 +263,36 @@ def test_ci_workflow_should_gate_agent_workflow_benchmark_regressions() -> None:
     assert "--iterations 1" in benchmark_section
     assert "--files 50" in benchmark_section
     assert "--loc 2500" in benchmark_section
+
+
+def test_native_publisher_uses_minimal_script_dependencies() -> None:
+    workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["publish-github-release-assets"]["steps"]
+    expected = {
+        "validate_release_binary_artifacts.py": [],
+        "prepare_package_manager_release.py": ["--with", "pyyaml==6.0.3"],
+        "verify_package_manager_bundle_checksums.py": [],
+        "smoke_test_package_manager_bundle.py": ["--with", "pyyaml==6.0.3"],
+        "verify_github_release_assets.py": [],
+    }
+    commands = [
+        shlex.split(step["run"])
+        for step in steps
+        if step.get("run", "").lstrip().startswith("uv run ")
+    ]
+    assert len(commands) == len(expected)
+    for command in commands:
+        script_index = command.index("python") + 1
+        script = Path(command[script_index]).name
+        assert script in expected
+        assert command[:script_index] == [
+            "uv",
+            "run",
+            "--no-project",
+            "--python",
+            "3.12",
+            *expected.pop(script),
+            "--",
+            "python",
+        ]
+    assert not expected
