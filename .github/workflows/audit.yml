@@ -62,6 +62,8 @@ jobs:
           test "$audit_version" = "cargo-audit 0.22.2"
           deny_version=$("$tool_root/bin/cargo-deny" --version)
           test "$deny_version" = "cargo-deny 0.20.2"
+          # The later Foldhash verifier resolves cargo-deny through PATH.
+          echo "$tool_root/bin" >> "$GITHUB_PATH"
 
       - name: Run cargo audit
         working-directory: rust_core

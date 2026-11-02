@@ -60,6 +60,13 @@ def _audit_commands():
     }
 
 
+def test_cached_cargo_deny_is_available_to_following_audit_probe():
+    installer = next(
+        step for step in _steps() if step.get("name") == "Install cargo-audit and cargo-deny"
+    )
+    assert 'echo "$tool_root/bin" >> "$GITHUB_PATH"' in installer["run"]
+
+
 def test_all_audits_use_exact_verified_tools_and_existing_targets():
     for name, command in _audit_commands().items():
         matching = [step for step in _steps() if step.get("name") == name]
@@ -138,6 +145,7 @@ chmod +x "$root/bin/$name"
         "STUBS": stubs.as_posix(),
         "TOOL_CALLS": (tmp_path / "tool-calls").as_posix(),
         "CARGO_CALLS": (tmp_path / "cargo-calls").as_posix(),
+        "GITHUB_PATH": (tmp_path / "github-path").as_posix(),
     }
     install = next(
         step for step in _steps() if step.get("name") == "Install cargo-audit and cargo-deny"
@@ -155,6 +163,9 @@ chmod +x "$root/bin/$name"
             f"install cargo-deny --version 0.20.2 --locked --force --root {runner_temp.as_posix()}/tg-audit-tools",
         ]
     if success:
+        assert (tmp_path / "github-path").read_text().splitlines() == [
+            f"{runner_temp.as_posix()}/tg-audit-tools/bin"
+        ]
         for name in _audit_commands():
             actual = next(step for step in _steps() if step.get("name") == name)
             result = _run(actual["run"], env, tmp_path)
@@ -167,6 +178,7 @@ chmod +x "$root/bin/$name"
         ]
     else:
         assert not (tmp_path / "tool-calls").exists()
+        assert not (tmp_path / "github-path").exists()
 
 
 @pytest.mark.skipif(
