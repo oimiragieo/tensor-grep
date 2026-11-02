@@ -115,6 +115,8 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
         tmp_path, file_name="impl.py", symbol_name="process_widget_report"
     )
     rm = repo_map.build_repo_map(project)
+    parsed = [symbol for symbol in rm["symbols"] if symbol.get("name") == "process_widget_report"]
+    assert len(parsed) == 1 and parsed[0]["file"] == str((project / "impl.py").resolve())
     monkeypatch.setattr(
         repo_map,
         "build_context_render_from_map",
@@ -132,6 +134,7 @@ def test_capsule_emits_best_effort_primary_on_truncated_scan_with_symbol_match(
     assert primary["partial_primary"] is True
     assert primary["primary_basis"] == "deadline_truncated_best_effort"
     assert "deadline-truncated-best-effort" in primary["evidence"]
+    assert primary["evidence"] == ["parser-backed", "heuristic", "deadline-truncated-best-effort"]
 
     # The exit-2 / honesty contract must survive the substitution untouched.
     assert result["partial"] is True
@@ -480,6 +483,7 @@ def test_best_effort_helper_prefers_symbol_name_match_over_file_path() -> None:
         "symbol": "process_widget_report",
         "kind": "function",
         "line": 42,
+        "evidence": ["parser-backed", "heuristic"],
     }
 
 
@@ -498,6 +502,7 @@ def test_best_effort_helper_falls_back_to_file_path_match_when_no_symbol_matches
         "symbol": None,
         "kind": "unknown",
         "line": 1,
+        "evidence": ["heuristic"],
     }
 
 
@@ -520,4 +525,88 @@ def test_best_effort_helper_falls_back_to_centrality_when_nothing_matches() -> N
         rm, "zzz_completely_unrelated_term"
     )
 
-    assert candidate == {"file": "/repo/hub.py", "symbol": None, "kind": "unknown", "line": 1}
+    assert candidate == {
+        "file": "/repo/hub.py",
+        "symbol": None,
+        "kind": "unknown",
+        "line": 1,
+        "evidence": ["heuristic"],
+    }
+
+
+@pytest.mark.parametrize("query", ["billing report", "zzz_unrelated_query"])
+def test_file_only_best_effort_target_has_only_heuristic_evidence(tmp_path, monkeypatch, query):
+    project = tmp_path / "docs"
+    project.mkdir()
+    (project / ".git").mkdir()
+    document = project / "billing_report.md"
+    document.write_text("Ordinary billing report notes.\n", encoding="utf-8")
+    rm = repo_map.build_repo_map(project)
+    assert rm["symbols"] == []
+    assert str(document.resolve()) in rm["files"]
+    monkeypatch.setattr(
+        repo_map,
+        "build_context_render_from_map",
+        lambda *args, **kwargs: _truncated_empty_primary_payload(),
+    )
+    result = agent_capsule.build_agent_capsule_from_map(
+        rm, query, deadline_monotonic=time.monotonic() - 5, max_tokens=8000
+    )
+    primary = result["primary_target"]
+    assert {key: primary[key] for key in ("file", "symbol", "kind", "line")} == {
+        "file": str(document.resolve()),
+        "symbol": None,
+        "kind": "unknown",
+        "line": 1,
+    }
+    assert primary["partial_primary"] is True
+    assert primary["primary_basis"] == "deadline_truncated_best_effort"
+    assert primary["confidence"] <= 0.55 and result["confidence"]["overall"] <= 0.55
+    assert result["ask_user_before_editing"]["required"] is True
+    assert result["context_consistency"]["capsule_primary_file_in_snippets"] is False
+    assert result["context_consistency"]["capsule_primary_file_omitted"] is True
+    assert result["deadline_limit"]["deadline_exceeded"] is True
+    assert result["partial"] is True and _scan_incomplete(result) is True
+    assert primary["evidence"] == ["heuristic", "deadline-truncated-best-effort"]
+
+
+@pytest.mark.parametrize(
+    "provenance,evidence",
+    [
+        ("regex-heuristic", ["heuristic"]),
+        ("heuristic", ["heuristic"]),
+        ("unknown", ["heuristic"]),
+        (None, ["heuristic"]),
+        ("lsp-confirmed", ["heuristic"]),
+        ("graph-derived", ["graph-derived", "heuristic"]),
+        (" PYTHON-AST ", ["parser-backed", "heuristic"]),
+    ],
+)
+def test_best_effort_selected_explicit_provenance_takes_precedence(
+    monkeypatch, provenance, evidence
+):
+    selected = {**_fake_symbol("widget", "/repo/widget.py"), "provenance": provenance}
+    rm = {"symbols": [selected], "files": [selected["file"]], "imports": []}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("explicit provenance must not consult parser availability")
+
+    monkeypatch.setattr(repo_map.lang_registry, "spec_for_path", forbidden)
+    target = agent_capsule._best_effort_primary_target_from_map(rm, "widget")
+    assert target["file"] == selected["file"] and target["symbol"] == "widget"
+    assert target["evidence"] == evidence
+
+
+def test_best_effort_missing_optional_parser_never_reads_source(monkeypatch):
+    selected = _fake_symbol("widget", "/repo/widget.js")
+    rm = {"symbols": [selected], "files": [selected["file"]], "imports": []}
+    monkeypatch.setattr(repo_map, "_javascript_parser", lambda: None)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("best-effort provenance must not read source")
+
+    monkeypatch.setattr(Path, "open", forbidden)
+    monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", forbidden)
+    target = agent_capsule._best_effort_primary_target_from_map(rm, "widget")
+    assert target["file"] == selected["file"] and target["symbol"] == "widget"
+    assert target["evidence"] == ["heuristic"]

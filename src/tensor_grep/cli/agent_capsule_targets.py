@@ -570,7 +570,7 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
     see that constant's comment for why this is an item-count cap, not a deadline re-check.
     Returns ``None`` (never fabricates) when ``rm`` has nothing to score at all. The caller owns
     stamping ``partial_primary``/``primary_basis`` and letting every existing confidence-cap/
-    ask-reason gate re-run over the result -- this helper returns a bare best-guess location only,
+    ask-reason gate re-run over the result -- this helper returns a best-guess location and its evidence only,
     never a fully-shaped primary-target dict.
     """
     symbols = _as_list_of_dicts(rm.get("symbols"))[:_BEST_EFFORT_PRIMARY_SCAN_CAP]
@@ -598,10 +598,22 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
                 best_symbol_score = score
                 best_symbol = symbol
         if best_symbol is not None:
+            # Extraction provenance belongs to the selected record, not the empty primary.
+            provenance = (
+                str(best_symbol["provenance"])
+                if "provenance" in best_symbol
+                else (repo_map._symbol_navigation_provenance_for_path(str(best_symbol["file"])))
+            )
+            evidence = ["heuristic"]
+            if repo_map._is_parser_backed_provenance(provenance):
+                evidence.insert(0, "parser-backed")
+            elif provenance.strip().lower() == "graph-derived":
+                evidence.insert(0, "graph-derived")
             line = best_symbol.get("line") or best_symbol.get("start_line") or 1
             return {
                 "file": str(best_symbol.get("file") or ""),
                 "symbol": best_symbol.get("name"),
+                "evidence": evidence,
                 "kind": str(best_symbol.get("kind") or "unknown"),
                 "line": int(line) if isinstance(line, int) or str(line).isdigit() else 1,
             }
@@ -617,7 +629,13 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
                 best_file_score = score
                 best_file = candidate_file
         if best_file is not None:
-            return {"file": best_file, "symbol": None, "kind": "unknown", "line": 1}
+            return {
+                "file": best_file,
+                "symbol": None,
+                "kind": "unknown",
+                "line": 1,
+                "evidence": ["heuristic"],
+            }
 
     # Local import avoids a module-level circular import -- same discipline every other
     # `orient_capsule` reuse in this module already follows (see e.g. `build_agent_capsule_
@@ -629,7 +647,13 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
         top_file = sorted(code_files, key=lambda current: (-centrality.get(current, 0.0), current))[
             0
         ]
-        return {"file": top_file, "symbol": None, "kind": "unknown", "line": 1}
+        return {
+            "file": top_file,
+            "symbol": None,
+            "kind": "unknown",
+            "line": 1,
+            "evidence": ["heuristic"],
+        }
 
     return None
 
