@@ -541,3 +541,40 @@ def test_the_probed_branch_passes_its_root_to_the_terminate_call(
         server.server_close()
     assert seen
     assert all(Path(str(r)) == root for r in seen), seen
+
+
+def test_probed_fixture_prepares_signing_key_before_listening_without_worker_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    main_thread = threading.get_ident()
+    loads: list[int] = []
+    verified: list[bool] = []
+    original_load = trust._load_or_create_user_secret
+    original_server = sd._ThreadedSessionDaemon
+    original_verify = sd._verify_ping_reply
+    original_reader = trust._read_user_secret
+
+    def load() -> bytes | None:
+        loads.append(threading.get_ident())
+        return original_load()
+
+    def construct(*args: Any, **kwargs: Any) -> Any:
+        assert loads == [main_thread], (
+            "root-binding fixture listened before preparing its signing key"
+        )
+        return original_server(*args, **kwargs)
+
+    def verify(*args: Any, **kwargs: Any) -> bool:
+        assert trust._read_user_secret is original_reader, "client key reads must remain real"
+        accepted = original_verify(*args, **kwargs)
+        verified.append(accepted)
+        return accepted
+
+    monkeypatch.setattr(trust, "_load_or_create_user_secret", load)
+    monkeypatch.setattr(sd, "_ThreadedSessionDaemon", construct)
+    monkeypatch.setattr(sd, "_verify_ping_reply", verify)
+    test_the_probed_branch_passes_its_root_to_the_terminate_call(tmp_path, monkeypatch)
+    assert verified and all(verified), "fixture never completed a real signed TCP probe"
+    assert loads == [main_thread], "root-binding fixture reloaded its key on a request worker"
