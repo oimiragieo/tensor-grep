@@ -616,6 +616,7 @@ def test_root_binding_fixture_closes_listener_when_setup_fails(
         server = original_server(*args, **kwargs)
         created.append(server)
         if stage == "thread-start":
+            monkeypatch.setattr(threading.Thread, "start", fail_start)
             monkeypatch.setattr(
                 server, "shutdown", lambda: pytest.fail("shutdown before serving started")
             )
@@ -629,9 +630,7 @@ def test_root_binding_fixture_closes_listener_when_setup_fails(
         raise RuntimeError("injected fixture setup failure")
 
     monkeypatch.setattr(sd, "_ThreadedSessionDaemon", construct)
-    if stage == "thread-start":
-        monkeypatch.setattr(threading.Thread, "start", fail_start)
-    else:
+    if stage == "metadata":
         monkeypatch.setattr(sd, "_write_daemon_metadata", fail_metadata)
     with pytest.raises(RuntimeError, match="injected fixture setup failure"):
         with _probed_root_binding_daemon(tmp_path.resolve(), monkeypatch):
