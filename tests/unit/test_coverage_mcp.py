@@ -40,6 +40,49 @@ def test_tg_coverage_returns_inventory_and_contract_version(tmp_path: Path, monk
     assert payload["complete"] is False
 
 
+def test_tg_coverage_file_scope_ignores_deleted_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "a.py"
+    sibling = project / "b.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    sibling.write_text("value = 2\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(project))
+    opened = CliRunner().invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+    sibling.unlink()
+
+    payload = json.loads(mcp_server.tg_coverage(str(target)))
+
+    assert payload["files_total"] == 1
+    assert payload["stale"] == []
+    assert payload["unindexed"] == []
+    assert payload["complete"] is True
+    assert payload["incomplete"]["status"] is False
+    assert "b.py" not in json.dumps(payload)
+
+
+def test_tg_coverage_missing_path_returns_sanitized_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setenv("TG_MCP_ROOT", str(project))
+    missing = project / "missing.py"
+
+    payload = json.loads(mcp_server.tg_coverage(str(missing)))
+
+    assert isinstance(payload.get("error"), dict)
+    assert str(missing) not in payload["error"]["message"]
+    assert "complete" not in payload
+
+
 def test_tg_coverage_refuses_paths_outside_mcp_root(tmp_path: Path, monkeypatch) -> None:
     anchor = tmp_path / "anchor"
     external = tmp_path / "external"
