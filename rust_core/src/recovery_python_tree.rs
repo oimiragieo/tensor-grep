@@ -52,11 +52,11 @@ fn refuse(message: &'static str) -> io::Error {
 fn check_anchor(stage: &AnchoredDirectory, root: &Path, root_final: &Path) -> io::Result<()> {
     let user = managed_runtime_windows_token::current_token_sids()?;
     for file in [stage.directory(), stage.anchor()] {
-        let acl = managed_runtime_acl_reader::read_handle_acl(file.as_handle())?;
-        if acl.owner != user.user_sid() {
+        let acl = managed_runtime_acl_reader::read_handle_acl_details(file.as_handle())?;
+        if acl.acl.owner != user.user_sid() {
             return Err(refuse("anchor or directory owner changed"));
         }
-        verified_dacl(file, user.user_sid())?;
+        verified_dacl(user.user_sid(), &acl)?;
     }
     let metadata = stage.anchor().metadata()?;
     let directory_metadata = stage.directory().metadata()?;

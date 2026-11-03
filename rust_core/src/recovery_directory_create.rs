@@ -10,13 +10,8 @@ use std::os::windows::fs::MetadataExt;
 use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::Security::Authorization::{
-    ConvertSecurityDescriptorToStringSecurityDescriptorW,
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SE_FILE_OBJECT,
-};
-use windows_sys::Win32::Security::{
-    GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED,
-};
+use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
     FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx, GetFileType,
     BY_HANDLE_FILE_INFORMATION, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
@@ -27,6 +22,9 @@ use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress
 
 type CreateDirectory2 =
     unsafe extern "system" fn(*const u16, u32, u32, u32, *const SECURITY_ATTRIBUTES) -> HANDLE;
+
+const FILE_ALL_ACCESS_MASK: u32 = 0x001f_01ff;
+const DIRECTORY_INHERIT_FLAGS: u8 = 0x03;
 
 #[repr(C)]
 struct CreateFile3Parameters {
@@ -112,57 +110,19 @@ fn api() -> Option<CreateDirectory2> {
     Some(unsafe { std::mem::transmute(function) })
 }
 
-pub(super) fn verified_dacl(file: &File, user: &str) -> io::Result<()> {
-    let mut dacl = null_mut();
-    let mut descriptor = null_mut();
-    let status = unsafe {
-        GetSecurityInfo(
-            file.as_raw_handle(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            null_mut(),
-            null_mut(),
-            &mut dacl,
-            null_mut(),
-            &mut descriptor,
-        )
-    };
-    if status != 0 {
-        return Err(io::Error::from_raw_os_error(status as i32));
-    }
-    let _descriptor = unsafe { LocalAllocation::from_raw(descriptor.cast()) }
-        .ok_or_else(|| invalid("missing security descriptor"))?;
-    if dacl.is_null() {
-        return Err(invalid("missing DACL"));
-    }
-    let (mut control, mut revision) = (0u16, 0u32);
-    if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0
-        || control & SE_DACL_PROTECTED == 0
-    {
+pub(super) fn verified_dacl(
+    user: &str,
+    acl: &managed_runtime_acl_reader::HandleAclDetails,
+) -> io::Result<()> {
+    if !acl.dacl_protected {
         return Err(invalid("DACL is not protected"));
     }
-    let (mut text, mut length) = (null_mut(), 0u32);
-    if unsafe {
-        ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            descriptor,
-            1,
-            DACL_SECURITY_INFORMATION,
-            &mut text,
-            &mut length,
-        )
-    } == 0
+    if acl.ace_count != 1
+        || acl.acl.allow_grants.len() != 1
+        || acl.acl.allow_grants[0].0.as_str() != user
+        || acl.acl.allow_grants[0].1 != FILE_ALL_ACCESS_MASK
+        || acl.allow_grant_flags.as_slice() != &[DIRECTORY_INHERIT_FLAGS]
     {
-        return Err(io::Error::last_os_error());
-    }
-    let _text = unsafe { LocalAllocation::from_raw(text.cast()) }
-        .ok_or_else(|| invalid("DACL text unavailable"))?;
-    if length == 0 || length > 4096 {
-        return Err(invalid("DACL text length invalid"));
-    }
-    // SAFETY: the OS returned this LocalFree-owned string and its bounded size.
-    let actual = String::from_utf16(unsafe { std::slice::from_raw_parts(text, length as usize) })
-        .map_err(|_| invalid("DACL text invalid"))?;
-    if actual.trim_end_matches('\0') != format!("D:P(A;OICI;FA;;;{user})") {
         return Err(invalid(
             "DACL differs from the protected user-only descriptor",
         ));
@@ -282,11 +242,11 @@ fn create_anchor(
         return Err(invalid("anchor identity invalid"));
     }
     for file in [directory, &anchor] {
-        let acl = managed_runtime_acl_reader::read_handle_acl(file.as_handle())?;
-        if !stage_owner_is_trusted(&acl.owner, user) {
+        let acl = managed_runtime_acl_reader::read_handle_acl_details(file.as_handle())?;
+        if !stage_owner_is_trusted(&acl.acl.owner, user) {
             return Err(invalid("anchor or directory owner invalid"));
         }
-        verified_dacl(file, user)?;
+        verified_dacl(user, &acl)?;
     }
     Ok(anchor)
 }
@@ -382,11 +342,11 @@ fn create_with_check(
         {
             return Err(invalid("created directory identity invalid"));
         }
-        let acl = managed_runtime_acl_reader::read_handle_acl(file.as_handle())?;
-        if !stage_owner_is_trusted(&acl.owner, user) {
+        let acl = managed_runtime_acl_reader::read_handle_acl_details(file.as_handle())?;
+        if !stage_owner_is_trusted(&acl.acl.owner, user) {
             return Err(invalid("created directory owner invalid"));
         }
-        verified_dacl(&file, user)?;
+        verified_dacl(user, &acl)?;
         extra_check(&file, user)
     };
     check().map_err(|_| invalid("created directory could not be validated and may remain"))?;
@@ -816,7 +776,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let parent = windows_file::open_directory(root.path()).unwrap();
         let good = super::create_child(&parent, "good").unwrap();
-        super::verified_dacl(&good, identity.user_sid()).unwrap();
+        let acl =
+            super::managed_runtime_acl_reader::read_handle_acl_details(good.as_handle()).unwrap();
+        super::verified_dacl(identity.user_sid(), &acl).unwrap();
         drop(good);
         let sddl: Vec<u16> = format!(
             "D:P(A;OICI;FA;;;{})(A;OICIIO;FA;;;WD)\0",
@@ -863,7 +825,9 @@ mod tests {
         };
         assert!(!raw.is_null() && raw != super::INVALID_HANDLE_VALUE);
         let file = unsafe { std::fs::File::from_raw_handle(raw) };
-        assert!(super::verified_dacl(&file, identity.user_sid()).is_err());
+        let acl =
+            super::managed_runtime_acl_reader::read_handle_acl_details(file.as_handle()).unwrap();
+        assert!(super::verified_dacl(identity.user_sid(), &acl).is_err());
     }
 
     #[test]
