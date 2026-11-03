@@ -1359,7 +1359,12 @@ def test_CiAstLane_FullAstSuite_InstallsPinnedWrapper() -> None:
     _, run_pytest = _ci_job_step("test-gpu-linux", "Run Pytest with GPU Hooks")
 
     assert 'uv pip install -e ".[dev,nlp,ast]"' in dependency_setup["run"]
-    assert install_ast_grep["run"] == "cargo install ast-grep --version 0.41.1 --locked"
+    assert (
+        'cargo install ast-grep --version 0.41.1 --locked --root "$tool_root"'
+        in install_ast_grep["run"]
+    )
+    assert "${{ steps.ast-grep-cache.outputs.cache-hit }}" in install_ast_grep["run"]
+    assert 'test "$version" = "ast-grep 0.41.1"' in install_ast_grep["run"]
     assert verify_ast_grep["run"] == (
         'uv run --no-sync python -c "from tensor_grep.backends.ast_wrapper_backend import '
         'AstGrepWrapperBackend; assert AstGrepWrapperBackend().is_available()"'
