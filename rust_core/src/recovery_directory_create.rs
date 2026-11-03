@@ -15,7 +15,8 @@ use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
-    GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED,
+    GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
+    SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     GetFileType, FILE_ATTRIBUTE_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
@@ -95,10 +96,12 @@ fn verified_dacl(file: &File, user: &str) -> io::Result<()> {
     // SAFETY: the OS returned this LocalFree-owned string and its bounded size.
     let actual = String::from_utf16(unsafe { std::slice::from_raw_parts(text, length as usize) })
         .map_err(|_| invalid("DACL text invalid"))?;
-    if actual.trim_end_matches('\0') != format!("D:P(A;OICI;FA;;;{user})") {
-        return Err(invalid(
-            "DACL differs from the protected user-only descriptor",
-        ));
+    let actual = actual.trim_end_matches('\0');
+    let expected = format!("D:P(A;OICI;FA;;;{user})");
+    // Server NTFS may mark this protected DACL auto-inherited without adding ACEs.
+    let auto_inherited = expected.replacen("D:P", "D:PAI", 1);
+    if actual != expected && (control & SE_DACL_AUTO_INHERITED == 0 || actual != auto_inherited) {
+        return Err(invalid("protected user-only DACL mismatch"));
     }
     Ok(())
 }
@@ -201,12 +204,7 @@ fn create_with_check(
         verified_dacl(&file, user)?;
         extra_check(&file, user)
     };
-    check().map_err(|error| {
-        io::Error::new(
-            error.kind(),
-            format!("created directory could not be validated and may remain: {error}"),
-        )
-    })?;
+    check().map_err(|_| invalid("created directory could not be validated and may remain"))?;
     Ok(file)
 }
 
@@ -467,7 +465,7 @@ mod tests {
         });
         assert_eq!(
             result.unwrap_err().to_string(),
-            "created directory could not be validated and may remain: injected validation failure"
+            "created directory could not be validated and may remain"
         );
         assert!(root.path().join("stage").is_dir());
     }
