@@ -158,18 +158,19 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
         advertised = os.environ.get("TG_NATIVE_TG_BINARY")
         sidecar = os.environ.get("TG_SIDECAR_PYTHON")
 
-        if sidecar is not None and _canonical_windows_path(sidecar) == _canonical_windows_path(
-            image.value
-        ):
-            sidecar_created = direct_parent_created
+        if (
+            sidecar is not None
+            and _canonical_windows_path(sidecar) == _canonical_windows_path(image.value)
+        ) or Path(image.value).name.casefold() == "uv.exe":
+            intermediate_created = direct_parent_created
             direct_parent_pid = _windows_parent_pid_for_handle(
                 kernel, direct_parent_pid, direct_parent
             )
             intermediate_handle = kernel.OpenProcess(0x00100000 | 0x1000, False, direct_parent_pid)
             if not intermediate_handle:
-                raise RuntimeError("cannot pin the native launcher above the Python sidecar")
-            if _windows_process_creation_time(kernel, intermediate_handle) >= sidecar_created:
-                raise RuntimeError("native launcher PID was reused before sidecar startup")
+                raise RuntimeError("cannot pin the native launcher above the Python launcher")
+            if _windows_process_creation_time(kernel, intermediate_handle) >= intermediate_created:
+                raise RuntimeError("native launcher PID was reused before Python startup")
             winsec.close_handle(direct_parent)
             direct_parent = intermediate_handle
             intermediate_handle = None
@@ -177,7 +178,7 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
             if not kernel.QueryFullProcessImageNameW(
                 direct_parent, 0, image, ctypes.byref(image_size)
             ):
-                raise RuntimeError("cannot verify the native launcher above the Python sidecar")
+                raise RuntimeError("cannot verify the native launcher above the Python launcher")
 
         def pin_stable_ancestor(
             launcher_pid: int, launcher_handle: int, generation_created: int
@@ -203,9 +204,10 @@ def _open_native_parent_handle(stable_path: Path) -> int | None:
                 )
 
         if _native_image_is_managed_generation(stable_path, image.value):
-            if advertised is not None and _canonical_windows_path(
-                advertised
-            ) != _canonical_windows_path(image.value):
+            if advertised is not None and _canonical_windows_path(advertised) not in {
+                _canonical_windows_path(image.value),
+                _canonical_windows_path(stable_path),
+            }:
                 raise RuntimeError(
                     "native launcher environment does not match the actual parent image"
                 )

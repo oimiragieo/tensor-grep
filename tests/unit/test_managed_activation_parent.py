@@ -225,9 +225,9 @@ def _advertise_generation(monkeypatch, generation, advertise):
         monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
 
 
-@pytest.mark.parametrize("advertise_generation", [True, False])
+@pytest.mark.parametrize("advertised_launcher", ["generation", "stable", None])
 def test_open_native_parent_handle_when_generation_parent_pins_stable_ancestor(
-    monkeypatch, tmp_path, advertise_generation
+    monkeypatch, tmp_path, advertised_launcher
 ):
     stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
     generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
@@ -236,7 +236,12 @@ def test_open_native_parent_handle_when_generation_parent_pins_stable_ancestor(
     from tensor_grep.cli import session_daemon_winsec as winsec
 
     _install_kernel(monkeypatch, kernel)
-    _advertise_generation(monkeypatch, generation, advertise_generation)
+    if advertised_launcher == "generation":
+        monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(generation))
+    elif advertised_launcher == "stable":
+        monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
+    else:
+        monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.setattr(winsec, "close_handle", closed.append)
 
     assert native_frontdoor._open_native_parent_handle(stable) == 113
@@ -247,6 +252,75 @@ def test_open_native_parent_handle_when_generation_parent_pins_stable_ancestor(
     ]
     assert kernel.inherit_calls == [(113, 1, 1)]
     assert sorted(closed) == [112, 999]
+
+
+def test_open_native_parent_handle_when_generation_parent_advertises_unrelated_image_refuses(
+    monkeypatch, tmp_path
+):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    closed = []
+    kernel = _generation_parent_kernel(stable, generation, closed)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(tmp_path / "other.exe"))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    with pytest.raises(RuntimeError, match="environment does not match"):
+        native_frontdoor._open_native_parent_handle(stable)
+
+    assert kernel.open_calls == [(0x00100000 | 0x1000, False, 321)]
+    assert kernel.inherit_calls == []
+    assert closed == [112]
+
+
+def test_open_native_parent_handle_when_uv_precedes_managed_generation(monkeypatch, tmp_path):
+    stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
+    generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
+    uv = tmp_path / "uv.exe"
+    closed = []
+    kernel = _Kernel(str(uv))
+    handles = {321: 112, 654: 113, 987: 114}
+    images = {112: str(uv), 113: str(generation), 114: str(stable)}
+    parent_pids = {321: 654, 654: 987}
+
+    kernel.OpenProcess = _WinFunction(
+        lambda access, inherit, pid: (
+            kernel.open_calls.append((access, inherit, pid)) or handles[pid]
+        )
+    )
+
+    def query(handle, _flags, image, image_size):
+        image.value = images[handle]
+        image_size._obj.value = len(image.value)
+        return True
+
+    kernel.QueryFullProcessImageNameW = _WinFunction(query)
+    from tensor_grep.cli import session_daemon_winsec as winsec
+
+    _install_kernel(monkeypatch, kernel)
+    monkeypatch.setattr(
+        windows_parent_process, "_windows_process_parent_pid", lambda _kernel, pid: parent_pids[pid]
+    )
+    monkeypatch.setattr(
+        windows_parent_process,
+        "_windows_process_creation_time",
+        lambda _kernel, handle: {112: 30, 113: 20, 114: 10, 1000: 40}[handle],
+    )
+    monkeypatch.setenv("TG_SIDECAR_PYTHON", str(tmp_path / ".venv" / "Scripts" / "python.exe"))
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
+    monkeypatch.setattr(winsec, "close_handle", closed.append)
+
+    assert native_frontdoor._open_native_parent_handle(stable) == 114
+
+    assert kernel.open_calls == [
+        (0x00100000 | 0x1000, False, 321),
+        (0x00100000 | 0x1000, False, 654),
+        (0x00100000 | 0x1000, False, 987),
+    ]
+    assert kernel.inherit_calls == [(114, 1, 1)]
+    assert sorted(closed) == [112, 113]
 
 
 def test_open_native_parent_handle_when_stable_pid_was_reused_refuses_activation(
