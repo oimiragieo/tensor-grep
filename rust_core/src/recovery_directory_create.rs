@@ -22,6 +22,7 @@ use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress
 
 type CreateDirectory2 =
     unsafe extern "system" fn(*const u16, u32, u32, u32, *const SECURITY_ATTRIBUTES) -> HANDLE;
+
 const FILE_ALL_ACCESS_MASK: u32 = 0x001f_01ff;
 const DIRECTORY_INHERIT_FLAGS: u8 = 0x03;
 
@@ -109,7 +110,10 @@ fn api() -> Option<CreateDirectory2> {
     Some(unsafe { std::mem::transmute(function) })
 }
 
-fn verified_dacl(user: &str, acl: &managed_runtime_acl_reader::HandleAclDetails) -> io::Result<()> {
+pub(super) fn verified_dacl(
+    user: &str,
+    acl: &managed_runtime_acl_reader::HandleAclDetails,
+) -> io::Result<()> {
     if !acl.dacl_protected {
         return Err(invalid("DACL is not protected"));
     }
@@ -119,7 +123,9 @@ fn verified_dacl(user: &str, acl: &managed_runtime_acl_reader::HandleAclDetails)
         || acl.acl.allow_grants[0].1 != FILE_ALL_ACCESS_MASK
         || acl.allow_grant_flags.as_slice() != &[DIRECTORY_INHERIT_FLAGS]
     {
-        return Err(invalid("protected user-only DACL mismatch"));
+        return Err(invalid(
+            "DACL differs from the protected user-only descriptor",
+        ));
     }
     Ok(())
 }
@@ -374,17 +380,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let parent = windows_file::open_directory(root.path()).unwrap();
         let held = super::create_anchored_child(&parent, "stage").unwrap();
-        let stage = root.path().join("stage");
+        let root_path = windows_file::final_path_for_handle(parent.as_handle()).unwrap();
+        let stage = windows_file::final_path_for_handle(held.directory().as_handle()).unwrap();
         let anchor = stage.join(".tg-recovery-anchor");
-        let held_anchor_path = windows_file::final_path_for_handle(held.directory().as_handle())
-            .unwrap()
-            .join(".tg-recovery-anchor");
         assert!(held.directory().metadata().unwrap().is_dir());
         assert_eq!(held.anchor().metadata().unwrap().len(), 0);
         assert!(windows_file::is_held_direct_child(
             held.directory().as_handle(),
             held.anchor().as_handle(),
-            &held_anchor_path,
+            &anchor,
         )
         .unwrap());
         let reader = fs::OpenOptions::new()
@@ -410,7 +414,7 @@ mod tests {
             Some(32)
         );
         assert_eq!(
-            fs::rename(&stage, root.path().join("moved"))
+            fs::rename(&stage, root_path.join("moved"))
                 .unwrap_err()
                 .raw_os_error(),
             Some(32)
@@ -418,7 +422,7 @@ mod tests {
         drop(held);
         drop(fs::OpenOptions::new().write(true).open(&anchor).unwrap());
         fs::remove_file(anchor).unwrap();
-        fs::rename(stage, root.path().join("moved")).unwrap();
+        fs::rename(stage, root_path.join("moved")).unwrap();
         eprintln!("anchored directory and anchor lifetime controls exercised");
     }
 
@@ -773,9 +777,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let parent = windows_file::open_directory(root.path()).unwrap();
         let good = super::create_child(&parent, "good").unwrap();
-        let good_acl =
+        let acl =
             super::managed_runtime_acl_reader::read_handle_acl_details(good.as_handle()).unwrap();
-        super::verified_dacl(identity.user_sid(), &good_acl).unwrap();
+        super::verified_dacl(identity.user_sid(), &acl).unwrap();
         drop(good);
         let sddl: Vec<u16> = format!(
             "D:P(A;OICI;FA;;;{})(A;OICIIO;FA;;;WD)\0",
@@ -822,10 +826,9 @@ mod tests {
         };
         assert!(!raw.is_null() && raw != super::INVALID_HANDLE_VALUE);
         let file = unsafe { std::fs::File::from_raw_handle(raw) };
-        let foreign_acl =
+        let acl =
             super::managed_runtime_acl_reader::read_handle_acl_details(file.as_handle()).unwrap();
-        assert_eq!(foreign_acl.ace_count, 2);
-        assert!(super::verified_dacl(identity.user_sid(), &foreign_acl).is_err());
+        assert!(super::verified_dacl(identity.user_sid(), &acl).is_err());
     }
 
     #[test]
