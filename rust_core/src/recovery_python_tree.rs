@@ -487,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn anchored_tree_refuses_foreign_anchor_grants() {
+    fn anchored_tree_refuses_foreign_grants_and_missing_inherit_flags() {
         use super::super::{
             managed_runtime_acl_reader, managed_runtime_windows_sid::LocalAllocation,
             managed_runtime_windows_token,
@@ -565,14 +565,21 @@ mod tests {
             "DACL differs from the protected user-only descriptor"
         );
         apply(&good);
-        let restored = managed_runtime_acl_reader::read_handle_acl(writer.as_handle()).unwrap();
-        assert_eq!(restored.owner, user.user_sid());
-        assert!(!restored.allow_grants.is_empty());
+        let restored =
+            managed_runtime_acl_reader::read_handle_acl_details(writer.as_handle()).unwrap();
+        assert_eq!(restored.acl.owner, user.user_sid());
+        assert!(!restored.acl.allow_grants.is_empty());
         assert!(restored
+            .acl
             .allow_grants
             .iter()
             .all(|(sid, _)| sid == user.user_sid()));
-        // Windows normalized the descriptor: removing the grant is not exact descriptor repair.
+        assert!(restored.dacl_protected);
+        assert_eq!(restored.ace_count, 1);
+        assert_eq!(restored.acl.allow_grants[0].1, 0x001f_01ff);
+        assert_eq!(restored.allow_grant_flags.len(), 1);
+        assert_ne!(restored.allow_grant_flags[0] & 0x03, 0x03);
+        // Applying the DACL to this marker file drops OI/CI, so it is still not the required ACL.
         assert_eq!(
             verify_anchored_expected(&path, &stage, &FIXTURE)
                 .err()
