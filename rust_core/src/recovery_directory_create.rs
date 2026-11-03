@@ -201,7 +201,12 @@ fn create_with_check(
         verified_dacl(&file, user)?;
         extra_check(&file, user)
     };
-    check().map_err(|_| invalid("created directory could not be validated and may remain"))?;
+    check().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("created directory could not be validated and may remain: {error}"),
+        )
+    })?;
     Ok(file)
 }
 
@@ -462,7 +467,7 @@ mod tests {
         });
         assert_eq!(
             result.unwrap_err().to_string(),
-            "created directory could not be validated and may remain"
+            "created directory could not be validated and may remain: injected validation failure"
         );
         assert!(root.path().join("stage").is_dir());
     }
