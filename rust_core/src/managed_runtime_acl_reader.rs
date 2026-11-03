@@ -24,6 +24,8 @@ const ACL_HEADER_BYTES: usize = 8;
 pub struct HandleAcl {
     pub owner: String,
     pub allow_grants: Vec<(String, u32)>,
+    pub allow_grant_flags: Vec<u8>,
+    pub ace_count: u32,
 }
 
 /// Read an opened file object's owner and effective allow grants; unsupported ACL semantics fail closed.
@@ -125,6 +127,7 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     }
 
     let mut grants = Vec::with_capacity(information.AceCount as usize);
+    let mut grant_flags = Vec::with_capacity(information.AceCount as usize);
     for index in 0..information.AceCount {
         let mut raw_ace = std::ptr::null_mut();
         if unsafe { GetAce(queried_dacl, index, &mut raw_ace) } == 0 || raw_ace.is_null() {
@@ -148,16 +151,19 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
         let ace_bytes = descriptor_bytes
             .get(ace_start..ace_end)
             .ok_or_else(|| invalid_acl("ACE range is invalid"))?;
-        if let Some((sid_offset, mask)) = parse_allow_ace(ace_bytes)? {
+        if let Some((sid_offset, mask, flags)) = parse_allow_ace(ace_bytes)? {
             let sid = ace_bytes
                 .get(sid_offset..)
                 .ok_or_else(|| invalid_acl("allow ACE SID lies outside its ACE"))?;
             grants.push((sid_string(sid)?, mask));
+            grant_flags.push(flags);
         }
     }
     Ok(HandleAcl {
         owner: owner_sid,
         allow_grants: grants,
+        allow_grant_flags: grant_flags,
+        ace_count: information.AceCount,
     })
 }
 
@@ -175,7 +181,7 @@ fn checked_ace_header_end(
         .ok_or_else(|| invalid_acl("ACE header lies outside its DACL"))
 }
 
-fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
+fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32, u8)>> {
     if ace.len() < std::mem::size_of::<ACE_HEADER>() {
         return Err(invalid_acl("ACE header is truncated"));
     }
@@ -199,7 +205,7 @@ fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
         return Ok(None);
     }
     let mask = u32::from_ne_bytes(ace[4..8].try_into().expect("ACE header has mask bytes"));
-    Ok(Some((sid_offset, mask)))
+    Ok(Some((sid_offset, mask, ace[1])))
 }
 
 fn sid_string(sid: &[u8]) -> io::Result<String> {

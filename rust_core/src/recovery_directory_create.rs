@@ -11,12 +11,10 @@ use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle};
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSecurityDescriptorToStringSecurityDescriptorW,
     ConvertStringSecurityDescriptorToSecurityDescriptorW, GetSecurityInfo, SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
-    GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES,
-    SE_DACL_AUTO_INHERITED, SE_DACL_PROTECTED,
+    GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SE_DACL_PROTECTED,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     GetFileType, FILE_ATTRIBUTE_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
@@ -26,6 +24,8 @@ use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress
 
 type CreateDirectory2 =
     unsafe extern "system" fn(*const u16, u32, u32, u32, *const SECURITY_ATTRIBUTES) -> HANDLE;
+const FILE_ALL_ACCESS_MASK: u32 = 0x001f_01ff;
+const DIRECTORY_INHERIT_FLAGS: u8 = 0x03;
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
@@ -46,7 +46,11 @@ fn api() -> Option<CreateDirectory2> {
     Some(unsafe { std::mem::transmute(function) })
 }
 
-fn verified_dacl(file: &File, user: &str) -> io::Result<()> {
+fn verified_dacl(
+    file: &File,
+    user: &str,
+    acl: &managed_runtime_acl_reader::HandleAcl,
+) -> io::Result<()> {
     let mut dacl = null_mut();
     let mut descriptor = null_mut();
     let status = unsafe {
@@ -75,34 +79,12 @@ fn verified_dacl(file: &File, user: &str) -> io::Result<()> {
     {
         return Err(invalid("DACL is not protected"));
     }
-    let (mut text, mut length) = (null_mut(), 0u32);
-    if unsafe {
-        ConvertSecurityDescriptorToStringSecurityDescriptorW(
-            descriptor,
-            1,
-            DACL_SECURITY_INFORMATION,
-            &mut text,
-            &mut length,
-        )
-    } == 0
+    if acl.ace_count != 1
+        || acl.allow_grants.len() != 1
+        || acl.allow_grants[0].0.as_str() != user
+        || acl.allow_grants[0].1 != FILE_ALL_ACCESS_MASK
+        || acl.allow_grant_flags.as_slice() != &[DIRECTORY_INHERIT_FLAGS]
     {
-        return Err(io::Error::last_os_error());
-    }
-    let _text = unsafe { LocalAllocation::from_raw(text.cast()) }
-        .ok_or_else(|| invalid("DACL text unavailable"))?;
-    if length == 0 || length > 4096 {
-        return Err(invalid("DACL text length invalid"));
-    }
-    // SAFETY: the OS returned this LocalFree-owned string and its bounded size.
-    let actual = String::from_utf16(unsafe { std::slice::from_raw_parts(text, length as usize) })
-        .map_err(|_| invalid("DACL text invalid"))?;
-    let actual = actual.trim_end_matches('\0');
-    let expected = format!("D:P(A;OICI;FA;;;{user})");
-    // Server NTFS may mark this protected DACL auto-inherited without adding ACEs.
-    let auto_inherited = expected.replacen("D:P", "D:PAI", 1);
-    if actual != expected && (control & SE_DACL_AUTO_INHERITED == 0 || actual != auto_inherited) {
-        #[cfg(test)]
-        dbg!(actual.strip_suffix(')').unwrap_or("").ends_with(user));
         return Err(invalid("protected user-only DACL mismatch"));
     }
     Ok(())
@@ -203,7 +185,7 @@ fn create_with_check(
         if !stage_owner_is_trusted(&acl.owner, user) {
             return Err(invalid("created directory owner invalid"));
         }
-        verified_dacl(&file, user)?;
+        verified_dacl(&file, user, &acl)?;
         extra_check(&file, user)
     };
     check().map_err(|_| invalid("created directory could not be validated and may remain"))?;
@@ -223,7 +205,7 @@ mod tests {
     };
     use std::fs;
     use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::io::FromRawHandle;
+    use std::os::windows::io::{AsHandle, FromRawHandle};
     use std::os::windows::process::CommandExt;
     use std::path::Path;
 
@@ -404,7 +386,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let parent = windows_file::open_directory(root.path()).unwrap();
         let good = super::create_child(&parent, "good").unwrap();
-        super::verified_dacl(&good, identity.user_sid()).unwrap();
+        let good_acl =
+            super::managed_runtime_acl_reader::read_handle_acl(good.as_handle()).unwrap();
+        super::verified_dacl(&good, identity.user_sid(), &good_acl).unwrap();
         drop(good);
         let sddl: Vec<u16> = format!(
             "D:P(A;OICI;FA;;;{})(A;OICIIO;FA;;;WD)\0",
@@ -451,7 +435,10 @@ mod tests {
         };
         assert!(!raw.is_null() && raw != super::INVALID_HANDLE_VALUE);
         let file = unsafe { std::fs::File::from_raw_handle(raw) };
-        assert!(super::verified_dacl(&file, identity.user_sid()).is_err());
+        let foreign_acl =
+            super::managed_runtime_acl_reader::read_handle_acl(file.as_handle()).unwrap();
+        assert_eq!(foreign_acl.ace_count, 2);
+        assert!(super::verified_dacl(&file, identity.user_sid(), &foreign_acl).is_err());
     }
 
     #[test]
