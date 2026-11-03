@@ -102,7 +102,7 @@ fn verified_dacl(file: &File, user: &str) -> io::Result<()> {
     let auto_inherited = expected.replacen("D:P", "D:PAI", 1);
     if actual != expected && (control & SE_DACL_AUTO_INHERITED == 0 || actual != auto_inherited) {
         #[cfg(test)]
-        dbg!((actual.starts_with("D:PAI("), actual.matches(')').count()));
+        dbg!(actual.split_once(";;;").map_or("", |x| x.0));
         return Err(invalid("protected user-only DACL mismatch"));
     }
     Ok(())
