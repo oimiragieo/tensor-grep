@@ -376,12 +376,15 @@ mod tests {
         let held = super::create_anchored_child(&parent, "stage").unwrap();
         let stage = root.path().join("stage");
         let anchor = stage.join(".tg-recovery-anchor");
+        let held_anchor_path = windows_file::final_path_for_handle(held.directory().as_handle())
+            .unwrap()
+            .join(".tg-recovery-anchor");
         assert!(held.directory().metadata().unwrap().is_dir());
         assert_eq!(held.anchor().metadata().unwrap().len(), 0);
         assert!(windows_file::is_held_direct_child(
             held.directory().as_handle(),
             held.anchor().as_handle(),
-            &anchor,
+            &held_anchor_path,
         )
         .unwrap());
         let reader = fs::OpenOptions::new()
