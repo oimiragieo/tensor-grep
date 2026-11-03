@@ -380,7 +380,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let parent = windows_file::open_directory(root.path()).unwrap();
         let held = super::create_anchored_child(&parent, "stage").unwrap();
-        let stage = root.path().join("stage");
+        let root_path = windows_file::final_path_for_handle(parent.as_handle()).unwrap();
+        let stage = windows_file::final_path_for_handle(held.directory().as_handle()).unwrap();
         let anchor = stage.join(".tg-recovery-anchor");
         assert!(held.directory().metadata().unwrap().is_dir());
         assert_eq!(held.anchor().metadata().unwrap().len(), 0);
@@ -413,7 +414,7 @@ mod tests {
             Some(32)
         );
         assert_eq!(
-            fs::rename(&stage, root.path().join("moved"))
+            fs::rename(&stage, root_path.join("moved"))
                 .unwrap_err()
                 .raw_os_error(),
             Some(32)
@@ -421,7 +422,7 @@ mod tests {
         drop(held);
         drop(fs::OpenOptions::new().write(true).open(&anchor).unwrap());
         fs::remove_file(anchor).unwrap();
-        fs::rename(stage, root.path().join("moved")).unwrap();
+        fs::rename(stage, root_path.join("moved")).unwrap();
         eprintln!("anchored directory and anchor lifetime controls exercised");
     }
 
