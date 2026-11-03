@@ -1162,8 +1162,25 @@ jobs:
           echo "GPU dependency install failed after 5 attempts."
           exit 1
 
+      # Cache only the versioned test tool, never project binaries or release artifacts.
+      - name: Cache pinned ast-grep CLI
+        id: ast-grep-cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/tg-ast-grep
+          key: ast-grep-${{ runner.os }}-${{ runner.arch }}-0.41.1-rust-1.96.0-v1
+
       - name: Install pinned ast-grep CLI
-        run: cargo install ast-grep --version 0.41.1 --locked
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/tg-ast-grep"
+          if [ "${{ steps.ast-grep-cache.outputs.cache-hit }}" != true ]; then
+            cargo install ast-grep --version 0.41.1 --locked --root "$tool_root"
+          fi
+          version=$("$tool_root/bin/ast-grep" --version)
+          test "$version" = "ast-grep 0.41.1"
+          printf '%s\n' "$tool_root/bin" >> "$GITHUB_PATH"
 
       - name: Verify ast-grep wrapper availability
         run: uv run --no-sync python -c "from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend; assert AstGrepWrapperBackend().is_available()"

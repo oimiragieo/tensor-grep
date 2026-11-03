@@ -14,8 +14,8 @@ import yaml
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
 
 
-def _steps():
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["test-python"]["steps"]
+def _steps(job="test-python"):
+    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"][job]["steps"]
 
 
 def test_cache_is_scoped_to_versioned_test_tool():
@@ -26,13 +26,13 @@ def test_cache_is_scoped_to_versioned_test_tool():
         for step in job.get("steps", [])
         if step.get("id") == "ast-grep-cache"
     ]
-    assert len(caches) == 1 and caches[0][0] == "test-python"
-    cache = caches[0][1]
-    assert cache["uses"] == "actions/cache@caa296126883cff596d87d8935842f9db880ef25"
-    assert cache["with"] == {
-        "path": "${{ runner.temp }}/tg-ast-grep",
-        "key": "ast-grep-${{ runner.os }}-${{ runner.arch }}-0.41.1-rust-1.96.0-v1",
-    }
+    assert {name for name, _ in caches} == {"test-python", "test-gpu-linux"}
+    for _, cache in caches:
+        assert cache["uses"] == "actions/cache@caa296126883cff596d87d8935842f9db880ef25"
+        assert cache["with"] == {
+            "path": "${{ runner.temp }}/tg-ast-grep",
+            "key": "ast-grep-${{ runner.os }}-${{ runner.arch }}-0.41.1-rust-1.96.0-v1",
+        }
 
 
 @pytest.mark.skipif(
@@ -47,7 +47,16 @@ def test_cache_is_scoped_to_versioned_test_tool():
         (True, "0.41.1", 1, False),
     ],
 )
-def test_install_step_cold_warm_and_wrong_version(tmp_path, hit, version, exit_code, success):
+@pytest.mark.parametrize(
+    "job,install_name",
+    [
+        ("test-python", "Install ast-grep CLI (AST wrapper backend)"),
+        ("test-gpu-linux", "Install pinned ast-grep CLI"),
+    ],
+)
+def test_install_step_cold_warm_and_wrong_version(
+    tmp_path, hit, version, exit_code, success, job, install_name
+):
     runner_temp = tmp_path / "runner temp"
     tool = runner_temp / "tg-ast-grep/bin/ast-grep"
     tool.parent.mkdir(parents=True)
@@ -67,11 +76,7 @@ def test_install_step_cold_warm_and_wrong_version(tmp_path, hit, version, exit_c
     )
     cargo.chmod(0o755)
     path_file = tmp_path / "github-path"
-    step = next(
-        step
-        for step in _steps()
-        if step.get("name") == "Install ast-grep CLI (AST wrapper backend)"
-    )
+    step = next(step for step in _steps(job) if step.get("name") == install_name)
     script = step["run"].replace("${{ steps.ast-grep-cache.outputs.cache-hit }}", str(hit).lower())
     result = subprocess.run(
         [shutil.which("bash"), "-c", script],
