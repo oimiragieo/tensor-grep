@@ -7,10 +7,10 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, BorrowedHandle};
 use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_FILE_OBJECT};
 use windows_sys::Win32::Security::{
-    AclSizeInformation, GetAce, GetAclInformation, GetSecurityDescriptorDacl,
-    GetSecurityDescriptorLength, GetSecurityDescriptorOwner, IsValidAcl, IsValidSid,
-    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
-    OWNER_SECURITY_INFORMATION,
+    AclSizeInformation, GetAce, GetAclInformation, GetSecurityDescriptorControl,
+    GetSecurityDescriptorDacl, GetSecurityDescriptorLength, GetSecurityDescriptorOwner, IsValidAcl,
+    IsValidSid, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
+    OWNER_SECURITY_INFORMATION, SE_DACL_PROTECTED,
 };
 
 const MAX_DESCRIPTOR_BYTES: usize = 65_536;
@@ -26,8 +26,19 @@ pub struct HandleAcl {
     pub allow_grants: Vec<(String, u32)>,
 }
 
+pub(crate) struct HandleAclDetails {
+    pub(crate) acl: HandleAcl,
+    pub(crate) allow_grant_flags: Vec<u8>,
+    pub(crate) ace_count: u32,
+    pub(crate) dacl_protected: bool,
+}
+
 /// Read an opened file object's owner and effective allow grants; unsupported ACL semantics fail closed.
 pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
+    read_handle_acl_details(handle).map(|details| details.acl)
+}
+
+pub(crate) fn read_handle_acl_details(handle: BorrowedHandle<'_>) -> io::Result<HandleAclDetails> {
     let mut owner = std::ptr::null_mut();
     let mut dacl = std::ptr::null_mut();
     let mut descriptor = std::ptr::null_mut();
@@ -48,6 +59,10 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     }
     let _owner = unsafe { LocalAllocation::from_raw(descriptor.cast()) }
         .ok_or_else(|| invalid_acl("security descriptor is unavailable"))?;
+    let (mut control, mut revision) = (0u16, 0u32);
+    let dacl_protected =
+        unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } != 0
+            && control & SE_DACL_PROTECTED != 0;
     let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
     if !(20..=MAX_DESCRIPTOR_BYTES).contains(&length) {
         return Err(invalid_acl("security descriptor length is invalid"));
@@ -125,6 +140,7 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
     }
 
     let mut grants = Vec::with_capacity(information.AceCount as usize);
+    let mut grant_flags = Vec::with_capacity(information.AceCount as usize);
     for index in 0..information.AceCount {
         let mut raw_ace = std::ptr::null_mut();
         if unsafe { GetAce(queried_dacl, index, &mut raw_ace) } == 0 || raw_ace.is_null() {
@@ -148,16 +164,22 @@ pub fn read_handle_acl(handle: BorrowedHandle<'_>) -> io::Result<HandleAcl> {
         let ace_bytes = descriptor_bytes
             .get(ace_start..ace_end)
             .ok_or_else(|| invalid_acl("ACE range is invalid"))?;
-        if let Some((sid_offset, mask)) = parse_allow_ace(ace_bytes)? {
+        if let Some((sid_offset, mask, flags)) = parse_allow_ace(ace_bytes)? {
             let sid = ace_bytes
                 .get(sid_offset..)
                 .ok_or_else(|| invalid_acl("allow ACE SID lies outside its ACE"))?;
             grants.push((sid_string(sid)?, mask));
+            grant_flags.push(flags);
         }
     }
-    Ok(HandleAcl {
-        owner: owner_sid,
-        allow_grants: grants,
+    Ok(HandleAclDetails {
+        acl: HandleAcl {
+            owner: owner_sid,
+            allow_grants: grants,
+        },
+        allow_grant_flags: grant_flags,
+        ace_count: information.AceCount,
+        dacl_protected,
     })
 }
 
@@ -175,7 +197,7 @@ fn checked_ace_header_end(
         .ok_or_else(|| invalid_acl("ACE header lies outside its DACL"))
 }
 
-fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
+fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32, u8)>> {
     if ace.len() < std::mem::size_of::<ACE_HEADER>() {
         return Err(invalid_acl("ACE header is truncated"));
     }
@@ -199,7 +221,7 @@ fn parse_allow_ace(ace: &[u8]) -> io::Result<Option<(usize, u32)>> {
         return Ok(None);
     }
     let mask = u32::from_ne_bytes(ace[4..8].try_into().expect("ACE header has mask bytes"));
-    Ok(Some((sid_offset, mask)))
+    Ok(Some((sid_offset, mask, ace[1])))
 }
 
 fn sid_string(sid: &[u8]) -> io::Result<String> {

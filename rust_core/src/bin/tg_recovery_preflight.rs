@@ -6,6 +6,23 @@
 mod windows_file;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../managed_runtime_acl_reader.rs"]
+mod managed_runtime_acl_reader;
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../managed_runtime_windows_sid.rs"]
+mod managed_runtime_windows_sid;
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../managed_runtime_windows_token.rs"]
+mod managed_runtime_windows_token;
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../recovery_directory_create.rs"]
+mod recovery_directory_create;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
 #[path = "../recovery_python_tree.rs"]
 mod recovery_python_tree;
 
