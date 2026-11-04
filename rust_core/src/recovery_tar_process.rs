@@ -1,5 +1,4 @@
 //! System tar process containment for an already-authorized recovery stage.
-//!
 //! The caller must retain the verified, read-only archive and all authorized stage/ancestor
 //! handles, and must establish archive integrity, directory confinement, and loader trust.
 //! The deadline begins only after CreateProcessW returns. A parent-level watchdog is required
