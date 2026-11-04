@@ -446,7 +446,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires independently reviewed Windows system tar fixture"]
     fn system_tar_accepts_valid_archive_and_refuses_warning() {
         for warning in [false, true] {
             let fixture = tempfile::tempdir().unwrap();
