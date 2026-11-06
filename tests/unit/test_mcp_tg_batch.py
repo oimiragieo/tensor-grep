@@ -301,6 +301,94 @@ def test_tg_batch_never_runs_more_than_four_items_at_once(monkeypatch):
     assert len(result["results"]) == 8
 
 
+@pytest.mark.parametrize(
+    "kind,tool_name,arguments",
+    [
+        ("find", "tg_find", {"query": "target"}),
+        ("refs", "tg_symbol_refs", {"symbol": "target"}),
+        ("callers", "tg_symbol_callers", {"symbol": "target"}),
+    ],
+)
+@pytest.mark.parametrize("item_deadline,overall_deadline", [(8.0, 6.0), (6.0, 8.0)])
+@pytest.mark.parametrize("requested_deadline", [None, 0.5, 20.0])
+def test_tg_batch_forwards_remaining_deadline_after_slot_wait_and_worker_start(
+    monkeypatch, kind, tool_name, arguments, item_deadline, overall_deadline, requested_deadline
+):
+    clock = SimpleNamespace(now=100.0)
+    worker_started = threading.Event()
+    received = []
+
+    def acquire_slot(timeout):
+        assert timeout == min(item_deadline, overall_deadline)
+        clock.now += 2.0
+        return True
+
+    class DelayedExecutor(ThreadPoolExecutor):
+        def submit(self, fn, /, *args, **kwargs):
+            def start_worker():
+                clock.now += 1.0
+                worker_started.set()
+                return fn(*args, **kwargs)
+
+            future = super().submit(start_worker)
+            assert worker_started.wait(2), "batch worker did not start"
+            return future
+
+    def fake_tool(path=".", deadline=None, **kwargs):
+        received.append((deadline, clock.now))
+        return json.dumps({"path": path, **kwargs})
+
+    monkeypatch.setattr(mcp_batch_tools, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    monkeypatch.setattr(
+        mcp_batch_tools, "_BATCH_SLOTS", SimpleNamespace(acquire=acquire_slot, release=lambda: None)
+    )
+    monkeypatch.setattr(mcp_batch_tools, "ThreadPoolExecutor", DelayedExecutor)
+    monkeypatch.setattr(mcp_server, tool_name, fake_tool)
+    item = {"id": "bounded", "kind": kind, **arguments}
+    if requested_deadline is not None:
+        item["deadline"] = requested_deadline
+
+    payload = _payload(
+        mcp_server.tg_batch([item], item_deadline=item_deadline, deadline=overall_deadline)
+    )
+
+    assert payload["results"] == [
+        {"id": "bounded", "kind": kind, "result": {"path": ".", **arguments}}
+    ]
+    assert len(received) == 1
+    forwarded, started_at = received[0]
+    remaining = min(item_deadline, overall_deadline) - (started_at - 100.0)
+    assert started_at == 103.0
+    assert forwarded is not None, "batch did not forward the remaining deadline"
+    assert 0 < forwarded <= remaining, "batch forwarded a fresh or unclamped deadline"
+    if requested_deadline == 0.5:
+        assert forwarded == requested_deadline, "batch enlarged the caller's shorter deadline"
+
+
+@pytest.mark.parametrize(
+    "kind,tool_name,arguments",
+    [
+        ("search", "tg_search", {"pattern": "target"}),
+        ("defs", "tg_symbol_defs", {"symbol": "target"}),
+        ("source", "tg_symbol_source", {"symbol": "target"}),
+    ],
+)
+def test_tg_batch_does_not_inject_deadline_into_unsupported_kinds(
+    monkeypatch, kind, tool_name, arguments
+):
+    def fake_tool(path=".", **kwargs):
+        assert "deadline" not in kwargs
+        return json.dumps({"path": path, **kwargs})
+
+    monkeypatch.setattr(mcp_server, tool_name, fake_tool)
+
+    payload = _payload(mcp_server.tg_batch([{"id": "plain", "kind": kind, **arguments}]))
+
+    assert payload["results"] == [
+        {"id": "plain", "kind": kind, "result": {"path": ".", **arguments}}
+    ]
+
+
 def test_tg_batch_rejects_real_search_completed_after_item_deadline(tmp_path, monkeypatch):
     monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
     (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
