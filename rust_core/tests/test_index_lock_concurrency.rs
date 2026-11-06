@@ -27,6 +27,10 @@ use serde_json::Value;
 use tempfile::tempdir;
 use tensor_grep_rs::index::TrigramIndex;
 
+#[path = "../test_support/index_lock_intervals.rs"]
+mod index_lock_intervals;
+use index_lock_intervals::read_lock_activity_intervals;
+
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
 }
@@ -173,36 +177,6 @@ fn hammer_concurrent_tg_search_index_one_writer_at_a_time_no_corruption_no_hangs
     assert_no_overlapping_intervals(&intervals);
 }
 
-fn read_lock_activity_intervals(dir: &Path) -> Vec<(u128, u128)> {
-    let mut starts: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
-    let mut ends: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
-    for entry in fs::read_dir(dir).unwrap().filter_map(|e| e.ok()) {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some((key, suffix)) = name.rsplit_once('.') else {
-            continue;
-        };
-        let value: u128 = fs::read_to_string(entry.path())
-            .ok()
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
-        match suffix {
-            "start" => {
-                starts.insert(key.to_string(), value);
-            }
-            "end" => {
-                ends.insert(key.to_string(), value);
-            }
-            _ => {}
-        }
-    }
-    let mut intervals: Vec<(u128, u128)> = starts
-        .into_iter()
-        .filter_map(|(key, start)| ends.get(&key).map(|end| (start, *end)))
-        .collect();
-    intervals.sort_unstable();
-    intervals
-}
-
 fn assert_no_overlapping_intervals(intervals: &[(u128, u128)]) {
     for window in intervals.windows(2) {
         let (_, end_a) = window[0];
@@ -215,6 +189,80 @@ fn assert_no_overlapping_intervals(intervals: &[(u128, u128)]) {
             window[1]
         );
     }
+}
+
+#[test]
+fn interval_reader_sorts_valid_records_and_detector_rejects_nesting() {
+    let dir = tempdir().unwrap();
+    for (name, value) in [
+        ("later.start", "10"),
+        ("later.end", "20"),
+        ("earlier.start", "1"),
+        ("earlier.end", "2"),
+    ] {
+        fs::write(dir.path().join(name), value).unwrap();
+    }
+    let intervals = read_lock_activity_intervals(dir.path());
+    assert_eq!(intervals, vec![(1, 2), (10, 20)]);
+    assert_no_overlapping_intervals(&intervals);
+
+    fs::write(dir.path().join("earlier.end"), "30").unwrap();
+    let nested = read_lock_activity_intervals(dir.path());
+    assert_eq!(nested, vec![(1, 30), (10, 20)]);
+    assert!(std::panic::catch_unwind(|| assert_no_overlapping_intervals(&nested)).is_err());
+}
+
+#[test]
+fn interval_reader_rejects_every_invalid_record() {
+    let mut accepted = Vec::new();
+    for (case, name, value) in [
+        ("unmatched start", "b.start", Some("3")),
+        ("unmatched end", "b.end", Some("4")),
+        ("malformed start", "a.start", Some("invalid")),
+        ("malformed end", "a.end", Some("invalid")),
+        ("zero start", "a.start", Some("0")),
+        ("zero end", "a.end", Some("0")),
+        ("reversed interval", "a.start", Some("3")),
+        ("invalid name", "invalid", Some("3")),
+        ("empty key", ".start", Some("3")),
+        ("unknown suffix", "b.unknown", Some("3")),
+        ("non-file event read failure", "b.start", None),
+    ] {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.start"), "1").unwrap();
+        fs::write(dir.path().join("a.end"), "2").unwrap();
+        assert_eq!(read_lock_activity_intervals(dir.path()), vec![(1, 2)]);
+        let path = dir.path().join(name);
+        match value {
+            Some(value) => fs::write(path, value).unwrap(),
+            None => fs::create_dir(path).unwrap(),
+        }
+        if std::panic::catch_unwind(|| read_lock_activity_intervals(dir.path())).is_ok() {
+            accepted.push(case);
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "accepted invalid records: {accepted:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn interval_reader_rejects_non_utf8_names() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.start"), "1").unwrap();
+    fs::write(dir.path().join("a.end"), "2").unwrap();
+    assert_eq!(read_lock_activity_intervals(dir.path()), vec![(1, 2)]);
+    for (suffix, value) in [("start", "3"), ("end", "4")] {
+        let mut name = vec![0xff, b'.'];
+        name.extend_from_slice(suffix.as_bytes());
+        fs::write(dir.path().join(OsString::from_vec(name)), value).unwrap();
+    }
+    assert!(std::panic::catch_unwind(|| read_lock_activity_intervals(dir.path())).is_err());
 }
 
 // -- Atomic-crash: a kill mid-write must never leave a torn index ---------------------------
