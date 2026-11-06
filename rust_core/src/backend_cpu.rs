@@ -397,13 +397,13 @@ impl CpuBackend {
 
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
-            if path_obj.is_file() {
+            if path_obj.metadata()?.is_file() {
                 results.extend(self.search_file_memmem(
                     pat_bytes,
                     &path_obj.to_path_buf(),
                     invert_match,
                 )?);
-            } else if path_obj.is_dir() {
+            } else if path_obj.metadata()?.is_dir() {
                 for entry in WalkDir::new(path_obj)
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?
@@ -430,9 +430,9 @@ impl CpuBackend {
                 .build()?
         };
 
-        if path_obj.is_file() {
+        if path_obj.metadata()?.is_file() {
             results.extend(self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)?);
-        } else if path_obj.is_dir() {
+        } else if path_obj.metadata()?.is_dir() {
             for entry in WalkDir::new(path_obj)
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?
@@ -966,10 +966,10 @@ impl CpuBackend {
         // Extreme fast path: fixed strings, case sensitive, use memmem
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
-            if path_obj.is_file() {
+            if path_obj.metadata()?.is_file() {
                 total_count +=
                     self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)?;
-            } else if path_obj.is_dir() {
+            } else if path_obj.metadata()?.is_dir() {
                 for entry in WalkDir::new(path_obj)
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?
@@ -996,9 +996,9 @@ impl CpuBackend {
                 .build()?
         };
 
-        if path_obj.is_file() {
+        if path_obj.metadata()?.is_file() {
             total_count += self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match)?;
-        } else if path_obj.is_dir() {
+        } else if path_obj.metadata()?.is_dir() {
             for entry in WalkDir::new(path_obj)
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?

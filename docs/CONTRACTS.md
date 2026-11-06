@@ -112,6 +112,10 @@ Current validated rows:
 Character-for-character identity is not required for help formatting, but command presence, supported rows, accepted normalization, and the deterministic parity corpus are part of the public contract. Additional rg-style flags may be exposed in `tg search --help`, but they are not covered by the stable compatibility claim until they are added to the contract suite and benchmark runner.
 
 Agent automation contracts:
+- The Rust CPU extension's `search` and `count_matches` report a missing input root as
+  `RuntimeError`; on these direct paths `RustCoreBackend` raises `BackendExecutionError`.
+  Existing empty files and directories remain successful empty results, and regex syntax
+  is validated before root lookup.
 - The Python Rust bridge treats streamed ripgrep status `0` as found, `1` as no match, and every other status as an execution error. A completed child with an exit status other than `0` or `1` is never retried through native regex or CPU fallback because output may already be partial and requested semantics must be preserved. Bridge invocation exceptions retain their existing fallback behavior. Direct backend PCRE2 bridge tests do not establish normal CLI routing: the CLI normally selects `RipgrepBackend` for explicit PCRE2.
 - `tg search PATTERN` defaults to the current directory when no path is provided.
 - Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
