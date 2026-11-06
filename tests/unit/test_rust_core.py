@@ -871,3 +871,71 @@ def test_literal_shortcut_eligibility_is_derived_from_the_shared_flags():
         {"line_regexp": True},
     ):
         assert _pattern_semantics_flags(SearchConfig(fixed_strings=True, **extra)) != ["-F"], extra
+
+
+@pytest.mark.parametrize("check_missing", [False, True])
+@pytest.mark.parametrize("layer", ["extension", "python"])
+@pytest.mark.parametrize("count", [False, True])
+@pytest.mark.parametrize(
+    ("ignore_case", "fixed"), [(False, True), (False, False), (True, True), (True, False)]
+)
+def test_tg066_real_extension_roots(tmp_path, layer, count, ignore_case, fixed, check_missing):
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.rust_core import RustBackend
+
+    native = RustBackend()
+    backend = RustCoreBackend()
+    config = SearchConfig(count=count, ignore_case=ignore_case, fixed_strings=fixed)
+    missing = tmp_path / "missing"
+    empty_file = tmp_path / "empty.txt"
+    empty_file.write_bytes(b"")
+    empty_dir = tmp_path / "empty-dir"
+    empty_dir.mkdir()
+    data = tmp_path / "data.txt"
+    data.write_text("Needle\nother\nneedle\n", encoding="utf-8")
+
+    def call(path):
+        args = ("needle", str(path), ignore_case, fixed)
+        return native.count_matches(*args) if count else native.search(*args, False)
+
+    for root in (empty_file, empty_dir):
+        if layer == "extension":
+            assert call(root) == (0 if count else [])
+        else:
+            assert backend.search(str(root), "needle", config=config).total_matches == 0
+    expected = 2 if ignore_case else 1
+    if layer == "extension":
+        result = call(data)
+        assert (result if count else len(result)) == expected
+        if not check_missing:
+            return
+        kind = "count" if count else "search"
+        with pytest.raises(RuntimeError, match=f"^Rust {kind} failed:"):
+            call(missing)
+    else:
+        assert backend.search(str(data), "needle", config=config).total_matches == expected
+        if not check_missing:
+            return
+        with pytest.raises(BackendExecutionError) as wrapped:
+            backend.search(str(missing), "needle", config=config)
+        assert isinstance(wrapped.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize("count", [False, True])
+def test_tg066_real_extension_invalid_regex_precedes_missing_root(tmp_path, count):
+    from tensor_grep.backends.cpu_backend import InvalidRegexError
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.rust_core import RustBackend
+
+    native = RustBackend()
+    missing = str(tmp_path / "missing")
+    with pytest.raises(RuntimeError, match="regex parse error"):
+        if count:
+            native.count_matches("(", missing, False, False)
+        else:
+            native.search("(", missing, False, False, False)
+    with pytest.raises(InvalidRegexError):
+        RustCoreBackend().search(missing, "(", config=SearchConfig(count=count))

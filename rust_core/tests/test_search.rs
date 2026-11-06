@@ -146,3 +146,215 @@ fn test_rust_cpu_backend_large_file_engages_intra_file_parallel_search() {
         assert!(text.contains(NEEDLE), "unexpected match text: {text}");
     }
 }
+
+macro_rules! tg066_missing_root_test {
+    ($name:ident, $method:ident, $pattern:expr, $ignore_case:expr, $fixed:expr) => {
+        #[test]
+        fn $name() {
+            let dir = tempdir().unwrap();
+            let missing = dir.path().join("missing");
+            let error = CpuBackend::new()
+                .$method(
+                    $pattern,
+                    missing.to_str().unwrap(),
+                    $ignore_case,
+                    $fixed,
+                    false,
+                )
+                .unwrap_err();
+            let io = error
+                .downcast_ref::<std::io::Error>()
+                .expect("expected I/O error");
+            assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+        }
+    };
+}
+
+tg066_missing_root_test!(tg066_count_literal, count_matches, "needle", false, true);
+tg066_missing_root_test!(tg066_count_regex, count_matches, "needle", false, false);
+tg066_missing_root_test!(
+    tg066_count_literal_icase,
+    count_matches,
+    "needle",
+    true,
+    true
+);
+tg066_missing_root_test!(
+    tg066_count_regex_icase,
+    count_matches,
+    "needle",
+    true,
+    false
+);
+tg066_missing_root_test!(tg066_search_literal, search, "needle", false, true);
+tg066_missing_root_test!(tg066_search_regex, search, "needle", false, false);
+tg066_missing_root_test!(tg066_search_literal_icase, search, "needle", true, true);
+tg066_missing_root_test!(tg066_search_regex_icase, search, "needle", true, false);
+tg066_missing_root_test!(
+    tg066_paths_literal,
+    search_with_paths,
+    "needle",
+    false,
+    true
+);
+tg066_missing_root_test!(tg066_paths_regex, search_with_paths, "needle", false, false);
+tg066_missing_root_test!(
+    tg066_paths_literal_icase,
+    search_with_paths,
+    "needle",
+    true,
+    true
+);
+tg066_missing_root_test!(
+    tg066_paths_regex_icase,
+    search_with_paths,
+    "needle",
+    true,
+    false
+);
+tg066_missing_root_test!(
+    tg066_paths_literal_paren,
+    search_with_paths,
+    "(",
+    true,
+    true
+);
+tg066_missing_root_test!(tg066_count_literal_paren, count_matches, "(", true, true);
+tg066_missing_root_test!(tg066_search_literal_paren, search, "(", true, true);
+
+#[test]
+fn tg066_invalid_regex_precedes_missing_root() {
+    let dir = tempdir().unwrap();
+    let missing = dir.path().join("missing");
+    let path = missing.to_str().unwrap();
+    let backend = CpuBackend::new();
+    let errors = [
+        backend
+            .count_matches("(", path, false, false, false)
+            .unwrap_err(),
+        backend.search("(", path, false, false, false).unwrap_err(),
+        backend
+            .search_with_paths("(", path, false, false, false)
+            .unwrap_err(),
+    ];
+    for error in errors {
+        assert!(error.downcast_ref::<regex::Error>().is_some(), "{error:?}");
+    }
+}
+
+#[test]
+fn tg066_existing_empty_inputs_are_empty() {
+    let dir = tempdir().unwrap();
+    let empty_file = dir.path().join("empty.txt");
+    let empty_dir = dir.path().join("empty-dir");
+    std::fs::write(&empty_file, "").unwrap();
+    std::fs::create_dir(&empty_dir).unwrap();
+    let backend = CpuBackend::new();
+    for root in [&empty_file, &empty_dir] {
+        for (ignore_case, fixed) in [(false, true), (false, false), (true, true), (true, false)] {
+            let path = root.to_str().unwrap();
+            assert_eq!(
+                backend
+                    .count_matches("needle", path, ignore_case, fixed, false)
+                    .unwrap(),
+                0
+            );
+            assert!(backend
+                .search("needle", path, ignore_case, fixed, false)
+                .unwrap()
+                .is_empty());
+            assert!(backend
+                .search_with_paths("needle", path, ignore_case, fixed, false)
+                .unwrap()
+                .is_empty());
+        }
+    }
+}
+
+#[test]
+fn tg066_existing_file_and_directory_keep_matches() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir(&data_dir).unwrap();
+    let data_file = data_dir.join("data.txt");
+    std::fs::write(&data_file, "Needle\nother\nneedle (\n").unwrap();
+    let backend = CpuBackend::new();
+    let cases: [(&str, bool, bool, bool, &[usize]); 6] = [
+        ("needle", false, true, false, &[3]),
+        ("needle", false, false, false, &[3]),
+        ("needle", true, true, false, &[1, 3]),
+        ("needle", true, false, false, &[1, 3]),
+        ("(", false, true, false, &[3]),
+        ("needle", false, true, true, &[1, 2]),
+    ];
+    for root in [&data_file, &data_dir] {
+        for (pattern, ignore_case, fixed, invert, expected) in cases {
+            let path = root.to_str().unwrap();
+            let count = backend
+                .count_matches(pattern, path, ignore_case, fixed, invert)
+                .unwrap();
+            let search = backend
+                .search(pattern, path, ignore_case, fixed, invert)
+                .unwrap();
+            let with_paths = backend
+                .search_with_paths(pattern, path, ignore_case, fixed, invert)
+                .unwrap();
+            assert_eq!(count, expected.len());
+            assert_eq!(
+                search
+                    .iter()
+                    .map(|(line, _)| *line)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                expected
+            );
+            assert_eq!(
+                with_paths
+                    .iter()
+                    .map(|m| m.line)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                expected
+            );
+            assert!(with_paths.iter().all(|m| m.file == data_file));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn tg066_existing_symlink_roots_follow_targets() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir(&data_dir).unwrap();
+    let data_file = data_dir.join("data.txt");
+    std::fs::write(&data_file, "needle\n").unwrap();
+    let file_link = dir.path().join("file-link");
+    let dir_link = dir.path().join("dir-link");
+    std::os::unix::fs::symlink(&data_file, &file_link).unwrap();
+    std::os::unix::fs::symlink(&data_dir, &dir_link).unwrap();
+    let backend = CpuBackend::new();
+    for root in [&file_link, &dir_link] {
+        let path = root.to_str().unwrap();
+        assert_eq!(
+            backend
+                .count_matches("needle", path, false, true, false)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            backend
+                .search("needle", path, false, true, false)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            backend
+                .search_with_paths("needle", path, false, true, false)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
