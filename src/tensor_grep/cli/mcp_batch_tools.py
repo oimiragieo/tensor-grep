@@ -30,6 +30,7 @@ _KIND_TO_TOOL = {
     "callers": "tg_symbol_callers",
     "source": "tg_symbol_source",
 }
+_DEADLINE_KINDS = {"find", "refs", "callers"}
 _BATCH_SLOTS = threading.BoundedSemaphore(4)
 
 
@@ -82,12 +83,24 @@ def _validate(queries: object, item_deadline: float, deadline: float) -> list[di
     return items
 
 
-def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[str, object]:
+def _run_item(
+    server: Any, item: dict[str, object], common_path: str, remaining: float | None = None
+) -> dict[str, object]:
     item_id = str(item["id"])
     kind = str(item["kind"])
     tool_name = _KIND_TO_TOOL[kind]
     arguments = {key: value for key, value in item.items() if key not in {"id", "kind"}}
     arguments.setdefault("path", common_path)
+    if kind in _DEADLINE_KINDS and remaining is not None:
+        caller_deadline = arguments.get("deadline")
+        if caller_deadline is None:
+            arguments["deadline"] = remaining
+        elif (
+            isinstance(caller_deadline, (int, float))
+            and not isinstance(caller_deadline, bool)
+            and caller_deadline > 0
+        ):
+            arguments["deadline"] = min(caller_deadline, remaining)
     try:
         output = getattr(server, tool_name)(**arguments)
         if kind == "search" and arguments.get("structured_json") is False:
@@ -130,9 +143,14 @@ def _run_item(server: Any, item: dict[str, object], common_path: str) -> dict[st
 
 
 def _timed_run_item(
-    server: Any, item: dict[str, object], common_path: str
+    server: Any, item: dict[str, object], common_path: str, item_end: float
 ) -> tuple[dict[str, object], float]:
-    result = _run_item(server, item, common_path)
+    remaining = item_end - time.monotonic()
+    if remaining <= 0:
+        item_id, kind = str(item["id"]), str(item["kind"])
+        result = _error_item(item_id, kind, "deadline_exceeded", "item deadline exceeded")
+    else:
+        result = _run_item(server, item, common_path, remaining)
     return result, time.monotonic()
 
 
@@ -191,7 +209,7 @@ def run_tg_batch(
                 )
                 continue
             try:
-                future = executor.submit(_timed_run_item, server, item, path)
+                future = executor.submit(_timed_run_item, server, item, path, item_end)
             except RuntimeError:
                 _BATCH_SLOTS.release()
                 raise
