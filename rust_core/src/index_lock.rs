@@ -15,11 +15,20 @@ use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::fs::OpenOptions;
 use std::hash::{BuildHasher, Hasher};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
+
+#[allow(dead_code)]
+mod sidecar;
+
+fn write_owner_record(file: &mut impl Write, token: &str) -> io::Result<()> {
+    let pid = writeln!(file, "{}", std::process::id());
+    let token = writeln!(file, "{token}");
+    pid.and(token)
+}
 
 /// A lock older than this is presumed abandoned by a dead holder and is reclaimed by the next
 /// waiter. RMW-scaled (bounded by how long a save can plausibly take), NOT scaled to any
@@ -263,6 +272,22 @@ impl IndexLockGuard {
         stale_after: Duration,
         poll_interval: Duration,
     ) -> Result<Self, IndexLockTimeoutError> {
+        Self::acquire_with_writer(
+            index_path,
+            timeout,
+            stale_after,
+            poll_interval,
+            write_owner_record,
+        )
+    }
+
+    fn acquire_with_writer(
+        index_path: &Path,
+        timeout: Duration,
+        stale_after: Duration,
+        poll_interval: Duration,
+        writer: impl FnOnce(&mut std::fs::File, &str) -> io::Result<()>,
+    ) -> Result<Self, IndexLockTimeoutError> {
         let lock_path = lock_path_for(index_path);
         if let Some(parent) = lock_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -276,14 +301,12 @@ impl IndexLockGuard {
             {
                 Ok(mut file) => {
                     let token = random_token();
-                    use std::io::Write as _;
                     // Best-effort content write, matching _index_lock.py: an OSError writing the
                     // freshly-created lock file is exceptional (not a contention signal) and
                     // isn't specially handled there either -- a missing/short token line just
                     // makes token_for_lock() return None, which every guard (release/heartbeat)
                     // already treats as "not mine, don't touch it": fails closed, not silently.
-                    let _ = writeln!(file, "{}", std::process::id());
-                    let _ = writeln!(file, "{token}");
+                    let _ = writer(&mut file, &token);
                     drop(file);
                     debug_log_event(&token, "start");
                     let hb_interval = default_heartbeat_interval(stale_after, poll_interval);
@@ -645,4 +668,9 @@ mod tests {
             "at most one thread must hold the lock at any instant"
         );
     }
+}
+
+#[cfg(test)]
+mod token_write_tests {
+    include!("../tests/support/index_lock_token_write.rs");
 }
