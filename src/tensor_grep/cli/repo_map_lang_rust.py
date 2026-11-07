@@ -624,7 +624,7 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     def _node_text(node: Any) -> str:
         return _self._tree_sitter_node_text(source_bytes, node)
 
-    def _visit(node: Any) -> None:
+    def _walk(node: Any) -> None:
         kind_map = {
             "function_item": "function",
             "struct_item": "struct",
@@ -654,7 +654,7 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     pending = [tree.root_node]
     while pending:
         node = pending.pop()
-        _visit(node)
+        _walk(node)
         pending.extend(reversed(node.children))
     symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
     return symbols
@@ -718,7 +718,7 @@ def _rust_references_and_calls(
             return False
         return bool(parent.type in {"function_item", "struct_item", "enum_item", "trait_item"})
 
-    def _visit(node: Any) -> None:
+    def _walk(node: Any) -> None:
         node_type = node.type
         if node_type == "identifier":
             node_text = _node_text(node)
@@ -804,7 +804,7 @@ def _rust_references_and_calls(
     pending = [tree.root_node]
     while pending:
         node = pending.pop()
-        _visit(node)
+        _walk(node)
         pending.extend(reversed(node.children))
     references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
@@ -974,7 +974,7 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     def _node_text(node: Any) -> str:
         return _self._tree_sitter_node_text(source_bytes, node)
 
-    def _visit(node: Any) -> None:
+    def _walk(node: Any) -> None:
         if node.type in kind_map:
             name_node = node.child_by_field_name("name")
             if name_node is None:
@@ -998,7 +998,7 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     pending = [tree.root_node]
     while pending:
         node = pending.pop()
-        _visit(node)
+        _walk(node)
         pending.extend(reversed(node.children))
     sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
     return sources
