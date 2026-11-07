@@ -650,10 +650,12 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
                             end_line=node.end_point[0] + 1,
                         )
                     )
-        for child in node.children:
-            _walk(child)
 
-    _walk(tree.root_node)
+    pending = [tree.root_node]
+    while pending:
+        node = pending.pop()
+        _walk(node)
+        pending.extend(reversed(node.children))
     symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
     return symbols
 
@@ -798,10 +800,12 @@ def _rust_references_and_calls(
                         else {}
                     ),
                 })
-        for child in node.children:
-            _walk(child)
 
-    _walk(tree.root_node)
+    pending = [tree.root_node]
+    while pending:
+        node = pending.pop()
+        _walk(node)
+        pending.extend(reversed(node.children))
     references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     return references, calls
@@ -990,10 +994,12 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
                     "end_line": node.end_point[0] + 1,
                     "source": block,
                 })
-        for child in node.children:
-            _walk(child)
 
-    _walk(tree.root_node)
+    pending = [tree.root_node]
+    while pending:
+        node = pending.pop()
+        _walk(node)
+        pending.extend(reversed(node.children))
     sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
     return sources
 
