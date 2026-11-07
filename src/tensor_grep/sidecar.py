@@ -552,10 +552,7 @@ def _dispatch_request(request: dict[str, Any]) -> tuple[str, str, int]:
 
 
 def _console_text(text: str) -> str:
-    normalized = text.replace("\r\n", "\n")
-    if os.linesep != "\n":
-        normalized = normalized.replace("\n", os.linesep)
-    return normalized
+    return text.replace("\r\n", "\n")
 
 
 def main() -> int:
