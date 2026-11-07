@@ -5,6 +5,16 @@ import types
 from typer.testing import CliRunner
 
 
+def test_sidecar_console_text_uses_lf_even_on_windows(monkeypatch):
+    from tensor_grep import sidecar
+
+    monkeypatch.setattr(sidecar.os, "linesep", "\n")
+    assert sidecar._console_text("") == ""
+    assert sidecar._console_text("one\nsecond\n") == "one\nsecond\n"
+    monkeypatch.setattr(sidecar.os, "linesep", "\r\n")
+    assert sidecar._console_text("one\nsecond\r\n") == "one\nsecond\n"
+
+
 def test_sidecar_classify_empty_content_reports_diagnostic(monkeypatch):
     """Audit MED: classifying empty content returned exit 1 with NO stdout AND no stderr —
     zero diagnostic, unlike every other early-return branch in _classify_payload. It must
