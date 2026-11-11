@@ -111,7 +111,7 @@ def test_request_line_reads_each_chunk_with_remaining_total_time(
     assert connection.timeouts == [30.0, 20.0, 10.0]
 
 
-def test_handler_deadline_uses_admission_time_for_the_whole_request(
+def test_handler_frame_and_work_deadlines_use_admission_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = tmp_path / "project"
@@ -135,7 +135,65 @@ def test_handler_deadline_uses_admission_time_for_the_whole_request(
         session_daemon._SessionDaemonHandler.handle(handler)
         response = json.loads(handler.wfile.getvalue().decode("utf-8"))
         assert response["ok"] is True
-        assert connection.timeouts == [5.0, 5.0]
+        assert connection.timeouts == [5.0, 35.0]
+    finally:
+        server.server_close()
+
+
+def test_warm_work_keeps_sixty_second_budget_after_thirty_second_frame_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    server = session_daemon._ThreadedSessionDaemon(project, ("127.0.0.1", 0), token="tok")
+    connection = _Connection()
+    admitted_at = 100.0
+    server._handler_admissions[connection] = admitted_at
+    server._handler_deadlines[connection] = admitted_at + 30.0
+    clock = {"now": admitted_at}
+    monkeypatch.setattr(session_daemon, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(session_daemon_deadlines, "monotonic", lambda: clock["now"])
+
+    class _LateFrameReader:
+        def read1(self, _size: int) -> bytes:
+            clock["now"] = admitted_at + 29.0
+            return b'{"command":"context_render","session_id":"session-id","token":"tok"}\n'
+
+        def readline(self, _size: int = -1) -> bytes:
+            pytest.fail("request-line reader must use bounded chunks")
+
+    deadlines: list[float | None] = []
+
+    def load_payload(
+        _cache: object, _session_id: str, _path: str, *, deadline_monotonic: float | None = None
+    ) -> tuple[dict[str, str], str]:
+        deadlines.append(deadline_monotonic)
+        return {"created_at": "now"}, "warm"
+
+    def serve_request(**kwargs: object) -> tuple[dict[str, str], str]:
+        deadline = kwargs["deadline_monotonic"]
+        assert isinstance(deadline, float)
+        deadlines.append(deadline)
+        clock["now"] = admitted_at + 31.0
+        return {"session_id": "session-id"}, "bypass"
+
+    monkeypatch.setattr(session_daemon, "_load_payload_with_status_retry", load_payload)
+    monkeypatch.setattr(session_daemon, "_serve_daemon_response_with_cache", serve_request)
+    server.demand_metrics.record = lambda **_kwargs: None
+    handler = session_daemon._SessionDaemonHandler.__new__(session_daemon._SessionDaemonHandler)
+    handler.server = server
+    handler.request = connection
+    handler.connection = connection
+    handler.rfile = _LateFrameReader()
+    handler.wfile = BytesIO()
+
+    try:
+        session_daemon._SessionDaemonHandler.handle(handler)
+        assert not connection.closed
+        response = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert response["session_id"] == "session-id"
+        assert deadlines == [admitted_at + 60.0, admitted_at + 60.0]
+        assert connection.timeouts == [30.0, 29.0]
     finally:
         server.server_close()
 
@@ -154,7 +212,7 @@ def test_handler_closes_connection_when_work_finishes_after_deadline(
     monkeypatch.setattr(session_daemon_deadlines, "monotonic", lambda: clock["now"])
 
     def _expire_during_ping(*_args: object) -> dict[str, str]:
-        clock["now"] = 130.0
+        clock["now"] = 160.0
         return {"proof": "ok"}
 
     monkeypatch.setattr(session_daemon, "_ping_proof_fields", _expire_during_ping)

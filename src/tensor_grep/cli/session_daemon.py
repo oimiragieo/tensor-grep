@@ -1774,11 +1774,11 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
             handler_deadline = server._handler_deadlines.get(handler_request)
         if handler_deadline is None:
             handler_deadline = admitted_at + _DAEMON_HANDLER_TIMEOUT_SECONDS
-        request_deadline = min(handler_deadline, admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS)
+        work_deadline = admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
         line = _read_bounded_request_line(
             self.rfile,
             max_bytes=_MAX_DAEMON_REQUEST_BYTES,
-            deadline=request_deadline,
+            deadline=handler_deadline,
             connection=getattr(self, "connection", None),
         )
         if not line:
@@ -1799,7 +1799,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_id": "",
                     "error": {"code": "unauthorized", "message": "invalid or missing daemon token"},
                 }
-                self._write_response(response, request_deadline)
+                self._write_response(response, work_deadline)
                 return
             server.note_activity()
             # audit r8: mark this request in-flight (after auth, so unauthorized clients don't
@@ -1832,14 +1832,14 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 session_id=request_session_id,
                 path=request_path,
                 request=request,
-                deadline_monotonic=request_deadline,
+                deadline_monotonic=work_deadline,
             )
             if request_session_id:
                 request["session_id"] = request_session_id
 
             if command == "stop":
                 response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
-                if not self._write_response(response, request_deadline):
+                if not self._write_response(response, work_deadline):
                     return
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
@@ -1850,7 +1850,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request.get("nonce"), server.root, int(server.server_address[1])
                     )
                 )
-                self._write_response(response, request_deadline)
+                self._write_response(response, work_deadline)
                 return
 
             if command == "stats":
@@ -1887,10 +1887,10 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     server.payload_cache,
                     request_session_id,
                     request_path,
-                    deadline_monotonic=request_deadline,
+                    deadline_monotonic=work_deadline,
                 )
                 response = _session_health_payload(
-                    request_session_id, payload, deadline_monotonic=request_deadline
+                    request_session_id, payload, deadline_monotonic=work_deadline
                 )
                 response["serve_cache"] = {
                     "status": cache_status,
@@ -1907,7 +1907,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         server.payload_cache,
                         request_session_id,
                         request_path,
-                        deadline_monotonic=request_deadline,
+                        deadline_monotonic=work_deadline,
                     )
                     loaded_at = monotonic()
                     response, response_cache_status = _serve_daemon_response_with_cache(
@@ -1917,7 +1917,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         path=request_path,
                         request=request,
                         payload=payload,
-                        deadline_monotonic=request_deadline,
+                        deadline_monotonic=work_deadline,
                     )
                     served_at = monotonic()
                 except Exception as exc:
@@ -1933,14 +1933,14 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                             request_session_id,
                             request_path,
                             payload_cache=server.payload_cache,
-                            deadline_monotonic=request_deadline,
+                            deadline_monotonic=work_deadline,
                         )
                         server.payload_cache.record_refresh()
                         payload, cache_status = _load_payload_with_status_retry(
                             server.payload_cache,
                             request_session_id,
                             request_path,
-                            deadline_monotonic=request_deadline,
+                            deadline_monotonic=work_deadline,
                         )
                         loaded_at = monotonic()
                         response, response_cache_status = _serve_daemon_response_with_cache(
@@ -1950,7 +1950,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                             path=request_path,
                             request=request,
                             payload=payload,
-                            deadline_monotonic=request_deadline,
+                            deadline_monotonic=work_deadline,
                         )
                         served_at = monotonic()
                     except Exception as rebuild_exc:
@@ -2011,7 +2011,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 with server._request_lock:
                     server.inflight_requests -= 1
 
-        self._write_response(response, request_deadline)
+        self._write_response(response, work_deadline)
 
 
 def _run_daemon_lifecycle_monitor(
