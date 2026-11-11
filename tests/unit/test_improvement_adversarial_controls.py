@@ -69,7 +69,7 @@ def test_cross_encoder_context_is_aligned_and_retained(monkeypatch: pytest.Monke
     from tensor_grep.core.result import MatchLine, SearchResult
 
     monkeypatch.setattr(
-        cross_encoder_assets, "verified_assets", lambda root: (Path("m"), Path("t"), Path("r"))
+        cross_encoder_assets, "scorer_assets", lambda root: (Path("m"), Path("t"), Path("r"))
     )
     seen = []
 

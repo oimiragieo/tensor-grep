@@ -93,7 +93,7 @@ pub(super) fn available_bytes(path: &Path) -> Option<u64> {
                 std::ptr::null_mut(),
             )
         };
-        return (ok != 0).then_some(free_to_caller);
+        (ok != 0).then_some(free_to_caller)
     }
 
     #[cfg(not(any(unix, windows)))]

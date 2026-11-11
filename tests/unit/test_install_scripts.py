@@ -721,8 +721,10 @@ def test_install_sh_ignores_fake_path_uv_even_when_it_reports_the_pin():
 
 def test_install_sh_does_not_persist_bootstrap_uv_to_user_bin():
     content = _read_script("scripts/install.sh")
-    uv_setup = content[content.index('UV_VERSION="') : content.index("# 2. Detect GPU Configuration")]
+    uv_setup = content[
+        content.index('UV_VERSION="') : content.index("# 2. Detect GPU Configuration")
+    ]
 
     assert 'cp "$UV_BIN_PATH" "$HOME/.local/bin/uv"' not in uv_setup
-    assert 'name uvx' not in uv_setup
+    assert "name uvx" not in uv_setup
     assert 'export PATH="$HOME/.local/bin:$PATH"' not in uv_setup

@@ -13,6 +13,7 @@ from pydantic import Field
 from tensor_grep.cli import mcp_search_scope
 from tensor_grep.cli.mcp_batch_supervisor import (
     _MAX_WORKER_DIAGNOSTIC_BYTES,
+    _WORKER_OPERATION_ERRORS,
     WorkerRun,
     run_contained_worker,
 )
@@ -440,7 +441,7 @@ def run_tg_batch(
             tree_reaped = False
             try:
                 outcome = future.result()
-            except Exception:
+            except _WORKER_OPERATION_ERRORS:
                 candidate = _error_item(
                     item_id,
                     kind,
@@ -551,7 +552,7 @@ def run_tg_batch(
                 continue
             try:
                 outcome = future.result()
-            except Exception:
+            except _WORKER_OPERATION_ERRORS:
                 continue
             if outcome.tree_reaped and index in held_slots:
                 slots.release()

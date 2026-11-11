@@ -1756,22 +1756,33 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
     # connection.settimeout().
     timeout = _DAEMON_HANDLER_TIMEOUT_SECONDS
 
+    def _write_response(self, response: dict[str, Any], deadline: float) -> bool:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            self.connection.close()
+            return False
+        self.connection.settimeout(remaining)
+        self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
+        self.wfile.flush()
+        return True
+
     def handle(self) -> None:
         server = cast(_ThreadedSessionDaemon, self.server)
         with server._handler_deadline_lock:
             handler_request = getattr(self, "request", None)
             admitted_at = server._handler_admissions.get(handler_request, monotonic())
             handler_deadline = server._handler_deadlines.get(handler_request)
-        request_deadline = admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+        if handler_deadline is None:
+            handler_deadline = admitted_at + _DAEMON_HANDLER_TIMEOUT_SECONDS
+        request_deadline = min(handler_deadline, admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS)
         line = _read_bounded_request_line(
             self.rfile,
             max_bytes=_MAX_DAEMON_REQUEST_BYTES,
-            deadline=handler_deadline,
+            deadline=request_deadline,
             connection=getattr(self, "connection", None),
         )
         if not line:
             return
-        self.connection.settimeout(self.timeout)
         response: dict[str, Any]
         with server._request_lock:
             server.request_count += 1
@@ -1788,8 +1799,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_id": "",
                     "error": {"code": "unauthorized", "message": "invalid or missing daemon token"},
                 }
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                self._write_response(response, request_deadline)
                 return
             server.note_activity()
             # audit r8: mark this request in-flight (after auth, so unauthorized clients don't
@@ -1829,8 +1839,8 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
 
             if command == "stop":
                 response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                if not self._write_response(response, request_deadline):
+                    return
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
             if command == "ping":
@@ -1840,8 +1850,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request.get("nonce"), server.root, int(server.server_address[1])
                     )
                 )
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                self._write_response(response, request_deadline)
                 return
 
             if command == "stats":
@@ -2002,8 +2011,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 with server._request_lock:
                     server.inflight_requests -= 1
 
-        self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-        self.wfile.flush()
+        self._write_response(response, request_deadline)
 
 
 def _run_daemon_lifecycle_monitor(

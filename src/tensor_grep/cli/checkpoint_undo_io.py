@@ -146,7 +146,7 @@ def rollback_overwrites(
                 expected_parent_identity=parent_identity,
                 expected_file_identity=expected_file_identity,
             )
-        except BaseException:
+        except OSError:
             failures.append(path)
     return failures
 
@@ -187,6 +187,6 @@ def rollback_removes(
                     _check_removed_parent_after_publish, path=path, identity=parent_identity
                 ),
             )
-        except BaseException:
+        except OSError:
             failures.append(path)
     return failures

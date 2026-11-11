@@ -6,12 +6,20 @@ import asyncio
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from tensor_grep.cli import checkpoint_store, mcp_serial_execution, mcp_server
+from tensor_grep.cli import (
+    checkpoint_store,
+    mcp_batch_tools,
+    mcp_batch_worker,
+    mcp_search_scope,
+    mcp_serial_execution,
+    mcp_server,
+)
 
 
 def _payload(result: Any) -> dict[str, Any]:
@@ -162,3 +170,43 @@ def test_worker_admission_stays_bounded_until_cancelled_jobs_drain(
 
     asyncio.run(exercise())
     assert calls == 1
+
+
+def test_batch_handler_deadline_is_recomputed_after_path_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(
+        mcp_batch_worker,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.now),
+    )
+    observed: list[float | None] = []
+
+    def run_item(
+        _server: Any,
+        _item: dict[str, object],
+        _common_path: str,
+        remaining: float | None,
+    ) -> dict[str, object]:
+        observed.append(remaining)
+        return {"id": "budget", "kind": "find", "result": {"ok": True}}
+
+    def scoped_call(function: Any, *, path: str, paths_defaulted: bool) -> str:
+        del paths_defaulted
+        clock.now += 2.0
+        return function(path)
+
+    monkeypatch.setattr(mcp_batch_tools, "_run_item", run_item)
+    monkeypatch.setattr(mcp_search_scope, "call", scoped_call)
+
+    result = mcp_batch_worker._run({
+        "item": {"id": "budget", "kind": "find", "query": "target"},
+        "path": ".",
+        "paths_defaulted": False,
+        "whole_tree_containment": True,
+        "deadline_end": 110.0,
+    })
+
+    assert result["result"] == {"ok": True}
+    assert observed == [8.0], "path scope setup must consume the handler's remaining budget"

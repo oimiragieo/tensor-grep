@@ -1,9 +1,10 @@
-"""Windows directory handles for checkpoint creation ownership."""
+"""Pinned directory ownership for checkpoint creation."""
 
 from __future__ import annotations
 
 import ctypes
 import errno
+import json
 import os
 import stat
 from ctypes import wintypes
@@ -36,11 +37,28 @@ def _create_directory2(kernel: Any | None = None) -> Any | None:
 
 
 def require_supported() -> None:
-    if os.name != "nt":
-        raise OSError(
-            errno.ENOTSUP,
-            "Python checkpoint creation is unsupported on POSIX without atomic directory ownership",
+    if os.name == "posix":
+        required = (
+            (os.open, os.supports_dir_fd),
+            (os.mkdir, os.supports_dir_fd),
+            (os.stat, os.supports_dir_fd),
+            (os.link, os.supports_dir_fd),
+            (os.replace, os.supports_dir_fd),
+            (os.unlink, os.supports_dir_fd),
+            (os.readlink, os.supports_dir_fd),
+            (os.symlink, os.supports_dir_fd),
+            (os.utime, os.supports_dir_fd),
+            (os.utime, os.supports_follow_symlinks),
         )
+        if (
+            not all(function in supported for function, supported in required)
+            or not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW"))
+            or not hasattr(os, "fchmod")
+        ):
+            raise OSError(errno.ENOTSUP, "Python checkpoint creation requires POSIX *at operations")
+        return
+    if os.name != "nt":
+        raise OSError(errno.ENOTSUP, "Python checkpoint creation is unsupported on this platform")
     if _create_directory2() is None:
         raise OSError(
             errno.ENOTSUP,
@@ -48,11 +66,36 @@ def require_supported() -> None:
         )
 
 
+def _fsync_directory(descriptor: int) -> None:
+    try:
+        os.fsync(descriptor)
+    except OSError as exc:
+        unsupported = {errno.EINVAL, errno.ENOTSUP, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
+        if exc.errno not in unsupported:
+            raise
+
+
 class CheckpointDirectoryOwner:
-    """Pin every checkpoint directory while path-based snapshot and state writes run."""
+    """Pin checkpoint paths with POSIX directory descriptors or Windows handles."""
 
     def __init__(self, root: Path) -> None:
         require_supported()
+        self._handles: dict[str, tuple[int, tuple[int, int]]] = {}
+        self._order: list[str] = []
+        self._created_paths: list[Path] = []
+        if os.name == "posix":
+            try:
+                self._open_posix_chain(root)
+            except BaseException as original_error:
+                try:
+                    self.close()
+                except OSError as close_error:
+                    if hasattr(original_error, "add_note"):
+                        original_error.add_note(
+                            f"also failed to close a checkpoint directory handle: {close_error}"
+                        )
+                raise
+            return
         self._kernel = _kernel()
         create2 = _create_directory2(self._kernel)
         if create2 is None:
@@ -80,16 +123,13 @@ class CheckpointDirectoryOwner:
         self._close_handle = self._kernel.CloseHandle
         self._close_handle.argtypes = [wintypes.HANDLE]
         self._close_handle.restype = wintypes.BOOL
-        self._handles: dict[str, tuple[int, tuple[int, int]]] = {}
-        self._order: list[str] = []
-        self._created_paths: list[Path] = []
         try:
             for directory in self._ancestor_chain(root):
                 self.open_existing(directory)
         except BaseException as original_error:
             try:
                 self.close()
-            except BaseException as close_error:
+            except OSError as close_error:
                 add_note = getattr(original_error, "add_note", None)
                 if add_note is not None:
                     add_note(f"also failed to close a checkpoint directory handle: {close_error}")
@@ -97,7 +137,49 @@ class CheckpointDirectoryOwner:
 
     @staticmethod
     def _key(path: Path) -> str:
-        return os.path.normcase(str(path.absolute()))
+        return os.path.normcase(os.path.normpath(str(path.absolute())))
+
+    @staticmethod
+    def _posix_flags() -> int:
+        return (
+            os.O_RDONLY
+            | int(getattr(os, "O_DIRECTORY", 0))
+            | int(getattr(os, "O_NOFOLLOW", 0))
+            | int(getattr(os, "O_CLOEXEC", 0))
+        )
+
+    def _open_posix_chain(self, root: Path) -> None:
+        absolute = Path(os.path.abspath(root))
+        if not absolute.is_absolute() or not absolute.anchor:
+            raise OSError(errno.EINVAL, "checkpoint root must be absolute")
+        current = Path(absolute.anchor)
+        descriptor = os.open(current, self._posix_flags())
+        self._remember_posix(current, descriptor)
+        for part in absolute.relative_to(current).parts:
+            parent_fd = self._handles[self._key(current)][0]
+            descriptor = os.open(part, self._posix_flags(), dir_fd=parent_fd)
+            current = current / part
+            self._remember_posix(current, descriptor)
+
+    def _remember_posix(self, path: Path, descriptor: int) -> tuple[int, int]:
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode):
+                raise OSError(f"checkpoint parent is not a real directory: {path}")
+            identity = (info.st_dev, info.st_ino)
+            key = self._key(path)
+            self._handles[key] = (descriptor, identity)
+            self._order.append(key)
+            return identity
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _parent_descriptor(self, path: Path) -> int:
+        try:
+            return self._handles[self._key(path.parent)][0]
+        except KeyError as exc:
+            raise OSError(f"checkpoint parent is not pinned: {path.parent}") from exc
 
     @staticmethod
     def _ancestor_chain(root: Path) -> list[Path]:
@@ -172,6 +254,16 @@ class CheckpointDirectoryOwner:
         key = self._key(path)
         if key in self._handles:
             return self._handles[key][1]
+        if os.name == "posix":
+            parent_fd = self._parent_descriptor(path)
+            before = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(before.st_mode):
+                raise OSError(f"checkpoint parent is not a real directory: {path}")
+            descriptor = os.open(path.name, self._posix_flags(), dir_fd=parent_fd)
+            identity = self._remember_posix(path, descriptor)
+            if identity != (before.st_dev, before.st_ino):
+                raise OSError(f"checkpoint parent identity changed while opening: {path}")
+            return identity
         before = path.lstat()
         if getattr(before, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT:
             raise OSError(f"checkpoint parent refuses a reparse point: {path}")
@@ -200,6 +292,15 @@ class CheckpointDirectoryOwner:
             raise FileExistsError(
                 errno.EEXIST, "checkpoint directory was already created", str(path)
             )
+        if os.name == "posix":
+            parent_fd = self._parent_descriptor(path)
+            os.mkdir(path.name, dir_fd=parent_fd)
+            self._created_paths.append(path)
+            _fsync_directory(parent_fd)
+            descriptor = os.open(path.name, self._posix_flags(), dir_fd=parent_fd)
+            identity = self._remember_posix(path, descriptor)
+            self.verify_created_directory(path, identity)
+            return identity
         handle = self._create2(
             str(path.absolute()),
             _DIRECTORY_ACCESS,
@@ -280,6 +381,111 @@ class CheckpointDirectoryOwner:
             parent = parent / part
             self.open_existing(parent)
 
+    def copy_snapshot_file(self, root: Path, snapshot: Path, relative_path: str) -> None:
+        """Copy a file or link using retained source and destination parent descriptors."""
+        from pathlib import PurePosixPath
+
+        relative = PurePosixPath(relative_path)
+        if (
+            relative.is_absolute()
+            or not relative.parts
+            or any(part in ("", ".", "..") for part in relative.parts)
+        ):
+            raise ValueError(f"invalid checkpoint snapshot path: {relative_path!r}")
+        self.pin_source_parent(root, relative_path)
+        self.create_snapshot_parents(snapshot, relative_path)
+        source_parent = root.joinpath(*relative.parts[:-1])
+        destination_parent = snapshot.joinpath(*relative.parts[:-1])
+        source_fd = self._handles[self._key(source_parent)][0]
+        destination_fd = self._handles[self._key(destination_parent)][0]
+        leaf = relative.parts[-1]
+        initial = os.stat(leaf, dir_fd=source_fd, follow_symlinks=False)
+        if stat.S_ISLNK(initial.st_mode):
+            target = os.readlink(leaf, dir_fd=source_fd)
+            current = os.stat(leaf, dir_fd=source_fd, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (initial.st_dev, initial.st_ino):
+                raise OSError(f"checkpoint source changed while copying: {relative_path}")
+            os.symlink(target, leaf, dir_fd=destination_fd)
+            _fsync_directory(destination_fd)
+            return
+        if not stat.S_ISREG(initial.st_mode):
+            raise OSError(f"checkpoint source is not a regular file or symlink: {relative_path}")
+        source_fd_file = os.open(
+            leaf,
+            os.O_RDONLY
+            | int(getattr(os, "O_NOFOLLOW", 0))
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=source_fd,
+        )
+        destination_fd_file: int | None = None
+        try:
+            opened = os.fstat(source_fd_file)
+            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (
+                initial.st_dev,
+                initial.st_ino,
+            ):
+                raise OSError(f"checkpoint source changed before copying: {relative_path}")
+            destination_fd_file = os.open(
+                leaf,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | int(getattr(os, "O_NOFOLLOW", 0))
+                | getattr(os, "O_CLOEXEC", 0),
+                stat.S_IMODE(opened.st_mode),
+                dir_fd=destination_fd,
+            )
+            fchmod = getattr(os, "fchmod", None)
+            if fchmod is None:
+                raise OSError(errno.ENOTSUP, "checkpoint snapshots require fchmod")
+            fchmod(destination_fd_file, stat.S_IMODE(opened.st_mode))
+            while block := os.read(source_fd_file, 1024 * 1024):
+                view = memoryview(block)
+                while view:
+                    view = view[os.write(destination_fd_file, view) :]
+            after = os.fstat(source_fd_file)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+            ):
+                raise OSError(f"checkpoint source changed during copy: {relative_path}")
+            os.utime(
+                leaf,
+                ns=(opened.st_atime_ns, opened.st_mtime_ns),
+                dir_fd=destination_fd,
+                follow_symlinks=False,
+            )
+            os.fsync(destination_fd_file)
+            _fsync_directory(destination_fd)
+        finally:
+            if destination_fd_file is not None:
+                os.close(destination_fd_file)
+            os.close(source_fd_file)
+
+    def write_json(self, root: Path, path: Path, payload: Any) -> None:
+        """Atomically write checkpoint metadata through its retained parent descriptor."""
+        if os.name != "posix":
+            from tensor_grep.cli._index_lock import atomic_write_json
+
+            atomic_write_json(path, payload)
+            return
+        from tensor_grep.cli._index_lock import atomic_write_bytes_confined
+
+        try:
+            parent_fd, identity = self._handles[self._key(path.parent)]
+        except KeyError as exc:
+            raise OSError(f"checkpoint output parent is not pinned: {path.parent}") from exc
+        atomic_write_bytes_confined(
+            root,
+            path,
+            json.dumps(payload, indent=2).encode("utf-8"),
+            parent_fd=parent_fd,
+            expected_parent_identity=identity,
+        )
+
     def create_snapshot_parents(self, snapshot: Path, relative_path: str) -> None:
         parent = snapshot
         for part in Path(relative_path).parts[:-1]:
@@ -290,6 +496,13 @@ class CheckpointDirectoryOwner:
                 self.create_directory(parent)
 
     def verify_created_directory(self, path: Path, expected: tuple[int, int]) -> None:
+        if os.name == "posix":
+            current = os.stat(
+                path.name, dir_fd=self._parent_descriptor(path), follow_symlinks=False
+            )
+            if not stat.S_ISDIR(current.st_mode) or (current.st_dev, current.st_ino) != expected:
+                raise OSError(f"checkpoint directory identity changed: {path}")
+            return
         info = path.lstat()
         if (
             not stat.S_ISDIR(info.st_mode)

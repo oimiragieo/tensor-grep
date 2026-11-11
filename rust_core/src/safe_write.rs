@@ -473,9 +473,16 @@ impl AnchoredTarget {
         use std::os::unix::io::FromRawFd;
         let name = CString::new(self.name.as_os_str().as_bytes())?;
         let flags = access | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK;
-        let fd = unsafe { libc::openat(self.parent.raw_fd(), name.as_ptr(), flags, mode) };
+        let fd = unsafe {
+            libc::openat(
+                self.parent.raw_fd(),
+                name.as_ptr(),
+                flags,
+                mode as libc::c_uint,
+            )
+        };
         if fd < 0 {
-            return Err(std::io::Error::last_os_error()).map_err(Into::into);
+            return Err(Into::into(std::io::Error::last_os_error()));
         }
         Ok(unsafe { File::from_raw_fd(fd) })
     }
@@ -780,7 +787,7 @@ impl AnchoredDirectory {
                 )
             };
             if fd < 0 {
-                return Err(std::io::Error::last_os_error()).map_err(Into::into);
+                return Err(Into::into(std::io::Error::last_os_error()));
             }
             handles.push(unsafe { File::from_raw_fd(fd) });
         }

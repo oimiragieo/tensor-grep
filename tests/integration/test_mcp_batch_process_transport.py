@@ -10,6 +10,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 import pytest
 from mcp import ClientSession, types
@@ -25,6 +26,23 @@ def _wait_for_files(paths: list[Path], timeout: float) -> None:
             return
         time.sleep(0.02)
     raise AssertionError(f"worker start handshake timed out: {paths}")
+
+
+def _wait_for_pids_to_exit(pids: list[int], timeout: float, psutil: Any) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        alive = []
+        for pid in pids:
+            try:
+                process = psutil.Process(pid)
+                if process.status() != psutil.STATUS_ZOMBIE:
+                    alive.append(pid)
+            except psutil.NoSuchProcess:
+                pass
+        if not alive:
+            return
+        time.sleep(0.02)
+    assert not alive, f"batch descendants remained after worker cleanup: {alive}"
 
 
 def test_batch_preserves_direct_results_and_partial_errors_over_stdio(tmp_path: Path) -> None:
@@ -91,6 +109,7 @@ def test_batch_preserves_direct_results_and_partial_errors_over_stdio(tmp_path: 
 def test_cancelling_batch_over_stdio_reaps_workers_and_restores_capacity(
     tmp_path: Path,
 ) -> None:
+    psutil = pytest.importorskip("psutil")
     root = Path(__file__).resolve().parents[2]
     marker_dir = tmp_path / "started"
     marker_dir.mkdir()
@@ -208,6 +227,11 @@ def test_cancelling_batch_over_stdio_reaps_workers_and_restores_capacity(
                     assert done_marker.exists(), (
                         "cancelled batch did not finish worker cleanup in 2s"
                     )
+                    descendant_pids = [
+                        json.loads(marker.read_text(encoding="utf-8"))["descendant"]
+                        for marker in marker_paths
+                    ]
+                    await asyncio.to_thread(_wait_for_pids_to_exit, descendant_pids, 1.0, psutil)
                 finally:
                     if not pending.done():
                         pending.cancel()

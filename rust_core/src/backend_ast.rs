@@ -1435,6 +1435,7 @@ fn apply_edit_set(edits: &[RewriteEdit]) -> Result<usize> {
     anchored_apply::apply_edit_set(edits)
 }
 
+#[cfg(test)]
 fn apply_edit_set_with_writer<W>(
     edits: &[RewriteEdit],
     original_sources: Option<&HashMap<PathBuf, String>>,
@@ -1566,6 +1567,7 @@ fn generate_diff_for_edits(edits: &[RewriteEdit]) -> Result<String> {
     Ok(output)
 }
 
+#[cfg(test)]
 fn ensure_files_not_stale(files: &[(&Path, Vec<&RewriteEdit>)]) -> Result<()> {
     let results: Vec<Result<()>> = files
         .par_iter()
@@ -1579,6 +1581,7 @@ fn ensure_files_not_stale(files: &[(&Path, Vec<&RewriteEdit>)]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn ensure_file_not_stale(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
     let planned_mtime_ns = planned_mtime_ns_for_file(file, edits)?;
     let current_mtime_ns = file_mtime_ns(file)?;
@@ -1611,6 +1614,7 @@ fn planned_mtime_ns_for_file(file: &Path, edits: &[&RewriteEdit]) -> Result<u64>
     Ok(planned_mtime_ns)
 }
 
+#[cfg(test)]
 fn file_mtime_ns(file: &Path) -> Result<u64> {
     let modified = std::fs::metadata(file)
         .with_context(|| format!("failed to read metadata for {}", file.display()))?
@@ -1635,11 +1639,13 @@ fn system_time_to_unix_nanos(file: &Path, timestamp: SystemTime) -> Result<u64> 
     })
 }
 
+#[cfg(test)]
 fn atomic_write_file(file: &Path, contents: &[u8]) -> Result<()> {
     atomic_write_file_with_hook(file, contents, |_| Ok(()))
 }
 
 /// Overwrite a file directly for the one-shot plan+apply fast path.
+#[cfg(test)]
 fn direct_write_file(file: &Path, contents: &[u8]) -> Result<()> {
     // The one-shot plan_and_apply path prioritizes sg-parity throughput over the temp-file rename
     // contract used by explicit plan+apply. We still reject stale files before writing, but once a
@@ -1659,6 +1665,7 @@ fn direct_write_file(file: &Path, contents: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to overwrite {}", file.display()))
 }
 
+#[cfg(test)]
 fn atomic_write_file_with_hook<F>(file: &Path, contents: &[u8], before_rename: F) -> Result<()>
 where
     F: FnOnce(&Path) -> Result<()>,

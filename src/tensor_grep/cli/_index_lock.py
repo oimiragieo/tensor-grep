@@ -516,18 +516,24 @@ def atomic_write_bytes_confined(
             if after_publish is not None:
                 after_publish()
 
-    options: dict[str, Any] = {"parent_fd": parent_fd} if parent_fd is not None else {}
+    options: dict[str, Any] = {
+        "before_publish": check_before_publish,
+        "on_published": on_published,
+    }
+    for name, value in (
+        ("parent_fd", parent_fd),
+        ("before_create", before_create),
+        ("temp_ready", temp_ready),
+        ("expected_parent_identity", expected_parent_identity),
+        ("expected_file_identity", expected_file_identity),
+    ):
+        if value is not None:
+            options[name] = value
     return confined.publish_confined(
         root,
         path,
         data,
         only_if_missing=not effective_replace,
-        before_create=before_create,
-        temp_ready=temp_ready,
-        before_publish=check_before_publish,
-        on_published=on_published,
-        expected_parent_identity=expected_parent_identity,
-        expected_file_identity=expected_file_identity,
         **options,
     )
 

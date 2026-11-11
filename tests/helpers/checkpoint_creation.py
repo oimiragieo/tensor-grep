@@ -19,5 +19,5 @@ def requires_checkpoint_creation(test):
     test = pytest.mark.checkpoint_creation(test)
     return pytest.mark.skipif(
         not _checkpoint_creation_supported(),
-        reason="Python checkpoint creation requires Windows CreateDirectory2W support",
+        reason="checkpoint creation requires pinned directory operations on this platform",
     )(test)

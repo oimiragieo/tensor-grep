@@ -440,7 +440,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self.disabled_until_monotonic = 0.0
 
     def enable_debug_trace(self) -> None:
-        with self._stderr_trace_lock:
+        with client_lock(self, lock=self._stderr_trace_lock):
             self._debug_trace_enabled = True
             self._debug_trace_started_monotonic = time.monotonic()
             self._debug_trace = []
@@ -486,7 +486,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         if detail:
             entry.update(detail)
         if event in {"stderr", "stderr_error"}:
-            with self._stderr_trace_lock:
+            with client_lock(self, lock=self._stderr_trace_lock, follow_deadline=False):
                 if (
                     self._stderr_trace_lines >= _LSP_STDERR_MAX_LINES
                     or self._stderr_trace_bytes + diagnostic_bytes > _LSP_STDERR_MAX_TEXT_BYTES
@@ -1153,11 +1153,15 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
 
     def _stderr_loop(self, session: ProviderSession | None = None) -> None:
         session = session or self._session
+        if self._session is not session:
+            return
         process = session.process
         if process is None or process.stderr is None:
             return
         try:
             for text in _iter_lsp_stderr_lines(process.stderr):
+                if self._session is not session:
+                    return
                 if not text:
                     continue
                 text_bytes = len(text.encode("utf-8", errors="replace"))
@@ -1165,12 +1169,18 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                     len(session.stderr_tail) >= _LSP_STDERR_MAX_LINES
                     or session.stderr_tail_bytes + text_bytes > _LSP_STDERR_MAX_TEXT_BYTES
                 ):
+                    if self._session is not session:
+                        return
                     removed = session.stderr_tail.pop(0)
                     session.stderr_tail_bytes -= len(removed.encode("utf-8", errors="replace"))
                 session.stderr_tail.append(text)
                 session.stderr_tail_bytes += text_bytes
+                if self._session is not session:
+                    return
                 self._record_debug_trace(event="stderr", detail={"message": text})
         except Exception as exc:
+            if self._session is not session:
+                return
             self._record_debug_trace(
                 event="stderr_error", detail={"message": _truncate_lsp_stderr_line(str(exc))}
             )

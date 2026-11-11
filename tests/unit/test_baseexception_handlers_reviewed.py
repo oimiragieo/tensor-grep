@@ -53,6 +53,16 @@ _REVIEWED_NON_RERAISING: dict[tuple[str, str, int], str] = {
         "a second cleanup interruption is re-raised and marks the activation worker as possibly "
         "live so callers retain the staged generation instead of treating cleanup as settled"
     ),
+    ("cli/mcp_batch_tools.py", "run", 0): (
+        "the AnyIO worker thread stores KeyboardInterrupt/SystemExit and signals completion in "
+        "finally; tg_batch re-raises the stored exception after the thread settles, while its "
+        "cancellation path waits for cleanup and then re-raises cancellation"
+    ),
+    ("cli/mcp_batch_worker.py", "main", 0): (
+        "the isolated worker converts failures from request parsing, tool execution, or JSON "
+        "writing into exit 1; the supervisor observes the nonzero code and returns the existing "
+        "internal_error item instead of accepting a partial protocol response"
+    ),
 }
 
 

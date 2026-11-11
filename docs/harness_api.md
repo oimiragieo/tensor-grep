@@ -1612,7 +1612,7 @@ uses the checkpoint ID. An older client that rewrites `index.json` may discard l
 understand. Contract 1.21.0 routes every checkpoint JSON response through the shared envelope
 injector, so successful and structured error responses include the standard `incomplete` object;
 checkpoint operations default to `{status: false, cause: null, budget_remediable: false}`.
-Checkpoint creation requires Windows 11 24H2 or Windows Server 2025 with `CreateDirectory2W` available. Python MCP checkpoint creation returns a structured unsupported error on POSIX and on older Windows systems before writing checkpoint state.
+On Windows, Python MCP checkpoint creation requires Windows 11 24H2 or Windows Server 2025 with `CreateDirectory2W`. On POSIX, it requires descriptor-relative file operations, `O_NOFOLLOW`, and `O_DIRECTORY`; unsupported runtimes return a structured error before writing checkpoint state.
 - `tg_session_open(path=".", max_repo_files=2000)`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`

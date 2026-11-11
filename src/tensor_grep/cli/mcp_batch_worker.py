@@ -56,18 +56,22 @@ def _run(request: dict[str, Any]) -> dict[str, object]:
             "internal_error",
             "external LSP provider cannot be contained by batch on this platform",
         )
-    remaining = float(request["deadline_end"]) - time.monotonic()
+    deadline_end = float(request["deadline_end"])
     effective_path = item.get("path", request["path"])
     if isinstance(effective_path, str):
         result = mcp_search_scope.call(
             lambda path: json.dumps(
-                mcp_batch_tools._run_item(mcp_server, item, request["path"], remaining)
+                mcp_batch_tools._run_item(
+                    mcp_server, item, request["path"], deadline_end - time.monotonic()
+                )
             ),
             path=effective_path,
             paths_defaulted=request["paths_defaulted"],
         )
         return cast(dict[str, object], json.loads(result))
-    return mcp_batch_tools._run_item(mcp_server, item, request["path"], remaining)
+    return mcp_batch_tools._run_item(
+        mcp_server, item, request["path"], deadline_end - time.monotonic()
+    )
 
 
 def _write(fd: int, value: dict[str, object]) -> None:

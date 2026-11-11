@@ -9010,6 +9010,7 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
 /// an rg PASSTHROUGH (`search_requires_ripgrep_passthrough` returns true), and
 /// `command_ripgrep_args` threads all three flags into rg's own argv, so that route is honored,
 /// not dropped -- refusing it would break working behavior.
+/// File-set flags that native structured output cannot preserve are included in the same refusal.
 fn native_structured_dropped_search_flags(args: &SearchArgs) -> Vec<&'static str> {
     let native_structured = args.ndjson || (args.json && args.format.as_deref() != Some("rg"));
     if !native_structured {
@@ -9024,6 +9025,15 @@ fn native_structured_dropped_search_flags(args: &SearchArgs) -> Vec<&'static str
     }
     if args.files_without_match {
         dropped.push("--files-without-match");
+    }
+    if !args.file_type.is_empty() {
+        dropped.push("--type");
+    }
+    if args.follow {
+        dropped.push("--follow");
+    }
+    if args.max_filesize.is_some() {
+        dropped.push("--max-filesize");
     }
     dropped
 }

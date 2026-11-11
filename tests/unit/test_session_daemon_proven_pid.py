@@ -28,7 +28,7 @@ from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 _DAEMON_REQUEST_FUNCTION = sd._daemon_request
-_DAEMON_REQUEST_CALL_LINES = {521: "connect", 526: "send", 528: "read"}
+_DAEMON_REQUEST_CALL_LINES = {526: "connect", 531: "send", 533: "read"}
 
 
 def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:

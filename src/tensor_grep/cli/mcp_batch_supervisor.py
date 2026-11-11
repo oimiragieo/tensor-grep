@@ -18,6 +18,15 @@ from tensor_grep.cli.process_containment import close_streams_bounded, spawn_con
 _CLEANUP_GRACE_SECONDS = 2.0
 _READ_SIZE = 64 * 1024
 _MAX_WORKER_DIAGNOSTIC_BYTES = 64 * 1024
+_WORKER_OPERATION_ERRORS = (
+    OSError,
+    subprocess.SubprocessError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+    AssertionError,
+    MemoryError,
+)
 _WORKER_PATH = Path(__file__).resolve().with_name("mcp_batch_worker.py")
 
 
@@ -60,7 +69,7 @@ def run_contained_worker(
         return WorkerRun(None, time.monotonic(), None, input_too_large=True)
     except TimeoutError:
         return WorkerRun(None, time.monotonic(), None, timed_out=True)
-    except Exception:
+    except _WORKER_OPERATION_ERRORS:
         return WorkerRun(None, time.monotonic(), None)
     if time.monotonic() >= deadline_end:
         return WorkerRun(None, time.monotonic(), None, timed_out=True)
@@ -248,7 +257,7 @@ def run_contained_worker(
             diagnostics=bytes(diagnostics),
             diagnostics_truncated=diagnostics_overflow.is_set(),
         )
-    except Exception:
+    except _WORKER_OPERATION_ERRORS:
         if process is None:
             return WorkerRun(None, time.monotonic(), None)
         cleanup_end = time.monotonic() + _CLEANUP_GRACE_SECONDS

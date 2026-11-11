@@ -191,7 +191,7 @@ where
         // `created_at` (newest first), NOT list position: the timestamp is stamped before the
         // lock, so a concurrent writer can make insertion order disagree with creation order.
         let limits = budget::checkpoint_limits();
-        records.sort_by(|left, right| record_created_at(right).cmp(&record_created_at(left)));
+        records.sort_by(|left, right| record_created_at(right).cmp(record_created_at(left)));
         let mut dropped_ids: Vec<String> = Vec::new();
         if records.len() > limits.max_records {
             for record in records.drain(limits.max_records..) {

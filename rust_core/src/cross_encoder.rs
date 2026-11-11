@@ -283,7 +283,7 @@ fn create_session(model: &[u8]) -> Result<Session> {
 }
 
 fn create_tokenizer(bytes: &[u8]) -> Result<Tokenizer> {
-    let mut tokenizer = Tokenizer::from_bytes(bytes.to_vec()).map_err(|e| anyhow!(e))?;
+    let mut tokenizer = Tokenizer::from_bytes(bytes).map_err(|e| anyhow!(e))?;
     tokenizer.with_padding(None);
     tokenizer
         .with_truncation(Some(TruncationParams {
@@ -309,6 +309,23 @@ fn verify_cached_runtime(scorer: &Scorer, deadline: Instant) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn verified_replacement_if_changed(
+    path: &Path,
+    size: usize,
+    digest: &str,
+    pinned_identity: &AssetIdentity,
+    deadline: Instant,
+) -> Result<Option<VerifiedAsset>> {
+    check_deadline(Some(deadline))?;
+    let current = open_asset(path, size)?;
+    check_deadline(Some(deadline))?;
+    if current.identity == *pinned_identity {
+        return Ok(None);
+    }
+    drop(current);
+    Ok(Some(verified_asset(path, size, digest, Some(deadline))?))
 }
 
 fn prefix(text: &str) -> &str {
@@ -419,33 +436,21 @@ pub fn scores(
         bail!("cross-encoder runtime changed; restart the process");
     }
     verify_cached_runtime(scorer, end)?;
-    check_deadline(Some(end))?;
-    let model_current = open_asset(Path::new(model), 91011230)?;
-    check_deadline(Some(end))?;
-    let vocab_current = open_asset(Path::new(tokenizer), 711396)?;
-    let model_changed = model_current.identity != scorer.model.identity;
-    let vocab_changed = vocab_current.identity != scorer.tokenizer_asset.identity;
-    if model_changed || vocab_changed {
-        let replacement_model = if model_changed {
-            Some(verified_asset(
-                Path::new(model),
-                91011230,
-                "5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a", // model sha256
-                Some(end),
-            )?)
-        } else {
-            None
-        };
-        let replacement_vocab_asset = if vocab_changed {
-            Some(verified_asset(
-                Path::new(tokenizer),
-                711396,
-                "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66", // tokenizer sha256
-                Some(end),
-            )?)
-        } else {
-            None
-        };
+    let replacement_model = verified_replacement_if_changed(
+        Path::new(model),
+        91011230,
+        "5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a", // model sha256
+        &scorer.model.identity,
+        end,
+    )?;
+    let replacement_vocab_asset = verified_replacement_if_changed(
+        Path::new(tokenizer),
+        711396,
+        "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66", // tokenizer sha256
+        &scorer.tokenizer_asset.identity,
+        end,
+    )?;
+    if replacement_model.is_some() || replacement_vocab_asset.is_some() {
         let replacement_session = replacement_model
             .as_ref()
             .map(|asset| create_session(&asset.bytes))
@@ -577,6 +582,76 @@ mod tests {
         assert_eq!(open_asset(&path, 5).unwrap().identity, identity);
         ASSET_HASHES.with(|count| assert_eq!(count.get(), 1));
         ASSET_BYTES_READ.with(|count| assert_eq!(count.get(), 5));
+    }
+
+    #[test]
+    fn unchanged_scorer_asset_needs_no_full_read_or_hash() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("asset");
+        std::fs::write(&path, b"known").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"known"));
+        ASSET_HASHES.with(|count| count.set(0));
+        ASSET_BYTES_READ.with(|count| count.set(0));
+        let verified = verified_asset(&path, 5, &digest, None).unwrap();
+        let identity = verified.pinned.identity.clone();
+        assert_eq!(ASSET_HASHES.with(|count| count.get()), 1);
+        assert_eq!(ASSET_BYTES_READ.with(|count| count.get()), 5);
+
+        let warm = verified_replacement_if_changed(
+            &path,
+            5,
+            &digest,
+            &identity,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+        assert!(warm.is_none());
+        assert_eq!(ASSET_HASHES.with(|count| count.get()), 1);
+        assert_eq!(ASSET_BYTES_READ.with(|count| count.get()), 5);
+    }
+
+    #[test]
+    fn changed_scorer_asset_is_reverified_and_deletion_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("asset");
+        let replacement = directory.path().join("replacement");
+        std::fs::write(&path, b"known").unwrap();
+        let digest = format!("{:x}", Sha256::digest(b"known"));
+        let verified = verified_asset(&path, 5, &digest, None).unwrap();
+        let identity = verified.pinned.identity.clone();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        drop(verified);
+
+        std::fs::write(&replacement, b"other").unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&replacement)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        #[cfg(windows)]
+        std::fs::remove_file(&path).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        assert!(verified_replacement_if_changed(
+            &path,
+            5,
+            &digest,
+            &identity,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("checksum"));
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(verified_replacement_if_changed(
+            &path,
+            5,
+            &digest,
+            &identity,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .is_err());
     }
 
     #[test]

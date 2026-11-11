@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -68,21 +69,24 @@ def create_checkpoint_with_owner(
         for relative_path, exists in entries.items():
             if not exists:
                 continue
-            try:
-                owner.pin_source_parent(root, relative_path)
-            except OSError as exc:
-                if "refuses a reparse point" not in str(exc):
+            if os.name == "posix":
+                owner.copy_snapshot_file(root, snapshot_dir, relative_path)
+            else:
+                try:
+                    owner.pin_source_parent(root, relative_path)
+                except OSError as exc:
+                    if "refuses a reparse point" not in str(exc):
+                        raise
+                    store._resolve_parent_within_root(root, root_resolved, relative_path)
                     raise
-                store._resolve_parent_within_root(root, root_resolved, relative_path)
-                raise
-            resolved_parent, leaf = store._resolve_parent_within_root(
-                root, root_resolved, relative_path
-            )
-            source = resolved_parent / leaf
-            destination = snapshot_dir / relative_path
-            owner.create_snapshot_parents(snapshot_dir, relative_path)
-            # Preserve a tracked leaf symlink as a link; never copy its target content.
-            shutil.copy2(source, destination, follow_symlinks=False)
+                resolved_parent, leaf = store._resolve_parent_within_root(
+                    root, root_resolved, relative_path
+                )
+                source = resolved_parent / leaf
+                destination = snapshot_dir / relative_path
+                owner.create_snapshot_parents(snapshot_dir, relative_path)
+                # Preserve a tracked leaf symlink as a link; never copy its target content.
+                shutil.copy2(source, destination, follow_symlinks=False)
 
         result = store.CheckpointCreateResult(
             checkpoint_id=checkpoint_id,
@@ -103,6 +107,7 @@ def create_checkpoint_with_owner(
             scope_kind=scope.scope_kind,
             original_path=scope.original_path,
             scoped_paths=scoped_paths,
+            owner=owner,
         )
 
         # Keep metadata and index publication in the same failure boundary as snapshot copying.
@@ -121,7 +126,7 @@ def create_checkpoint_with_owner(
                 ),
             )
             records, dropped_dirs = store._select_retained_checkpoints(root, records)
-            store._write_index(root, records)
+            store._write_index(root, records, owner=owner)
     except BaseException as exc:
         if owner.created_paths:
             retained = owner.created_paths[0]

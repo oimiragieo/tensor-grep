@@ -165,7 +165,9 @@ def _is_generated_discovery_dir(path: Path) -> bool:
     return path.name in _DISCOVERY_IGNORED_DIRS or path.name.startswith(".tmp")
 
 
-def _write_json_atomic(path: Path, payload: Any) -> None:
+def _write_json_atomic(
+    path: Path, payload: Any, *, root: Path | None = None, owner: Any | None = None
+) -> None:
     """Write ``payload`` as pretty JSON to ``path`` atomically, refusing a pre-existing symlink.
 
     Thin wrapper over the shared C4/#659 hardening baseline (`_index_lock.atomic_write_json`).
@@ -174,7 +176,12 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     -- routing through the shared helper closes that gap uniformly instead of re-patching a third
     copy of the same pattern in place.
     """
-    atomic_write_json(path, payload)
+    if owner is None:
+        atomic_write_json(path, payload)
+    else:
+        if root is None:
+            raise ValueError("anchored checkpoint writes require their scope root")
+        owner.write_json(root, path, payload)
 
 
 def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path:
@@ -638,9 +645,9 @@ def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
     return _index_path(root)
 
 
-def _write_index(root: Path, records: list[CheckpointRecord]) -> None:
+def _write_index(root: Path, records: list[CheckpointRecord], *, owner: Any | None = None) -> None:
     index_path = _index_path(root)
-    _write_json_atomic(index_path, [asdict(record) for record in records])
+    _write_json_atomic(index_path, [asdict(record) for record in records], root=root, owner=owner)
 
 
 def _git_snapshot_entries(root: Path) -> tuple[dict[str, bool], list[str]]:
@@ -769,6 +776,7 @@ def _write_checkpoint_metadata(
     scope_kind: str,
     original_path: Path,
     scoped_paths: list[str] | None = None,
+    owner: Any | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "version": _CHECKPOINT_VERSION,
@@ -790,7 +798,7 @@ def _write_checkpoint_metadata(
     }
     if scoped_paths is not None:
         payload["scoped_paths"] = scoped_paths
-    _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
+    _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload, root=root, owner=owner)
 
 
 def create_checkpoint(

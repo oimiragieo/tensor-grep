@@ -55,6 +55,27 @@ def _load_script_module(name: str, rel_path: str):
     return module
 
 
+def _complete_run_rows(tg_time_s: float, rg_time_s: float | None = None) -> list[dict[str, object]]:
+    from tensor_grep.perf_guard import RUN_BENCHMARK_SCENARIO_NAMES
+
+    rows: list[dict[str, object]] = []
+    for name in RUN_BENCHMARK_SCENARIO_NAMES:
+        row: dict[str, object] = {"name": name, "tg_time_s": tg_time_s}
+        if rg_time_s is not None:
+            row["rg_time_s"] = rg_time_s
+        rows.append(row)
+    return rows
+
+
+def _complete_hot_rows(first_s: float, second_s: float) -> list[dict[str, object]]:
+    from tensor_grep.perf_guard import RUN_HOT_QUERY_SCENARIO_NAMES
+
+    return [
+        {"name": name, "first_s": first_s, "second_s": second_s}
+        for name in RUN_HOT_QUERY_SCENARIO_NAMES
+    ]
+
+
 def _passing_native_gpu_scale_summary(module):
     rows = [
         {
@@ -903,6 +924,8 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
 def test_check_regression_should_allow_cross_environment_comparison_with_override(
     monkeypatch, tmp_path
 ):
+    from tensor_grep.perf_guard import RUN_BENCHMARK_SCENARIO_NAMES
+
     module = _load_script_module("check_regression_script", "benchmarks/check_regression.py")
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
@@ -910,7 +933,7 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
         json.dumps({
             "suite": "run_benchmarks",
             "environment": {"platform": "linux", "machine": "x86_64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
+            "rows": [{"name": name, "tg_time_s": 1.0} for name in RUN_BENCHMARK_SCENARIO_NAMES],
         }),
         encoding="utf-8",
     )
@@ -918,7 +941,7 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
         json.dumps({
             "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
+            "rows": [{"name": name, "tg_time_s": 1.05} for name in RUN_BENCHMARK_SCENARIO_NAMES],
         }),
         encoding="utf-8",
     )
@@ -950,13 +973,13 @@ def test_check_regression_should_report_rg_comparator_drift(monkeypatch, tmp_pat
     payload = {
         "suite": "run_benchmarks",
         "environment": {"platform": "windows", "machine": "amd64"},
-        "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 0.9}],
+        "rows": _complete_run_rows(1.0, 0.9),
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
         json.dumps({
             **payload,
-            "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 1.2}],
+            "rows": _complete_run_rows(1.0, 1.2),
         }),
         encoding="utf-8",
     )
@@ -989,7 +1012,7 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
         json.dumps({
             "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
+            "rows": _complete_run_rows(1.0),
         }),
         encoding="utf-8",
     )
@@ -997,7 +1020,7 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
         json.dumps({
             "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.06}],
+            "rows": _complete_run_rows(1.06),
         }),
         encoding="utf-8",
     )
@@ -1024,13 +1047,13 @@ def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_p
     payload = {
         "suite": "run_hot_query_benchmarks",
         "environment": {"platform": "windows", "machine": "amd64"},
-        "rows": [{"name": "repeated_fixed_string", "first_s": 1.0, "second_s": 0.4}],
+        "rows": _complete_hot_rows(1.0, 0.4),
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
         json.dumps({
             **payload,
-            "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+            "rows": _complete_hot_rows(1.02, 0.43),
         }),
         encoding="utf-8",
     )
@@ -1057,7 +1080,7 @@ def test_check_regression_should_run_directly_without_site_packages(tmp_path):
     payload = {
         "suite": "run_benchmarks",
         "environment": {"platform": "windows", "machine": "amd64"},
-        "rows": [{"name": "1. Simple String Match", "tg_time_s": 1.0, "rg_time_s": 0.5}],
+        "rows": _complete_run_rows(1.0, 0.5),
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1139,13 +1162,13 @@ def test_check_regression_should_allow_same_environment_explicit_baseline_for_ca
             "machine": "amd64",
             "python_version": "3.12.12",
         },
-        "rows": [{"name": "x", "tg_time_s": 1.00, "rg_time_s": 0.80}],
+        "rows": _complete_run_rows(1.00, 0.80),
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
         json.dumps({
             **payload,
-            "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
+            "rows": _complete_run_rows(1.03, 0.81),
         }),
         encoding="utf-8",
     )
@@ -1178,7 +1201,7 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
             "suite": "run_benchmarks",
             "milestone": "m1",
             "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
+            "rows": _complete_run_rows(1.0),
         }),
         encoding="utf-8",
     )
@@ -1188,7 +1211,7 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
             "suite": "run_benchmarks",
             "milestone": "m2",
             "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.04}],
+            "rows": _complete_run_rows(1.04),
         }),
         encoding="utf-8",
     )

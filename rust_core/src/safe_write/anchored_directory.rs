@@ -808,7 +808,7 @@ mod windows_impl {
             let end = offset
                 .checked_add(length)
                 .filter(|end| *end <= path_bytes.len());
-            if length == 0 || length % 2 != 0 || end.is_none() {
+            if length == 0 || length & 1 != 0 || end.is_none() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "invalid Windows reparse target name range",

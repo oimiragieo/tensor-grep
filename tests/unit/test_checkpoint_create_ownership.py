@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import threading
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -32,6 +32,7 @@ def test_checkpoint_owner_supports_drive_and_unc_ancestor_chains() -> None:
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")
 def test_create_checkpoint_refuses_same_parent_replacement_before_identity_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -117,6 +118,7 @@ def test_create_checkpoint_refuses_same_parent_replacement_before_identity_captu
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")
 def test_checkpoint_create_pins_nested_source_parent_before_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,6 +211,7 @@ def test_checkpoint_create_pins_nested_source_parent_before_copy(
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")
 def test_checkpoint_owner_pins_root_ancestors_before_source_enumeration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -264,6 +267,7 @@ def test_checkpoint_owner_pins_root_ancestors_before_source_enumeration(
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")
 def test_checkpoint_owner_pins_root_ancestors_during_scope_discovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -342,24 +346,88 @@ def test_checkpoint_create_refuses_scope_outside_pinned_input_chain(
     assert not (outside / ".tensor-grep").exists()
 
 
-def test_python_posix_checkpoint_create_refuses_before_state_mutation(
+@pytest.mark.skipif(os.name != "posix", reason="POSIX capability refusal")
+def test_checkpoint_creation_refuses_without_posix_at_support_before_state_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     (root / "tracked.py").write_bytes(b"payload\n")
-    native_require_supported = checkpoint_directory.require_supported
+    monkeypatch.setattr(checkpoint_directory.os, "supports_dir_fd", set())
 
-    def require_as_posix() -> None:
-        with patch.object(checkpoint_directory.os, "name", "posix"):
-            native_require_supported()
-
-    monkeypatch.setattr(checkpoint_directory, "require_supported", require_as_posix)
-
-    with pytest.raises(OSError, match="unsupported"):
+    with pytest.raises(OSError, match="POSIX \\*at operations"):
         checkpoint_store.create_checkpoint(str(root))
 
     assert not (root / ".tensor-grep").exists()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory-descriptor replacement control")
+@requires_checkpoint_creation
+def test_checkpoint_snapshot_uses_pinned_source_after_parent_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    nested = root / "pkg"
+    nested.mkdir(parents=True)
+    source = nested / "secret.py"
+    source.write_bytes(b"original in-repo source\n")
+    source.chmod(0o640)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_secret = outside / "secret.py"
+    outside_secret.write_bytes(b"outside secret\n")
+    sentinel = outside / "sentinel.bin"
+    sentinel.write_bytes(b"outside sentinel\n")
+    parked = root / "parked-pkg"
+    requested, swapped = threading.Event(), threading.Event()
+    swap_errors: list[BaseException] = []
+    synced_directories: list[int] = []
+    original_fsync = os.fsync
+
+    def observe_directory_sync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            synced_directories.append(descriptor)
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(checkpoint_directory.os, "fsync", observe_directory_sync)
+    original_pin = checkpoint_directory.CheckpointDirectoryOwner.pin_source_parent
+
+    def replace_parent() -> None:
+        try:
+            assert requested.wait(10), "checkpoint did not pin the source parent"
+            nested.rename(parked)
+            nested.symlink_to(outside, target_is_directory=True)
+        except BaseException as exc:
+            swap_errors.append(exc)
+        finally:
+            swapped.set()
+
+    def synchronized_pin(
+        owner: checkpoint_directory.CheckpointDirectoryOwner, root_path: Path, relative: str
+    ) -> None:
+        original_pin(owner, root_path, relative)
+        if relative == "pkg/secret.py":
+            requested.set()
+            assert swapped.wait(10), "source-parent replacement did not finish"
+
+    monkeypatch.setattr(
+        checkpoint_directory.CheckpointDirectoryOwner, "pin_source_parent", synchronized_pin
+    )
+    worker = threading.Thread(target=replace_parent)
+    worker.start()
+    try:
+        created = checkpoint_store.create_checkpoint(str(root))
+    finally:
+        worker.join(10)
+
+    assert not worker.is_alive()
+    assert not swap_errors, f"source-parent replacement failed: {swap_errors}"
+    copied = checkpoint_store._snapshot_path(root, created.checkpoint_id) / "pkg" / "secret.py"
+    assert copied.read_bytes() == b"original in-repo source\n"
+    assert copied.stat().st_mode & 0o777 == 0o640
+    assert synced_directories, "checkpoint publication must sync directory entries where supported"
+    assert outside_secret.read_bytes() == b"outside secret\n"
+    assert sentinel.read_bytes() == b"outside sentinel\n"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="CreateDirectory2W is a Windows API")
@@ -379,6 +447,7 @@ def test_missing_createdirectory2_refuses_before_state_mutation(
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="junction creation requires Windows cmd")
 def test_checkpoint_create_refuses_storage_junction_without_touching_target(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -403,6 +472,7 @@ def test_checkpoint_create_refuses_storage_junction_without_touching_target(tmp_
 
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="junction creation requires Windows cmd")
 def test_checkpoint_create_refuses_root_junction_after_path_confinement(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

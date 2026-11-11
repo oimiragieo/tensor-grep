@@ -38,6 +38,7 @@ from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
+from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (

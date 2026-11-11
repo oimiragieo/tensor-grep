@@ -11,6 +11,14 @@ from tensor_grep.cli import session_store
 from tensor_grep.cli.session_daemon import _SessionDaemonHandler, _ThreadedSessionDaemon
 
 
+class _MockConnection:
+    def settimeout(self, _timeout: float | None) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 def _write_python_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -362,6 +370,7 @@ def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Pat
     try:
         handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
         handler.server = server
+        handler.request = handler.connection = _MockConnection()
         handler.rfile = BytesIO(b'{"command":"context"\n')
         handler.wfile = BytesIO()
 
@@ -428,6 +437,7 @@ def test_session_daemon_retries_initial_missing_session_payload(
         opened = session_store.open_session(str(project))
         handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
         handler.server = server
+        handler.request = handler.connection = _MockConnection()
         handler.rfile = BytesIO(
             (
                 json.dumps({
@@ -466,6 +476,7 @@ def test_session_daemon_resolves_relative_request_path_against_daemon_root(
     try:
         handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
         handler.server = server
+        handler.request = handler.connection = _MockConnection()
         handler.rfile = BytesIO(
             (
                 json.dumps({

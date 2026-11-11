@@ -57,7 +57,9 @@ KNOWN_DISCARD_SITES: dict[str, int] = {
     # instead of silently dropping entries. Lowered here in the SAME PR -- a ratchet that is
     # not re-tightened after a fix has no teeth for the sites that remain.
     "backend_cpu.rs": 0,
-    "index.rs": 1,
+    # 1 -> 0: audit finding 6 changed index construction and refresh walks to
+    # propagate traversal failures instead of returning a partial index.
+    "index.rs": 0,
 }
 
 
