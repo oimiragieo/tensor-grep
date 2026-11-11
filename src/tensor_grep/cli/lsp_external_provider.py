@@ -997,7 +997,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 # begun token counts as active: the create->begin window must not read as "ready".
                 token = (message.get("params") or {}).get("token")
                 if token is not None:
-                    self._note_progress_started(str(token), session)
+                    self._note_progress_started(token, session)
                 result = None
             else:
                 with client_lock(self, follow_deadline=False):

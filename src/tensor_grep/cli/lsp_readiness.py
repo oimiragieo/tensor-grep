@@ -15,6 +15,23 @@ from typing import Any
 
 from tensor_grep.cli.lsp_probe_budget import client_lock
 
+_MAX_ACTIVE_PROGRESS_TOKENS = 128
+_MAX_PROGRESS_TOKEN_KEY_CHARS = 256
+_MAX_ACTIVE_PROGRESS_TOKEN_KEY_CHARS = 16_384
+# Outside both wire-token namespaces; it latches dropped work until session replacement.
+_PROGRESS_OVERFLOW_TOKEN = "\x00tensor-grep:progress-overflow"
+
+
+def _progress_token_key(token: Any) -> str | None:
+    if isinstance(token, str):
+        if len(token) > _MAX_PROGRESS_TOKEN_KEY_CHARS - 2:
+            return None
+        return f"s:{token}"
+    if isinstance(token, int):
+        key = f"i:{token}"
+        return key if len(key) <= _MAX_PROGRESS_TOKEN_KEY_CHARS else None
+    return None
+
 
 class ReadinessMixin:
     """Readiness state lives on the ``ProviderSession`` that produced it. Progress handlers take
@@ -25,19 +42,32 @@ class ReadinessMixin:
     _lock: Any
     _session: Any
 
-    def _note_progress_started(self, token: str, session: Any) -> None:
+    def _note_progress_started(self, token: str | int, session: Any) -> None:
+        token_key = _progress_token_key(token)
         with client_lock(self, follow_deadline=False):
             if self._session is not session:
                 return
-            session.active_progress_tokens.add(token)
+            active_tokens = session.active_progress_tokens
+            if token_key not in active_tokens and _PROGRESS_OVERFLOW_TOKEN not in active_tokens:
+                if (
+                    token_key is None
+                    or len(active_tokens) >= _MAX_ACTIVE_PROGRESS_TOKENS - 1
+                    or sum(map(len, active_tokens)) + len(token_key)
+                    > _MAX_ACTIVE_PROGRESS_TOKEN_KEY_CHARS - len(_PROGRESS_OVERFLOW_TOKEN)
+                ):
+                    active_tokens.add(_PROGRESS_OVERFLOW_TOKEN)
+                else:
+                    active_tokens.add(token_key)
             session.progress_activity_seen = True
             session.index_ready = False  # a new indexing round re-invalidates readiness
 
-    def _note_progress_ended(self, token: str, session: Any) -> None:
+    def _note_progress_ended(self, token: str | int, session: Any) -> None:
+        token_key = _progress_token_key(token)
         with client_lock(self, follow_deadline=False):
             if self._session is not session:
                 return
-            session.active_progress_tokens.discard(token)
+            if token_key is not None:
+                session.active_progress_tokens.discard(token_key)
             session.progress_activity_seen = True
             session.progress_end_count += 1
 
@@ -51,9 +81,9 @@ class ReadinessMixin:
         if token is None:
             return True
         if kind == "begin":
-            self._note_progress_started(str(token), session)
+            self._note_progress_started(token, session)
         elif kind == "end":
-            self._note_progress_ended(str(token), session)
+            self._note_progress_ended(token, session)
         # "report" -> in-flight; activity noted at begin. Nothing to do.
         return True
 

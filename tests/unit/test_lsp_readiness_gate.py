@@ -31,7 +31,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> provider_module.E
     return made
 
 
-def _create_progress(client: provider_module.ExternalLSPClient, token: str) -> None:
+def _create_progress(client: provider_module.ExternalLSPClient, token: str | int) -> None:
     client._handle_server_request({
         "id": 99,
         "method": "window/workDoneProgress/create",
@@ -39,7 +39,7 @@ def _create_progress(client: provider_module.ExternalLSPClient, token: str) -> N
     })
 
 
-def _progress(client: provider_module.ExternalLSPClient, token: str, kind: str) -> None:
+def _progress(client: provider_module.ExternalLSPClient, token: str | int, kind: str) -> None:
     client._dispatch_response({
         "method": "$/progress",
         "params": {"token": token, "value": {"kind": kind}},
@@ -61,6 +61,75 @@ def test_server_initiated_begin_without_create_still_tracked(client) -> None:
     assert client.wait_until_ready(time.monotonic() + 0.05) is False
     _progress(client, "anon-token", "end")
     assert client.wait_until_ready(time.monotonic() + 0.05) is True
+
+
+def test_integer_and_string_progress_tokens_are_distinct(client) -> None:
+    _progress(client, 1, "begin")
+    _progress(client, "1", "begin")
+    assert len(client._session.active_progress_tokens) == 2
+
+    _progress(client, 1, "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is False
+    _progress(client, "1", "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is True
+
+
+def test_integer_create_token_matches_integer_progress_notifications(client) -> None:
+    _create_progress(client, 1)
+    _progress(client, "1", "begin")
+    _progress(client, 1, "begin")
+    assert len(client._session.active_progress_tokens) == 2
+
+    _progress(client, 1, "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is False
+    _progress(client, "1", "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is True
+
+
+def test_legal_token_cannot_collide_with_overflow_marker(client) -> None:
+    token = "\x00tensor-grep:progress-overflow"
+    _progress(client, token, "begin")
+    _progress(client, token, "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is True
+
+
+def test_progress_token_flood_is_bounded(client) -> None:
+    for index in range(256):
+        _progress(client, f"token-{index}", "begin")
+    for index in range(256):
+        _progress(client, f"token-{index}", "end")
+
+    tokens = client._session.active_progress_tokens
+    assert len(tokens) <= 128
+    assert all(len(token) <= 256 for token in tokens)
+    assert sum(map(len, tokens)) <= 16_384
+    # Dropped progress tokens keep readiness fail-closed for this provider session.
+    assert client.wait_until_ready(time.monotonic() + 0.05) is False
+
+
+def test_oversized_progress_token_is_not_retained(client) -> None:
+    token = "x" * 2048
+    _progress(client, token, "begin")
+    tokens = client._session.active_progress_tokens
+
+    assert len(tokens) <= 128
+    assert all(len(item) <= 256 for item in tokens)
+    assert sum(map(len, tokens)) <= 16_384
+    assert token not in tokens
+
+    _progress(client, token, "end")
+    assert client.wait_until_ready(time.monotonic() + 0.05) is False
+
+
+def test_progress_token_aggregate_chars_are_bounded(client) -> None:
+    for index in range(100):
+        _progress(client, f"{index:04d}" + "x" * 196, "begin")
+
+    tokens = client._session.active_progress_tokens
+    assert len(tokens) <= 128
+    assert all(len(token) <= 256 for token in tokens)
+    assert sum(map(len, tokens)) <= 16_384
+    assert client.wait_until_ready(time.monotonic() + 0.05) is False
 
 
 def test_readiness_timeout_does_not_arm_cooldown(client) -> None:
