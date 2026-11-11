@@ -1,27 +1,38 @@
+#[cfg(windows)]
 mod budget;
 
 #[cfg(test)]
 #[path = "../tests/checkpoint_state/publication.rs"]
 mod publication_tests;
 
+#[cfg(windows)]
 use anyhow::Context;
+#[cfg(windows)]
 use std::ffi::OsStr;
+#[cfg(windows)]
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::CheckpointCreateSummary;
+#[cfg(windows)]
 use super::{
     checkpoint_display_path, checkpoint_index_path, checkpoint_timestamp_string,
     collect_checkpoint_entries, detect_checkpoint_scope, JSON_OUTPUT_VERSION,
 };
-use super::{CheckpointCreateSummary, CheckpointIndexRecord, CheckpointMetadata};
+#[cfg(windows)]
+use super::{CheckpointIndexRecord, CheckpointMetadata};
+#[cfg(windows)]
 use tensor_grep_rs::safe_write::{AnchoredDirectory, AnchoredTarget, AtomicPublishError};
 
+#[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CheckpointArtifact {
     Metadata,
     Index,
 }
 
+#[cfg(windows)]
 pub(super) fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
     let created_at = checkpoint_timestamp_string();
     let unique = SystemTime::now()
@@ -41,15 +52,7 @@ pub(super) fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSu
 }
 
 #[cfg(not(windows))]
-fn create_checkpoint_with_publisher<P>(
-    _path: &str,
-    _checkpoint_id: &str,
-    _created_at: &str,
-    _publish: P,
-) -> anyhow::Result<CheckpointCreateSummary>
-where
-    P: FnMut(CheckpointArtifact, &AnchoredTarget, &[u8]) -> Result<(), AtomicPublishError>,
-{
+pub(super) fn create_checkpoint(_path: &str) -> anyhow::Result<CheckpointCreateSummary> {
     anyhow::bail!(
         "native checkpoint creation is unsupported on this platform without atomic directory ownership"
     )
@@ -267,6 +270,7 @@ where
     }
 }
 
+#[cfg(windows)]
 fn snapshot_target(
     snapshot_dir: &AnchoredDirectory,
     relative_path: &str,
@@ -288,11 +292,13 @@ fn snapshot_target(
     parent.target(name)
 }
 
+#[cfg(windows)]
 enum AnchoredCheckpointSource {
     Symlink(PathBuf),
     Regular(std::fs::File),
 }
 
+#[cfg(windows)]
 fn anchored_source_parent(
     root: &AnchoredDirectory,
     relative_path: &str,
@@ -328,6 +334,7 @@ fn anchored_source_parent(
     Ok((parent, name))
 }
 
+#[cfg(windows)]
 fn open_checkpoint_source(
     root: &AnchoredDirectory,
     relative_path: &str,
@@ -341,6 +348,7 @@ fn open_checkpoint_source(
         .map(AnchoredCheckpointSource::Regular)
 }
 
+#[cfg(windows)]
 fn symlink_target_size_bytes(target: &Path) -> u64 {
     #[cfg(unix)]
     {
@@ -360,11 +368,12 @@ fn symlink_target_size_bytes(target: &Path) -> u64 {
     }
 }
 
+#[cfg(windows)]
 fn copy_checkpoint_entry_anchored(
     root: &AnchoredDirectory,
     relative_path: &str,
     destination: &AnchoredTarget,
-    destination_path: &Path,
+    _destination_path: &Path,
     max_bytes: u64,
 ) -> std::io::Result<u64> {
     match open_checkpoint_source(root, relative_path)? {
@@ -379,7 +388,7 @@ fn copy_checkpoint_entry_anchored(
                 ));
             }
             #[cfg(windows)]
-            let is_directory = destination_path
+            let is_directory = _destination_path
                 .parent()
                 .map(|parent| parent.join(&link_target))
                 .and_then(|path| std::fs::metadata(path).ok())
@@ -401,6 +410,7 @@ fn copy_checkpoint_entry_anchored(
 ///
 /// Missing entries and failed metadata reads are errors; no snapshot directory is created until
 /// every collected source has been checked successfully.
+#[cfg(windows)]
 fn check_disk_budget(
     root: &AnchoredDirectory,
     entries: &std::collections::BTreeMap<String, bool>,
@@ -454,6 +464,7 @@ fn check_disk_budget(
     Ok(())
 }
 
+#[cfg(windows)]
 fn record_created_at(record: &serde_json::Value) -> &str {
     record
         .get("created_at")
@@ -467,6 +478,7 @@ fn record_created_at(record: &serde_json::Value) -> &str {
 /// The component check is what stops `..`/`.`; the charset check is what stops a Windows
 /// DRIVE-RELATIVE prefix like `C:evil`, which `Path::join` treats as a replacement rather than a
 /// child -- a separator blacklist alone passes `C:evil` and steers cleanup outside the store.
+#[cfg(windows)]
 fn is_safe_checkpoint_id(id: &str) -> bool {
     if id.is_empty() || id.contains(':') {
         return false;

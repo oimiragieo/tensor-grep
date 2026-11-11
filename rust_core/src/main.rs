@@ -10539,6 +10539,7 @@ struct CheckpointCreateSummary {
     file_count: usize,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CheckpointIndexRecord {
     version: u32,
@@ -10549,6 +10550,7 @@ struct CheckpointIndexRecord {
     file_count: usize,
 }
 
+#[cfg(windows)]
 #[derive(Debug, Clone, Serialize)]
 struct CheckpointMetadata {
     version: u32,
@@ -11080,6 +11082,7 @@ fn select_rewrite_apply_mode(args: &RunArgs) -> RewriteApplyMode {
     }
 }
 
+#[cfg(windows)]
 fn checkpoint_timestamp_string() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -11124,20 +11127,24 @@ fn audit_manifest_timestamp_string() -> String {
     epoch_seconds_to_iso8601_utc(epoch_secs)
 }
 
+#[cfg(windows)]
 fn checkpoint_storage_dir(root: &Path) -> PathBuf {
     root.join(".tensor-grep").join("checkpoints")
 }
 
+#[cfg(windows)]
 fn checkpoint_snapshot_dir(root: &Path, checkpoint_id: &str) -> PathBuf {
     checkpoint_storage_dir(root)
         .join(checkpoint_id)
         .join("snapshot")
 }
 
+#[cfg(windows)]
 fn checkpoint_index_path(root: &Path) -> PathBuf {
     checkpoint_storage_dir(root).join("index.json")
 }
 
+#[cfg(windows)]
 #[derive(Debug, Clone)]
 struct CheckpointScope {
     root: PathBuf,
@@ -11146,6 +11153,7 @@ struct CheckpointScope {
     target_relative: Option<String>,
 }
 
+#[cfg(windows)]
 impl CheckpointScope {
     fn scope_kind(&self) -> &'static str {
         if self.target_relative.is_some() {
@@ -11156,15 +11164,18 @@ impl CheckpointScope {
     }
 }
 
+#[cfg(windows)]
 fn checkpoint_rel_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+#[cfg(windows)]
 fn checkpoint_display_path(path: &Path) -> String {
     let text = path.to_string_lossy();
     text.strip_prefix(r"\\?\").unwrap_or(&text).to_string()
 }
 
+#[cfg(windows)]
 fn checkpoint_absolute_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| {
         if path.is_absolute() {
@@ -11177,6 +11188,7 @@ fn checkpoint_absolute_path(path: &Path) -> PathBuf {
     })
 }
 
+#[cfg(windows)]
 fn detect_checkpoint_scope(path: &str) -> CheckpointScope {
     let candidate = Path::new(path);
     let resolved = checkpoint_absolute_path(candidate);
@@ -11249,6 +11261,7 @@ fn detect_checkpoint_scope(path: &str) -> CheckpointScope {
     }
 }
 
+#[cfg(windows)]
 fn collect_git_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String, bool>> {
     let tracked = Command::new("git")
         .args(["-C", &root.to_string_lossy(), "ls-files", "-z"])
@@ -11292,6 +11305,7 @@ fn collect_git_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String
     Ok(entries)
 }
 
+#[cfg(windows)]
 fn should_skip_checkpoint_dir(name: &str) -> bool {
     matches!(
         name,
@@ -11308,6 +11322,7 @@ fn should_skip_checkpoint_dir(name: &str) -> bool {
     )
 }
 
+#[cfg(windows)]
 fn collect_filesystem_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String, bool>> {
     let mut entries = BTreeMap::new();
     for result in walkdir::WalkDir::new(root) {
@@ -11330,6 +11345,7 @@ fn collect_filesystem_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap
     Ok(entries)
 }
 
+#[cfg(windows)]
 fn collect_checkpoint_entries(scope: &CheckpointScope) -> anyhow::Result<BTreeMap<String, bool>> {
     if let Some(relative) = &scope.target_relative {
         let mut entries = BTreeMap::new();

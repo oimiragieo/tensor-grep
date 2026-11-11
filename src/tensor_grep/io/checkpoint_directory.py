@@ -18,6 +18,10 @@ _DIRECTORY_ACCESS = _FILE_LIST_DIRECTORY | _FILE_READ_ATTRIBUTES | _SYNCHRONIZE
 _FILE_SHARE_READ = 0x0001
 _FILE_SHARE_WRITE = 0x0002
 _OPEN_EXISTING = 3
+_CREATE_NEW = 1
+_GENERIC_READ = 0x80000000
+_GENERIC_WRITE = 0x40000000
+_FILE_ATTRIBUTE_NORMAL = 0x00000080
 _FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
 _FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
 _DIRECTORY_FLAGS_DISALLOW_PATH_REDIRECTS = 0x00000001
@@ -43,7 +47,8 @@ def require_supported() -> None:
             (os.mkdir, os.supports_dir_fd),
             (os.stat, os.supports_dir_fd),
             (os.link, os.supports_dir_fd),
-            (os.replace, os.supports_dir_fd),
+            # os.replace has dir_fd parameters but CPython reports renameat support under os.rename.
+            (os.rename, os.supports_dir_fd),
             (os.unlink, os.supports_dir_fd),
             (os.readlink, os.supports_dir_fd),
             (os.symlink, os.supports_dir_fd),
@@ -137,7 +142,14 @@ class CheckpointDirectoryOwner:
 
     @staticmethod
     def _key(path: Path) -> str:
-        return os.path.normcase(os.path.normpath(str(path.absolute())))
+        value = str(path.absolute())
+        if os.name == "nt":
+            folded = value.casefold()
+            if folded.startswith("\\\\?\\unc\\"):
+                value = "\\\\" + value[8:]
+            elif folded.startswith("\\\\?\\"):
+                value = value[4:]
+        return os.path.normcase(os.path.normpath(value))
 
     @staticmethod
     def _posix_flags() -> int:
@@ -240,11 +252,12 @@ class CheckpointDirectoryOwner:
             os.close(descriptor)
             raise
 
-    def _descriptor(self, handle: int) -> int:
+    def _descriptor(self, handle: int, flags: int | None = None) -> int:
         import msvcrt
 
         try:
-            return msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            descriptor_flags = os.O_RDONLY if flags is None else flags
+            return msvcrt.open_osfhandle(handle, descriptor_flags | getattr(os, "O_BINARY", 0))
         except BaseException as original_error:
             if not self._close_handle(handle):
                 raise ctypes.WinError(ctypes.get_last_error()) from original_error
@@ -399,6 +412,22 @@ class CheckpointDirectoryOwner:
         source_fd = self._handles[self._key(source_parent)][0]
         destination_fd = self._handles[self._key(destination_parent)][0]
         leaf = relative.parts[-1]
+        if os.name == "nt":
+            source_path = source_parent / leaf
+            initial = source_path.lstat()
+            if stat.S_ISLNK(initial.st_mode):
+                self._copy_windows_symlink(
+                    source_path, destination_parent / leaf, initial, relative_path
+                )
+            elif stat.S_ISREG(initial.st_mode):
+                self._copy_windows_regular_file(
+                    source_path, destination_parent / leaf, initial, relative_path
+                )
+            else:
+                raise OSError(
+                    f"checkpoint source is not a regular file or symlink: {relative_path}"
+                )
+            return
         initial = os.stat(leaf, dir_fd=source_fd, follow_symlinks=False)
         if stat.S_ISLNK(initial.st_mode):
             target = os.readlink(leaf, dir_fd=source_fd)
@@ -465,14 +494,118 @@ class CheckpointDirectoryOwner:
                 os.close(destination_fd_file)
             os.close(source_fd_file)
 
-    def write_json(self, root: Path, path: Path, payload: Any) -> None:
+    def _open_windows_source(
+        self, source: Path, initial: os.stat_result, relative_path: str, *, symlink: bool
+    ) -> int:
+        handle = self._create(
+            str(source.absolute()),
+            _FILE_READ_ATTRIBUTES if symlink else _GENERIC_READ | _FILE_READ_ATTRIBUTES,
+            _FILE_SHARE_READ if symlink else _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+            None,
+            _OPEN_EXISTING,
+            _FILE_FLAG_OPEN_REPARSE_POINT | (_FILE_FLAG_BACKUP_SEMANTICS if symlink else 0),
+            None,
+        )
+        if handle in (None, _INVALID_HANDLE_VALUE):
+            raise ctypes.WinError(ctypes.get_last_error())
+        descriptor = self._descriptor(handle)
+        try:
+            opened = os.fstat(descriptor)
+            identity = (opened.st_dev, opened.st_ino)
+            if identity != (initial.st_dev, initial.st_ino):
+                raise OSError(f"checkpoint source changed before copying: {relative_path}")
+            is_reparse = bool(
+                getattr(opened, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+            )
+            if symlink:
+                if not is_reparse or not stat.S_ISLNK(initial.st_mode):
+                    raise OSError(f"checkpoint source changed before copying: {relative_path}")
+            elif not stat.S_ISREG(opened.st_mode) or is_reparse:
+                raise OSError(f"checkpoint source changed before copying: {relative_path}")
+            return descriptor
+        except BaseException:
+            os.close(descriptor)
+            raise
+
+    def _copy_windows_symlink(
+        self,
+        source: Path,
+        destination: Path,
+        initial: os.stat_result,
+        relative_path: str,
+    ) -> None:
+        source_descriptor = self._open_windows_source(source, initial, relative_path, symlink=True)
+        try:
+            target = os.readlink(source)
+            current = os.fstat(source_descriptor)
+            if (current.st_dev, current.st_ino) != (initial.st_dev, initial.st_ino):
+                raise OSError(f"checkpoint source changed while copying: {relative_path}")
+            os.symlink(target, destination)
+        finally:
+            os.close(source_descriptor)
+
+    def _copy_windows_regular_file(
+        self,
+        source: Path,
+        destination: Path,
+        initial: os.stat_result,
+        relative_path: str,
+    ) -> None:
+        source_descriptor = self._open_windows_source(source, initial, relative_path, symlink=False)
+        destination_handle = self._create(
+            str(destination.absolute()),
+            _GENERIC_WRITE,
+            _FILE_SHARE_READ | _FILE_SHARE_WRITE,
+            None,
+            _CREATE_NEW,
+            _FILE_ATTRIBUTE_NORMAL | _FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        if destination_handle in (None, _INVALID_HANDLE_VALUE):
+            os.close(source_descriptor)
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            destination_descriptor = self._descriptor(destination_handle, os.O_WRONLY)
+        except BaseException:
+            os.close(source_descriptor)
+            raise
+        try:
+            opened = os.fstat(source_descriptor)
+            while block := os.read(source_descriptor, 1024 * 1024):
+                view = memoryview(block)
+                while view:
+                    view = view[os.write(destination_descriptor, view) :]
+            after = os.fstat(source_descriptor)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+            ):
+                raise OSError(f"checkpoint source changed during copy: {relative_path}")
+            os.chmod(destination, stat.S_IMODE(opened.st_mode))
+            os.utime(
+                destination,
+                ns=(opened.st_atime_ns, opened.st_mtime_ns),
+            )
+            os.fsync(destination_descriptor)
+        finally:
+            os.close(destination_descriptor)
+            os.close(source_descriptor)
+
+    def write_json(
+        self,
+        root: Path,
+        path: Path,
+        payload: Any,
+        *,
+        atomic_write_json: Any,
+        atomic_write_bytes_confined: Any,
+    ) -> None:
         """Atomically write checkpoint metadata through its retained parent descriptor."""
         if os.name != "posix":
-            from tensor_grep.cli._index_lock import atomic_write_json
-
             atomic_write_json(path, payload)
             return
-        from tensor_grep.cli._index_lock import atomic_write_bytes_confined
 
         try:
             parent_fd, identity = self._handles[self._key(path.parent)]

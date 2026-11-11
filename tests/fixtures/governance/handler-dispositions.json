@@ -3281,7 +3281,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 604,
+    "lineno": 561,
     "enclosing_symbol": "_start_locked",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3291,7 +3291,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 687,
+    "lineno": 615,
     "enclosing_symbol": "_graceful_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3301,7 +3301,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 716,
+    "lineno": 644,
     "enclosing_symbol": "_request_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3311,7 +3311,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 861,
+    "lineno": 815,
     "enclosing_symbol": "_notify_document_closed",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3321,7 +3321,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1024,
+    "lineno": 1007,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3331,7 +3331,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1030,
+    "lineno": 1013,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -3341,7 +3341,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1063,
+    "lineno": 1050,
     "enclosing_symbol": "_reader_loop",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3361,7 +3361,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1181,
+    "lineno": 1147,
     "enclosing_symbol": "_stderr_loop",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",

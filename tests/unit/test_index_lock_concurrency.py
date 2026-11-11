@@ -6,7 +6,8 @@ the atomic ``os.replace`` swap. Two near-simultaneous writers can each read the 
 index and the second clobbers the first's insert -- an orphaned session/snapshot dir that is
 invisible to ``list`` and never retention-pruned (reintroducing the round-4 disk-growth DoS).
 
-These tests import ONLY ``_index_lock``, ``session_store``, and ``checkpoint_store`` (no
+These tests import only ``_index_lock``, ``session_store``, ``checkpoint_store``, and the
+checkpoint directory writer (no
 ``cli.main`` / rust_core), so they run standalone and in CI, mirroring
 ``test_session_containment.py`` / ``test_checkpoint_containment.py``.
 """
@@ -26,6 +27,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import _index_lock, checkpoint_store, session_store
+from tensor_grep.io import checkpoint_directory
 from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
@@ -156,9 +158,9 @@ def test_concurrent_create_checkpoint_no_lost_insert(
 
     orig_write_index = checkpoint_store._write_index
 
-    def slow_write_index(r: Path, recs: list) -> None:
+    def slow_write_index(r: Path, recs: list, *, owner: object | None = None) -> None:
         time.sleep(0.05)
-        return orig_write_index(r, recs)
+        return orig_write_index(r, recs, owner=owner)
 
     monkeypatch.setattr(checkpoint_store, "_write_index", slow_write_index)
 
@@ -330,7 +332,7 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
 ) -> None:
     """Structural (non-wall-clock) proof that acquiring the index lock does not slow the
     uncontended hot path, by asserting it directly: the expensive work
-    (``_snapshot_entries``, the per-file ``shutil.copy2`` copy loop, and
+    (``_snapshot_entries``, the per-file owner-anchored snapshot copy, and
     ``_prime_bounded_discovery_caches_for_root``) must execute OUTSIDE the ``index_lock``
     held window, not merely "fast enough".
 
@@ -368,7 +370,7 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
 
     Mechanism: monkeypatch `index_lock` (checkpoint_store.py:16 import) and the three
     expensive calls create_checkpoint makes (`_snapshot_entries` at checkpoint_store.py:819,
-    the copy loop's `shutil.copy2` at :842, and `_prime_bounded_discovery_caches_for_root` at
+    the copy loop's `owner.copy_snapshot_file`, and `_prime_bounded_discovery_caches_for_root` at
     :904) to each append an ENTER/EXIT marker to a shared, ordered event list. Because
     `create_checkpoint` runs single-threaded and sequentially, the markers' *relative order*
     -- not any timestamp or duration -- fully determines whether a call happened before,
@@ -409,13 +411,22 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
 
     monkeypatch.setattr(checkpoint_store, "_snapshot_entries", tracing_snapshot_entries)
 
-    real_copy2 = checkpoint_store.shutil.copy2
+    real_copy_snapshot_file = checkpoint_directory.CheckpointDirectoryOwner.copy_snapshot_file
 
-    def tracing_copy2(*args: object, **kwargs: object) -> object:
-        events.append("copy2")
-        return real_copy2(*args, **kwargs)
+    def tracing_copy_snapshot_file(
+        owner: checkpoint_directory.CheckpointDirectoryOwner,
+        root_arg: Path,
+        snapshot_arg: Path,
+        relative_path: str,
+    ) -> None:
+        events.append("copy_snapshot_file")
+        real_copy_snapshot_file(owner, root_arg, snapshot_arg, relative_path)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", tracing_copy2)
+    monkeypatch.setattr(
+        checkpoint_directory.CheckpointDirectoryOwner,
+        "copy_snapshot_file",
+        tracing_copy_snapshot_file,
+    )
 
     real_prime = checkpoint_store._prime_bounded_discovery_caches_for_root
 
@@ -435,7 +446,7 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
     assert events.count("lock_release") == 1
     assert "snapshot_entries_start" in events
     assert "snapshot_entries_end" in events
-    assert "copy2" in events  # the fixture has 1 file, so at least 1 copy
+    assert "copy_snapshot_file" in events  # the fixture has 1 file, so at least 1 copy
     assert "prime_caches_start" in events
     assert "prime_caches_end" in events
 
@@ -446,7 +457,7 @@ def test_create_checkpoint_lock_does_not_wrap_expensive_work(
     expensive_markers = {
         "snapshot_entries_start",
         "snapshot_entries_end",
-        "copy2",
+        "copy_snapshot_file",
         "prime_caches_start",
         "prime_caches_end",
     }

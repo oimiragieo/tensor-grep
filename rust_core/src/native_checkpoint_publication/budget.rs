@@ -62,7 +62,7 @@ pub(super) fn available_bytes(path: &Path) -> Option<u64> {
         } else {
             stats.f_bsize
         };
-        return Some((stats.f_bavail as u64).saturating_mul(block_size as u64));
+        Some((stats.f_bavail as u64).saturating_mul(block_size as u64))
     }
 
     #[cfg(windows)]

@@ -79,6 +79,58 @@ while True:
 """
 
 
+_PARTIAL_HEADER_SERVER = r"""
+import json
+import sys
+
+inp, out = sys.stdin.buffer, sys.stdout.buffer
+launch_log, partial_marker = sys.argv[1:]
+with open(launch_log, "a", encoding="ascii") as stream:
+    stream.write("started\n")
+with open(launch_log, encoding="ascii") as stream:
+    launch_number = sum(1 for _ in stream)
+
+
+def read():
+    length = 0
+    while True:
+        line = inp.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length"):
+            length = int(line.split(b":")[1])
+    return json.loads(inp.read(length))
+
+
+def send(obj):
+    body = json.dumps(obj).encode()
+    out.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+    out.flush()
+
+
+while True:
+    message = read()
+    if message is None:
+        break
+    method = message.get("method")
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {}}})
+    elif method == "workspace/symbol" and launch_number == 1:
+        with open(partial_marker, "w", encoding="ascii") as stream:
+            stream.write("partial header emitted")
+        out.write(b"Content-Length: 100")
+        out.flush()
+    elif method == "workspace/symbol":
+        send({"jsonrpc": "2.0", "id": message["id"], "result": {"fresh": True}})
+    elif method == "shutdown" and launch_number > 1:
+        send({"jsonrpc": "2.0", "id": message["id"], "result": None})
+    elif method == "exit" and launch_number > 1:
+        break
+"""
+
+
 def _client(tmp_path: Path) -> provider.ExternalLSPClient:
     server = tmp_path / "fake_server.py"
     server.write_text(_FAKE_SERVER, encoding="utf-8")
@@ -152,6 +204,46 @@ def test_a_dead_reader_triggers_a_restart_instead_of_a_timeout_on_the_same_child
         client.stop()
 
 
+def test_request_timeout_tears_down_partial_header_provider_and_restarts(
+    tmp_path: Path,
+) -> None:
+    server = tmp_path / "partial_header_server.py"
+    server.write_text(_PARTIAL_HEADER_SERVER, encoding="utf-8")
+    launch_log = tmp_path / "launches.txt"
+    partial_marker = tmp_path / "partial_header.txt"
+    client = provider.ExternalLSPClient(
+        language="python",
+        workspace_root=tmp_path,
+        request_timeout_seconds=0.5,
+        initialize_timeout_seconds=1.0,
+    )
+    client.command = [sys.executable, str(server), str(launch_log), str(partial_marker)]
+    try:
+        client.start()
+        first_session = client.current_session()
+        first_process = client.process
+        assert first_process is not None
+
+        with pytest.raises(
+            provider.LSPTransportError,
+            match="timeout waiting for LSP response: workspace/symbol",
+        ):
+            client.request("workspace/symbol", {"query": "blocked"})
+
+        assert partial_marker.read_text(encoding="ascii") == "partial header emitted"
+        assert first_session.unusable
+        assert first_process.poll() is not None, "timed-out provider child was not reaped"
+        assert client.process is None, "timed-out session should be cleared"
+        assert "timeout waiting for LSP response" in str(client.status()["last_error"])
+
+        assert client.request("workspace/symbol", {"query": "fresh"}) == {"fresh": True}
+        assert client.process is not None
+        assert client.process.pid != first_process.pid
+        assert len(launch_log.read_text(encoding="ascii").splitlines()) == 2
+    finally:
+        client.stop()
+
+
 def test_a_healthy_client_is_not_restarted(tmp_path: Path) -> None:
     # CONTROL: a live child with a live reader keeps its pid across start() calls.
     client = _client(tmp_path)
@@ -207,3 +299,4 @@ def test_stop_discloses_a_child_it_could_not_kill_instead_of_dropping_it_silentl
     assert client.process is None
     assert "kill denied" in str(client.last_error), client.last_error
     assert "424242" in str(client.last_error)
+    assert "kill denied" in str(client.status()["last_error"])

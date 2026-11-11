@@ -16,6 +16,7 @@ from uuid import uuid4  # noqa: F401 -- checkpoint_create uses this facade for t
 
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
+    atomic_write_bytes_confined,
     atomic_write_json,
     dir_identity,
     index_lock,
@@ -181,7 +182,13 @@ def _write_json_atomic(
     else:
         if root is None:
             raise ValueError("anchored checkpoint writes require their scope root")
-        owner.write_json(root, path, payload)
+        owner.write_json(
+            root,
+            path,
+            payload,
+            atomic_write_json=atomic_write_json,
+            atomic_write_bytes_confined=atomic_write_bytes_confined,
+        )
 
 
 def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path:

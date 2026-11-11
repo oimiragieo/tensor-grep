@@ -333,6 +333,7 @@ class TestUtf16Conversion:
 from tensor_grep.cli.lsp_external_provider import (  # noqa: E402
     _CLOSED_SENTINEL,
 )
+from tensor_grep.cli.lsp_session import reset_after_stop  # noqa: E402
 
 
 class TestDemuxRouting:
@@ -422,6 +423,72 @@ class TestDemuxRouting:
         assert not errors
         assert results[10] == "A"
         assert results[20] == "B"
+
+    def test_orphan_wire_size_and_oversized_response(self, tmp_path: Path) -> None:
+        import tensor_grep.cli.lsp_external_provider as m
+
+        client = self._make_client(tmp_path)
+        session = client.current_session()
+        body = b'{"jsonrpc":"2.0","id":1,"result":"late"}'
+        response = m._read_message(
+            io.BytesIO(b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        )
+        assert response is not None
+        assert response.encoded_json_bytes == len(body)
+        client._dispatch_response(response, encoded_bytes=response.encoded_json_bytes)
+        assert session.orphan_response_sizes == {1: len(body)}
+        assert session.orphan_response_total_bytes == len(body)
+
+        client._dispatch_response(
+            {"jsonrpc": "2.0", "id": 2, "result": "oversized"},
+            encoded_bytes=m._MAX_ORPHAN_RESPONSE_BYTES + 1,
+        )
+        assert list(session.orphan_responses) == [1]
+        assert session.orphan_response_sizes == {1: len(body)}
+        assert session.orphan_response_total_bytes == len(body)
+
+    def test_orphan_byte_cap_evicts_oldest_and_keeps_count_cap(self, tmp_path: Path) -> None:
+        import tensor_grep.cli.lsp_external_provider as m
+
+        client = self._make_client(tmp_path)
+        session = client.current_session()
+        client._dispatch_response(
+            {"jsonrpc": "2.0", "id": 1, "result": "old"},
+            encoded_bytes=600_000,
+        )
+        client._dispatch_response(
+            {"jsonrpc": "2.0", "id": 2, "result": "new"},
+            encoded_bytes=500_000,
+        )
+
+        assert list(session.orphan_responses) == [2]
+        assert session.orphan_response_sizes == {2: 500_000}
+        assert session.orphan_response_total_bytes == 500_000
+
+        for request_id in range(3, m._MAX_ORPHAN_RESPONSES + 4):
+            client._dispatch_response(
+                {"jsonrpc": "2.0", "id": request_id, "result": None},
+                encoded_bytes=1,
+            )
+        assert len(session.orphan_responses) == m._MAX_ORPHAN_RESPONSES
+        assert session.orphan_response_total_bytes == sum(session.orphan_response_sizes.values())
+
+    def test_orphan_pop_and_session_reset_clear_byte_accounting(self, tmp_path: Path) -> None:
+        client = self._make_client(tmp_path)
+        session = client.current_session()
+        response = {"jsonrpc": "2.0", "id": 8, "result": "late"}
+        client._dispatch_response(response, encoded_bytes=12)
+
+        assert session.pop_orphan_response(8) == response
+        assert session.orphan_response_total_bytes == 0
+        assert session.orphan_response_sizes == {}
+
+        client._dispatch_response(response, encoded_bytes=24)
+        reset_after_stop(session, _CLOSED_SENTINEL)
+
+        assert session.orphan_responses == {}
+        assert session.orphan_response_sizes == {}
+        assert session.orphan_response_total_bytes == 0
 
 
 # ---------------------------------------------------------------------------

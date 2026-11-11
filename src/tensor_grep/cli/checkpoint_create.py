@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -69,24 +68,12 @@ def create_checkpoint_with_owner(
         for relative_path, exists in entries.items():
             if not exists:
                 continue
-            if os.name == "posix":
+            try:
                 owner.copy_snapshot_file(root, snapshot_dir, relative_path)
-            else:
-                try:
-                    owner.pin_source_parent(root, relative_path)
-                except OSError as exc:
-                    if "refuses a reparse point" not in str(exc):
-                        raise
+            except OSError as exc:
+                if "refuses a reparse point" in str(exc):
                     store._resolve_parent_within_root(root, root_resolved, relative_path)
-                    raise
-                resolved_parent, leaf = store._resolve_parent_within_root(
-                    root, root_resolved, relative_path
-                )
-                source = resolved_parent / leaf
-                destination = snapshot_dir / relative_path
-                owner.create_snapshot_parents(snapshot_dir, relative_path)
-                # Preserve a tracked leaf symlink as a link; never copy its target content.
-                shutil.copy2(source, destination, follow_symlinks=False)
+                raise
 
         result = store.CheckpointCreateResult(
             checkpoint_id=checkpoint_id,

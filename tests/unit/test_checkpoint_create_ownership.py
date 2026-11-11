@@ -30,6 +30,19 @@ def test_checkpoint_owner_supports_drive_and_unc_ancestor_chains() -> None:
     assert unc_chain[-1] == Path("\\\\server\\share\\repo\\src")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows extended-path normalization")
+def test_checkpoint_owner_key_normalizes_extended_drive_and_unc_paths(tmp_path: Path) -> None:
+    extended_drive = Path("\\\\?\\" + str(tmp_path.absolute()))
+    extended_unc = Path("\\\\?\\UNC\\server\\share\\repo")
+
+    assert checkpoint_directory.CheckpointDirectoryOwner._key(extended_drive) == (
+        checkpoint_directory.CheckpointDirectoryOwner._key(tmp_path)
+    )
+    assert checkpoint_directory.CheckpointDirectoryOwner._key(extended_unc) == (
+        checkpoint_directory.CheckpointDirectoryOwner._key(Path("\\\\server\\share\\repo"))
+    )
+
+
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
 @pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")
@@ -169,10 +182,16 @@ def test_checkpoint_create_pins_nested_source_parent_before_copy(
         finally:
             finished.set()
 
-    original_resolve = checkpoint_store._resolve_parent_within_root
+    original_open = checkpoint_directory.CheckpointDirectoryOwner._open_windows_source
 
-    def synchronized_resolve(root_path: Path, root_resolved: Path, rel_path: str):
-        resolved_parent, leaf = original_resolve(root_path, root_resolved, rel_path)
+    def synchronized_open(
+        owner: checkpoint_directory.CheckpointDirectoryOwner,
+        source: Path,
+        initial: os.stat_result,
+        rel_path: str,
+        *,
+        symlink: bool,
+    ) -> int:
         if rel_path == "pkg/secret.py":
             requested.set()
             assert finished.wait(10), "source-parent replacement did not finish"
@@ -182,9 +201,11 @@ def test_checkpoint_create_pins_nested_source_parent_before_copy(
                 raise OSError("source-parent replacement was blocked by ownership handle") from (
                     blocked_errors[0]
                 )
-        return resolved_parent, leaf
+        return original_open(owner, source, initial, rel_path, symlink=symlink)
 
-    monkeypatch.setattr(checkpoint_store, "_resolve_parent_within_root", synchronized_resolve)
+    monkeypatch.setattr(
+        checkpoint_directory.CheckpointDirectoryOwner, "_open_windows_source", synchronized_open
+    )
     worker = threading.Thread(target=replace_parent)
     worker.start()
     create_error: OSError | None = None
@@ -207,6 +228,72 @@ def test_checkpoint_create_pins_nested_source_parent_before_copy(
     assert swapped == [False], "the nested source parent must remain pinned through copy"
     assert len(blocked_errors) == 1 and blocked_errors[0].winerror == 32
     assert create_error is not None and "source-parent replacement was blocked" in str(create_error)
+
+
+@pytest.mark.checkpoint_creation
+@requires_checkpoint_creation
+@pytest.mark.skipif(os.name != "nt", reason="Windows source leaf identity")
+def test_checkpoint_rejects_leaf_symlink_swap_before_opening_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = root / "tracked.py"
+    source.write_bytes(b"original in-repo source\n")
+    outside = tmp_path / "outside-secret.py"
+    outside_bytes = b"outside secret must never be copied\n"
+    outside.write_bytes(outside_bytes)
+    parked = root / "tracked.original.py"
+    requested, finished = threading.Event(), threading.Event()
+    swap_errors: list[BaseException] = []
+
+    def replace_leaf() -> None:
+        try:
+            assert requested.wait(10), "checkpoint copy did not reach the leaf-open boundary"
+            source.rename(parked)
+            source.symlink_to(outside)
+        except BaseException as exc:
+            swap_errors.append(exc)
+        finally:
+            finished.set()
+
+    original_open = checkpoint_directory.CheckpointDirectoryOwner._open_windows_source
+
+    def synchronized_open(
+        owner: checkpoint_directory.CheckpointDirectoryOwner,
+        path: Path,
+        initial: os.stat_result,
+        relative_path: str,
+        *,
+        symlink: bool,
+    ) -> int:
+        if relative_path == "tracked.py":
+            requested.set()
+            assert finished.wait(10), "source leaf replacement did not finish"
+            if swap_errors:
+                raise OSError("source leaf replacement failed") from swap_errors[0]
+        return original_open(owner, path, initial, relative_path, symlink=symlink)
+
+    monkeypatch.setattr(
+        checkpoint_directory.CheckpointDirectoryOwner, "_open_windows_source", synchronized_open
+    )
+    worker = threading.Thread(target=replace_leaf)
+    worker.start()
+    try:
+        with pytest.raises(OSError):
+            checkpoint_store.create_checkpoint(str(root))
+    finally:
+        worker.join(10)
+        if source.is_symlink():
+            source.unlink()
+        if parked.exists():
+            parked.rename(source)
+
+    assert not worker.is_alive()
+    assert not swap_errors, f"source leaf replacement failed: {swap_errors}"
+    assert outside.read_bytes() == outside_bytes
+    storage = root / ".tensor-grep" / "checkpoints"
+    assert not list(storage.glob("ckpt-*/snapshot/tracked.py"))
 
 
 @pytest.mark.checkpoint_creation

@@ -863,13 +863,6 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "Rebinds `sys.stdout` to the fixed `os.devnull` device after fd 1 redirection, keeping "
         "tool output separate from the result protocol; no caller-selected path is opened."
     ),
-    ("checkpoint_create.py", "create_checkpoint_with_owner", "shutil.copy2"): (
-        "Snapshot copy runs while the Windows directory owner retains checkpoint and "
-        "snapshot-parent handles, pins each source parent, rejects reparse ancestors, and "
-        "passes `follow_symlinks=False` so tracked leaf links are copied as links. The copy "
-        "remains path-based inside those owned directories; noncooperating name-based writer "
-        "races and power-loss durability are not claimed to be closed."
-    ),
     ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"): (
         "Stages validated snapshot bytes under the private `TemporaryDirectory` used by undo; "
         "this copy does not publish to the caller's working tree. `follow_symlinks=False` "
@@ -1764,7 +1757,6 @@ _EXPECTED_SANCTIONED = {
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---
     ("agent_capsule.py", "_agent_gpu_evidence", "Path.write_text"),
     ("audit_manifest.py", "verify_review_bundle", "Path.write_text"),
-    ("checkpoint_create.py", "create_checkpoint_with_owner", "shutil.copy2"),
     ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"),
     ("mcp_batch_worker.py", "_write", "os.write"),
     ("mcp_batch_worker.py", "main", "os.open"),

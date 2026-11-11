@@ -47,8 +47,9 @@ checkpoint_store.create_checkpoint(path)      <- pure business logic, no Typer/J
         |
         +-- _check_checkpoint_disk_budget()   <- refuse BEFORE writing anything if too big
         |
-        +-- copy loop: shutil.copy2(..., follow_symlinks=False) into
+        +-- copy loop: owner.copy_snapshot_file(root, snapshot_dir, rel_path) into
         |     .tensor-grep/checkpoints/<checkpoint_id>/snapshot/<rel_path>
+        |     (source and destination parents stay anchored; Windows verifies the opened source leaf)
         |
         +-- _write_checkpoint_metadata()      <- .../metadata.json  (entries manifest, mode, root)
         |
