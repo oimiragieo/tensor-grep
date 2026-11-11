@@ -458,8 +458,7 @@ pub fn scores(
             scorer.model = asset.pinned;
             scorer.session = session;
         }
-        if let (Some(asset), Some(tokenizer)) = (replacement_vocab_asset, replacement_vocabulary)
-        {
+        if let (Some(asset), Some(tokenizer)) = (replacement_vocab_asset, replacement_vocabulary) {
             scorer.tokenizer_asset = asset.pinned;
             scorer.tokenizer = tokenizer;
         }

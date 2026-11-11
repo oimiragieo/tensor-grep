@@ -9,11 +9,11 @@ use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{CheckpointCreateSummary, CheckpointIndexRecord, CheckpointMetadata};
 use super::{
     checkpoint_display_path, checkpoint_index_path, checkpoint_timestamp_string,
     collect_checkpoint_entries, detect_checkpoint_scope, JSON_OUTPUT_VERSION,
 };
+use super::{CheckpointCreateSummary, CheckpointIndexRecord, CheckpointMetadata};
 use tensor_grep_rs::safe_write::{AnchoredDirectory, AnchoredTarget, AtomicPublishError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

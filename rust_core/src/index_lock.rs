@@ -423,7 +423,14 @@ impl IndexLockGuard {
                 lock_path: lock_path.clone(),
                 timeout,
             })?;
-        Self::acquire_at(&lock_path, &directory, timeout, stale_after, poll_interval, writer)
+        Self::acquire_at(
+            &lock_path,
+            &directory,
+            timeout,
+            stale_after,
+            poll_interval,
+            writer,
+        )
     }
 
     /// Acquires the same Python-compatible sidecar through an already-validated directory.
