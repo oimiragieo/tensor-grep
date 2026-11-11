@@ -13,7 +13,11 @@ from tensor_grep.cli._index_lock import (
     atomic_write_bytes_confined,
     dir_identity,
 )
-from tensor_grep.io.confined import unlink_confined, validate_confined_parent_prefix
+from tensor_grep.io.confined import (
+    read_confined,
+    unlink_confined,
+    validate_confined_parent_prefix,
+)
 
 
 def check_restore_target(
@@ -173,8 +177,13 @@ def rollback_removes(
             check()
             if os.path.lexists(path):
                 current = path.lstat()
-                if (current.st_dev, current.st_ino) != (prior_info.st_dev, prior_info.st_ino):
+                identity = (prior_info.st_dev, prior_info.st_ino)
+                if (current.st_dev, current.st_ino) != identity:
                     raise OSError("checkpoint removed target was replaced before rollback")
+                check_restore_target(root, path, parent_identity, identity)
+                if read_confined(root, path, prior_info.st_size) != prior_bytes:
+                    raise OSError("checkpoint removed target content changed before rollback")
+                check_restore_target(root, path, parent_identity, identity)
                 continue
             publish_restored_file(
                 root,

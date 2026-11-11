@@ -496,7 +496,7 @@ def test_undo_metadata_preparation_failure_recovers_bytes(tmp_path, monkeypatch)
     reached = []
 
     def fail_metadata(path, *args, **kwargs):
-        if isinstance(path, Path) and path.parent == target.parent:
+        if isinstance(path, int) or (isinstance(path, Path) and path.parent == target.parent):
             if not reached:
                 reached.append(target.read_bytes())
                 raise failure

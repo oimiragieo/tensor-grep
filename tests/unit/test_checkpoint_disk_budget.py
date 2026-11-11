@@ -20,6 +20,7 @@ import pytest
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.checkpoint_store import CheckpointBudgetExceededError
+from tensor_grep.io.checkpoint_directory import CheckpointDirectoryOwner
 from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
@@ -124,16 +125,16 @@ def test_create_checkpoint_retains_snapshot_dir_on_mid_copy_failure(
     (root / "a.py").write_bytes(b"a\n")
     (root / "b.py").write_text("b\n", encoding="utf-8")
 
-    original_copy2 = checkpoint_store.shutil.copy2
+    original_copy = CheckpointDirectoryOwner.copy_snapshot_file
     calls = {"n": 0}
 
-    def _boom_on_second_copy(src, dst, *args, **kwargs):
+    def _boom_on_second_copy(owner, root_arg, snapshot_arg, relative_path):
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("simulated mid-copy failure")
-        return original_copy2(src, dst, *args, **kwargs)
+        return original_copy(owner, root_arg, snapshot_arg, relative_path)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _boom_on_second_copy)
+    monkeypatch.setattr(CheckpointDirectoryOwner, "copy_snapshot_file", _boom_on_second_copy)
 
     with pytest.raises(OSError):
         checkpoint_store.create_checkpoint(str(root))
@@ -154,16 +155,16 @@ def test_create_checkpoint_retains_snapshot_dir_on_mid_copy_keyboard_interrupt(
     (root / "a.py").write_bytes(b"a\n")
     (root / "b.py").write_text("b\n", encoding="utf-8")
 
-    original_copy2 = checkpoint_store.shutil.copy2
+    original_copy = CheckpointDirectoryOwner.copy_snapshot_file
     calls = {"n": 0}
 
-    def _interrupt_on_second_copy(src, dst, *args, **kwargs):
+    def _interrupt_on_second_copy(owner, root_arg, snapshot_arg, relative_path):
         calls["n"] += 1
         if calls["n"] == 2:
             raise KeyboardInterrupt
-        return original_copy2(src, dst, *args, **kwargs)
+        return original_copy(owner, root_arg, snapshot_arg, relative_path)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _interrupt_on_second_copy)
+    monkeypatch.setattr(CheckpointDirectoryOwner, "copy_snapshot_file", _interrupt_on_second_copy)
 
     with pytest.raises(KeyboardInterrupt):
         checkpoint_store.create_checkpoint(str(root))

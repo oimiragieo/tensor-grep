@@ -71,7 +71,7 @@ def create_checkpoint_with_owner(
             try:
                 owner.copy_snapshot_file(root, snapshot_dir, relative_path)
             except OSError as exc:
-                if "refuses a reparse point" in str(exc):
+                if "refuses a reparse point" in str(exc) or "is not a real directory" in str(exc):
                     store._resolve_parent_within_root(root, root_resolved, relative_path)
                 raise
 

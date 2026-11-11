@@ -142,7 +142,7 @@ def test_removed_file_rollback_preserves_changed_destination(tmp_path, monkeypat
     checkpoint = checkpoint_store.create_checkpoint(str(root))
     extra = root / "extra/extra.py"
     extra.parent.mkdir()
-    extra.write_bytes(b"removed bytes")
+    extra.write_bytes(b"before owner bytes here")
     outside = tmp_path / "outside"
     outside.mkdir()
     canary = outside / extra.name if swap_parent else extra
@@ -170,6 +170,32 @@ def test_removed_file_rollback_preserves_changed_destination(tmp_path, monkeypat
     assert caught.value.__cause__ is failure
     assert reached == [target]
     assert canary.read_bytes() == b"independent owner bytes"
+
+
+@requires_checkpoint_creation
+def test_removed_file_rollback_accepts_unchanged_target_when_unlink_fails(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    target = root / "value.py"
+    target.write_bytes(b"snapshot")
+    checkpoint = checkpoint_store.create_checkpoint(str(root))
+    extra = root / "extra.py"
+    extra.write_bytes(b"original extra bytes")
+    original_identity = (extra.stat().st_dev, extra.stat().st_ino)
+    failure = OSError("unlink failure")
+
+    def fail_unlink(root_arg, path, *args, **kwargs):
+        if Path(path) == extra:
+            raise failure
+        return checkpoint_store.unlink_with_pinned_parent(root_arg, path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store, "unlink_with_pinned_parent", fail_unlink)
+    with pytest.raises(OSError) as caught:
+        checkpoint_store.undo_checkpoint(checkpoint.checkpoint_id, str(root))
+
+    assert caught.value is failure
+    assert extra.read_bytes() == b"original extra bytes"
+    assert (extra.stat().st_dev, extra.stat().st_ino) == original_identity
 
 
 def test_confined_claim_receipt_survives_copy2(tmp_path):
