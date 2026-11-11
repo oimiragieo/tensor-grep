@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import checkpoint_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _directory_alias(alias: Path, destination: Path) -> None:
@@ -26,6 +27,7 @@ def _directory_alias(alias: Path, destination: Path) -> None:
         pytest.skip("directory junction creation unavailable")
 
 
+@requires_checkpoint_creation
 def test_failed_existing_copy_does_not_restore_through_changed_parent(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     target = root / "src/value.py"
@@ -38,12 +40,12 @@ def test_failed_existing_copy_does_not_restore_through_changed_parent(tmp_path, 
     canary = outside / target.name
     canary.write_bytes(b"outside canary")
     displaced = tmp_path / "original-src"
-    copy2 = checkpoint_store.shutil.copy2
+    publish = checkpoint_store.publish_restored_file
     failure = OSError("copy failed after parent swap attempt")
     reached = []
 
-    def fail_copy(source, destination, **kwargs):
-        if Path(destination) == target:
+    def fail_copy(root_arg, path, *args, **kwargs):
+        if Path(path) == target:
             reached.append(target)
             try:
                 target.parent.rename(displaced)
@@ -52,18 +54,19 @@ def test_failed_existing_copy_does_not_restore_through_changed_parent(tmp_path, 
             _directory_alias(target.parent, outside)
             assert target.parent.resolve() == outside.resolve()
             raise failure
-        return copy2(source, destination, **kwargs)
+        return publish(root_arg, path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", fail_copy)
-    with pytest.raises(OSError) as caught:
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_copy)
+    with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError) as caught:
         checkpoint_store.undo_checkpoint(checkpoint.checkpoint_id, str(root))
-    assert caught.value is failure
+    assert caught.value.__cause__ is failure
     assert reached == [target]
     assert canary.read_bytes() == b"outside canary", "rollback wrote through a changed parent"
     preserved = displaced / target.name if displaced.exists() else target
     assert preserved.read_bytes() == b"current user bytes"
 
 
+@requires_checkpoint_creation
 def test_failed_absent_copy_does_not_delete_unrelated_replacement(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
@@ -73,13 +76,13 @@ def test_failed_absent_copy_does_not_delete_unrelated_replacement(tmp_path, monk
     target.unlink()
     unrelated = tmp_path / "independent.py"
     unrelated.write_bytes(b"independent owner bytes")
-    copy2 = checkpoint_store.shutil.copy2
+    publish = checkpoint_store.publish_restored_file
     failure = OSError("copy failed before creating destination")
     reached = []
     replaced = []
 
-    def fail_copy(source, destination, **kwargs):
-        if Path(destination) == target:
+    def fail_copy(root_arg, path, *args, **kwargs):
+        if Path(path) == target:
             reached.append(target)
             try:
                 os.replace(unrelated, target)
@@ -87,9 +90,9 @@ def test_failed_absent_copy_does_not_delete_unrelated_replacement(tmp_path, monk
             except OSError:
                 replaced.append(False)
             raise failure
-        return copy2(source, destination, **kwargs)
+        return publish(root_arg, path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", fail_copy)
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_copy)
     with pytest.raises(OSError) as caught:
         checkpoint_store.undo_checkpoint(checkpoint.checkpoint_id, str(root))
     assert caught.value is failure
@@ -100,6 +103,7 @@ def test_failed_absent_copy_does_not_delete_unrelated_replacement(tmp_path, monk
 
 
 @pytest.mark.parametrize("removed", [False, True])
+@requires_checkpoint_creation
 def test_replacement_during_rollback_read_is_not_journaled(tmp_path, monkeypatch, removed):
     root = tmp_path / "repo"
     root.mkdir()
@@ -129,6 +133,7 @@ def test_replacement_during_rollback_read_is_not_journaled(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("swap_parent", [False, True])
+@requires_checkpoint_creation
 def test_removed_file_rollback_preserves_changed_destination(tmp_path, monkeypatch, swap_parent):
     root = tmp_path / "repo"
     root.mkdir()
@@ -143,12 +148,12 @@ def test_removed_file_rollback_preserves_changed_destination(tmp_path, monkeypat
     canary = outside / extra.name if swap_parent else extra
     if swap_parent:
         canary.write_bytes(b"independent owner bytes")
-    copy2 = checkpoint_store.shutil.copy2
+    publish = checkpoint_store.publish_restored_file
     failure = OSError("restore copy failure")
     reached = []
 
-    def fail_copy(source, destination, **kwargs):
-        if Path(destination) == target:
+    def fail_copy(root_arg, path, *args, **kwargs):
+        if Path(path) == target:
             reached.append(target)
             assert not extra.exists()
             if swap_parent:
@@ -157,12 +162,12 @@ def test_removed_file_rollback_preserves_changed_destination(tmp_path, monkeypat
             else:
                 extra.write_bytes(b"independent owner bytes")
             raise failure
-        return copy2(source, destination, **kwargs)
+        return publish(root_arg, path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", fail_copy)
-    with pytest.raises(OSError) as caught:
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_copy)
+    with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError) as caught:
         checkpoint_store.undo_checkpoint(checkpoint.checkpoint_id, str(root))
-    assert caught.value is failure
+    assert caught.value.__cause__ is failure
     assert reached == [target]
     assert canary.read_bytes() == b"independent owner bytes"
 

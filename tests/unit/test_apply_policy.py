@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli.checkpoint_store import create_checkpoint
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _write_policy(tmp_path: Path, payload: dict[str, object]) -> Path:
@@ -500,7 +501,6 @@ def test_evaluate_apply_policy_reports_success_for_all_null_checks(tmp_path: Pat
         },
     )
     policy = load_apply_policy(str(policy_path))
-
     payload, exit_code = evaluate_apply_policy(
         _base_rewrite_payload(),
         policy,
@@ -527,7 +527,6 @@ def test_evaluate_apply_policy_skips_disabled_ruleset_scan(tmp_path: Path) -> No
         },
     )
     policy = load_apply_policy(str(policy_path))
-
     payload, exit_code = evaluate_apply_policy(
         _base_rewrite_payload(),
         policy,
@@ -865,6 +864,7 @@ def test_run_policy_command_preserves_quoted_paths_and_arguments(tmp_path: Path)
     assert output_path.read_text(encoding="utf-8") == "argument with spaces && literal"
 
 
+@requires_checkpoint_creation
 def test_evaluate_apply_policy_rollback_restores_checkpointed_files(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
 

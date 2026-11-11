@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 
 from tensor_grep.cli import checkpoint_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _project(tmp_path: Path) -> Path:
@@ -45,6 +46,7 @@ def _touch_after_checkpoint(path: Path, text: str) -> None:
     os.utime(path, (future, future))
 
 
+@requires_checkpoint_creation
 def test_undo_names_the_files_whose_post_checkpoint_edits_it_discarded(tmp_path: Path) -> None:
     root = _project(tmp_path)
     created = checkpoint_store.create_checkpoint(str(root))
@@ -64,6 +66,7 @@ def test_undo_names_the_files_whose_post_checkpoint_edits_it_discarded(tmp_path:
     assert (root / "a.py").read_text(encoding="utf-8") == "original a\n"
 
 
+@requires_checkpoint_creation
 def test_an_undo_with_no_post_checkpoint_edits_names_nothing() -> None:
     """CONTROL. Without it, a detector that returns every path satisfies the test above."""
     import tempfile
@@ -78,6 +81,7 @@ def test_an_undo_with_no_post_checkpoint_edits_names_nothing() -> None:
         )
 
 
+@requires_checkpoint_creation
 def test_divergence_is_sampled_before_mutation(tmp_path: Path) -> None:
     """The ordering bug that would make this field permanently, silently empty.
 

@@ -65,6 +65,8 @@ tg checkpoint list REPO_PATH --json
 tg checkpoint undo CHECKPOINT_ID REPO_PATH --json
 ```
 
+Checkpoint creation requires Windows 11 24H2 or Windows Server 2025 with `CreateDirectory2W`. On POSIX and older Windows versions, creation fails before writing checkpoint state; listing or undoing existing checkpoints has separate platform requirements.
+
 Confirm the saved scope and returned undo command before restoring. Undo can
 discard later edits. Labels are optional descriptive text, trimmed to 1–120
 printable Unicode characters; duplicate labels are allowed. Restore by checkpoint

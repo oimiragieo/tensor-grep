@@ -8,6 +8,7 @@ import pytest
 
 from tensor_grep.cli import checkpoint_store, ledger_store, session_store
 from tensor_grep.cli.main import _daemon_directory_path
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _stray_state(root: Path) -> list[Path]:
@@ -52,6 +53,7 @@ def test_create_checkpoint_missing_parent_of_a_new_file_raises(tmp_path: Path) -
         checkpoint_store.create_checkpoint(str(tmp_path / "nodir" / "new.txt"))
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_of_a_not_yet_created_file_is_still_allowed(tmp_path: Path) -> None:
     # CONTROL / preserved contract: `_detect_checkpoint_scope` deliberately scopes a suffixed
     # nonexistent path as a file so a to-be-created file can be undone.

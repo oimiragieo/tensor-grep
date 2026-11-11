@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import _index_lock, checkpoint_store, session_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _make_project(tmp_path: Path, name: str = "project") -> Path:
@@ -147,6 +148,7 @@ def test_concurrent_open_session_no_lost_insert(
     assert written == indexed
 
 
+@requires_checkpoint_creation
 def test_concurrent_create_checkpoint_no_lost_insert(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,6 +324,7 @@ def test_open_session_uncontended_hot_path_unaffected(tmp_path: Path) -> None:
     assert result.session_id in indexed
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_lock_does_not_wrap_expensive_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -598,6 +601,7 @@ def test_open_session_reclaims_stale_lock(tmp_path: Path, monkeypatch: Any) -> N
     assert result.session_id in indexed
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_reclaims_stale_lock(tmp_path: Path, monkeypatch: Any) -> None:
     """Checkpoint-store twin of the above; same reasoning, same retired wall-clock bound."""
     root = _make_project(tmp_path)

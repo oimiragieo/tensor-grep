@@ -4,9 +4,15 @@ use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
 mod cli_invocations;
+mod native_checkpoint_publication;
 mod native_multi_pattern;
+mod validation_rollback;
 use cli_invocations::is_search_version_invocation;
 use native_multi_pattern::collect_native_multi_pattern_matches;
+use validation_rollback::{
+    collect_validation_rollback_snapshots, emit_rollback_status,
+    restore_validation_rollback_snapshots, retained_validation_targets, ValidationRollbackSummary,
+};
 // Bug #88/#480/#100: `implicit_search_walk_exceeds_ceiling` (the WALK-ceiling probe) moved to
 // `rg_passthrough.rs` (a library module, not this binary crate root) -- see the breadcrumb
 // comment above `parse_early_ripgrep_args`. `WalkBuilder`'s only remaining consumer in THIS file
@@ -3644,6 +3650,34 @@ mod tests {
         );
     }
 
+    /// TG-007: the file-SET trio changes WHICH files are searched; each was accepted then ignored.
+    #[test]
+    fn native_structured_route_hard_refuses_file_set_flags() {
+        for (tokens, expected) in [
+            (
+                ["tg", "search", "--json", "-t", "py", "n", "."].as_slice(),
+                "--type",
+            ),
+            (
+                ["tg", "search", "--ndjson", "--type", "py", "n", "."].as_slice(),
+                "--type",
+            ),
+            (
+                ["tg", "search", "--json", "--follow", "n", "."].as_slice(),
+                "--follow",
+            ),
+            (
+                ["tg", "search", "--json", "--max-filesize", "1", "n", "."].as_slice(),
+                "--max-filesize",
+            ),
+        ] {
+            assert_eq!(
+                native_structured_dropped_search_flags(&parse_search_args(tokens)),
+                vec![expected],
+                "file-set flag must be refused on the structured route: {tokens:?}"
+            );
+        }
+    }
     #[test]
     fn format_rg_json_passthrough_stays_honored_not_refused() {
         // `--format rg --json` is an rg PASSTHROUGH (search_requires_ripgrep_passthrough returns
@@ -7076,6 +7110,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_create_checkpoint_refuses_symlink_at_index_path() {
         // #115 Gap 2: checkpoint_index_path (checkpoint_storage_dir(root).join("index.json"))
@@ -7122,8 +7157,9 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
-    fn test_create_checkpoint_removes_orphaned_dir_on_index_parse_failure() {
+    fn test_create_checkpoint_cleanup_respects_platform_ownership_on_index_parse_failure() {
         // NIT (v1.76 #602 gate, "NIT-3"): checkpoint_store.py::create_checkpoint (the Python
         // side) already wraps its copy-loop + metadata-write in `except BaseException: rmtree
         // (snapshot_dir.parent); raise` (audit #125a, shipped in #602) so a failure never
@@ -7131,8 +7167,10 @@ mod tests {
         // to also cover the index write (see checkpoint_store.py::create_checkpoint), closing
         // the one gap that earlier widening had not yet reached. The Rust `create_checkpoint`
         // above had NO equivalent at all: a failure in the copy loop, the metadata write, OR
-        // the index write left the just-created checkpoint_id directory (snapshot/ +
-        // metadata.json) behind forever.
+        // the index write left the just-created checkpoint_id directory behind. Native cleanup
+        // now removes it on Windows where the retained directory handle proves ownership. Unix
+        // keeps the unpublished directory and reports the refusal because there is no portable
+        // atomic mkdir-plus-handle ownership operation against same-credential replacement.
         //
         // Force a deterministic, cross-platform failure at the LAST fallible step (the
         // pre-existing index.json fails to parse) so the copy loop and the metadata.json write
@@ -7155,16 +7193,34 @@ mod tests {
             "a corrupt pre-existing index.json must fail create_checkpoint"
         );
 
-        let remaining: Vec<std::ffi::OsString> = std::fs::read_dir(&storage_dir)
+        let mut remaining: Vec<std::ffi::OsString> = std::fs::read_dir(&storage_dir)
             .unwrap()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.file_name())
             .collect();
-        assert_eq!(
-            remaining,
-            vec![std::ffi::OsString::from("index.json")],
-            "a failed checkpoint must not leave an orphaned per-checkpoint directory behind: {remaining:?}"
-        );
+        remaining.sort();
+        assert!(storage_dir.join(".index.json.lock.os").is_file());
+        remaining.retain(|name| name != ".index.json.lock.os");
+        #[cfg(windows)]
+        assert_eq!(remaining, vec![std::ffi::OsString::from("index.json")]);
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                remaining.len(),
+                2,
+                "Unix must retain the unpublished checkpoint directory"
+            );
+            assert!(remaining.contains(&std::ffi::OsString::from("index.json")));
+            let checkpoint_id = remaining
+                .iter()
+                .find(|name| name.to_string_lossy() != "index.json")
+                .expect("retained checkpoint id must be present");
+            assert!(checkpoint_id.to_string_lossy().starts_with("ckpt-"));
+            assert!(storage_dir
+                .join(checkpoint_id)
+                .join("metadata.json")
+                .is_file());
+        }
         assert_eq!(
             std::fs::read(&index_path).unwrap(),
             b"not valid json",
@@ -7172,6 +7228,7 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_create_checkpoint_does_not_disclose_symlink_target() {
         // Item 1 (audit #178, surfaced by the #610 gate): `std::fs::copy` FOLLOWS symlinks, so
@@ -7228,6 +7285,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn test_create_checkpoint_still_copies_regular_files_byte_identical() {
         // Regression guard for the copy_checkpoint_entry symlink fix above: an ordinary
@@ -7253,53 +7311,6 @@ mod tests {
         assert_eq!(
             std::fs::read(snapshot_dir.join("pkg").join("b.py")).unwrap(),
             b"beta\n"
-        );
-    }
-
-    #[test]
-    fn test_restore_validation_rollback_snapshots_refuses_symlink_at_file_path() {
-        // #115 Gap 3: between "apply the edit" and a failed-validation rollback, an edited
-        // file could be swapped for a symlink pointing outside the project (e.g. via a
-        // hostile --lint-cmd/--test-cmd running between apply and rollback).
-        // restore_validation_rollback_snapshots must refuse to follow it instead of writing
-        // the pre-edit snapshot bytes through the symlink.
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("fixture.py");
-        let original_bytes = b"def add(x, y): return x + y\n".to_vec();
-        std::fs::write(&file_path, &original_bytes).unwrap();
-
-        let outside_dir = tempfile::tempdir().unwrap();
-        let outside_target = outside_dir.path().join("outside-target.py");
-        std::fs::write(&outside_target, b"UNTOUCHED").unwrap();
-
-        let mut snapshots = BTreeMap::new();
-        snapshots.insert(file_path.to_string_lossy().to_string(), original_bytes);
-
-        // Simulate the swap: the tracked file is replaced by a symlink after the pre-apply
-        // snapshot was captured.
-        std::fs::remove_file(&file_path).unwrap();
-        if let Err(err) = try_symlink_file(&outside_target, &file_path) {
-            eprintln!(
-                "skipping test_restore_validation_rollback_snapshots_refuses_symlink_at_file_path: cannot create a symlink in this environment: {err}"
-            );
-            return;
-        }
-
-        let summary = restore_validation_rollback_snapshots(&snapshots);
-
-        assert!(
-            !summary.success,
-            "restore must report failure when a snapshot target is a symlink"
-        );
-        assert!(
-            summary.files_restored.is_empty(),
-            "a refused symlink write must not be counted as restored"
-        );
-        assert_eq!(summary.errors.len(), 1);
-        assert_eq!(
-            std::fs::read(&outside_target).unwrap(),
-            b"UNTOUCHED",
-            "the symlink's target outside the rollback root must be left untouched"
         );
     }
 
@@ -10555,14 +10566,6 @@ struct ValidationSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct ValidationRollbackSummary {
-    triggered_by: &'static str,
-    success: bool,
-    files_restored: Vec<String>,
-    errors: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 struct ValidationCommandResult {
     kind: &'static str,
     command: String,
@@ -11121,12 +11124,6 @@ fn checkpoint_snapshot_dir(root: &Path, checkpoint_id: &str) -> PathBuf {
         .join("snapshot")
 }
 
-fn checkpoint_metadata_path(root: &Path, checkpoint_id: &str) -> PathBuf {
-    checkpoint_storage_dir(root)
-        .join(checkpoint_id)
-        .join("metadata.json")
-}
-
 fn checkpoint_index_path(root: &Path) -> PathBuf {
     checkpoint_storage_dir(root).join("index.json")
 }
@@ -11357,198 +11354,8 @@ fn collect_checkpoint_entries(scope: &CheckpointScope) -> anyhow::Result<BTreeMa
 /// resolved target exists inside the snapshot is actually restored. That fail-closed refusal is
 /// the correct, safe behavior; the alternative (following the link here) would materialize
 /// out-of-root content into the snapshot and then into the tree on undo.
-fn copy_checkpoint_entry(source: &Path, destination: &Path) -> std::io::Result<()> {
-    if std::fs::symlink_metadata(source)?.file_type().is_symlink() {
-        let link_target = std::fs::read_link(source)?;
-        create_checkpoint_symlink(&link_target, destination)
-    } else {
-        std::fs::copy(source, destination).map(|_| ())
-    }
-}
-
-/// Recreates a symlink (never its target's content) at `link`, pointing at the same raw
-/// `target` text the original symlink stored (relative or absolute, copied verbatim -- exactly
-/// what `os.readlink()` + `os.symlink()` do on the Python side, so a relative target resolves
-/// the same way it always would relative to a symlink's own directory; this is an existing,
-/// accepted property of symlink-preserving copies -- e.g. Python's own `shutil.copytree(...,
-/// symlinks=True)` -- not a new gap introduced here).
-fn create_checkpoint_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link)
-    }
-    #[cfg(windows)]
-    {
-        // Windows symlinks are typed (file vs. directory reparse point). Resolve the target
-        // relative to the link's own parent directory to pick the right type; a target that
-        // cannot be resolved (dangling symlink) defaults to a file symlink, same as Python's
-        // `os.symlink(target, dst)` (which defaults `target_is_directory=False`).
-        let resolved_is_dir = link
-            .parent()
-            .map(|parent| parent.join(target))
-            .and_then(|candidate| std::fs::metadata(candidate).ok())
-            .map(|metadata| metadata.is_dir())
-            .unwrap_or(false);
-        let result = if resolved_is_dir {
-            std::os::windows::fs::symlink_dir(target, link)
-        } else {
-            std::os::windows::fs::symlink_file(target, link)
-        };
-        // audit #178 F2a: creating a symlink on Windows needs SeCreateSymbolicLinkPrivilege
-        // (admin, or Developer Mode). Without it the OS returns ERROR_PRIVILEGE_NOT_HELD (1314),
-        // which the caller's `.with_context("failed to copy ... into checkpoint snapshot ...")`
-        // would otherwise surface as a bare, misleading "copy failed". Re-message that one errno
-        // so the real cause (a privilege gap, not a copy fault) is visible; leave every other
-        // error untouched.
-        result.map_err(|err| {
-            const ERROR_PRIVILEGE_NOT_HELD: i32 = 1314;
-            if err.raw_os_error() == Some(ERROR_PRIVILEGE_NOT_HELD) {
-                std::io::Error::new(
-                    err.kind(),
-                    format!(
-                        "creating checkpoint symlink {} requires administrator privileges or \
-                         Windows Developer Mode (ERROR_PRIVILEGE_NOT_HELD)",
-                        link.display()
-                    ),
-                )
-            } else {
-                err
-            }
-        })
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (target, link);
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "symlinks not supported on this platform",
-        ))
-    }
-}
-
 fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
-    let scope = detect_checkpoint_scope(path);
-    let root = scope.root.clone();
-    let mode = scope.mode.clone();
-    let created_at = checkpoint_timestamp_string();
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let checkpoint_id = format!("ckpt-{created_at}-{unique:x}");
-    let entries = collect_checkpoint_entries(&scope)?;
-
-    let snapshot_dir = checkpoint_snapshot_dir(&root, &checkpoint_id);
-    std::fs::create_dir_all(&snapshot_dir).with_context(|| {
-        format!(
-            "failed to create checkpoint snapshot dir {}",
-            snapshot_dir.display()
-        )
-    })?;
-
-    // NIT (v1.76 #602 gate, "NIT-3"): mirror checkpoint_store.py::create_checkpoint's
-    // `except BaseException: shutil.rmtree(snapshot_dir.parent, ignore_errors=True); raise`
-    // (audit #125a, shipped in #602; widened by audit #178 to also cover the index write, so
-    // it is now a true mirror end-to-end -- see checkpoint_store.py::create_checkpoint) on the
-    // Rust side. Everything from here on is fallible (a file copy, the metadata.json write,
-    // the index.json read/parse/write) and, before this fix, a failure at ANY of those steps
-    // propagated the error via `?` while leaving the just-created random-id checkpoint
-    // directory -- `checkpoint_dir`, holding both snapshot/ and metadata.json -- behind on disk
-    // forever. Run the rest of the write sequence in a closure (stable Rust has no `try`
-    // blocks) and remove that whole directory before propagating any error; the success (`Ok`)
-    // path below is byte-identical to before.
-    let checkpoint_dir = checkpoint_storage_dir(&root).join(&checkpoint_id);
-
-    let write_checkpoint_body = || -> anyhow::Result<CheckpointCreateSummary> {
-        for (rel_path, exists) in &entries {
-            if !exists {
-                continue;
-            }
-            let source = root.join(rel_path);
-            let destination = snapshot_dir.join(rel_path);
-            if let Some(parent) = destination.parent() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "failed to create checkpoint parent dir {}",
-                        parent.display()
-                    )
-                })?;
-            }
-            copy_checkpoint_entry(&source, &destination).with_context(|| {
-                format!(
-                    "failed to copy {} into checkpoint snapshot {}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-        }
-
-        let summary = CheckpointCreateSummary {
-            checkpoint_id: checkpoint_id.clone(),
-            mode: mode.clone(),
-            root: checkpoint_display_path(&root),
-            scope: scope.scope_kind().to_string(),
-            original_path: checkpoint_display_path(&scope.original_path),
-            created_at: created_at.clone(),
-            file_count: entries.len(),
-        };
-        let metadata = CheckpointMetadata {
-            version: JSON_OUTPUT_VERSION,
-            checkpoint_id: checkpoint_id.clone(),
-            mode: mode.clone(),
-            root: summary.root.clone(),
-            scope: summary.scope.clone(),
-            original_path: summary.original_path.clone(),
-            created_at: created_at.clone(),
-            file_count: entries.len(),
-            entries,
-        };
-        let metadata_path = checkpoint_metadata_path(&root, &checkpoint_id);
-        if let Some(parent) = metadata_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        write_bytes_refuse_symlink(&metadata_path, &serde_json::to_vec_pretty(&metadata)?)
-            .with_context(|| format!("failed to write {}", metadata_path.display()))?;
-
-        let index_path = checkpoint_index_path(&root);
-        let mut records: Vec<CheckpointIndexRecord> = if index_path.exists() {
-            serde_json::from_slice(
-                &std::fs::read(&index_path)
-                    .with_context(|| format!("failed to read {}", index_path.display()))?,
-            )
-            .with_context(|| format!("failed to parse {}", index_path.display()))?
-        } else {
-            Vec::new()
-        };
-        records.insert(
-            0,
-            CheckpointIndexRecord {
-                version: JSON_OUTPUT_VERSION,
-                checkpoint_id: checkpoint_id.clone(),
-                mode,
-                root: summary.root.clone(),
-                created_at,
-                file_count: summary.file_count,
-            },
-        );
-        if let Some(parent) = index_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-        write_bytes_refuse_symlink(&index_path, &serde_json::to_vec_pretty(&records)?)
-            .with_context(|| format!("failed to write {}", index_path.display()))?;
-
-        Ok(summary)
-    };
-
-    let result = write_checkpoint_body();
-    if result.is_err() {
-        // Best-effort: already on the error path, so a cleanup failure must never mask (or
-        // panic over) the original error being returned.
-        let _ = std::fs::remove_dir_all(&checkpoint_dir);
-    }
-    result
+    native_checkpoint_publication::create_checkpoint(path)
 }
 
 fn load_batch_rewrite_config(config_path: &Path) -> anyhow::Result<BatchRewriteConfig> {
@@ -12154,58 +11961,6 @@ fn collect_pre_apply_hashes(
     Ok(hashes)
 }
 
-fn collect_validation_rollback_snapshots(
-    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
-) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
-    let mut snapshots = BTreeMap::new();
-    for file in edits
-        .iter()
-        .map(|edit| edit.file.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-    {
-        let bytes = std::fs::read(&file).with_context(|| {
-            format!("failed to read {} for validation rollback", file.display())
-        })?;
-        snapshots.insert(file.to_string_lossy().to_string(), bytes);
-    }
-    Ok(snapshots)
-}
-
-fn restore_validation_rollback_snapshots(
-    snapshots: &BTreeMap<String, Vec<u8>>,
-) -> ValidationRollbackSummary {
-    let mut files_restored = Vec::new();
-    let mut errors = Vec::new();
-
-    for (file, bytes) in snapshots {
-        match write_bytes_refuse_symlink(Path::new(file), bytes) {
-            Ok(()) => files_restored.push(file.clone()),
-            Err(error) => errors.push(format!("failed to restore {file}: {error}")),
-        }
-    }
-
-    ValidationRollbackSummary {
-        triggered_by: "validation",
-        success: errors.is_empty(),
-        files_restored,
-        errors,
-    }
-}
-
-fn emit_rollback_status(summary: &ValidationRollbackSummary) {
-    if summary.success {
-        eprintln!(
-            "[rollback] restored {} file(s) after failed validation",
-            summary.files_restored.len()
-        );
-    } else {
-        eprintln!(
-            "[rollback] failed to restore {} file(s) after failed validation",
-            summary.errors.len()
-        );
-    }
-}
-
 /// Delegates to the single implementation in the lib crate
 /// (`tensor_grep_rs::safe_write`). It lived HERE, in the binary crate, which is why
 /// `backend_ast::direct_write_file` (lib crate) could not reach it and used a bare
@@ -12809,7 +12564,13 @@ fn handle_ast_rewrite_apply(
     };
 
     if apply_mode == RewriteApplyMode::PlanThenApply {
-        AstBackend::apply_rewrites(&plan)?;
+        match rollback_snapshots.as_ref() {
+            Some(snapshots) => AstBackend::apply_rewrites_with_targets(
+                &plan,
+                &retained_validation_targets(snapshots),
+            )?,
+            None => AstBackend::apply_rewrites(&plan)?,
+        };
     }
 
     if !plan.rejected_overlaps.is_empty() && !args.json {
@@ -13051,7 +12812,13 @@ fn handle_ast_batch_rewrite_apply(
         None
     };
 
-    AstBackend::apply_batch_rewrites(&plan)?;
+    match rollback_snapshots.as_ref() {
+        Some(snapshots) => AstBackend::apply_batch_rewrites_with_targets(
+            &plan,
+            &retained_validation_targets(snapshots),
+        )?,
+        None => AstBackend::apply_batch_rewrites(&plan)?,
+    };
 
     if !plan.rejected_overlaps.is_empty() && !args.json {
         eprintln!(

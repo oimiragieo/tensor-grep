@@ -1,4 +1,4 @@
-"""Contain a spawned provider's WHOLE process tree so cleanup can kill descendants.
+"""Contain a spawned provider with the strongest process-tree primitive available.
 
 Killing only the direct child leaves grandchildren holding the inherited stdout/stderr
 handles: reader threads stay blocked and ``stream.close()`` waits on the BufferedReader
@@ -14,8 +14,8 @@ lock forever (the `tg doctor` LSP-probe hang). Platform primitives, by name:
 * POSIX: ``start_new_session=True`` + ``os.killpg(pgid, SIGTERM)`` then ``SIGKILL``;
   survivors are probed with ``os.killpg(pgid, 0)``. The level is honestly ``process_group``,
   NOT whole-tree: a descendant that calls ``setsid`` leaves the group and ``killpg`` misses it.
-  That escape is DETECTED (the provider's pipes stay held after the group is dead) and
-  reported as ``ESCAPE_MESSAGE``; it cannot be prevented without cgroups (needs delegation).
+  It is detected only if it keeps an inherited pipe open; a child that closes those pipes can
+  outlive group cleanup. Preventing that escape needs cgroups (and delegation).
 
 FAIL CLOSED: if reliable containment is unavailable (Job Object cannot be created or
 assigned, or ``os.killpg`` is missing) the provider is NOT launched and
@@ -51,7 +51,7 @@ ESCAPE_MESSAGE = "a descendant outside the provider's process group still holds 
 
 
 class ContainmentUnavailableError(OSError):
-    """Reliable whole-tree containment could not be established; nothing was launched."""
+    """The platform's supported containment primitive could not be established."""
 
 
 def _win_api() -> Any:
@@ -159,10 +159,11 @@ def _job_active_processes(k32: Any, job: Any) -> int | None:
 
 
 class Containment:
-    """Handle that can kill a spawned process and every descendant.
+    """Handle for the strongest process containment available on this platform.
 
     ``terminate``/``kill``/``survivors`` return a list of failure strings (empty = clean).
-    A Job Object is terminated at most once, however many times these are called.
+    Windows tracks all Job members. POSIX tracks only the initial process group; a ``setsid``
+    descendant that closes inherited pipes can outlive cleanup without being detected.
     """
 
     def __init__(self, level: str, *, degraded: bool, pid: int, job: Any = None, k32: Any = None):
@@ -175,15 +176,15 @@ class Containment:
         self._job_terminated = False
 
     def terminate(self) -> list[str]:
-        """Begin teardown of the whole tree (Windows has no polite tree signal: forceful)."""
+        """Begin teardown of the tracked group or Job (Windows termination is forceful)."""
         if self.level == LEVEL_PROCESS_GROUP:
-            return self._killpg(signal.SIGTERM, "tree terminate")
+            return self._killpg(signal.SIGTERM, "process-group terminate")
         return self.kill()
 
     def kill(self) -> list[str]:
-        """Force-kill the whole tree. Never raises; the Job is terminated only once."""
+        """Force-kill the tracked POSIX group or Windows Job. Never raises."""
         if self.level == LEVEL_PROCESS_GROUP:
-            return self._killpg(getattr(signal, "SIGKILL", signal.SIGTERM), "tree kill")
+            return self._killpg(getattr(signal, "SIGKILL", signal.SIGTERM), "process-group kill")
         with self._lock:
             if self._job is None or self._job_terminated:
                 return []
@@ -193,7 +194,7 @@ class Containment:
         return []
 
     def survivors(self, deadline: float) -> list[str]:
-        """Poll (until the absolute monotonic ``deadline``) for members that outlived the kill."""
+        """Poll tracked group/Job members until the absolute monotonic ``deadline``."""
         while True:
             alive = self._alive_count()
             if alive is None:  # a failed query is NOT "zero survivors"
@@ -201,9 +202,7 @@ class Containment:
             if not alive:
                 return []
             if time.monotonic() >= deadline:
-                return [
-                    f"{alive} process(es) of the provider tree still alive (pgid/job {self.pid})"
-                ]
+                return [f"{alive} tracked process(es) still alive (pgid/job {self.pid})"]
             time.sleep(0.01)
 
     def release(self) -> None:
@@ -245,9 +244,10 @@ class Containment:
 def spawn_contained(
     argv: list[str], **popen_kwargs: Any
 ) -> tuple[subprocess.Popen[Any], Containment]:
-    """``subprocess.Popen`` whose whole descendant tree is killable via the returned handle.
+    """Spawn a child with a controllable Windows Job or POSIX process group.
 
-    Raises ``ContainmentUnavailableError`` (provider NOT running) if that cannot be guaranteed.
+    POSIX descendants that leave the group and close inherited pipes are outside that guarantee.
+    Raises ``ContainmentUnavailableError`` if the platform primitive cannot be established.
     """
     if sys.platform != "win32":
         return _spawn_posix(argv, popen_kwargs)
@@ -327,7 +327,8 @@ def close_streams_bounded(
 
     ``abandoned`` = closes still blocked at the deadline (not proof of anything by themselves);
     ``failed`` = closes that raised ``OSError`` (a cleanup failure, collected thread-safely).
-    Kill the process tree FIRST: once every holder of the pipe is dead, close() returns.
+    Terminate tracked group/Job members FIRST: once pipe holders exit, close() returns. A POSIX
+    descendant that escapes with ``setsid`` and closes its pipes is not visible to this handle.
     """
     started: list[tuple[threading.Thread, str]] = []
     failed: list[str] = []
@@ -366,16 +367,17 @@ def teardown_provider(
     deadline: float,
     graceful: Callable[[float], None] | None = None,
 ) -> list[str]:
-    """Stop a provider and its whole tree inside ONE absolute monotonic ``deadline``.
+    """Stop a provider at the strongest available containment level before one deadline.
 
     The slice is split so no phase starves the next: graceful shutdown <= 30% of the total,
     then the exit wait <= 40% of what is left; forced kill, exit verification, the survivor
-    check and the pipe close share the rest. Order: graceful (own thread) -> terminate tree,
+    check and the pipe close share the rest. Order: graceful (own thread) -> terminate group/Job,
     then the direct child (each at most once) -> wait -> escalate to kill (once) -> final
-    tree kill, survivor check, release -> close stdin/stdout/stderr TOGETHER, bounded.
+    group/Job kill, survivor check, release -> close stdin/stdout/stderr TOGETHER, bounded.
 
-    A "descendant outside the process group" is reported ONLY when the tree is verified dead
-    and the output pipes are still held; running out of time is a plain ``cleanup timed out``.
+    A POSIX descendant outside the process group is reported only while it still holds an
+    inherited pipe; one that closes its pipes can outlive group cleanup undetected.
+    Running out of time is a plain ``cleanup timed out``.
     """
 
     def left() -> float:

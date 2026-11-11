@@ -817,8 +817,7 @@ def test_run_hot_query_benchmarks_should_run_stringzilla_probe_in_subprocess(mon
 
     def _fake_check_output(cmd, *, text, env):
         captured.setdefault("calls", []).append((cmd, env))
-        pattern = cmd[-1]
-        if pattern == "ERROR timeout":
+        if len(captured["calls"]) == 1:
             return json.dumps({
                 "available": True,
                 "seconds": 0.4,
@@ -842,6 +841,7 @@ def test_run_hot_query_benchmarks_should_run_stringzilla_probe_in_subprocess(mon
     calls = captured["calls"]
     assert len(calls) == 2
     assert calls[0][0][1] == str(probe_script)
+    assert calls[0][0][-1] == calls[1][0][-1] == "ERROR alpha timeout"
     assert calls[0][1]["TENSOR_GREP_STRING_INDEX_DIR"] == str(cache_dir)
 
 
@@ -1091,7 +1091,6 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
         json.dumps({
-            "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
             "rows": [{"name": "x", "tg_time_s": 1.0}],
         }),
@@ -1100,7 +1099,6 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     current_path = tmp_path / "current.json"
     current_path.write_text(
         json.dumps({
-            "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
             "rows": [{"name": "x", "tg_time_s": 1.05}],
         }),
@@ -1259,7 +1257,6 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
         json.dumps({
-            "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
             "rows": [{"name": "x", "tg_time_s": 1.0}],
         }),
@@ -1268,7 +1265,6 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     current_path = tmp_path / "current.json"
     current_path.write_text(
         json.dumps({
-            "suite": "run_benchmarks",
             "environment": {"platform": "windows", "machine": "amd64"},
             "rows": [{"name": "x", "tg_time_s": 1.05}],
         }),
@@ -1334,6 +1330,86 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
         raise AssertionError("Expected SystemExit for unsupported auto baseline platform")
     except SystemExit as exc:
         assert "Unsupported platform for --baseline auto" in str(exc)
+
+
+def test_summarize_benchmarks_reports_invalid_threshold_without_traceback(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module(
+        "summarize_benchmarks_invalid_threshold", "benchmarks/summarize_benchmarks.py"
+    )
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(json.dumps({"rows": []}), encoding="utf-8")
+    current_path = tmp_path / "current.json"
+    current_path.write_text(json.dumps({"rows": []}), encoding="utf-8")
+    output_path = tmp_path / "summary.md"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "summarize_benchmarks.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+            "--output",
+            str(output_path),
+            "--max-regression-pct",
+            "nan",
+        ],
+    )
+
+    try:
+        module.main()
+        raise AssertionError("Expected invalid threshold to fail")
+    except SystemExit as exc:
+        assert exc.code == 2
+
+    error = capsys.readouterr().err
+    assert "max_regression_pct must be a finite number >= 0" in error
+    assert "Traceback" not in error
+    assert not output_path.exists()
+
+
+def test_summarize_benchmarks_reports_invalid_timing_without_traceback(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module(
+        "summarize_benchmarks_invalid_timing", "benchmarks/summarize_benchmarks.py"
+    )
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(
+        json.dumps({"rows": [{"name": "x", "tg_time_s": 1.0}]}), encoding="utf-8"
+    )
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({"rows": [{"name": "x", "tg_time_s": float("nan")}]}), encoding="utf-8"
+    )
+    output_path = tmp_path / "summary.md"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "summarize_benchmarks.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    try:
+        module.main()
+        raise AssertionError("Expected invalid timing data to fail")
+    except SystemExit as exc:
+        assert exc.code == 2
+
+    error = capsys.readouterr().err
+    assert "finite number > 0" in error
+    assert "Traceback" not in error
+    assert not output_path.exists()
 
 
 def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(

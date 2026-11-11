@@ -83,6 +83,12 @@ have not touched the working tree yet. Only the commit phase mutates real files,
 enough (`committed_removes`, `committed_overwrites`, each holding the actual prior bytes) to revert
 itself if it dies partway through.
 
+After a successful restore, undo removes only tracked staging objects whose identities still match.
+Unexpected entries, reparse points, or identity-query failures make cleanup fail closed and report
+the staging path for inspection. Windows deletes opened objects by handle. POSIX cleanup uses
+directory-relative operations, but the platform has no atomic compare-and-unlink operation, so a
+same-user race on a final staging name remains a limitation.
+
 ## 3. Every file involved, and what each contributes
 
 | File | Contributes |

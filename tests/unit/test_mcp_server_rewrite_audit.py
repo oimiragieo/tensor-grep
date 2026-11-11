@@ -6,6 +6,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 from tests.unit.test_mcp_server_shared import (
     _assert_audit_manifest_envelope,
     _canonical_manifest_bytes,
@@ -132,6 +133,7 @@ def test_rewrite_nonzero_malformed_stdout_keeps_stderr_error_classification(monk
     assert result["error"]["retryable"] is True
 
 
+@requires_checkpoint_creation
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
@@ -1222,6 +1224,7 @@ def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path, monkeypatch):
     assert "Previous manifest digest does not match previous_manifest_sha256." in parsed["errors"]
 
 
+@requires_checkpoint_creation
 def test_tg_review_bundle_create_matches_bundle_schema(tmp_path, monkeypatch):
     from tensor_grep.cli import mcp_server
     from tensor_grep.cli.checkpoint_store import create_checkpoint

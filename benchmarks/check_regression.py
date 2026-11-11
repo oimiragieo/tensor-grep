@@ -39,6 +39,7 @@ def resolve_auto_baseline_path(current: dict, milestone: str | None) -> Path:
 def main() -> int:
     from tensor_grep.perf_guard import (
         check_regressions,
+        count_comparable_regression_metrics,
         detect_comparator_drift,
         detect_environment_mismatch,
     )
@@ -118,24 +119,41 @@ def main() -> int:
         )
         return 2
 
-    comparator_drifts = detect_comparator_drift(
-        baseline=baseline,
-        current=current,
-        comparator_key="rg_time_s",
-        max_regression_pct=args.max_regression_pct,
-        min_baseline_time_s=args.min_baseline_time_s,
-    )
+    try:
+        comparable_metrics = count_comparable_regression_metrics(
+            baseline=baseline,
+            current=current,
+            min_baseline_time_s=args.min_baseline_time_s,
+        )
+    except ValueError as exc:
+        print(f"Invalid benchmark timing data: {exc}", file=sys.stderr)
+        return 2
+    if comparable_metrics == 0:
+        print("No comparable benchmark timing metrics found.", file=sys.stderr)
+        return 2
+
+    try:
+        comparator_drifts = detect_comparator_drift(
+            baseline=baseline,
+            current=current,
+            comparator_key="rg_time_s",
+            max_regression_pct=args.max_regression_pct,
+            min_baseline_time_s=args.min_baseline_time_s,
+        )
+        regressions = check_regressions(
+            baseline=baseline,
+            current=current,
+            max_regression_pct=args.max_regression_pct,
+            min_baseline_time_s=args.min_baseline_time_s,
+        )
+    except ValueError as exc:
+        print(f"Invalid benchmark timing data: {exc}", file=sys.stderr)
+        return 2
     if comparator_drifts:
         print("Comparator drift detected:")
         for msg in comparator_drifts:
             print(f"- {msg}")
 
-    regressions = check_regressions(
-        baseline=baseline,
-        current=current,
-        max_regression_pct=args.max_regression_pct,
-        min_baseline_time_s=args.min_baseline_time_s,
-    )
     if regressions:
         print("Benchmark regressions detected:")
         for msg in regressions:

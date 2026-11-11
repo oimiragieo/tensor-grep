@@ -12,14 +12,13 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
-use std::fs::OpenOptions;
-use std::io::{ErrorKind, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+mod anchored_apply;
+
 const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
 const BINARY_SCAN_BYTES: usize = 8192;
 const MAX_REWRITE_FILE_BYTES: u64 = 100 * 1024 * 1024;
@@ -39,6 +38,7 @@ impl RewriteSource {
 
 struct PreparedRewriteFile {
     file: PathBuf,
+    target: Option<Arc<crate::safe_write::AnchoredTarget>>,
     original_source: String,
     edits: Vec<RewriteEdit>,
 }
@@ -489,8 +489,24 @@ impl AstBackend {
         apply_edit_set(&plan.edits)
     }
 
+    #[doc(hidden)]
+    pub fn apply_rewrites_with_targets(
+        plan: &RewritePlan,
+        targets: &HashMap<PathBuf, std::sync::Arc<crate::safe_write::AnchoredTarget>>,
+    ) -> Result<usize> {
+        anchored_apply::apply_edit_set_with_targets(&plan.edits, targets)
+    }
+
     pub fn apply_batch_rewrites(plan: &BatchRewritePlan) -> Result<usize> {
         apply_edit_set(&plan.edits)
+    }
+
+    #[doc(hidden)]
+    pub fn apply_batch_rewrites_with_targets(
+        plan: &BatchRewritePlan,
+        targets: &HashMap<PathBuf, std::sync::Arc<crate::safe_write::AnchoredTarget>>,
+    ) -> Result<usize> {
+        anchored_apply::apply_edit_set_with_targets(&plan.edits, targets)
     }
 
     pub fn plan_and_apply(
@@ -600,7 +616,7 @@ impl AstBackend {
 
         let file_results: Vec<Result<Option<PreparedRewriteFile>>> = files
             .par_iter()
-            .map(|file| Self::plan_file_rewrites_prepared(pattern, replacement, lang, file))
+            .map(|file| Self::plan_file_rewrites_prepared(pattern, replacement, lang, file, false))
             .collect();
 
         let mut prepared_files = Vec::new();
@@ -627,7 +643,7 @@ impl AstBackend {
 
             let file_results: Vec<Result<Option<PreparedRewriteFile>>> = files
                 .par_iter()
-                .map(|file| Self::plan_file_batch_rewrites_prepared(rules, language, file))
+                .map(|file| Self::plan_file_batch_rewrites_prepared(rules, language, file, false))
                 .collect();
 
             for result in file_results {
@@ -647,18 +663,22 @@ impl AstBackend {
         file: &Path,
     ) -> Result<Option<PerFileRewriteOutcome>> {
         let Some(mut prepared) =
-            Self::plan_file_rewrites_prepared(pattern, replacement, lang, file)?
+            Self::plan_file_rewrites_prepared(pattern, replacement, lang, file, true)?
         else {
             return Ok(None);
         };
         sort_rewrite_edits(&mut prepared.edits);
         let (valid_edits, rejected_overlaps) = validate_no_overlaps(prepared.edits);
-        apply_prepared_rewrite_file(
+        let target = prepared
+            .target
+            .take()
+            .context("prepared rewrite target was not retained")?;
+        anchored_apply::apply_prepared_rewrite_file(
+            target,
             prepared.file,
             prepared.original_source,
             valid_edits,
             rejected_overlaps,
-            &direct_write_file,
         )
     }
 
@@ -667,18 +687,23 @@ impl AstBackend {
         lang: SupportLang,
         file: &Path,
     ) -> Result<Option<PerFileRewriteOutcome>> {
-        let Some(mut prepared) = Self::plan_file_batch_rewrites_prepared(rewrites, lang, file)?
+        let Some(mut prepared) =
+            Self::plan_file_batch_rewrites_prepared(rewrites, lang, file, true)?
         else {
             return Ok(None);
         };
         sort_rewrite_edits(&mut prepared.edits);
         let (valid_edits, rejected_overlaps) = validate_batch_no_overlaps(prepared.edits);
-        apply_prepared_rewrite_file(
+        let target = prepared
+            .target
+            .take()
+            .context("prepared rewrite target was not retained")?;
+        anchored_apply::apply_prepared_rewrite_file(
+            target,
             prepared.file,
             prepared.original_source,
             valid_edits,
             rejected_overlaps,
-            &direct_write_file,
         )
     }
 
@@ -687,8 +712,10 @@ impl AstBackend {
         replacement: &str,
         lang: SupportLang,
         file: &Path,
+        retain_target: bool,
     ) -> Result<Option<PreparedRewriteFile>> {
-        let Some(rewrite_source) = load_rewrite_source(file)? else {
+        let target = Arc::new(crate::safe_write::AnchoredTarget::open(file)?);
+        let Some(rewrite_source) = load_rewrite_source(file, &target)? else {
             return Ok(None);
         };
         let file_owned = file.to_path_buf();
@@ -736,6 +763,7 @@ impl AstBackend {
 
         Ok(Some(PreparedRewriteFile {
             file: file_owned,
+            target: retain_target.then_some(target),
             original_source: rewrite_source.original_source,
             edits,
         }))
@@ -745,8 +773,10 @@ impl AstBackend {
         rewrites: &[CompiledBatchRewrite],
         lang: SupportLang,
         file: &Path,
+        retain_target: bool,
     ) -> Result<Option<PreparedRewriteFile>> {
-        let Some(rewrite_source) = load_rewrite_source(file)? else {
+        let target = Arc::new(crate::safe_write::AnchoredTarget::open(file)?);
+        let Some(rewrite_source) = load_rewrite_source(file, &target)? else {
             return Ok(None);
         };
         let file_owned = file.to_path_buf();
@@ -796,6 +826,7 @@ impl AstBackend {
 
         Ok(Some(PreparedRewriteFile {
             file: file_owned,
+            target: retain_target.then_some(target),
             original_source: rewrite_source.original_source,
             edits,
         }))
@@ -1315,8 +1346,12 @@ fn has_binary_bytes(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(BINARY_SCAN_BYTES)].contains(&0)
 }
 
-fn load_rewrite_source(file: &Path) -> Result<Option<RewriteSource>> {
-    let metadata = std::fs::metadata(file)
+fn load_rewrite_source(
+    file: &Path,
+    target: &crate::safe_write::AnchoredTarget,
+) -> Result<Option<RewriteSource>> {
+    let metadata = target
+        .metadata()
         .with_context(|| format!("failed to read metadata for {}", file.display()))?;
     let file_len = metadata.len();
     let planned_mtime_ns = metadata
@@ -1333,7 +1368,8 @@ fn load_rewrite_source(file: &Path) -> Result<Option<RewriteSource>> {
         return Ok(None);
     }
 
-    let bytes = std::fs::read(file)
+    let bytes = target
+        .read()
         .with_context(|| format!("failed to read source file {}", file.display()))?;
     if has_binary_bytes(&bytes) {
         return Ok(None);
@@ -1396,7 +1432,7 @@ fn rewrite_source_with_edits(
 }
 
 fn apply_edit_set(edits: &[RewriteEdit]) -> Result<usize> {
-    apply_edit_set_with_writer(edits, None, ApplyExecution::Parallel, &atomic_write_file)
+    anchored_apply::apply_edit_set(edits)
 }
 
 fn apply_edit_set_with_writer<W>(
@@ -1411,11 +1447,34 @@ where
     let files = group_edits_by_file(edits);
     ensure_files_not_stale(&files)?;
 
+    apply_grouped_edit_files_with_reader(
+        &files,
+        original_sources,
+        execution,
+        &|file| {
+            std::fs::read_to_string(file)
+                .with_context(|| format!("failed to read {}", file.display()))
+        },
+        write_file,
+    )
+}
+
+fn apply_grouped_edit_files_with_reader<R, W>(
+    files: &[(&Path, Vec<&RewriteEdit>)],
+    original_sources: Option<&HashMap<PathBuf, String>>,
+    execution: ApplyExecution,
+    read_source: &R,
+    write_file: &W,
+) -> Result<usize>
+where
+    R: Fn(&Path) -> Result<String> + Sync,
+    W: Fn(&Path, &[u8]) -> Result<()> + Sync,
+{
     let apply_file = |(file, file_edits): &(&Path, Vec<&RewriteEdit>)| {
         let original_source = original_sources
             .and_then(|sources| sources.get(*file))
             .map(String::as_str);
-        apply_edits_to_file_with_writer(file, file_edits, original_source, write_file)
+        apply_edits_to_file_with_reader(file, file_edits, original_source, read_source, write_file)
     };
 
     match execution {
@@ -1428,7 +1487,7 @@ where
         }
         #[cfg(test)]
         ApplyExecution::Sequential => {
-            for file in &files {
+            for file in files {
                 apply_file(file)?;
             }
             Ok(files.len())
@@ -1595,7 +1654,8 @@ fn direct_write_file(file: &Path, contents: &[u8]) -> Result<()> {
     // symlink to its target, so `--apply` could overwrite a file outside the repo. Matching sg's
     // atomicity choice does not require inheriting that. The guard costs one open() flag and
     // leaves the direct-overwrite fast path intact.
-    crate::safe_write::write_bytes_refuse_symlink(file, contents)
+    crate::safe_write::AnchoredTarget::open(file)?
+        .write_direct(contents)
         .with_context(|| format!("failed to overwrite {}", file.display()))
 }
 
@@ -1603,80 +1663,7 @@ fn atomic_write_file_with_hook<F>(file: &Path, contents: &[u8], before_rename: F
 where
     F: FnOnce(&Path) -> Result<()>,
 {
-    let (temp_path, mut temp_file) = create_temp_file(file)?;
-
-    let write_result: Result<()> = (|| {
-        temp_file
-            .write_all(contents)
-            .with_context(|| format!("failed to write temp file {}", temp_path.display()))?;
-        temp_file
-            .flush()
-            .with_context(|| format!("failed to flush temp file {}", temp_path.display()))?;
-        // Intentionally skip sync_all()/sync_data() here: same-directory renames are atomic on
-        // NTFS, and the metadata update is journaled, so temp-file + rename still preserves
-        // all-old-or-all-new visibility. A per-file fsync is a large Windows hot-path cost and
-        // would not flush the parent directory entry anyway; this matches sg's plain write path.
-        drop(temp_file);
-
-        before_rename(&temp_path)?;
-
-        std::fs::rename(&temp_path, file).with_context(|| {
-            format!(
-                "failed to rename temp file {} to {}",
-                temp_path.display(),
-                file.display()
-            )
-        })
-    })();
-
-    if let Err(err) = write_result {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(err);
-    }
-
-    Ok(())
-}
-
-fn create_temp_file(file: &Path) -> Result<(PathBuf, std::fs::File)> {
-    let directory = file
-        .parent()
-        .with_context(|| format!("{} has no parent directory", file.display()))?;
-
-    for _ in 0..64 {
-        let temp_path = directory.join(format!(
-            ".tg_tmp_{:x}_{:x}",
-            std::process::id(),
-            next_temp_nonce()
-        ));
-
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp_path)
-        {
-            Ok(temp_file) => return Ok((temp_path, temp_file)),
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
-            Err(err) => {
-                return Err(err).with_context(|| {
-                    format!("failed to create temp file alongside {}", file.display())
-                });
-            }
-        }
-    }
-
-    anyhow::bail!(
-        "failed to allocate unique temp file alongside {} after 64 attempts",
-        file.display()
-    )
-}
-
-fn next_temp_nonce() -> u128 {
-    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(counter);
-    nanos ^ counter
+    crate::safe_write::AnchoredTarget::open(file)?.write_atomic_with_hook(contents, before_rename)
 }
 
 fn assign_edit_ids(edits: &mut [RewriteEdit]) {
@@ -1784,49 +1771,40 @@ fn apply_edits_to_file_with_writer<W>(
 where
     W: Fn(&Path, &[u8]) -> Result<()> + Sync,
 {
+    apply_edits_to_file_with_reader(
+        file,
+        edits,
+        original_source,
+        &|file| {
+            std::fs::read_to_string(file)
+                .with_context(|| format!("failed to read {}", file.display()))
+        },
+        write_file,
+    )
+}
+
+fn apply_edits_to_file_with_reader<R, W>(
+    file: &Path,
+    edits: &[&RewriteEdit],
+    original_source: Option<&str>,
+    read_source: &R,
+    write_file: &W,
+) -> Result<()>
+where
+    R: Fn(&Path) -> Result<String> + Sync,
+    W: Fn(&Path, &[u8]) -> Result<()> + Sync,
+{
     let loaded_source;
     let original = match original_source {
         Some(original_source) => original_source,
         None => {
-            loaded_source = std::fs::read_to_string(file)
-                .with_context(|| format!("failed to read {}", file.display()))?;
+            loaded_source = read_source(file)?;
             &loaded_source
         }
     };
 
     let rewritten = rewrite_source_with_edits(file, original, edits)?;
     write_file(file, rewritten.as_bytes())
-}
-
-fn apply_prepared_rewrite_file<W>(
-    file: PathBuf,
-    original_source: String,
-    valid_edits: Vec<RewriteEdit>,
-    rejected_overlaps: Vec<OverlapRejection>,
-    write_file: &W,
-) -> Result<Option<PerFileRewriteOutcome>>
-where
-    W: Fn(&Path, &[u8]) -> Result<()> + Sync,
-{
-    if valid_edits.is_empty() && rejected_overlaps.is_empty() {
-        return Ok(None);
-    }
-
-    if !valid_edits.is_empty() {
-        let file_edits: Vec<&RewriteEdit> = valid_edits.iter().collect();
-        ensure_file_not_stale(&file, &file_edits)?;
-        apply_edits_to_file_with_writer(
-            &file,
-            &file_edits,
-            Some(original_source.as_str()),
-            write_file,
-        )?;
-    }
-
-    Ok(Some(PerFileRewriteOutcome {
-        edits: valid_edits,
-        rejected_overlaps,
-    }))
 }
 
 fn validate_no_overlaps(edits: Vec<RewriteEdit>) -> (Vec<RewriteEdit>, Vec<OverlapRejection>) {

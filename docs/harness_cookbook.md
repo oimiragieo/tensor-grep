@@ -531,6 +531,7 @@ tg checkpoint undo ckpt-20260320120000-deadbeef . --json
 
 Current behavior:
 
+- checkpoint creation requires Windows 11 24H2 or Windows Server 2025 with `CreateDirectory2W`; POSIX and older Windows systems return an unsupported error before writing state
 - inside a Git repo, `mode` is `git-worktree-snapshot`
 - outside Git, `mode` is `filesystem-snapshot`
 - undo restores files captured at checkpoint creation and removes paths created afterward inside the checkpoint scope

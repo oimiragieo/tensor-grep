@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tensor_grep.cli import audit_manifest
 from tensor_grep.cli.checkpoint_store import create_checkpoint
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
@@ -80,6 +81,7 @@ def _make_project(tmp_path: Path) -> tuple[Path, Path]:
     return project, audit_dir
 
 
+@requires_checkpoint_creation
 def test_create_review_bundle_packages_all_components_and_checksums(tmp_path: Path):
     project, audit_dir = _make_project(tmp_path)
     previous_path = audit_dir / "previous.json"
@@ -159,6 +161,7 @@ def test_create_review_bundle_json_matches_python_payload(tmp_path: Path):
     assert json.loads(bundle_json) == bundle
 
 
+@requires_checkpoint_creation
 def test_create_review_bundle_is_deterministic_for_same_inputs(monkeypatch, tmp_path: Path):
     project, audit_dir = _make_project(tmp_path)
     previous_path = audit_dir / "previous.json"

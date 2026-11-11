@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -162,10 +162,7 @@ pub struct TrigramIndex {
     /// entries. This is the SOLE dereference base for every stored file entry (M17 F2) and the
     /// only reader is `root_servability_reason` / the deref helper.
     canonical_root: PathBuf,
-    /// M17 F1: representative-set identity of the tree (SHA-256 over a bounded sample of the
-    /// canonical root's direct children). Compared in `staleness_reason` so a wholesale
-    /// same-path metadata-preserving tree swap is detected even when every per-file
-    /// name/size/mtime matches. See `compute_tree_fingerprint`.
+    /// Fingerprint of sampled root files, catching content swaps that preserve metadata.
     tree_fingerprint: u64,
     files: Vec<FileEntry>,
     file_trigrams: Vec<FileTrigramHits>,
@@ -593,84 +590,67 @@ fn validate_entry_rel_path(rel: &Path) -> Result<()> {
     Ok(())
 }
 
-/// M17 F2 (gate round 3): is this top-level entry one the tg INDEX OWNS, i.e. part of the
-/// persisted-index machinery rather than the user's tree? These must never be sampled into
-/// `compute_tree_fingerprint` -- a leftover artifact would consume a sample slot and flip
-/// the digest, producing a FALSE staleness transition on a healthy tree. Covered:
-///  - `.tg_index` itself;
-///  - the atomic-save temp namespace `..tg_index.<token>.tmp` (`atomic_write_bytes`,
-///    index.rs) -- a temp left behind by a crash between write and rename persists on disk;
-///  - the write-lock file `..tg_index.lock` (`index_lock::lock_path_for`) -- removed on
-///    release, but a hard crash leaves it behind like any lock.
-///
-/// Both artifacts are also invisible to the per-file loop and the new-file walk (they are
-/// never indexed and are `.`-hidden to the walker), so the fingerprint is the only surface
-/// that could see them.
 fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
     name == std::ffi::OsStr::new(".tg_index") || name.to_string_lossy().starts_with("..tg_index.")
 }
 
-/// M17 F1 (audit-m17 gate): representative-set identity of the tree this index was built
-/// from. SHA-256 over the DIRECT children of the canonical root: each entry's name, and for
-/// each file its FULL content, size and mtime, in deterministic (sorted) order. The tg
-/// index's OWN top-level namespace is excluded BEFORE the sampling cap (the index's own
-/// persistence must never consume one of the sampled slots) -- see
-/// `is_tg_index_owned_entry`.
-///
-/// Round-2 gate: the initial 4 KiB-per-file byte cap let a same-size/same-mtime edit past
-/// offset 4096 in a sampled file evade detection, and inode identity would not catch that
-/// either -- so this hashes sampled files in FULL (bounded by the 32-file cap, not by
-/// bytes). The honest remaining boundary is the files NOT sampled: 33rd+ top-level files
-/// and every non-top-level file are covered only by the per-file mtime/size loop -- per-file
-/// FULL content identity for those is tracked as follow-up M17-FU1.
-///
-/// Gate 3a (fingerprint-vs-walk agreement): the fingerprint must sample the SAME top-level
-/// file set the index walk would produce, or a gitignored file (added after build) flips
-/// the digest and falsely reports staleness -- disagreeing with the new-file walk, which
-/// correctly ignores it. The population is therefore derived from `ignore::WalkBuilder`
-/// with the SAME config as `collect_file_entries` (hidden=true, git_ignore=!no_ignore,
-/// add_ignore trio, capped to depth 1), so agreement holds by construction. The tg index's
-/// OWN dot-namespace (.tg_index, ..tg_index.*) is hidden and thus excluded by the same
-/// filter the walk applies.
-fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
-    let mut hasher = Sha256::new();
-    let mut builder = ignore::WalkBuilder::new(canonical_root);
-    builder
-        .hidden(true)
-        .git_ignore(!no_ignore)
-        .max_depth(Some(1));
+fn index_walker(root: &Path, no_ignore: bool) -> ignore::WalkBuilder {
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder.hidden(true).git_ignore(!no_ignore);
     if !no_ignore {
-        for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
-            let ignore_path = canonical_root.join(ignore_name);
-            if ignore_path.is_file() {
-                builder.add_ignore(ignore_path);
+        for name in [".ignore", ".gitignore", ".rgignore"] {
+            let path = root.join(name);
+            if path.is_file() {
+                builder.add_ignore(path);
             }
         }
     }
-    let mut names: Vec<PathBuf> = builder
-        .build()
-        // Walk errors are LOGGED, not silently dropped (task #276 / the
-        // walk-error-discard ratchet): a truncated walk must not read as a clean
-        // fingerprint. The discard is deliberate (a stale-fingerprint signal is
-        // best-effort; the per-file checks in staleness_reason still fail closed),
-        // but it is never silent.
-        .filter_map(|entry| {
-            entry
-                .map_err(|e| eprintln!("tg index: fingerprint walk error: {e}"))
-                .ok()
-        })
-        .filter(|entry| entry.depth() == 1)
-        // Select FILES first (matching collect_file_entries and the new-file scan) so a
-        // directory or symlink can neither flip the digest nor consume a fingerprint slot
-        // before the cap -- otherwise 32 early-sorting directories could displace every
-        // real file from the sample (codex audit, M17 round-3).
-        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
-        .map(|entry| entry.into_path())
+    builder
+}
+
+fn file_paths_from_walk<E>(
+    root: &Path,
+    entries: impl Iterator<Item = std::result::Result<ignore::DirEntry, E>>,
+) -> Result<Vec<PathBuf>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let mut paths = Vec::new();
+    for walked in entries {
+        let entry =
+            walked.with_context(|| format!("failed to traverse index root {}", root.display()))?;
+        let file_type = entry.file_type().ok_or_else(|| {
+            anyhow::anyhow!("failed to inspect index entry {}", entry.path().display())
+        })?;
+        if file_type.is_file() {
+            paths.push(entry.into_path());
+        }
+    }
+    Ok(paths)
+}
+
+fn metadata_mtime_ns(meta: &fs::Metadata, path: &Path) -> Result<u128> {
+    Ok(meta
+        .modified()
+        .with_context(|| format!("failed to read modification time for {}", path.display()))?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .with_context(|| {
+            format!(
+                "modification time predates UNIX epoch for {}",
+                path.display()
+            )
+        })?
+        .as_nanos())
+}
+
+fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> Result<u64> {
+    let mut hasher = Sha256::new();
+    let mut builder = index_walker(canonical_root, no_ignore);
+    builder.max_depth(Some(1));
+    let mut names: Vec<PathBuf> = file_paths_from_walk(canonical_root, builder.build())?
+        .into_iter()
+        .filter(|path| path.parent() == Some(canonical_root))
         .collect();
-    // An unreadable root walks nothing -> the digest of the empty set (a constant
-    // identity); the per-file checks in staleness_reason still fail closed (they cannot
-    // read files either).
-    // Deterministic across runs: walk order is unspecified.
     names.sort();
     for entry in names
         .into_iter()
@@ -680,39 +660,39 @@ fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> u64 {
         if let Some(name) = entry.file_name() {
             hasher.update(name.to_string_lossy().as_bytes());
         }
-        let meta = match std::fs::metadata(&entry) {
-            Ok(meta) => meta,
-            Err(_) => continue,
-        };
+        let meta = fs::metadata(&entry).with_context(|| {
+            format!(
+                "failed to read fingerprint metadata for {}",
+                entry.display()
+            )
+        })?;
         if !meta.is_file() {
-            continue;
+            anyhow::bail!("fingerprinted entry changed type: {}", entry.display());
         }
         hasher.update(meta.len().to_le_bytes());
-        if let Ok(modified) = meta.modified() {
-            if let Ok(duration) = modified.duration_since(SystemTime::UNIX_EPOCH) {
-                hasher.update(duration.as_nanos().to_le_bytes());
-            }
-        }
-        // FULL content -- a modification anywhere in a sampled file changes the digest,
-        // even when size and mtime are preserved.
-        if let Ok(mut file) = File::open(&entry) {
-            use std::io::Read as _;
-            let mut chunk = [0u8; 64 * 1024];
-            loop {
-                match file.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(n) => hasher.update(&chunk[..n]),
-                    Err(_) => break,
+        hasher.update(metadata_mtime_ns(&meta, &entry)?.to_le_bytes());
+        // Content hashing detects sampled edits that preserve size and mtime.
+        let mut file = File::open(&entry)
+            .with_context(|| format!("failed to open fingerprint file {}", entry.display()))?;
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            match file.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => hasher.update(&chunk[..n]),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to read fingerprint file {}", entry.display())
+                    });
                 }
             }
         }
     }
     let digest = hasher.finalize();
-    u64::from_le_bytes(
+    Ok(u64::from_le_bytes(
         digest[..8]
             .try_into()
             .expect("SHA-256 digest has >= 8 bytes"),
-    )
+    ))
 }
 
 impl TrigramIndex {
@@ -721,14 +701,17 @@ impl TrigramIndex {
     }
 
     pub fn build_with_options(root: &Path, no_ignore: bool) -> Result<Self> {
-        // M17 (audit-m17): the walk root is the CANONICALIZED root, never the caller's raw
-        // spelling -- a relative spelling would dereference from a LATER query's cwd and
-        // walk/read a different tree (F2, the relative-root escape). Entries are stored
-        // canonical-root-relative; every read dereferences through the verified canonical
-        // root, so a built or loaded index is cwd-independent. F3: canonicalize failure
-        // fails the build (no raw fallback); F5: non-UTF-8 roots/entries are rejected.
+        Self::build_with_operations(root, no_ignore, collect_file_entries, extract_file_trigrams)
+    }
+
+    fn build_with_operations(
+        root: &Path,
+        no_ignore: bool,
+        collect: impl Fn(&Path, bool) -> Result<Vec<FileEntry>>,
+        extract: impl Fn(&Path) -> Result<FileTrigramHits> + Sync,
+    ) -> Result<Self> {
         let canonical_root = canonical_root_of(root)?;
-        let file_entries = collect_file_entries(&canonical_root, no_ignore);
+        let file_entries = collect(&canonical_root, no_ignore)?;
 
         let file_entries: Vec<FileEntry> = file_entries
             .iter()
@@ -746,11 +729,15 @@ impl TrigramIndex {
             .par_iter()
             .enumerate()
             .map(|(file_id, entry)| {
-                let trigrams =
-                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default();
-                (file_id as u32, trigrams)
+                let path = canonical_root.join(&entry.path);
+                Ok((
+                    file_id as u32,
+                    extract(&path).with_context(|| {
+                        format!("failed to extract index trigrams from {}", path.display())
+                    })?,
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         let mut file_trigrams = vec![Vec::new(); file_entries.len()];
         let mut postings: HashMap<[u8; 3], Vec<PostingEntry>> = HashMap::new();
@@ -765,7 +752,7 @@ impl TrigramIndex {
         }
         normalize_postings(&mut postings);
 
-        let tree_fingerprint = compute_tree_fingerprint(&canonical_root, no_ignore);
+        let tree_fingerprint = compute_tree_fingerprint(&canonical_root, no_ignore)?;
 
         Ok(Self {
             root: canonical_root.clone(),
@@ -779,15 +766,27 @@ impl TrigramIndex {
     }
 
     pub fn rebuild_incremental_with_options(
-        mut self,
+        self,
         root: &Path,
         no_ignore: bool,
     ) -> Result<IncrementalUpdateResult> {
-        // M17: same canonical-walk discipline as the build (F2) and the same fail-closed
-        // canonicalization (F3/F5); the incremental caller is only ever reached after the
-        // same-root check, so this root canonicalizes to the stored identity.
+        self.rebuild_incremental_with_operations(
+            root,
+            no_ignore,
+            collect_file_entries,
+            extract_file_trigrams,
+        )
+    }
+
+    fn rebuild_incremental_with_operations(
+        mut self,
+        root: &Path,
+        no_ignore: bool,
+        collect: impl Fn(&Path, bool) -> Result<Vec<FileEntry>>,
+        extract: impl Fn(&Path) -> Result<FileTrigramHits> + Sync,
+    ) -> Result<IncrementalUpdateResult> {
         let canonical_root = canonical_root_of(root)?;
-        let current_entries = collect_file_entries(&canonical_root, no_ignore);
+        let current_entries = collect(&canonical_root, no_ignore)?;
         let current_entries: Vec<FileEntry> = current_entries
             .iter()
             .map(|entry| {
@@ -860,13 +859,16 @@ impl TrigramIndex {
         let changed_postings: Vec<(usize, FileEntry, FileTrigramHits)> = modified_entries
             .par_iter()
             .map(|(file_id, entry)| {
-                (
+                let path = canonical_root.join(&entry.path);
+                Ok((
                     *file_id,
                     entry.clone(),
-                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default(),
-                )
+                    extract(&path).with_context(|| {
+                        format!("failed to extract index trigrams from {}", path.display())
+                    })?,
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         for (file_id, entry, hits) in changed_postings {
             remove_file_postings(
@@ -888,12 +890,15 @@ impl TrigramIndex {
         let new_postings: Vec<(FileEntry, FileTrigramHits)> = added_entries
             .par_iter()
             .map(|entry| {
-                (
+                let path = canonical_root.join(&entry.path);
+                Ok((
                     entry.clone(),
-                    extract_file_trigrams(&canonical_root.join(&entry.path)).unwrap_or_default(),
-                )
+                    extract(&path).with_context(|| {
+                        format!("failed to extract index trigrams from {}", path.display())
+                    })?,
+                ))
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()?;
 
         for (entry, hits) in new_postings {
             let file_id = self.files.len() as u32;
@@ -903,15 +908,9 @@ impl TrigramIndex {
         }
 
         normalize_affected_postings(&mut self.postings, &affected_trigrams);
-        // M17: the rebuilt index re-records the canonical identity of the tree it rebuilt
-        // from and re-computes the tree fingerprint -- otherwise a subsequent reuse would
-        // refuse the tree it just built (root) or falsely report it stale (fingerprint).
         self.root = canonical_root.clone();
         self.canonical_root = canonical_root;
-        self.tree_fingerprint = compute_tree_fingerprint(&self.canonical_root, no_ignore);
-        // H1d: persist the query's no_ignore mode onto the rebuilt index so a subsequent
-        // staleness check compares against what this rebuild actually walked with, not a
-        // stale build-time value.
+        self.tree_fingerprint = compute_tree_fingerprint(&self.canonical_root, no_ignore)?;
         self.no_ignore = no_ignore;
 
         Ok(IncrementalUpdateResult { index: self, stats })
@@ -1148,15 +1147,8 @@ impl TrigramIndex {
         self.staleness_reason(no_ignore).is_some()
     }
 
-    /// `no_ignore` is the CURRENT query's `--no-ignore` request, compared against the
-    /// mode this index was actually built with (`self.no_ignore`).
+    /// `no_ignore` is the current query's mode.
     pub fn staleness_reason(&self, no_ignore: bool) -> Option<String> {
-        // H1d (audit): a stored no_ignore mode that disagrees with the current query's
-        // --no-ignore request means this index was built walking a DIFFERENT file set
-        // than the one the query now expects -- reusing it as-is either leaks gitignored
-        // content into a default query (built --no-ignore, queried without) or misses
-        // gitignored files a --no-ignore query asked for (built without, queried with).
-        // Treat it as stale so the caller rebuilds under the query's requested mode.
         if self.no_ignore != no_ignore {
             return Some(format!(
                 "no_ignore mode changed: index built with no_ignore={}, query requested no_ignore={}",
@@ -1172,73 +1164,59 @@ impl TrigramIndex {
             .collect();
 
         for entry in self.files.iter().filter(|entry| !entry.deleted) {
-            // M17 F2: per-entry checks dereference through the verified canonical root --
-            // a stored (relative) spelling must never be resolved against this process's cwd.
             let absolute = self.deref_path(&entry.path);
-            match absolute.metadata() {
-                Ok(meta) => {
-                    let current_mtime = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0);
-                    if current_mtime != entry.mtime_ns {
-                        return Some(format!("file modified: {}", absolute.display()));
-                    }
-                    if meta.len() != entry.size {
-                        return Some(format!("file size changed: {}", absolute.display()));
-                    }
+            let meta = match absolute.metadata() {
+                Ok(meta) => meta,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Some(format!("file deleted: {}", absolute.display()))
                 }
-                Err(_) => {
-                    return Some(format!("file deleted: {}", absolute.display()));
+                Err(error) => {
+                    return Some(format!(
+                        "failed to read indexed file metadata for {}: {error}",
+                        absolute.display()
+                    ))
                 }
+            };
+            let current_mtime = match metadata_mtime_ns(&meta, &absolute) {
+                Ok(mtime) => mtime,
+                Err(error) => return Some(format!("{error:#}")),
+            };
+            if current_mtime != entry.mtime_ns {
+                return Some(format!("file modified: {}", absolute.display()));
+            }
+            if meta.len() != entry.size {
+                return Some(format!("file size changed: {}", absolute.display()));
             }
         }
 
         if self.canonical_root.is_dir() {
-            // Mirror collect_file_entries' walk semantics exactly -- this was hardcoded
-            // .git_ignore(true) regardless of no_ignore (audit H1d), so the new-file scan
-            // could disagree with how this index would actually be rebuilt. #127: also mirror
-            // collect_file_entries' add_ignore trio so this scan agrees with it outside a git
-            // repo too (see that function for the require_git(false) rationale). M17 F2: the
-            // scan walks the CANONICAL root (never a stored spelling, which would resolve
-            // against the query cwd) and compares relativized paths.
-            let mut builder = ignore::WalkBuilder::new(&self.canonical_root);
-            builder.hidden(true).git_ignore(!self.no_ignore);
-            if !self.no_ignore {
-                for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
-                    let ignore_path = self.canonical_root.join(ignore_name);
-                    if ignore_path.is_file() {
-                        builder.add_ignore(ignore_path);
-                    }
-                }
-            }
-            let current_files: Vec<PathBuf> = builder
-                .build()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-                .map(|e| e.into_path())
-                .collect();
-
-            for file in &current_files {
-                let Ok(rel) = file.strip_prefix(&self.canonical_root) else {
-                    continue;
+            let files = match file_paths_from_walk(
+                &self.canonical_root,
+                index_walker(&self.canonical_root, self.no_ignore).build(),
+            ) {
+                Ok(files) => files,
+                Err(error) => return Some(format!("index traversal failed: {error:#}")),
+            };
+            for file in files {
+                let rel = match relativize_entry(&file, &self.canonical_root) {
+                    Ok(rel) => rel,
+                    Err(error) => return Some(format!("index entry path invalid: {error:#}")),
                 };
-                if !indexed_paths.contains(rel) {
+                if !indexed_paths.contains(rel.as_path()) {
                     return Some(format!("new file: {}", file.display()));
                 }
             }
         }
 
-        // M17 F1: representative-set identity. Runs AFTER the per-file loop so a normal
-        // modification reports the precise file-level reason; a wholesale same-path swap
-        // that preserved every name/size/mtime (and thus passed every check above) is
-        // caught here -- the only detector that sees it.
-        if self.tree_fingerprint != compute_tree_fingerprint(&self.canonical_root, self.no_ignore) {
-            return Some(
-                "tree fingerprint changed (representative top-level identity mismatch)".to_string(),
-            );
+        match compute_tree_fingerprint(&self.canonical_root, self.no_ignore) {
+            Ok(fingerprint) if self.tree_fingerprint != fingerprint => {
+                return Some(
+                    "tree fingerprint changed (representative top-level identity mismatch)"
+                        .to_string(),
+                )
+            }
+            Err(error) => return Some(format!("tree fingerprint failed: {error:#}")),
+            _ => {}
         }
 
         None
@@ -1440,50 +1418,40 @@ fn atomic_write_bytes(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn collect_file_entries(root: &Path, no_ignore: bool) -> Vec<FileEntry> {
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder.hidden(true).git_ignore(!no_ignore);
-    // #127: outside a directory the `ignore` crate recognizes as an actual git repo (no
-    // `.git`/`.jj` marker in any ancestor), `.git_ignore(true)` alone never auto-discovers
-    // `.gitignore` files -- the crate only applies them once it has detected a git repo, so a
-    // root `.gitignore` was silently a no-op there (index pollution). Deliberately NOT
-    // `.require_git(false)`: that would additionally pull in nested/global gitignores outside
-    // git, diverging from `tg search`'s own root-only behavior (BACKLOG #127). Mirror the
-    // sibling `add_ignore` trio instead (main.rs:5695 / native_search.rs:1471) -- explicitly
-    // added ignore files are honored by the `ignore` crate unconditionally, git repo or not.
-    if !no_ignore {
-        for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
-            let ignore_path = root.join(ignore_name);
-            if ignore_path.is_file() {
-                builder.add_ignore(ignore_path);
-            }
+fn collect_file_entries(root: &Path, no_ignore: bool) -> Result<Vec<FileEntry>> {
+    let builder = index_walker(root, no_ignore);
+    collect_file_entries_from(root, builder.build())
+}
+
+fn collect_file_entries_from<E>(
+    root: &Path,
+    entries: impl Iterator<Item = std::result::Result<ignore::DirEntry, E>>,
+) -> Result<Vec<FileEntry>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let mut files = Vec::new();
+    for walked in entries {
+        let entry =
+            walked.with_context(|| format!("failed to traverse index root {}", root.display()))?;
+        let file_type = entry.file_type().ok_or_else(|| {
+            anyhow::anyhow!("failed to inspect index entry {}", entry.path().display())
+        })?;
+        if !file_type.is_file() {
+            continue;
         }
+        let path = entry.into_path();
+        let meta = path.metadata().with_context(|| {
+            format!("failed to read index file metadata for {}", path.display())
+        })?;
+        files.push(FileEntry {
+            path: path.clone(),
+            mtime_ns: metadata_mtime_ns(&meta, &path)?,
+            size: meta.len(),
+            deleted: false,
+        });
     }
-    builder
-        .build()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_type()
-                .is_some_and(|file_type| file_type.is_file())
-        })
-        .filter_map(|entry| {
-            let path = entry.into_path();
-            let meta = path.metadata().ok()?;
-            let mtime_ns = meta
-                .modified()
-                .ok()?
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .ok()?
-                .as_nanos();
-            Some(FileEntry {
-                path,
-                mtime_ns,
-                size: meta.len(),
-                deleted: false,
-            })
-        })
-        .collect()
+    Ok(files)
 }
 
 fn rebuild_file_trigrams(
@@ -1566,14 +1534,32 @@ fn normalize_affected_postings(
     }
 }
 
+/// TG-006: files above this size carry no postings, so `search` scans them directly.
+const MAX_INDEXED_FILE_BYTES: u64 = 10 * 1024 * 1024;
+
 fn extract_file_trigrams(path: &Path) -> Result<Vec<([u8; 3], u32)>> {
-    let file = File::open(path)?;
-    let meta = file.metadata()?;
-    if meta.len() == 0 || meta.len() > 10 * 1024 * 1024 {
+    extract_file_trigrams_with(
+        path,
+        |file| file.metadata(),
+        |file| unsafe { MmapOptions::new().map(file) },
+    )
+}
+
+fn extract_file_trigrams_with(
+    path: &Path,
+    metadata: impl FnOnce(&File) -> io::Result<fs::Metadata>,
+    map: impl FnOnce(&File) -> io::Result<memmap2::Mmap>,
+) -> Result<Vec<([u8; 3], u32)>> {
+    let file = File::open(path)
+        .with_context(|| format!("failed to open index file {}", path.display()))?;
+    let meta = metadata(&file)
+        .with_context(|| format!("failed to read index file metadata for {}", path.display()))?;
+    if meta.len() == 0 || meta.len() > MAX_INDEXED_FILE_BYTES {
         return Ok(Vec::new());
     }
 
-    let mmap = unsafe { MmapOptions::new().map(&file)? };
+    let mmap =
+        map(&file).with_context(|| format!("failed to map index file {}", path.display()))?;
     let mut trigrams = Vec::new();
 
     for (line_num, line_bytes) in (1_u32..).zip(mmap.split(|&b| b == b'\n')) {

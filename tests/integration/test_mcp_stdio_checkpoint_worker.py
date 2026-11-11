@@ -15,6 +15,8 @@ import pytest
 from mcp import ClientSession, types
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
+
 pytestmark = pytest.mark.integration
 SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 _HELD_SERVER = """
@@ -56,6 +58,7 @@ async def _call(
 @pytest.mark.parametrize("git_repo", [False, True])
 @pytest.mark.parametrize("directory_scope", [False, True])
 @pytest.mark.parametrize("consolidated", [False, True])
+@requires_checkpoint_creation
 def test_checkpoint_stdio_create_list_undo_is_scoped_and_reusable(
     tmp_path: Path, git_repo: bool, directory_scope: bool, consolidated: bool
 ) -> None:
@@ -157,6 +160,7 @@ def test_checkpoint_stdio_create_list_undo_is_scoped_and_reusable(
     assert len(json.loads(index.read_text(encoding="utf-8"))) == 1
 
 
+@requires_checkpoint_creation
 def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

@@ -35,6 +35,12 @@ from tensor_grep.cli.lsp_session import (
     proof_request,
     reset_after_stop,
 )
+from tensor_grep.cli.lsp_stderr import (
+    _LSP_STDERR_MAX_LINES,
+    _LSP_STDERR_MAX_TEXT_BYTES,
+    _iter_lsp_stderr_lines,
+    _truncate_lsp_stderr_line,
+)
 from tensor_grep.cli.lsp_transport_writer import bounded_stdin
 from tensor_grep.cli.process_containment import (
     ContainmentUnavailableError,
@@ -403,6 +409,9 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self._debug_trace_enabled = False
         self._debug_trace_started_monotonic = time.monotonic()
         self._debug_trace: list[dict[str, Any]] = []
+        self._stderr_trace_lock = threading.Lock()
+        self._stderr_trace_lines = 0
+        self._stderr_trace_bytes = 0
         self.request_timeout_seconds = (
             _configured_timeout_seconds(
                 _LSP_REQUEST_TIMEOUT_ENV_VAR, _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS
@@ -431,9 +440,12 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self.disabled_until_monotonic = 0.0
 
     def enable_debug_trace(self) -> None:
-        self._debug_trace_enabled = True
-        self._debug_trace_started_monotonic = time.monotonic()
-        self._debug_trace = []
+        with self._stderr_trace_lock:
+            self._debug_trace_enabled = True
+            self._debug_trace_started_monotonic = time.monotonic()
+            self._debug_trace = []
+            self._stderr_trace_lines = 0
+            self._stderr_trace_bytes = 0
 
     def debug_trace(self) -> list[dict[str, Any]]:
         return list(self._debug_trace)
@@ -454,6 +466,12 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
     ) -> None:
         if not self._debug_trace_enabled:
             return
+        diagnostic_bytes = 0
+        if event in {"stderr", "stderr_error"}:
+            detail = dict(detail or {})
+            message = _truncate_lsp_stderr_line(str(detail.get("message", "")))
+            detail["message"] = message
+            diagnostic_bytes = len(message.encode("utf-8"))
         entry: dict[str, Any] = {
             "event": event,
             "elapsed_ms": round(
@@ -467,6 +485,17 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             entry["id"] = request_id
         if detail:
             entry.update(detail)
+        if event in {"stderr", "stderr_error"}:
+            with self._stderr_trace_lock:
+                if (
+                    self._stderr_trace_lines >= _LSP_STDERR_MAX_LINES
+                    or self._stderr_trace_bytes + diagnostic_bytes > _LSP_STDERR_MAX_TEXT_BYTES
+                ):
+                    return
+                self._debug_trace.append(entry)
+                self._stderr_trace_lines += 1
+                self._stderr_trace_bytes += diagnostic_bytes
+            return
         self._debug_trace.append(entry)
 
     def start(self) -> None:
@@ -1128,18 +1157,23 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         if process is None or process.stderr is None:
             return
         try:
-            for line in process.stderr:
-                if isinstance(line, bytes):
-                    line = line.decode("utf-8", errors="replace")
-                text = line.rstrip("\r\n")
+            for text in _iter_lsp_stderr_lines(process.stderr):
                 if not text:
                     continue
+                text_bytes = len(text.encode("utf-8", errors="replace"))
+                while session.stderr_tail and (
+                    len(session.stderr_tail) >= _LSP_STDERR_MAX_LINES
+                    or session.stderr_tail_bytes + text_bytes > _LSP_STDERR_MAX_TEXT_BYTES
+                ):
+                    removed = session.stderr_tail.pop(0)
+                    session.stderr_tail_bytes -= len(removed.encode("utf-8", errors="replace"))
                 session.stderr_tail.append(text)
-                if len(session.stderr_tail) > 50:
-                    del session.stderr_tail[:-50]
+                session.stderr_tail_bytes += text_bytes
                 self._record_debug_trace(event="stderr", detail={"message": text})
         except Exception as exc:
-            self._record_debug_trace(event="stderr_error", detail={"message": str(exc)})
+            self._record_debug_trace(
+                event="stderr_error", detail={"message": _truncate_lsp_stderr_line(str(exc))}
+            )
 
 
 class ExternalLSPProviderManager:

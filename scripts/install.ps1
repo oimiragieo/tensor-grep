@@ -124,11 +124,10 @@ function Install-NativeFrontdoorBinary {
         return $nativeFrontdoorPath
     }
 
-    # Fetch the published CHECKSUMS.txt so every downloaded asset is verified against a
-    # signed digest BEFORE it is made executable or run. Without this, a compromised
-    # release/account or a TLS-intercepting proxy could persist arbitrary code as the
-    # default `tg` (audit S4). Failure to fetch it means the native front door is skipped
-    # (fail closed to the Python wrapper), never executed unverified.
+    # Compare each downloaded asset with the release's CHECKSUMS.txt before use. The
+    # unsigned manifest checks consistency only; an attacker who can replace both the
+    # asset and manifest can still install arbitrary code (audit S4). Failure to fetch
+    # it means the native front door is skipped (fail closed to the Python wrapper).
     $checksumsPath = Join-Path $frontdoorDir "CHECKSUMS.txt"
     $checksumsUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/CHECKSUMS.txt"
     try {
@@ -449,9 +448,10 @@ Write-Host "           TENSOR-GREP WINDOWS INSTALLER                  "
 Write-Host "=========================================================="
 
 $uvExtractDir = $null
+$uvTempDir = $null
 
 try {
-    # 1. Install or locate uv
+    # 1. Download and verify uv
     # Pin uv to an exact version and verify its SHA-256 before execution. We download the release
     # zip directly from GitHub and check it against a committed checksum table
     # (scripts/uv_checksums.json) instead of running the astral.sh remote installer, which lacks
@@ -463,72 +463,46 @@ try {
         "x86_64"  = "ccec7508a07d9933d7cb1261880633efcf1f30d6e6eddab21823f1dae6f23225"
         "aarch64" = "c4bc5a9534b2bb6a12fe29ea748445e1a6f9cb7bb275211c4fb74c52ecf317a5"
     }
-    $uvPath = "uv"
-    # H6 hardening: a uv already on PATH is trusted ONLY if it reports EXACTLY the pinned version.
-    # Any mismatch/unparsable/error falls CLOSED into the checksum-verified download below, so a
-    # stale/incompatible/hijacked PATH uv can no longer bypass the pinned-uv supply-chain gate.
-    $uvTrusted = $false
-    $existingUv = Get-Command "uv" -ErrorAction SilentlyContinue
-    if ($existingUv) {
-        try {
-            $uvVersionOutput = & $existingUv.Source --version 2>$null
-            # EXACT regex-captured match (never substring/-like) so "0.11.253" cannot false-match "0.11.25".
-            if ($LASTEXITCODE -eq 0 -and $uvVersionOutput -match "^uv (?<v>\d+\.\d+\.\d+)" -and $Matches.v -eq $uvVersion) {
-                $uvTrusted = $true
-            } else {
-                Write-Warning "Existing PATH uv reports '$uvVersionOutput', not pinned $uvVersion; ignoring it and downloading the pinned, checksum-verified release instead."
-            }
-        } catch {
-            Write-Warning "Existing PATH uv version check failed ($_); ignoring it and downloading the pinned, checksum-verified release instead."
-        }
+    Write-Host "[1/4] Downloading uv package manager (pinned $uvVersion)..."
+    # Detect CPU architecture to pick the correct release artifact.
+    $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+    $uvArch = switch ($osArch) {
+        "Arm64" { "aarch64" }
+        default { "x86_64" }
     }
-    if ($uvTrusted) {
-        Write-Host "[1/4] Found existing uv $uvVersion on PATH (matches pinned version)."
-        $uvPath = $existingUv.Source
-    } else {
-        Write-Host "[1/4] Downloading uv package manager (pinned $uvVersion)..."
-        # Residual risk (accepted): a version-string gate catches stale/accidental/incompatible uv but
-        # does NOT stop a determined PATH-hijack attacker who hardcodes --version to print the pin.
-        # Closing that needs a committed hash of the resident binary, which does not exist today (only
-        # the release zip is hashed). This closes the accidental/stale-uv hole; fake binary out of scope.
-        # Detect CPU architecture to pick the correct release artifact.
-        $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-        $uvArch = switch ($osArch) {
-            "Arm64" { "aarch64" }
-            default { "x86_64" }
-        }
-        $uvTriple = "uv-$uvArch-pc-windows-msvc"
-        $uvZipName = "$uvTriple.zip"
-        $uvZipUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvZipName"
-        $uvExpectedSha = $uvKnownSha256[$uvArch]
-        if (!$uvExpectedSha) {
-            throw "No committed SHA-256 for uv arch '$uvArch' (version $uvVersion). Update scripts/uv_checksums.json and the embedded table in install.ps1."
-        }
-        $uvZipPath = Join-Path $env:TEMP "uv_${uvVersion}_${uvArch}.zip"
-        $uvExtractDir = Join-Path $env:TEMP "uv_${uvVersion}_${uvArch}"
-        try {
-            Invoke-WebRequest -Uri $uvZipUrl -OutFile $uvZipPath
-            $actualSha = (Get-FileHash -LiteralPath $uvZipPath -Algorithm SHA256).Hash.ToLower()
-            if ($actualSha -ne $uvExpectedSha) {
-                throw "uv zip checksum MISMATCH for $uvZipName (expected $uvExpectedSha, got $actualSha). Aborting installation."
-            }
-            Write-Host "      uv zip checksum verified OK ($uvZipName)."
-            Remove-Item -LiteralPath $uvExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-            Expand-Archive -LiteralPath $uvZipPath -DestinationPath $uvExtractDir -Force
-        } finally {
-            Remove-Item -LiteralPath $uvZipPath -Force -ErrorAction SilentlyContinue
-        }
-        # The zip extracts to a subdirectory named after the triple; fall back to a recursive search.
-        $uvExePath = Join-Path $uvExtractDir "$uvTriple\uv.exe"
-        if (!(Test-Path -LiteralPath $uvExePath)) {
-            $uvExePath = Get-ChildItem -LiteralPath $uvExtractDir -Filter "uv.exe" -Recurse `
-                -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-        }
-        if (!$uvExePath -or !(Test-Path -LiteralPath $uvExePath)) {
-            throw "uv.exe not found in extracted zip at $uvExtractDir."
-        }
-        $uvPath = $uvExePath
+    $uvTriple = "uv-$uvArch-pc-windows-msvc"
+    $uvZipName = "$uvTriple.zip"
+    $uvZipUrl = "https://github.com/astral-sh/uv/releases/download/$uvVersion/$uvZipName"
+    $uvExpectedSha = $uvKnownSha256[$uvArch]
+    if (!$uvExpectedSha) {
+        throw "No committed SHA-256 for uv arch '$uvArch' (version $uvVersion). Update scripts/uv_checksums.json and the embedded table in install.ps1."
     }
+    $uvTempPath = Join-Path $env:TEMP ("tensor-grep-uv-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $uvTempPath -ErrorAction Stop | Out-Null
+    $uvTempDir = $uvTempPath
+    $uvZipPath = Join-Path $uvTempDir $uvZipName
+    $uvExtractDir = Join-Path $uvTempDir "extract"
+    try {
+        Invoke-WebRequest -Uri $uvZipUrl -OutFile $uvZipPath
+        $actualSha = (Get-FileHash -LiteralPath $uvZipPath -Algorithm SHA256).Hash.ToLower()
+        if ($actualSha -ne $uvExpectedSha) {
+            throw "uv zip checksum MISMATCH for $uvZipName (expected $uvExpectedSha, got $actualSha). Aborting installation."
+        }
+        Write-Host "      uv zip checksum verified OK ($uvZipName)."
+        Expand-Archive -LiteralPath $uvZipPath -DestinationPath $uvExtractDir -Force
+    } finally {
+        Remove-Item -LiteralPath $uvZipPath -Force -ErrorAction SilentlyContinue
+    }
+    # Run this exact binary from the checksum-verified archive, never a PATH-resolved uv.
+    $uvExePath = Join-Path $uvExtractDir "$uvTriple\uv.exe"
+    if (!(Test-Path -LiteralPath $uvExePath)) {
+        $uvExePath = Get-ChildItem -LiteralPath $uvExtractDir -Filter "uv.exe" -Recurse `
+            -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (!$uvExePath -or !(Test-Path -LiteralPath $uvExePath)) {
+        throw "uv.exe not found in extracted zip at $uvExtractDir."
+    }
+    $uvPath = $uvExePath
 
     # 2. Detect GPU Configuration
     Write-Host "[2/4] Detecting hardware for optimal routing..."
@@ -939,8 +913,8 @@ exit `$LASTEXITCODE
     Write-Host "=========================================================="
 }
 finally {
-    if ($uvExtractDir -and (Test-Path -LiteralPath $uvExtractDir)) {
-        Remove-Item -LiteralPath $uvExtractDir -Recurse -Force -ErrorAction SilentlyContinue
+    if ($uvTempDir -and (Test-Path -LiteralPath $uvTempDir)) {
+        Remove-Item -LiteralPath $uvTempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
     if ($stagingInstallDir -and (Test-Path -LiteralPath $stagingInstallDir)) {
         Remove-Item -LiteralPath $stagingInstallDir -Recurse -Force -ErrorAction SilentlyContinue

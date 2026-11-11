@@ -6,6 +6,7 @@ import ctypes
 import errno
 import os
 import re
+import stat
 import sys
 from ctypes import wintypes
 from pathlib import Path
@@ -168,3 +169,46 @@ def replace_open(descriptor: int, path: Path) -> None:
         raise OSError("Windows handle publication is unavailable on this platform")
     # FileRenameInfoEx: REPLACE_IF_EXISTS | POSIX_SEMANTICS, with no legacy fallback.
     _rename_open(descriptor, path, flags=3, kind=22)
+
+
+def unlink_open(
+    path: Path, expected_identity: tuple[int, int], *, allow_reparse: bool = False
+) -> None:
+    """Delete only the verified regular file or reparse point held by this handle."""
+    import msvcrt
+
+    kernel = _kernel()
+    create = kernel.CreateFileW
+    create.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create.restype = wintypes.HANDLE
+    handle = create(str(path), 0x00010080, 3, None, 3, 0x02200000, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+    except BaseException:
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle(handle)
+        raise
+    try:
+        info = os.fstat(descriptor)
+        is_reparse = stat.S_ISLNK(info.st_mode) or bool(
+            getattr(info, "st_file_attributes", 0) & 0x400
+        )
+        if (
+            (not stat.S_ISREG(info.st_mode) and not (allow_reparse and is_reparse))
+            or (is_reparse and not allow_reparse)
+            or (info.st_dev, info.st_ino) != expected_identity
+        ):
+            raise OSError(f"confined leaf identity changed: {path}")
+        discard_open(descriptor)
+    finally:
+        os.close(descriptor)

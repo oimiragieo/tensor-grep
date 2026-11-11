@@ -132,8 +132,9 @@ async function main() {
     process.exit(1);
   }
 
-  // Verify the downloaded bytes against the signed manifest BEFORE writing or making the
-  // binary executable. Fail closed: never install an unverified or mismatched binary.
+  // Compare the downloaded bytes with the release's unsigned CHECKSUMS.txt before writing
+  // or making the binary executable. This checks consistency only; an attacker who can
+  // replace both the asset and manifest can still provide a matching malicious binary.
   const expected = expectedChecksum(checksumsText, assetName);
   const actual = crypto.createHash('sha256').update(binary).digest('hex');
   if (!expected) {

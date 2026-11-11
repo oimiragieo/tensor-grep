@@ -42,6 +42,7 @@ class ProviderSession:
         self.reader_thread: threading.Thread | None = None
         self.stderr_thread: threading.Thread | None = None
         self.stderr_tail: list[str] = []
+        self.stderr_tail_bytes = 0
         # warm-LSP readiness (workDoneProgress) belongs to THIS provider: a fresh session starts
         # with fresh readiness, and a stale reader can only ever touch its own session
         self.active_progress_tokens: set[str] = set()

@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.main import app
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _project(root: Path) -> Path:
@@ -51,6 +52,7 @@ def test_checkpoint_label_is_trimmed_and_persisted_through_cli_store_and_list(
     assert "再確認 🧭" in listed.stdout
 
 
+@requires_checkpoint_creation
 def test_checkpoint_label_accepts_the_120_character_boundary(tmp_path: Path) -> None:
     project = _project(tmp_path / "project")
 
@@ -73,6 +75,7 @@ def test_invalid_label_is_rejected_before_checkpoint_state_or_copy(
     assert not (project / ".tensor-grep").exists()
 
 
+@requires_checkpoint_creation
 def test_legacy_checkpoint_callers_and_old_index_records_default_to_no_label(
     tmp_path: Path,
 ) -> None:
@@ -124,6 +127,7 @@ def test_legacy_checkpoint_callers_and_old_index_records_default_to_no_label(
     )
 
 
+@requires_checkpoint_creation
 def test_malformed_persisted_labels_load_as_none_without_hiding_checkpoint(tmp_path: Path) -> None:
     project = _project(tmp_path / "project")
     created = checkpoint_store.create_checkpoint(str(project), label="good")
@@ -152,6 +156,7 @@ def test_malformed_persisted_labels_load_as_none_without_hiding_checkpoint(tmp_p
     assert recovered.scopes[0].checkpoints[0].label is None
 
 
+@requires_checkpoint_creation
 def test_label_survives_metadata_index_recovery_and_scope_discovery(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     project = _project(workspace / "nested" / "project")
@@ -166,6 +171,7 @@ def test_label_survives_metadata_index_recovery_and_scope_discovery(tmp_path: Pa
     assert found.scopes[0].checkpoints[0].label == "recovered label"
 
 
+@requires_checkpoint_creation
 def test_duplicate_labels_survive_retention_and_undo_still_uses_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -193,6 +199,7 @@ def test_duplicate_labels_survive_retention_and_undo_still_uses_ids(
     assert (project / "sample.py").read_text(encoding="utf-8") == "value = 'middle'\n"
 
 
+@requires_checkpoint_creation
 def test_scoped_checkpoint_label_does_not_expand_undo_scope(tmp_path: Path) -> None:
     project = _project(tmp_path / "project")
     other = project / "other.py"

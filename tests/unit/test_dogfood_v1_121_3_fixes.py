@@ -25,6 +25,7 @@ from tensor_grep.cli.checkpoint_store import (
 from tensor_grep.cli.doctor_payload import _build_doctor_payload
 from tensor_grep.cli.doctor_report import _doctor_rust_binary_remediation
 from tensor_grep.cli.main import app
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 runner = CliRunner()
 
@@ -170,6 +171,7 @@ def test_symbol_disambiguation_suggestions(tmp_path: Path) -> None:
 # ==============================================================================
 
 
+@requires_checkpoint_creation
 def test_checkpoint_paths_confinement_and_scoped_undo(tmp_path: Path) -> None:
     """--paths creates scoped checkpoints; undo preserves files outside the scoped paths."""
     root = tmp_path / "repo"
@@ -218,6 +220,7 @@ def test_checkpoint_paths_confinement_and_scoped_undo(tmp_path: Path) -> None:
     assert unselected_new.read_text(encoding="utf-8") == "fresh file outside scope"
 
 
+@requires_checkpoint_creation
 def test_checkpoint_paths_single_file_scope_conflict(tmp_path: Path) -> None:
     """Cannot combine single-file path with --paths."""
     single_file = tmp_path / "single.py"
@@ -389,6 +392,7 @@ def test_sql_cooperative_deadline_interruption(sql_test_env: Path) -> None:
     assert payload["partial"] is True
 
 
+@requires_checkpoint_creation
 def test_checkpoint_scoped_undo_rejects_symlink_escape(tmp_path: Path) -> None:
     """Pre-flight check in scoped undo rejects in-scope symlink pointing to an unselected file."""
     root = tmp_path / "repo"
@@ -488,6 +492,7 @@ def test_sql_extended_safe_functions(sql_test_env: Path) -> None:
     assert payload["result_incomplete"] is False
 
 
+@requires_checkpoint_creation
 def test_checkpoint_paths_dot_scope(tmp_path: Path) -> None:
     """--paths with '.' or '' correctly matches all files under root."""
     root = tmp_path / "repo"
@@ -517,6 +522,7 @@ def test_defs_does_not_leak_candidate_symbols(tmp_path: Path) -> None:
     assert "my_special_function" in payload.get("suggestions", [])
 
 
+@requires_checkpoint_creation
 def test_scoped_undo_preserves_out_of_scope_empty_dir(tmp_path: Path) -> None:
     """Scoped undo must not prune empty directories located outside scoped_paths."""
     root = tmp_path / "repo"

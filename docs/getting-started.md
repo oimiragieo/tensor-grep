@@ -158,6 +158,8 @@ tg checkpoint create ./src/invoice.py --json
 tg checkpoint list ./src/invoice.py --json
 ```
 
+Checkpoint creation currently requires Windows 11 24H2 or Windows Server 2025 and the `CreateDirectory2W` API. On Linux, macOS, and older Windows systems, the command reports that creation is unsupported before writing checkpoint state.
+
 Before changing the file, inspect the create result. Record its `checkpoint_id`, confirm its scope is the sample file, and read the `undo_command` or `undo_argv` it returned. You can also list the checkpoint as shown above. If you are practicing, make a small change to `invoice.py`, then use the exact ID from that creation result:
 
 ```text

@@ -16,6 +16,7 @@ import pytest
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.checkpoint_store import CheckpointCorruptError
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,6 +31,7 @@ def _make_project(root: Path, files: dict[str, str]) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+@requires_checkpoint_creation
 def test_undo_cleanup_does_not_remove_or_follow_a_directory_symlink(tmp_path: Path) -> None:
     """Round-7 fresh-eyes: the post-undo empty-dir cleanup sweep must skip symlinks.
 
@@ -60,6 +62,7 @@ def test_undo_cleanup_does_not_remove_or_follow_a_directory_symlink(tmp_path: Pa
     )
 
 
+@requires_checkpoint_creation
 def test_undo_commit_failure_restores_a_removed_file(tmp_path: Path, monkeypatch) -> None:
     """Round-7 rank-6: if the commit phase raises AFTER unlinking an extra file, the best-effort
     revert must recreate that file from the bytes snapshotted before unlink -- not lose it.
@@ -74,17 +77,15 @@ def test_undo_commit_failure_restores_a_removed_file(tmp_path: Path, monkeypatch
     extra.write_text("extra-content\n", encoding="utf-8")  # not in snapshot -> removed during undo
     assert extra.exists()
 
-    original_copy2 = checkpoint_store.shutil.copy2
-    resolved_root = root.resolve()
+    target = root / "src" / "a.py"
+    original_publish = checkpoint_store.publish_restored_file
 
-    def _boom_copy2(src, dst, *args, **kwargs):
-        # Fail ONLY the commit-phase swap (dst under the repo root); let staging copies proceed.
-        dst_resolved = Path(dst).resolve()
-        if dst_resolved == resolved_root or resolved_root in dst_resolved.parents:
+    def _boom_publish(root_arg, path, *args, **kwargs):
+        if Path(path) == target:
             raise OSError("simulated commit-phase failure")
-        return original_copy2(src, dst, *args, **kwargs)
+        return original_publish(root_arg, path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _boom_copy2)
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", _boom_publish)
 
     with pytest.raises(Exception):  # noqa: B017 - the commit failure is re-raised by design
         checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
@@ -98,6 +99,7 @@ def test_undo_commit_failure_restores_a_removed_file(tmp_path: Path, monkeypatch
 # ---------------------------------------------------------------------------
 
 
+@requires_checkpoint_creation
 def test_undo_with_missing_snapshot_file_leaves_tree_intact(tmp_path: Path) -> None:
     """Deleting a snapshot blob must prevent any working-tree mutation.
 
@@ -159,6 +161,7 @@ def test_undo_with_missing_snapshot_file_leaves_tree_intact(tmp_path: Path) -> N
     )
 
 
+@requires_checkpoint_creation
 def test_undo_with_missing_snapshot_file_error_is_checkpoint_corrupt_not_file_not_found(
     tmp_path: Path,
 ) -> None:
@@ -195,6 +198,7 @@ def test_undo_with_missing_snapshot_file_error_is_checkpoint_corrupt_not_file_no
         pytest.fail(f"undo raised FileNotFoundError instead of CheckpointCorruptError: {exc}")
 
 
+@requires_checkpoint_creation
 def test_undo_succeeds_when_snapshot_intact(tmp_path: Path) -> None:
     """Baseline: a normal create→mutate→undo roundtrip still works after the fix."""
     root = tmp_path / "repo"
@@ -232,6 +236,7 @@ def test_undo_missing_metadata_raises_file_not_found(tmp_path: Path) -> None:
         checkpoint_store.undo_checkpoint("ckpt-does-not-exist", str(root))
 
 
+@requires_checkpoint_creation
 def test_checkpoint_corrupt_error_message_contains_count_and_path(tmp_path: Path) -> None:
     """CheckpointCorruptError message must identify the first bad file and total count."""
     root = tmp_path / "repo"
@@ -268,6 +273,7 @@ def test_checkpoint_corrupt_error_message_contains_count_and_path(tmp_path: Path
     assert "[Errno" not in msg
 
 
+@requires_checkpoint_creation
 def test_checkpoint_corrupt_error_missing_files_attribute_populated(tmp_path: Path) -> None:
     """CheckpointCorruptError.missing_files must be a non-empty list of rel paths."""
     root = tmp_path / "repo"
@@ -313,6 +319,7 @@ def _read_bytes_raiser(canary_name: str, pristine):
     return fake
 
 
+@requires_checkpoint_creation
 def test_undo_refuses_to_delete_an_unreadable_extra_file(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -340,6 +347,7 @@ def test_undo_refuses_to_delete_an_unreadable_extra_file(tmp_path: Path, monkeyp
     assert extra.read_text(encoding="utf-8") == "extra-content\n", "and unmodified"
 
 
+@requires_checkpoint_creation
 def test_undo_rolls_back_an_already_applied_removal_when_a_later_file_is_unreadable(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -375,6 +383,7 @@ def test_undo_rolls_back_an_already_applied_removal_when_a_later_file_is_unreada
 # ---------------------------------------------------------------------------
 
 
+@requires_checkpoint_creation
 def test_corrupt_checkpoint_reports_its_own_error_code_not_not_found(tmp_path: Path) -> None:
     """The record was FOUND; its snapshot is unusable. Those are different problems.
 
@@ -419,7 +428,8 @@ def test_corrupt_checkpoint_reports_its_own_error_code_not_not_found(tmp_path: P
 
 
 @pytest.mark.parametrize("prior", [b"current user work", b"", None])
-def test_undo_partial_copy_recovers_current_target(tmp_path, monkeypatch, prior):
+@requires_checkpoint_creation
+def test_undo_publication_failure_recovers_current_target(tmp_path, monkeypatch, prior):
     root = tmp_path / "repo"
     root.mkdir()
     _make_project(root, {"a.py": "snapshot"})
@@ -429,18 +439,18 @@ def test_undo_partial_copy_recovers_current_target(tmp_path, monkeypatch, prior)
         target.unlink()
     else:
         target.write_bytes(prior)
-    copy2 = checkpoint_store.shutil.copy2
+    publish = checkpoint_store.publish_restored_file
     failure = OSError("commit partial copy")
     reached = []
 
-    def partial_copy(source, destination, **kwargs):
-        if Path(destination) == target:
+    def fail_after_publish(root_arg, path, *args, **kwargs):
+        if Path(path) == target:
+            publish(root_arg, path, *args, **kwargs)
             reached.append(target)
-            target.write_bytes(b"partial")
             raise failure
-        return copy2(source, destination, **kwargs)
+        return publish(root_arg, path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", partial_copy)
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_after_publish)
     with pytest.raises(OSError) as caught:
         checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
     assert caught.value is failure
@@ -451,6 +461,7 @@ def test_undo_partial_copy_recovers_current_target(tmp_path, monkeypatch, prior)
         assert target.read_bytes() == prior
 
 
+@requires_checkpoint_creation
 def test_undo_success_preserves_snapshot_metadata(tmp_path):
     import os
 
@@ -472,36 +483,37 @@ def test_undo_success_preserves_snapshot_metadata(tmp_path):
     assert target.stat().st_mode == snapshot.stat().st_mode
 
 
-def test_undo_metadata_copy_failure_recovers_bytes(tmp_path, monkeypatch):
+@requires_checkpoint_creation
+def test_undo_metadata_preparation_failure_recovers_bytes(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     root.mkdir()
     _make_project(root, {"a.py": "snapshot"})
     created = checkpoint_store.create_checkpoint(str(root))
     target = root / "a.py"
     target.write_bytes(b"current")
-    # Exercise copy2's portable content-then-metadata path on Windows too.
-    monkeypatch.setattr(checkpoint_store.shutil, "_winapi", None, raising=False)
-    copystat = checkpoint_store.shutil.copystat
+    utime = checkpoint_store.os.utime
     failure = OSError("commit metadata copy")
     reached = []
 
-    def fail_metadata(source, destination, **kwargs):
-        if Path(destination) == target:
-            reached.append(target.read_bytes())
-            raise failure
-        return copystat(source, destination, **kwargs)
+    def fail_metadata(path, *args, **kwargs):
+        if isinstance(path, Path) and path.parent == target.parent:
+            if not reached:
+                reached.append(target.read_bytes())
+                raise failure
+        return utime(path, *args, **kwargs)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copystat", fail_metadata)
+    monkeypatch.setattr(checkpoint_store.os, "utime", fail_metadata)
     with pytest.raises(OSError) as caught:
         checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
     assert caught.value is failure
-    assert reached == [b"snapshot"]
+    assert reached == [b"current"]
     assert target.read_bytes() == b"current"
 
 
 @pytest.mark.parametrize("first_absent", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_undo_later_partial_copy_recovers_prior_mutations(
+@requires_checkpoint_creation
+def test_undo_later_publication_failure_recovers_prior_mutations(
     tmp_path, monkeypatch, first_absent, cleanup_fails
 ):
     root = tmp_path / "repo"
@@ -518,35 +530,44 @@ def test_undo_later_partial_copy_recovers_prior_mutations(
     else:
         later.write_bytes(b"current b")
     extra.write_bytes(b"extra")
-    copy2 = checkpoint_store.shutil.copy2
-    unlink = Path.unlink
-    failure = OSError("later partial copy")
+    publish = checkpoint_store.publish_restored_file
+    failure = OSError("later publication failure")
     reached = []
     cleanup_attempts = []
 
-    def partial_copy(source, destination, **kwargs):
-        destination = Path(destination)
-        if destination in (first, later):
-            reached.append(destination)
+    def fail_later_after_publish(root_arg, path, *args, **kwargs):
+        path = Path(path)
+        if path in (first, later):
+            reached.append(path)
             assert not extra.exists()
-            if destination == later:
+            if path == later:
                 assert first.read_bytes() == b"snapshot a"
-                later.write_bytes(b"partial")
+                publish(root_arg, path, *args, **kwargs)
                 raise failure
-        return copy2(source, destination, **kwargs)
+        return publish(root_arg, path, *args, **kwargs)
 
-    def fail_cleanup(path, *args, **kwargs):
-        if path == later:
-            cleanup_attempts.append(path)
-            raise OSError("cleanup unavailable")
-        return unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", partial_copy)
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_later_after_publish)
     if cleanup_fails:
-        monkeypatch.setattr(Path, "unlink", fail_cleanup)
-    with pytest.raises(OSError) as caught:
-        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
-    assert caught.value is failure
+        from tensor_grep.cli import checkpoint_undo_io
+
+        unlink_with_pinned_parent = checkpoint_undo_io.unlink_with_pinned_parent
+
+        def fail_cleanup(root_arg, path, *args, **kwargs):
+            if Path(path) == later:
+                cleanup_attempts.append(Path(path))
+                raise OSError("cleanup unavailable")
+            return unlink_with_pinned_parent(root_arg, path, *args, **kwargs)
+
+        monkeypatch.setattr(checkpoint_undo_io, "unlink_with_pinned_parent", fail_cleanup)
+
+    if cleanup_fails:
+        with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError) as caught:
+            checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+        assert caught.value.__cause__ is failure
+    else:
+        with pytest.raises(OSError) as caught:
+            checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+        assert caught.value is failure
     assert reached == [first, later]
     assert extra.read_bytes() == b"extra"
     if first_absent:
@@ -555,6 +576,6 @@ def test_undo_later_partial_copy_recovers_prior_mutations(
         assert first.read_bytes() == b"current a"
     if cleanup_fails:
         assert cleanup_attempts == [later]
-        assert later.read_bytes() == b"partial"
+        assert later.read_bytes() == b"snapshot b"
     else:
         assert later.read_bytes() == b"current b"

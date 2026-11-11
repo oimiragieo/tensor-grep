@@ -31,6 +31,8 @@ from typing import Any, cast
 import pytest
 from mcp import types
 
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "src"))
@@ -55,9 +57,9 @@ _DECLARED_SCAN_LIMIT_KEYS = {
 }
 
 # The version in force when the key set above was last reviewed. This is not a "bump me every
-# release" pin -- it moves only when the wire shape changes, which is exactly when a reviewer
+# release" pin -- it moves when the response contract changes, which is exactly when a reviewer
 # should be looking.
-_CONTRACT_AT_LAST_WIRE_REVIEW = "1.20.0"
+_CONTRACT_AT_LAST_WIRE_REVIEW = "1.21.0"
 
 
 @pytest.fixture
@@ -151,6 +153,7 @@ def test_budget_remediable_is_actually_on_the_wire_at_the_declared_contract(
     )
 
 
+@requires_checkpoint_creation
 def test_CheckpointCall_ValidCreateListUndo_EmitsCompleteEnvelope(
     checkpoint_roots: tuple[Path, Path],
 ) -> None:
@@ -218,7 +221,7 @@ def test_CheckpointMeta_ListFailure_ReturnsSanitizedJSONAndLogsDetail(
         == "tg_checkpoint failed due to an internal error (RuntimeError)."
     )
     assert payload["incomplete"] == {"status": False, "cause": None, "budget_remediable": False}
-    assert payload["mcp_contract_version"] == "1.20.0"
+    assert payload["mcp_contract_version"] == _TG_MCP_SERVER_CONTRACT_VERSION
     assert secret_detail not in error_output
     assert secret_detail in captured.err
     assert not (project / ".tensor-grep").exists()
@@ -251,6 +254,7 @@ def test_CheckpointCall_RefusedInput_PreservesErrorAndCompleteness(
     _assert_checkpoint_envelope(payload)
 
 
+@requires_checkpoint_creation
 def test_CheckpointCall_CorruptRealStore_PreservesSanitizedFailureEnvelope(
     checkpoint_roots: tuple[Path, Path],
 ) -> None:
@@ -274,6 +278,7 @@ def test_CheckpointCall_CorruptRealStore_PreservesSanitizedFailureEnvelope(
     _assert_checkpoint_envelope(payload)
 
 
+@requires_checkpoint_creation
 def test_CheckpointCall_MetaAndLegacy_EmitEquivalentCompleteness(
     checkpoint_roots: tuple[Path, Path],
 ) -> None:

@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import platform
 import shutil
@@ -139,6 +140,22 @@ def _run_probe(
     return json.loads(raw)
 
 
+def _repeat_validation_error(
+    name: str,
+    first: dict[str, object],
+    second: dict[str, object],
+    expected_routes: tuple[str, str],
+) -> str | None:
+    if not first.get("matches"):
+        return f"{name} repeated query returned no matches"
+    if first.get("matches") != second.get("matches"):
+        return f"{name} repeated query returned different match counts"
+    routes = (first.get("routing_reason"), second.get("routing_reason"))
+    if routes != expected_routes:
+        return f"{name} repeated query used unexpected routes: {routes!r}"
+    return None
+
+
 def _run_stringzilla_hot_query(
     corpus_path: Path, cache_dir: Path, probe_script: Path
 ) -> dict[str, object]:
@@ -147,7 +164,8 @@ def _run_stringzilla_hot_query(
     env["TENSOR_GREP_STRING_INDEX"] = "1"
     env["TENSOR_GREP_STRING_INDEX_DIR"] = str(cache_dir)
 
-    first_payload = _run_probe(probe_script, corpus_path, "ERROR timeout", env)
+    pattern = "ERROR alpha timeout"
+    first_payload = _run_probe(probe_script, corpus_path, pattern, env)
     if not first_payload.get("available", False):
         missing_dependency = str(first_payload.get("missing_dependency", "stringzilla"))
         return {
@@ -159,9 +177,9 @@ def _run_stringzilla_hot_query(
                 "`uv run --extra bench python benchmarks/run_hot_query_benchmarks.py`"
             ),
         }
-    second_payload = _run_probe(probe_script, corpus_path, "critical path", env)
+    second_payload = _run_probe(probe_script, corpus_path, pattern, env)
 
-    return {
+    row: dict[str, object] = {
         "name": "repeated_fixed_string",
         "first_s": float(first_payload["seconds"]),
         "second_s": float(second_payload["seconds"]),
@@ -169,6 +187,16 @@ def _run_stringzilla_hot_query(
         "second_reason": str(second_payload["routing_reason"]),
         "matches": int(second_payload["matches"]),
     }
+    validation_error = _repeat_validation_error(
+        "repeated_fixed_string",
+        first_payload,
+        second_payload,
+        ("stringzilla_fixed_strings_index", "stringzilla_fixed_strings_index_cache"),
+    )
+    if validation_error is not None:
+        row["status"] = "FAIL"
+        row["validation_error"] = validation_error
+    return row
 
 
 def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -> dict[str, object]:
@@ -177,19 +205,20 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
     env["TENSOR_GREP_CPU_REGEX_INDEX"] = "1"
     env["TENSOR_GREP_CPU_REGEX_INDEX_DIR"] = str(cache_dir)
 
+    pattern = r"ERROR.*timeout"
     first = subprocess.check_output(
-        [sys.executable, str(probe_script), str(corpus_path), r"ERROR.*timeout"],
+        [sys.executable, str(probe_script), str(corpus_path), pattern],
         text=True,
         env=env,
     )
     second = subprocess.check_output(
-        [sys.executable, str(probe_script), str(corpus_path), r"ERROR.*critical"],
+        [sys.executable, str(probe_script), str(corpus_path), pattern],
         text=True,
         env=env,
     )
     first_payload = json.loads(first)
     second_payload = json.loads(second)
-    return {
+    row: dict[str, object] = {
         "name": "repeated_regex_native",
         "first_s": float(first_payload["seconds"]),
         "second_s": float(second_payload["seconds"]),
@@ -197,18 +226,35 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
         "second_reason": second_payload["routing_reason"],
         "matches": int(second_payload["matches"]),
     }
+    validation_error = _repeat_validation_error(
+        "repeated_regex_native",
+        first_payload,
+        second_payload,
+        ("cpu_rust_regex", "cpu_rust_regex"),
+    )
+    if validation_error is not None:
+        row["status"] = "FAIL"
+        row["validation_error"] = validation_error
+    return row
 
 
 def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) -> dict[str, object]:
-    if row.get("status") == "SKIP":
+    from tensor_grep.perf_guard import _validate_regression_threshold
+
+    max_regression_pct = _validate_regression_threshold(max_regression_pct)
+    if row.get("status") in {"SKIP", "FAIL"}:
         return row
     first_s = row.get("first_s")
     second_s = row.get("second_s")
-    if (
-        not isinstance(first_s, (float, int))
-        or not isinstance(second_s, (float, int))
-        or first_s <= 0
-    ):
+    if not isinstance(first_s, (float, int)) or not isinstance(second_s, (float, int)):
+        return {**row, "status": "UNKNOWN"}
+    try:
+        finite_samples = math.isfinite(float(first_s)) and math.isfinite(float(second_s))
+    except OverflowError:
+        finite_samples = False
+    if not finite_samples:
+        return {**row, "status": "FAIL"}
+    if first_s <= 0:
         return {**row, "status": "UNKNOWN"}
 
     improvement_pct = ((float(first_s) - float(second_s)) / float(first_s)) * 100.0
@@ -227,7 +273,7 @@ def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) ->
 
 
 def main() -> int:
-    from tensor_grep.perf_guard import write_json
+    from tensor_grep.perf_guard import _validate_regression_threshold, write_json
 
     parser = argparse.ArgumentParser(description="Benchmark hot repeated-query cache paths.")
     parser.add_argument("--output", type=Path, default=None)
@@ -238,6 +284,10 @@ def main() -> int:
         help="Maximum allowed slowdown for the cached second query relative to the first query.",
     )
     args = parser.parse_args()
+    try:
+        args.max_regression_pct = _validate_regression_threshold(args.max_regression_pct)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     data_dir = resolve_hot_bench_data_dir()
     corpus_path = _prepare_corpus(data_dir)
@@ -253,7 +303,7 @@ def main() -> int:
         _run_cpu_hot_query(corpus_path, data_dir / "cpu-prefilter-cache", probe_script),
     ]
     evaluated_rows = [evaluate_hot_query_row(row, args.max_regression_pct) for row in rows]
-    no_regressions = all(row.get("status") != "FAIL" for row in evaluated_rows)
+    no_regressions = all(row.get("status") in {"PASS", "SKIP"} for row in evaluated_rows)
 
     payload = {
         "artifact": "bench_hot_query_benchmarks",
@@ -287,7 +337,12 @@ def main() -> int:
             if isinstance(row.get("second_s"), (float, int))
             else "   n/a  "
         )
-        reason = str(row.get("second_reason") or row.get("skip_reason") or "n/a")
+        reason = str(
+            row.get("second_reason")
+            or row.get("skip_reason")
+            or row.get("validation_error")
+            or "n/a"
+        )
         print(
             f"{row['name']:35} | {first_value:>9} | {second_value:>9} | "
             f"{row['status']:>6} | {reason}"

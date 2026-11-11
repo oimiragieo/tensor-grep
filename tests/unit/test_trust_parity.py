@@ -6,6 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 from tests.unit.test_cli_modes_shared import (
     _canonical_manifest_bytes,
     _FakeAstPipeline,
@@ -94,6 +95,7 @@ def test_audit_diff_json_uses_standard_envelope(tmp_path: Path) -> None:
     assert right_payload["manifest_sha256"] != parsed_right["manifest_sha256"]
 
 
+@requires_checkpoint_creation
 def test_review_bundle_create_json_uses_standard_envelope(tmp_path: Path) -> None:
     runner = CliRunner()
     _, previous_path, current_path, checkpoint_id = _prepare_review_bundle_fixture(tmp_path)
@@ -123,6 +125,7 @@ def test_review_bundle_create_json_uses_standard_envelope(tmp_path: Path) -> Non
     assert json.loads(bundle_path.read_text(encoding="utf-8")) == payload
 
 
+@requires_checkpoint_creation
 def test_review_bundle_verify_json_uses_standard_envelope(tmp_path: Path) -> None:
     from tensor_grep.cli import audit_manifest
 

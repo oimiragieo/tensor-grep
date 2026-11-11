@@ -3,6 +3,9 @@ use std::fmt::Write as _;
 use std::fs;
 use tempfile::tempdir;
 
+#[path = "index_failure_tests.rs"]
+mod failure_tests;
+
 fn write_test_file(dir: &Path, name: &str, content: &str) {
     fs::write(dir.join(name), content).unwrap();
 }
@@ -656,7 +659,7 @@ fn test_m17_f2_fingerprint_ignores_leftover_index_machinery_files() {
         write_test_file(dir.path(), &format!("f{i:03}.txt"), "same content\n");
     }
     let index = TrigramIndex::build(dir.path()).unwrap();
-    let digest_before = compute_tree_fingerprint(dir.path(), false);
+    let digest_before = compute_tree_fingerprint(dir.path(), false).unwrap();
 
     // Fixture premise: the leftover artifacts must actually be visible to read_dir.
     // This is a read_dir enumeration, not a walk -- the walk-error-discard ratchet
@@ -675,7 +678,7 @@ fn test_m17_f2_fingerprint_ignores_leftover_index_machinery_files() {
     );
 
     assert_eq!(
-        compute_tree_fingerprint(dir.path(), false),
+        compute_tree_fingerprint(dir.path(), false).unwrap(),
         digest_before,
         "the leftover index-machinery files must not change the fingerprint digest"
     );
@@ -694,11 +697,11 @@ fn fingerprint_ignores_top_level_directories() {
     let dir = tempdir().unwrap();
     write_test_file(dir.path(), "keep.txt", "kept\n");
     let index = TrigramIndex::build(dir.path()).unwrap();
-    let digest_before = compute_tree_fingerprint(dir.path(), false);
+    let digest_before = compute_tree_fingerprint(dir.path(), false).unwrap();
 
     fs::create_dir(dir.path().join("added_dir")).unwrap();
     assert_eq!(
-        compute_tree_fingerprint(dir.path(), false),
+        compute_tree_fingerprint(dir.path(), false).unwrap(),
         digest_before,
         "an added empty directory must not change the fingerprint"
     );
@@ -748,11 +751,11 @@ fn fingerprint_ignores_top_level_symlink() {
     let dir = tempdir().unwrap();
     write_test_file(dir.path(), "keep.txt", "kept\n");
     let index = TrigramIndex::build(dir.path()).unwrap();
-    let digest_before = compute_tree_fingerprint(dir.path(), false);
+    let digest_before = compute_tree_fingerprint(dir.path(), false).unwrap();
 
     symlink(dir.path().join("keep.txt"), dir.path().join("link.txt")).unwrap();
     assert_eq!(
-        compute_tree_fingerprint(dir.path(), false),
+        compute_tree_fingerprint(dir.path(), false).unwrap(),
         digest_before,
         "an added top-level symlink must not change the fingerprint"
     );
@@ -1245,7 +1248,7 @@ fn collect_file_entries_honors_root_gitignore_outside_git_repo() {
     write_test_file(dir.path(), "ignoreme.py", "excluded\n");
     write_test_file(dir.path(), "keep.py", "kept\n");
 
-    let names = names_of(&collect_file_entries(dir.path(), false));
+    let names = names_of(&collect_file_entries(dir.path(), false).unwrap());
 
     assert!(
         !names.contains(&"ignoreme.py".to_string()),
@@ -1270,7 +1273,7 @@ fn collect_file_entries_honors_root_gitignore_inside_git_repo() {
     write_test_file(dir.path(), "ignoreme.py", "excluded\n");
     write_test_file(dir.path(), "keep.py", "kept\n");
 
-    let names = names_of(&collect_file_entries(dir.path(), false));
+    let names = names_of(&collect_file_entries(dir.path(), false).unwrap());
 
     assert!(
         !names.contains(&"ignoreme.py".to_string()),
@@ -1290,7 +1293,7 @@ fn collect_file_entries_no_ignore_still_includes_gitignored_file_outside_git_rep
     write_test_file(dir.path(), ".gitignore", "ignoreme.py\n");
     write_test_file(dir.path(), "ignoreme.py", "excluded\n");
 
-    let names = names_of(&collect_file_entries(dir.path(), true));
+    let names = names_of(&collect_file_entries(dir.path(), true).unwrap());
 
     assert!(
         names.contains(&"ignoreme.py".to_string()),

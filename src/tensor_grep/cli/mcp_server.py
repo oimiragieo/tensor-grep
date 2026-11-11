@@ -175,7 +175,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.20.0"  # checkpoint response completeness envelope
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.21.0"  # checkpoint and tg_batch response changes
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

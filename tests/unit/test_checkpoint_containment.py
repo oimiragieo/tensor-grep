@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import checkpoint_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _write_metadata(root: Path, checkpoint_id: str, entries: dict[str, bool]) -> None:
@@ -41,6 +42,7 @@ def _write_metadata(root: Path, checkpoint_id: str, entries: dict[str, bool]) ->
     meta_path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+@requires_checkpoint_creation
 def test_undo_restores_in_root_file_roundtrip(tmp_path: Path) -> None:
     """Baseline: a normal create→modify→undo restores the original content."""
     root = tmp_path / "repo"
@@ -139,6 +141,7 @@ def test_undo_refuses_traversal_checkpoint_id(tmp_path: Path) -> None:
         checkpoint_store.undo_checkpoint("../../evil-ckpt", str(root))
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_does_not_disclose_symlink_target(tmp_path: Path) -> None:
     """Audit HIGH: create_checkpoint followed symlinks, copying the CONTENT of a file OUTSIDE
     the checkpoint root into the snapshot (out-of-root disclosure, and it could re-materialize
@@ -273,10 +276,11 @@ def test_rust_created_dangling_symlink_checkpoint_fails_closed_on_undo(tmp_path:
     assert keep.read_text(encoding="utf-8") == "original in-repo content\n"
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_prunes_to_retention_cap(tmp_path: Path, monkeypatch) -> None:
     """Round-4 DoS: the checkpoint store had no retention cap, so every `tg checkpoint create`
-    copied the whole scope into a new snapshot dir with unbounded disk growth. Retain only the
-    newest TG_CHECKPOINT_MAX; drop older checkpoints (metadata + snapshot) entirely."""
+    copied the whole scope into a new snapshot dir with unbounded disk growth. Bound the index to
+    TG_CHECKPOINT_MAX while retaining older directories whose cleanup ownership is unknown."""
     monkeypatch.setenv("TG_CHECKPOINT_MAX", "3")
     root = tmp_path / "repo"
     root.mkdir()
@@ -292,9 +296,54 @@ def test_create_checkpoint_prunes_to_retention_cap(tmp_path: Path, monkeypatch) 
     assert {r.checkpoint_id for r in records} == set(ids[-3:]), "keep the 3 newest"
 
     for dropped in ids[:-3]:
-        assert not checkpoint_store._checkpoint_dir(root, dropped).exists()  # snapshot removed
+        assert checkpoint_store._checkpoint_dir(root, dropped).exists()  # unowned bytes retained
     for kept in ids[-3:]:
         assert checkpoint_store._checkpoint_dir(root, kept).exists()
+
+
+@requires_checkpoint_creation
+def test_retention_prunes_forged_id_but_preserves_unowned_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A tampered index cannot authorize deletion of a valid-shaped child directory."""
+    monkeypatch.setenv("TG_CHECKPOINT_MAX", "1")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "sample.py").write_text("current = 2\n", encoding="utf-8")
+
+    forged_id = "ckpt-20260101000000-feedface"
+    forged_dir = checkpoint_store._checkpoint_dir(root, forged_id)
+    forged_snapshot = forged_dir / "snapshot"
+    forged_snapshot.mkdir(parents=True)
+    (forged_snapshot / "sample.py").write_text("old = 1\n", encoding="utf-8")
+    _write_metadata(root, forged_id, {"sample.py": True})
+    metadata_before = checkpoint_store._metadata_path(root, forged_id).read_bytes()
+    sentinel = forged_dir / "user-data.bin"
+    sentinel.write_bytes(b"unowned sentinel must survive retention\n")
+    checkpoint_store._write_index(
+        root,
+        [
+            checkpoint_store.CheckpointRecord(
+                version=checkpoint_store._CHECKPOINT_VERSION,
+                checkpoint_id=forged_id,
+                mode="filesystem-snapshot",
+                root=str(root),
+                created_at="2000-01-01T00:00:00+00:00",
+                file_count=1,
+            )
+        ],
+    )
+
+    created = checkpoint_store.create_checkpoint(str(root))
+
+    records = checkpoint_store._load_index(root)
+    assert [record.checkpoint_id for record in records] == [created.checkpoint_id]
+    assert forged_dir.is_dir()
+    assert sentinel.read_bytes() == b"unowned sentinel must survive retention\n"
+    assert checkpoint_store._metadata_path(root, forged_id).read_bytes() == metadata_before
+    assert "directories are retained because the shared index cannot prove cleanup ownership" in (
+        caplog.text
+    )
 
 
 def test_select_retained_checkpoints_prunes_by_created_at_not_insert_position(
@@ -343,6 +392,7 @@ def test_select_retained_checkpoints_prunes_by_created_at_not_insert_position(
         root, records, max_records=2
     )
 
+    assert _dirs_to_delete == []
     retained_ids = {record.checkpoint_id for record in retained}
     # Position-based (buggy) pruning would keep {"oldest", "newest"} (records[:2]).
     # created_at-based (fixed) pruning must keep the two NEWEST: {"newest", "middle"}.
@@ -477,6 +527,7 @@ def test_undo_refuses_source_escape_without_touching_other_valid_entries(tmp_pat
     assert not (root / "subdir" / "secret.txt").exists()
 
 
+@requires_checkpoint_creation
 def test_undo_still_restores_normal_nested_snapshot_after_source_containment_fix(
     tmp_path: Path,
 ) -> None:
@@ -548,19 +599,11 @@ def test_write_json_atomic_overwrite_of_a_regular_file_still_succeeds(tmp_path: 
     assert json.loads(dest.read_text(encoding="utf-8")) == {"new": True}
 
 
-def test_create_checkpoint_refuses_when_metadata_path_is_a_pre_existing_symlink(
+@requires_checkpoint_creation
+def test_create_checkpoint_refuses_existing_checkpoint_id_before_touching_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """End-to-end proof through the real ``create_checkpoint`` entry point (not just the isolated
-    writer): if a symlink is already planted at the checkpoint's metadata.json destination, the
-    create must fail the WHOLE checkpoint closed and never disclose/corrupt the symlink's real
-    (out-of-tree) target -- the exact gap this module's un-hardened copy of the atomic-write
-    pattern had before it was routed through the shared C4 baseline.
-
-    The checkpoint id embeds ``datetime.now(UTC)`` + a random ``uuid4`` hex, so both are pinned
-    here to make the resulting metadata path predictable/plantable in advance, with no race
-    against the real call's own clock/uuid reads.
-    """
+    """A colliding checkpoint id must leave pre-existing metadata and its symlink target intact."""
     root = tmp_path / "repo"
     root.mkdir()
     (root / "file.txt").write_text("hello\n", encoding="utf-8")
@@ -583,12 +626,10 @@ def test_create_checkpoint_refuses_when_metadata_path_is_a_pre_existing_symlink(
     real_target.write_text('{"do-not-touch": true}', encoding="utf-8")
     _symlink_or_skip(metadata_path, real_target)
 
-    with pytest.raises(OSError, match="symlink"):
+    with pytest.raises(FileExistsError):
         checkpoint_store.create_checkpoint(str(root))
 
-    # The real target OUTSIDE the checkpoint tree is never disclosed/corrupted.
+    # Ownership acquisition refuses the existing checkpoint directory before metadata writes.
     assert json.loads(real_target.read_text(encoding="utf-8")) == {"do-not-touch": True}
-    # The existing BaseException cleanup (audit #125a) still fires correctly for this NEW failure
-    # mode: no orphaned partial checkpoint directory is left behind (shutil.rmtree unlinks the
-    # symlink ENTRY it encounters as part of that cleanup; it never follows it into the target).
-    assert not metadata_path.parent.exists()
+    assert metadata_path.is_symlink()
+    assert metadata_path.parent.is_dir()

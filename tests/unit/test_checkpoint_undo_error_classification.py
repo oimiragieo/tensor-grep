@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.main import app
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 @pytest.fixture
@@ -28,6 +29,7 @@ def _undo(root, checkpoint_id):
 
 @pytest.mark.parametrize("failure_type", [OSError, FileNotFoundError])
 @pytest.mark.parametrize("stage", ["metadata", "restore"])
+@requires_checkpoint_creation
 def test_existing_checkpoint_io_failure_is_undo_failed(project, monkeypatch, failure_type, stage):
     created = checkpoint_store.create_checkpoint(str(project))
     target = project / "sample.txt"
@@ -46,15 +48,15 @@ def test_existing_checkpoint_io_failure_is_undo_failed(project, monkeypatch, fai
 
         monkeypatch.setattr(Path, "read_text", fail_read)
     else:
-        copy2 = checkpoint_store.shutil.copy2
+        publish = checkpoint_store.publish_restored_file
 
-        def fail_restore(source, destination, **kwargs):
-            if Path(destination) == target:
+        def fail_restore(root_arg, path, *args, **kwargs):
+            if Path(path) == target:
                 calls.append(target)
                 raise failure
-            return copy2(source, destination, **kwargs)
+            return publish(root_arg, path, *args, **kwargs)
 
-        monkeypatch.setattr(checkpoint_store.shutil, "copy2", fail_restore)
+        monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_restore)
 
     result, payload = _undo(project, created.checkpoint_id)
 
@@ -75,6 +77,7 @@ def test_existing_checkpoint_io_failure_is_undo_failed(project, monkeypatch, fai
 
 @pytest.mark.parametrize("failure_type", [OSError, FileNotFoundError])
 @pytest.mark.parametrize("entrypoint", ["undo", "load", "cli"])
+@requires_checkpoint_creation
 def test_metadata_entry_inspection_preserves_failure_origin(
     project, monkeypatch, failure_type, entrypoint
 ):
@@ -132,6 +135,7 @@ def test_missing_record_retains_not_found_and_library_compatibility(project):
     assert json.loads(result.stdout)["error"] == "checkpoint_not_found"
 
 
+@requires_checkpoint_creation
 def test_missing_snapshot_retains_corrupt_error(project):
     created = checkpoint_store.create_checkpoint(str(project))
     (checkpoint_store._snapshot_path(project, created.checkpoint_id) / "sample.txt").unlink()
@@ -141,6 +145,7 @@ def test_missing_snapshot_retains_corrupt_error(project):
     assert (project / "sample.txt").read_text(encoding="utf-8") == "before"
 
 
+@requires_checkpoint_creation
 def test_unsafe_undo_retains_unsafe_error(project, monkeypatch):
     created = checkpoint_store.create_checkpoint(str(project))
     extra = project / "extra.txt"
@@ -159,6 +164,7 @@ def test_unsafe_undo_retains_unsafe_error(project, monkeypatch):
     assert extra.read_text(encoding="utf-8") == "keep"
 
 
+@requires_checkpoint_creation
 def test_successful_undo_payload_and_restoration_unchanged(project):
     created = checkpoint_store.create_checkpoint(str(project))
     (project / "sample.txt").write_text("after", encoding="utf-8")
@@ -173,6 +179,7 @@ def test_successful_undo_payload_and_restoration_unchanged(project):
 
 
 @pytest.mark.parametrize("missing", [False, True])
+@requires_checkpoint_creation
 def test_mcp_undo_retains_sanitized_error_envelope(project, monkeypatch, missing):
     from tensor_grep.cli import mcp_server
 

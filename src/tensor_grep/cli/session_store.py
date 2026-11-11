@@ -131,18 +131,8 @@ _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 # distinct behavior.
 _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
-# #200 (Backend Fail-Closed / scale-honesty gap): `_serve_session_request_from_payload` serves
-# agent/orient/context_render/context_edit_plan from an ALREADY-CACHED repo_map, so
-# build_repo_map's own --deadline (agent_capsule.DEFAULT_AGENT_CLI_DEADLINE_SECONDS on the cold
-# CLI path) never applies here -- the scan already happened, possibly long ago. Before this fix
-# these 4 warm-daemon branches never threaded ANY wall-clock budget into their builders (`grep -n
-# deadline session_store.py` was ZERO matches), so the DEFAULT (no --deadline flag) warm-daemon
-# request ran fully unbounded. Matches the cold path's own default exactly (a SAFE first cut: a
-# warm response finishing inside 60s, the overwhelming common case, is unaffected; a tighter
-# warm-specific value is a benchmark-gated follow-on, not this fix) so a warm request that
-# genuinely runs long now comes back partial=True/exit-2 instead of blocking the daemon worker
-# forever. See session_daemon.py's _DAEMON_RESPONSE_TIMEOUT_SECONDS comment, which already
-# flagged this exact gap as "tracked" before this fix closed it.
+# Warm daemon handlers use an existing repo map, so CLI build deadlines do not bound their scans.
+# Carry one absolute deadline through rebuild and stale checks to keep each request bounded.
 WARM_DAEMON_DEFAULT_DEADLINE_SECONDS = 60.0
 # audit I2: bound on-disk session retention; keep at most N newest explicit sessions per root
 # so per-open cost and disk usage stay bounded. Configurable via TG_SESSION_MAX.
@@ -798,7 +788,7 @@ def open_session(
     # q10 RMW race: load->mutate->write must be atomic w.r.t. every other writer of this
     # index.json, cross-process and cross-thread, or a concurrent insert can be lost (see
     # _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed Contract).
-    with index_lock(_index_path(root)):
+    with index_lock(_index_path(root), deadline_monotonic=deadline_monotonic):
         records = [existing for existing in _load_index(root) if existing.session_id != session_id]
         records.insert(0, record)
         # audit I2: bound retention so disk and index size do not grow without limit; unlink
@@ -919,7 +909,7 @@ def refresh_session(
     session_path = _session_payload_path(root, session_id)
 
     # Serialize payload and index publication with every other session writer under one lock.
-    with index_lock(_index_path(root)):
+    with index_lock(_index_path(root), deadline_monotonic=deadline_monotonic):
         # Preserve a concurrent prepare only from a still-authenticated session payload.
         current_on_disk = existing
         if session_path.exists():
@@ -1066,9 +1056,17 @@ def _load_session_payload(
     return payload
 
 
-def _session_health_payload(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _session_health_payload(
+    session_id: str,
+    payload: dict[str, Any],
+    *,
+    deadline_monotonic: float | None = None,
+) -> dict[str, Any]:
     repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
-    changeset = _stale_changeset(payload, detect_added_files=False) or _empty_changeset()
+    changeset = (
+        _stale_changeset(payload, detect_added_files=False, deadline_monotonic=deadline_monotonic)
+        or _empty_changeset()
+    )
     stale = _changeset_has_entries(changeset)
     return {
         "version": _SESSION_VERSION,

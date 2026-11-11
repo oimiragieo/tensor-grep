@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import checkpoint_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _init_git_repo(path: Path) -> None:
@@ -103,6 +104,7 @@ def _assert_no_secret_under(root: Path, secret: str) -> None:
             assert secret not in path.read_text(encoding="utf-8", errors="ignore")
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_refuses_junctioned_ancestor_directory(tmp_path: Path) -> None:
     """Windows attack platform: an ANCESTOR junction inside root must be refused on create.
 
@@ -146,6 +148,7 @@ def test_create_checkpoint_refuses_junctioned_ancestor_directory(tmp_path: Path)
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_refuses_symlinked_ancestor_directory(tmp_path: Path) -> None:
     """Unix arm (and git-mode twin): a symlinked ANCESTOR of a TRACKED path must be refused.
 
@@ -182,6 +185,7 @@ def test_create_checkpoint_refuses_symlinked_ancestor_directory(tmp_path: Path) 
         _assert_no_secret_under(storage, "SECRET-OUT-OF-ROOT-VIA-ANCESTOR")
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_normal_ancestor_dirs_still_snapshot(tmp_path: Path) -> None:
     """Control: a NORMAL tree (no link anywhere) must keep snapshotting -- the new ancestor
     guard must not be over-strict."""
@@ -198,6 +202,7 @@ def test_create_checkpoint_normal_ancestor_dirs_still_snapshot(tmp_path: Path) -
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_stores_tracked_leaf_symlink_as_link(tmp_path: Path) -> None:
     """Control (law A38): a legitimately tracked LEAF symlink pointing out of root must be
     stored AS A LINK -- never refused by the ancestor guard, never followed (the guard

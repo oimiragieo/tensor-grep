@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import evidence_receipt
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
@@ -972,6 +973,7 @@ def test_changes_rollback_unavailable_when_manifest_has_no_checkpoint(
     assert receipt["changes"]["rollback"]["status"] == "unavailable"
 
 
+@requires_checkpoint_creation
 def test_standalone_checkpoint_id_without_manifest_still_answers_rollback(
     git_repo: Path,
 ) -> None:

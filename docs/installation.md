@@ -28,10 +28,12 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 
 The script installs `tg` and prints its version. These commands fetch an installer from the mutable `main` branch. For a pinned install, use an exact PyPI version or download a GitHub Release asset and verify its checksum before running it.
 
+The native installers compare downloaded bytes with the release's `CHECKSUMS.txt`. This checks consistency with that manifest; it does not independently authenticate a release or protect against an attacker who can replace both the asset and its checksum. These installers do not verify a release signature.
+
 Managed scripts select uv `0.13.4` and verify each platform archive against the SHA-256
-manifest in `scripts/uv_checksums.json`. A PATH executable is reused only when its reported
-version exactly matches that pin. This refresh removes affected bundled CA trust; existing
+manifest in `scripts/uv_checksums.json`. Only the binary from that verified archive is executed; a PATH executable is not reused. This refresh removes affected bundled CA trust; existing
 pip/uv users should follow the [Python security team's upgrade instructions](https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576).
+The installer keeps this bootstrap binary in its temporary directory and removes it when installation exits; it does not install a separate `uv` or `uvx` command in `~/.local/bin`.
 
 ## Install the Python package
 

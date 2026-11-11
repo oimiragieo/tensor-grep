@@ -87,6 +87,7 @@ def test_tokenless_daemon_request_gets_unauthorized_envelope(tmp_path: Path) -> 
         handler.server = server
         handler.rfile = io.BytesIO(b'{"command":"ping"}\n')
         handler.wfile = io.BytesIO()
+        handler.connection = type("SocketStub", (), {"settimeout": lambda *_: None})()
 
         session_daemon._SessionDaemonHandler.handle(handler)
 
@@ -424,12 +425,17 @@ def test_daemon_request_path_field_cannot_escape_root(tmp_path: Path, monkeypatc
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request: session_id or "session-x",
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+            session_id or "session-x"
+        ),
     )
     monkeypatch.setattr(
         session_daemon,
         "_load_payload_with_status_retry",
-        lambda cache, session_id, path: ({"root": str(root), "repo_map": {}}, "miss"),
+        lambda cache, session_id, path, *, deadline_monotonic=None: (
+            {"root": str(root), "repo_map": {}},
+            "miss",
+        ),
     )
 
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")

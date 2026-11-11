@@ -73,6 +73,7 @@ developer desktop and the CI pytest env. Two engine classes differ between them:
 import asyncio
 import contextlib
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -504,6 +505,8 @@ def _mcp_census_run(
                         out = getattr(mcp_server, tool.name)(**kwargs)
                 else:
                     out = getattr(mcp_server, tool.name)(**kwargs)
+                if inspect.isawaitable(out):
+                    out = asyncio.run(out)
             except Exception as exc:
                 allow = _RAISE_ALLOWLIST.get((tool.name, family_key))
                 if allow is None or not isinstance(exc, allow[0]):

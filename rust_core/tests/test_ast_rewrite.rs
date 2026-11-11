@@ -1128,7 +1128,7 @@ fn test_tg_run_apply_verify_json_is_single_document() {
         .is_empty());
 }
 
-#[test]
+#[cfg_attr(windows, test)]
 fn test_tg_run_apply_verify_json_can_create_checkpoint() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 
@@ -1182,7 +1182,7 @@ fn test_tg_run_apply_verify_json_can_create_checkpoint() {
     assert!(index_path.exists(), "missing {}", index_path.display());
 }
 
-#[test]
+#[cfg_attr(windows, test)]
 fn test_tg_run_apply_checkpoint_for_file_inside_git_repo_stays_file_scoped() {
     if Command::new("git").arg("--version").output().is_err() {
         return;
@@ -1636,7 +1636,7 @@ fn test_tg_run_apply_validation_substitutes_file_placeholder_once_per_file_for_m
     );
 }
 
-#[test]
+#[cfg_attr(windows, test)]
 fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
     let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
