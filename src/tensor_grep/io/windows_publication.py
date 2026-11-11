@@ -16,7 +16,7 @@ from typing import Any
 def _kernel() -> Any:
     if sys.platform != "win32":
         raise OSError("Windows handle publication is unavailable on this platform")
-    return ctypes.WinDLL("kernel32", use_last_error=True)
+    return ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
 
 
 def open_temporary(path: Path, *, restrict_to_sid: str | None = None) -> int:
@@ -62,7 +62,7 @@ def open_temporary(path: Path, *, restrict_to_sid: str | None = None) -> int:
                     ("bInheritHandle", wintypes.BOOL),
                 ]
 
-            adv = ctypes.WinDLL("advapi32", use_last_error=True)
+            adv = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
             convert = adv.ConvertStringSecurityDescriptorToSecurityDescriptorW
             convert.argtypes = [
                 wintypes.LPCWSTR,
@@ -74,22 +74,25 @@ def open_temporary(path: Path, *, restrict_to_sid: str | None = None) -> int:
             if not convert(
                 f"D:P(A;;FA;;;{restrict_to_sid})", 1, ctypes.byref(security_descriptor), None
             ):
-                raise ctypes.WinError(ctypes.get_last_error())
+                raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
             attributes = SecurityAttributes(
                 ctypes.sizeof(SecurityAttributes), security_descriptor, False
             )
             attributes_pointer = ctypes.byref(attributes)
         # GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ, CREATE_NEW, OPEN_REPARSE_POINT.
         handle = create(str(path), 0xC0010000, 1, attributes_pointer, 1, 0x00200080, None)
-        create_error = ctypes.get_last_error()
+        create_error = ctypes.get_last_error()  # type: ignore[attr-defined]
     finally:
         if security_descriptor.value:
             kernel.LocalFree.argtypes = [ctypes.c_void_p]
             kernel.LocalFree(security_descriptor)
     if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(create_error)
+        raise ctypes.WinError(create_error)  # type: ignore[attr-defined]
     try:
-        return msvcrt.open_osfhandle(handle, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        descriptor: int = msvcrt.open_osfhandle(  # type: ignore[attr-defined]
+            handle, os.O_RDWR | getattr(os, "O_BINARY", 0)
+        )
+        return descriptor
     except BaseException:
         try:
             _discard_handle(handle)
@@ -107,10 +110,10 @@ def _set_handle_information(handle: int, kind: int, buffer: Any, size: int) -> N
     set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     set_information.restype = wintypes.BOOL
     if not set_information(handle, kind, buffer, size):
-        code = ctypes.get_last_error()
+        code = ctypes.get_last_error()  # type: ignore[attr-defined]
         if code in (80, 183):
             raise FileExistsError(errno.EEXIST, "confined destination appeared before publication")
-        raise ctypes.WinError(code)
+        raise ctypes.WinError(code)  # type: ignore[attr-defined]
 
 
 def _set_information(descriptor: int, kind: int, buffer: Any, size: int) -> None:
@@ -191,9 +194,11 @@ def unlink_open(
     create.restype = wintypes.HANDLE
     handle = create(str(path), 0x00010080, 3, None, 3, 0x02200000, None)
     if handle == ctypes.c_void_p(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
     try:
-        descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        descriptor: int = msvcrt.open_osfhandle(  # type: ignore[attr-defined]
+            handle, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        )
     except BaseException:
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.CloseHandle(handle)

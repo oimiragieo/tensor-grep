@@ -43,6 +43,36 @@ def test_checkpoint_owner_key_normalizes_extended_drive_and_unc_paths(tmp_path: 
     )
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows directory handle aliases")
+@requires_checkpoint_creation
+def test_checkpoint_owner_accepts_only_same_directory_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    owner = checkpoint_directory.CheckpointDirectoryOwner(root)
+    original_key = checkpoint_directory.CheckpointDirectoryOwner._key
+    alias = Path(str(root).upper())
+    alias_spelling = str(alias)
+
+    def alias_key(path: Path) -> str:
+        key = original_key(path)
+        return f"alias:{key}" if str(path) == alias_spelling else key
+
+    monkeypatch.setattr(
+        checkpoint_directory.CheckpointDirectoryOwner, "_key", staticmethod(alias_key)
+    )
+    try:
+        owner.assert_pinned(alias)
+        assert owner.identity(alias) == owner.identity(root)
+        with pytest.raises(OSError, match="outside the pinned input path chain"):
+            owner.assert_pinned(outside)
+    finally:
+        owner.close()
+
+
 @pytest.mark.checkpoint_creation
 @requires_checkpoint_creation
 @pytest.mark.skipif(os.name != "nt", reason="Windows directory handles deny rename while pinned")

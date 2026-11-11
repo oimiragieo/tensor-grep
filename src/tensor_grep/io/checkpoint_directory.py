@@ -33,7 +33,7 @@ _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 def _kernel() -> Any:
     if os.name != "nt":
         raise OSError(errno.ENOTSUP, "Windows checkpoint directory handles are unavailable")
-    return ctypes.WinDLL("kernel32", use_last_error=True)
+    return ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
 
 
 def _create_directory2(kernel: Any | None = None) -> Any | None:
@@ -226,8 +226,29 @@ class CheckpointDirectoryOwner:
 
     def assert_pinned(self, path: Path) -> None:
         """Require a discovered checkpoint scope to belong to the already-pinned input chain."""
-        if self._key(path) not in self._handles:
-            raise OSError(f"checkpoint scope root is outside the pinned input path chain: {path}")
+        key = self._key(path)
+        if key in self._handles:
+            return
+        if os.name == "nt":
+            try:
+                chain = self._ancestor_chain(path)
+                aliases: list[tuple[str, tuple[int, tuple[int, int]]]] = []
+                for directory, pinned_key in zip(chain, self._order, strict=False):
+                    info = directory.lstat()
+                    if (
+                        not stat.S_ISDIR(info.st_mode)
+                        or getattr(info, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT
+                        or (info.st_dev, info.st_ino) != self._handles[pinned_key][1]
+                    ):
+                        break
+                    aliases.append((self._key(directory), self._handles[pinned_key]))
+                else:
+                    self._handles.update(aliases)
+                    if key in self._handles:
+                        return
+            except OSError:
+                pass
+        raise OSError(f"checkpoint scope root is outside the pinned input path chain: {path}")
 
     @property
     def created_paths(self) -> tuple[Path, ...]:
@@ -257,10 +278,15 @@ class CheckpointDirectoryOwner:
 
         try:
             descriptor_flags = os.O_RDONLY if flags is None else flags
-            return msvcrt.open_osfhandle(handle, descriptor_flags | getattr(os, "O_BINARY", 0))
+            descriptor: int = msvcrt.open_osfhandle(  # type: ignore[attr-defined]
+                handle, descriptor_flags | getattr(os, "O_BINARY", 0)
+            )
+            return descriptor
         except BaseException as original_error:
             if not self._close_handle(handle):
-                raise ctypes.WinError(ctypes.get_last_error()) from original_error
+                raise ctypes.WinError(  # type: ignore[attr-defined]
+                    ctypes.get_last_error()  # type: ignore[attr-defined]
+                ) from original_error
             raise
 
     def open_existing(self, path: Path) -> tuple[int, int]:
@@ -292,7 +318,7 @@ class CheckpointDirectoryOwner:
             None,
         )
         if handle in (None, _INVALID_HANDLE_VALUE):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         identity = self._remember(path, handle)
         if identity != (before.st_dev, before.st_ino):
             raise OSError(f"checkpoint parent identity changed while opening: {path}")
@@ -322,7 +348,7 @@ class CheckpointDirectoryOwner:
             None,
         )
         if handle in (None, _INVALID_HANDLE_VALUE):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         self._created_paths.append(path)
         identity = self._remember(path, handle)
         first_fd = self._handles[key][0]
@@ -336,7 +362,7 @@ class CheckpointDirectoryOwner:
             None,
         )
         if second_handle in (None, _INVALID_HANDLE_VALUE):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         second_fd = self._descriptor(second_handle)
         try:
             info = os.fstat(second_fd)
@@ -507,7 +533,7 @@ class CheckpointDirectoryOwner:
             None,
         )
         if handle in (None, _INVALID_HANDLE_VALUE):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         descriptor = self._descriptor(handle)
         try:
             opened = os.fstat(descriptor)
@@ -563,7 +589,7 @@ class CheckpointDirectoryOwner:
         )
         if destination_handle in (None, _INVALID_HANDLE_VALUE):
             os.close(source_descriptor)
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         try:
             destination_descriptor = self._descriptor(destination_handle, os.O_WRONLY)
         except BaseException:
