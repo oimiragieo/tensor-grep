@@ -22,14 +22,14 @@ class ManagedWindowsUpgradeError(RuntimeError):
 def run_upgrade(
     attempts: list[tuple[str, list[str]]],
 ) -> tuple[subprocess.CompletedProcess[str], str]:
-    from tensor_grep.cli.runtime_paths import trusted_which
+    from tensor_grep.cli.runtime_paths import resolve_executable_path
 
     errors: list[str] = []
     cwd = str(Path(sys.executable).parent)
     for label, cmd in attempts:
         try:
             if not Path(cmd[0]).is_absolute():
-                executable = trusted_which(cmd[0])
+                executable = resolve_executable_path(cmd[0])
                 if executable is None:
                     raise FileNotFoundError(cmd[0])
                 cmd = [executable, *cmd[1:]]

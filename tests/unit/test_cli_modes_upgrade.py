@@ -36,10 +36,10 @@ def _upgrade_test_uses_external_python_by_default(
         cli_main._native_frontdoor, "managed_windows_install_root", lambda _path: None
     )
     trusted_uv = str(tmp_path / "trusted-tools" / "uv.exe")
-    real_which = runtime_paths.trusted_which
+    real_which = runtime_paths.resolve_executable_path
     monkeypatch.setattr(
         runtime_paths,
-        "trusted_which",
+        "resolve_executable_path",
         lambda name: trusted_uv if name == "uv" else real_which(name),
     )
 

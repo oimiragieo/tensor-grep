@@ -599,7 +599,7 @@ def gpu_probe_timeout_s(
     return default_s
 
 
-def trusted_which(binary_name: str) -> str | None:
+def resolve_executable_path(binary_name: str) -> str | None:
     import shutil
 
     cwd = Path.cwd().resolve()
@@ -634,7 +634,7 @@ def resolve_ripgrep_binary() -> Path | None:
     # Priority 2: PATH. For explicit rg-compatible passthrough, prefer the same rg that
     # caller gets from the shell so JSON event ordering and version-specific behavior
     # match the user's baseline. Bundled rg remains the fallback when PATH has none.
-    if which_rg := trusted_which(binary_name):
+    if which_rg := resolve_executable_path(binary_name):
         return Path(which_rg).resolve()
 
     # Priority 3: In-tree bundled binary

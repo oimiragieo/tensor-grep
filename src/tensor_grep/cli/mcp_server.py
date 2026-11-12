@@ -2187,7 +2187,7 @@ def tg_session_edit_plan(
 
         # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2290,7 +2290,7 @@ def tg_session_context_render(
 
         # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2382,7 +2382,7 @@ def tg_session_blast_radius(
 
         # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2476,7 +2476,7 @@ def tg_session_file_importers(
         # confinement below to cwd) is deliberate: it keeps a legitimate relative `file` working
         # when session_root != cwd -- see the comment on the file confinement immediately below.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2594,7 +2594,7 @@ def tg_session_blast_radius_render(
 
         # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2707,7 +2707,7 @@ def tg_session_blast_radius_plan(
 
         # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -4064,7 +4064,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_exception_payload(
                 session_id=session_id,
@@ -4104,7 +4104,7 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_exception_payload(
                 session_id=session_id,
@@ -4154,7 +4154,7 @@ def tg_session_context(
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_session_path(path))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,

@@ -10648,9 +10648,10 @@ def _is_uv_tool_managed_python(executable: str) -> bool:
 
 
 def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
-    from tensor_grep.cli.runtime_paths import trusted_which
+    from tensor_grep.cli import runtime_paths
 
-    uv = trusted_which("uv")
+    uv = runtime_paths.resolve_executable_path("uv")
+    uv_prefix = [uv, "--no-config"] if uv else []
     pip_cmd = [
         sys.executable,
         "-m",
@@ -10667,7 +10668,7 @@ def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
             (
                 "uv",
                 [
-                    uv,
+                    *uv_prefix,
                     "pip",
                     "install",
                     "--python",
@@ -10679,9 +10680,8 @@ def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
                 ],
             ),
         )
-    # Route its isolated venv through the uv-tool front door.
     if uv and _is_uv_tool_managed_python(sys.executable):
-        attempts.insert(0, ("uv-tool", [uv, "tool", "install", "--force", package_spec]))
+        attempts.insert(0, ("uv-tool", [*uv_prefix, "tool", "install", "--force", package_spec]))
     return attempts
 
 
@@ -11384,7 +11384,7 @@ def upgrade() -> None:
                 expected_version = latest_version
             else:
                 package_spec = "tensor-grep"
-            native_path = _managed_native_frontdoor_path()
+            native_path = _self._managed_native_frontdoor_path()
             path_order_message = (
                 _self._ensure_windows_managed_native_first_on_path(native_path)
                 if native_path is not None

@@ -321,7 +321,8 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
 Executable discovery excludes the current directory and its descendants from automatic PATH
 lookup for ripgrep and the AST wrapper. `TG_RG_PATH` remains an explicit ripgrep override.
 Package upgrades resolve tools to absolute PATH candidates and run from the interpreter
-folder, so a repository-local `uv.exe` or `uv.toml` is not selected implicitly.
+folder. UV attempts also use `--no-config`, preventing repository `uv.toml` discovery
+even when the interpreter lives in that repository's virtual environment.
 
 ## 5. Operational diagnostics (`tg doctor --json`)
 `tg doctor --json` is intended for operational automation and support workflows.

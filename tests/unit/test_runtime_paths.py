@@ -552,7 +552,9 @@ def test_resolve_ripgrep_binary_prefers_path_rg_before_bundled(monkeypatch, tmp_
     assert resolve_ripgrep_binary() == path_rg.resolve()
 
 
-def test_trusted_which_rejects_candidate_resolving_into_cwd_and_continues(tmp_path, monkeypatch):
+def test_resolve_executable_path_rejects_candidate_resolving_into_cwd_and_continues(
+    tmp_path, monkeypatch
+):
     repo = tmp_path / "repo"
     first = tmp_path / "first"
     second = tmp_path / "second"
@@ -571,7 +573,7 @@ def test_trusted_which_rejects_candidate_resolving_into_cwd_and_continues(tmp_pa
         return str(planted) if candidate == str(first / "uv.exe") else str(trusted)
 
     monkeypatch.setattr(shutil, "which", which)
-    assert runtime_paths.trusted_which("uv.exe") == str(trusted)
+    assert runtime_paths.resolve_executable_path("uv.exe") == str(trusted)
     assert candidates == [str(first / "uv.exe"), str(trusted)]
 
 
