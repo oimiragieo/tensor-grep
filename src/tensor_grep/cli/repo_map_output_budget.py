@@ -67,18 +67,19 @@ def apply_repo_map_output_limits(
     original_tests = [str(current) for current in payload.get("tests", [])]
     selected_tests = original_tests[:normalized_max_files]
     selected_test_set = set(selected_tests)
+    selected_paths = selected_file_set | selected_test_set
 
     limited["files"] = selected_files
     limited["tests"] = selected_tests
     limited["symbols"] = [
         dict(symbol)
         for symbol in payload.get("symbols", [])
-        if str(symbol.get("file", "")) in selected_file_set
+        if str(symbol.get("file", "")) in selected_paths
     ]
     limited["imports"] = [
         dict(entry)
         for entry in payload.get("imports", [])
-        if str(entry.get("file", "")) in selected_file_set
+        if str(entry.get("file", "")) in selected_paths
     ]
     for key in ("file_matches", "file_summaries", "sources"):
         if key in payload:

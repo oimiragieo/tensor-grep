@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.io.file_types import TYPE_ALIASES, TYPE_EXTENSIONS
 
 # perf (+10% campaign #6 / F2.4): the 5 broad-scan-guard constants below (plus the private
 # `_GENERATED_DIR_NAMES` skip-list they're partly derived from) are now DEFINED in
@@ -230,6 +231,21 @@ class DirectoryScanner:
             self.unreadable_path_sample.append(str(offending_path))
 
     def walk(self, path_str: str) -> Iterator[str]:
+        from tensor_grep.core.pipeline import ConfigurationError
+
+        for option in ("iglob", "type_add", "type_clear"):
+            if getattr(self.config, option):
+                raise ConfigurationError(
+                    f"--{option.replace('_', '-')} is not supported by the Python scanner"
+                )
+        for option in ("file_type", "type_not"):
+            flag = "--type" if option == "file_type" else "--type-not"
+            for type_name in getattr(self.config, option) or ():
+                if type_name not in TYPE_EXTENSIONS and type_name not in TYPE_ALIASES:
+                    raise ConfigurationError(
+                        f"{flag} type {type_name!r} is not supported by the Python scanner"
+                    )
+
         base_path = Path(path_str)
 
         if not base_path.exists():
@@ -334,6 +350,7 @@ class DirectoryScanner:
     def _should_include_file(self, file_path: Path, relative_path: Path | None = None) -> bool:
         # Check explicit globs
         if self.config.glob:
+            saw_include = False
             matched_glob = False
             candidates = [file_path.name, str(file_path), file_path.as_posix()]
             if relative_path is not None:
@@ -344,6 +361,7 @@ class DirectoryScanner:
                 # Simplistic handling: if it starts with !, it's an exclusion
                 is_exclude = g.startswith("!")
                 pattern = g[1:] if is_exclude else g
+                saw_include = saw_include or not is_exclude
                 if self.config.glob_case_insensitive:
                     pattern = pattern.lower()
 
@@ -353,7 +371,7 @@ class DirectoryScanner:
                     matched_glob = True
 
             # If globs were provided and none matched, exclude
-            if not matched_glob:
+            if saw_include and not matched_glob:
                 return False
 
         # Check explicit types (extensions)
@@ -361,7 +379,7 @@ class DirectoryScanner:
             matched_type = False
             ext = file_path.suffix.lstrip(".")
             for t in self.config.file_type:
-                if ext == t:
+                if ext in TYPE_EXTENSIONS.get(TYPE_ALIASES.get(t, t), ()):
                     matched_type = True
                     break
             if not matched_type:
@@ -370,7 +388,7 @@ class DirectoryScanner:
         if self.config.type_not:
             ext = file_path.suffix.lstrip(".")
             for t in self.config.type_not:
-                if ext == t:
+                if ext in TYPE_EXTENSIONS.get(TYPE_ALIASES.get(t, t), ()):
                     return False
 
         return True
