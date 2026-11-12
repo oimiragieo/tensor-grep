@@ -25,8 +25,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tensor_grep.cli._index_lock import WriteAuthorization, write_authorizations
 from tensor_grep.cli.incompleteness import disclosed_incomplete
 from tensor_grep.cli.mcp_arg_validation import unsupported_ast_language_message
+from tensor_grep.cli.mcp_artifact_guard import (
+    _authorize_artifact_write_path as _authorize_artifact_write_path,
+)
 
 if TYPE_CHECKING:
     from tensor_grep.cli import mcp_server as _self
@@ -1004,27 +1008,18 @@ def execute_rewrite_apply_json(
     pattern = _restore_variadic_metavar_escaping(pattern)
     replacement = _restore_variadic_metavar_escaping(replacement)
 
-    # round-5 security: confine audit_manifest to cwd (the sibling precedent for a general
-    # audit artifact — tg_review_bundle_create's output_path, not the rewrite scan root) and
-    # consume the RESOLVED absolute path so the native subprocess argv (see
-    # _build_rewrite_command below) carries the anchor-validated location, not the raw
-    # candidate. Without this the validated path is discarded (TOCTOU) and the native binary
-    # independently re-resolves the unconfined raw string against its own cwd.
-    # NOTE (tracked follow-up, Part C of this fix): this Python-side confinement closes the
-    # anchor-mismatch/discard TOCTOU (validated-location == written-location) and refuses an
-    # escaping path before the native subprocess is ever spawned. It does NOT close the
-    # narrower cross-process symlink-swap window: between this resolve() and the moment the
-    # native Rust binary's write_audit_manifest_for_plan actually opens the resolved path
-    # (rust_core/src/main.rs, ~6746-6838), a symlink could in principle be swapped in at the
-    # final path component. Closing that residual window requires the Rust side to refuse via
-    # symlink_metadata()+O_NOFOLLOW at the point the bytes hit disk (rust_core/src/main.rs is
-    # explicitly out of scope for this PR — see deviations). This Python confinement is
-    # defense-in-depth and the user-facing early error, not a full closure on its own.
+    # Validate the named destination before checkpoint creation or native execution. The Rust
+    # writer does not consume Python WriteAuthorization, so a native symlink/no-clobber race remains.
+    manifest_auth: WriteAuthorization | None = None
     if audit_manifest is not None:
         try:
-            audit_manifest = str(
-                _confine_write_path(audit_manifest, _mcp_root(), label="audit_manifest")
+            resolved_manifest, manifest_auth = _authorize_artifact_write_path(
+                audit_manifest,
+                _mcp_root(),
+                label="audit_manifest",
+                allowed_kinds=frozenset({"rewrite-audit-manifest"}),
             )
+            audit_manifest = str(resolved_manifest)
         except PathConfinementError as exc:
             return _rewrite_error(str(exc), code="invalid_input"), 1
         except ValueError as exc:
@@ -1209,7 +1204,10 @@ def execute_rewrite_apply_json(
             test_cmd=None if loaded_policy is not None else test_cmd,
             native_binary=native_tg,
         )
-        rewrite_json = _execute_rewrite_json_command(command)
+        # Keep the authorization bound for Python writers reached during execution; it cannot
+        # constrain the separate Rust process that writes the manifest.
+        with write_authorizations([manifest_auth] if manifest_auth is not None else []):
+            rewrite_json = _execute_rewrite_json_command(command)
     rewrite_payload = json.loads(rewrite_json)
     if checkpoint_payload is not None:
         rewrite_payload["checkpoint"] = checkpoint_payload

@@ -599,10 +599,30 @@ def gpu_probe_timeout_s(
     return default_s
 
 
-@lru_cache(maxsize=1)
-def resolve_ripgrep_binary() -> Path | None:
+def trusted_which(binary_name: str) -> str | None:
     import shutil
 
+    cwd = Path.cwd().resolve()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        path_dir = Path(directory or os.curdir).expanduser()
+        try:
+            path_dir = path_dir.resolve()
+        except OSError:
+            continue
+        if path_dir == cwd or cwd in path_dir.parents:
+            continue
+        if candidate := shutil.which(str(path_dir / binary_name)):
+            try:
+                resolved = Path(candidate).resolve()
+            except (OSError, RuntimeError):
+                continue
+            if resolved != cwd and cwd not in resolved.parents:
+                return str(resolved)
+    return None
+
+
+@lru_cache(maxsize=1)
+def resolve_ripgrep_binary() -> Path | None:
     binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
 
     # Priority 1: Explicit override
@@ -614,7 +634,7 @@ def resolve_ripgrep_binary() -> Path | None:
     # Priority 2: PATH. For explicit rg-compatible passthrough, prefer the same rg that
     # caller gets from the shell so JSON event ordering and version-specific behavior
     # match the user's baseline. Bundled rg remains the fallback when PATH has none.
-    if which_rg := shutil.which(binary_name):
+    if which_rg := trusted_which(binary_name):
         return Path(which_rg).resolve()
 
     # Priority 3: In-tree bundled binary
