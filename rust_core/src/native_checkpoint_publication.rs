@@ -25,6 +25,10 @@ use super::{CheckpointIndexRecord, CheckpointMetadata};
 #[cfg(windows)]
 use tensor_grep_rs::safe_write::{AnchoredDirectory, AnchoredTarget, AtomicPublishError};
 
+// 64 default retained records get 256 KiB each, with room for unknown JSON fields.
+#[cfg(windows)]
+const MAX_CHECKPOINT_INDEX_BYTES: u64 = 16 * 1024 * 1024;
+
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CheckpointArtifact {
@@ -160,7 +164,9 @@ where
                 .map_err(|err| anyhow::anyhow!("could not lock {}: {err}", index_path.display()))?;
         storage_dir.validate_current()?;
         let index_target = storage_dir.target(OsStr::new("index.json"))?;
-        let mut records: Vec<serde_json::Value> = match index_target.read() {
+        let mut records: Vec<serde_json::Value> = match index_target
+            .read_bounded(MAX_CHECKPOINT_INDEX_BYTES)
+        {
             Ok(bytes) => {
                 let _: Vec<CheckpointIndexRecord> = serde_json::from_slice(&bytes)
                     .with_context(|| format!("failed to parse {}", index_path.display()))?;

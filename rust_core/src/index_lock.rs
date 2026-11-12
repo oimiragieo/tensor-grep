@@ -17,7 +17,7 @@ use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -48,6 +48,8 @@ pub const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(10);
 pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(12);
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+// The pid and 32-hex ownership token fit comfortably below this bound.
+const MAX_LOCK_METADATA_BYTES: u64 = 4 * 1024;
 
 /// Bound on how long [`IndexLockGuard`]'s drop waits for the heartbeat thread to acknowledge a
 /// stop signal before giving up on it and releasing the lock anyway -- mirrors
@@ -189,10 +191,23 @@ struct LockLocation {
 }
 
 fn token_for_lock(location: &LockLocation) -> Option<String> {
-    let content = match &location.target {
-        Some(target) => String::from_utf8(target.read().ok()?).ok()?,
-        None => std::fs::read_to_string(&location.path).ok()?,
+    let bytes = match &location.target {
+        Some(target) => target.read_bounded(MAX_LOCK_METADATA_BYTES).ok()?,
+        None => {
+            let file = File::open(&location.path).ok()?;
+            if file.metadata().ok()?.len() > MAX_LOCK_METADATA_BYTES {
+                return None;
+            }
+            let read_limit = MAX_LOCK_METADATA_BYTES.checked_add(1)?;
+            let mut bytes = Vec::new();
+            file.take(read_limit).read_to_end(&mut bytes).ok()?;
+            if bytes.len() as u64 > MAX_LOCK_METADATA_BYTES {
+                return None;
+            }
+            bytes
+        }
     };
+    let content = String::from_utf8(bytes).ok()?;
     let mut lines = content.lines();
     let _pid_line = lines.next()?;
     let token_line = lines.next()?;
@@ -692,6 +707,38 @@ mod tests {
             !lock_path.exists(),
             "lock file must be removed after the guard drops"
         );
+    }
+
+    #[test]
+    fn oversized_lock_metadata_is_not_ownership_evidence() {
+        let dir = tempdir().unwrap();
+        for (name, anchored) in [("anchored.lock", true), ("legacy.lock", false)] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"123\nsmall-token\n").unwrap();
+            let target = anchored.then(|| Arc::new(AnchoredTarget::open(&path).unwrap()));
+            let location = LockLocation {
+                path: path.clone(),
+                target,
+            };
+            assert_eq!(token_for_lock(&location).as_deref(), Some("small-token"));
+
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&vec![b'x'; MAX_LOCK_METADATA_BYTES as usize])
+                .unwrap();
+            drop(file);
+            let oversized = std::fs::read(&path).unwrap();
+            assert!(oversized.len() as u64 > MAX_LOCK_METADATA_BYTES);
+            assert_eq!(token_for_lock(&location), None);
+
+            let mut removal_check_ran = false;
+            release_lock_with(&location, "small-token", || {
+                removal_check_ran = true;
+                Ok(())
+            })
+            .unwrap();
+            assert!(!removal_check_ran);
+            assert_eq!(std::fs::read(&path).unwrap(), oversized);
+        }
     }
 
     #[test]

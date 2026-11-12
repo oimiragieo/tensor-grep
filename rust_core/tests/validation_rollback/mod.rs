@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
+use tensor_grep_rs::backend_ast::MAX_REWRITE_FILE_BYTES;
 
 fn try_symlink_file(target: &Path, link: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
@@ -56,6 +57,40 @@ fn validation_rollback_refuses_leaf_symlink_and_restores_regular_file() {
     let summary = restore_validation_rollback_snapshots(&snapshots);
     assert!(!summary.success);
     assert_eq!(std::fs::read(&sentinel).unwrap(), b"OUTSIDE_SENTINEL");
+}
+
+#[test]
+fn validation_rollback_snapshot_refuses_same_inode_growth_above_rewrite_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("fixture.py");
+    std::fs::write(&file, "def add(x, y): return x + y\n").unwrap();
+    let plan = AstBackend::new()
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file.to_str().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(plan.edits.len(), 1);
+    let positive_control = collect_validation_rollback_snapshots(&plan.edits).unwrap();
+    assert_eq!(positive_control.len(), 1);
+    drop(positive_control);
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_len(MAX_REWRITE_FILE_BYTES + 1)
+        .unwrap();
+    let error = collect_validation_rollback_snapshots(&plan.edits)
+        .err()
+        .expect("rollback snapshot must refuse content grown past the rewrite limit");
+    assert!(format!("{error:#}").contains("read limit"), "{error:#}");
+    assert_eq!(
+        std::fs::metadata(&file).unwrap().len(),
+        MAX_REWRITE_FILE_BYTES + 1
+    );
 }
 
 #[test]

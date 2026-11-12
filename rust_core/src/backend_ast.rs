@@ -21,7 +21,8 @@ mod anchored_apply;
 
 const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
 const BINARY_SCAN_BYTES: usize = 8192;
-const MAX_REWRITE_FILE_BYTES: u64 = 100 * 1024 * 1024;
+/// Maximum source-file size read by native rewrite planning and apply paths.
+pub const MAX_REWRITE_FILE_BYTES: u64 = 100 * 1024 * 1024;
 const PAR_SORT_EDIT_THRESHOLD: usize = 512;
 
 struct RewriteSource {
@@ -1369,7 +1370,7 @@ fn load_rewrite_source(
     }
 
     let bytes = target
-        .read()
+        .read_bounded(MAX_REWRITE_FILE_BYTES)
         .with_context(|| format!("failed to read source file {}", file.display()))?;
     if has_binary_bytes(&bytes) {
         return Ok(None);
@@ -2048,6 +2049,19 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn rewrite_source_skips_files_over_the_existing_size_limit() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("large.py");
+        fs::File::create(&file)
+            .unwrap()
+            .set_len(MAX_REWRITE_FILE_BYTES + 1)
+            .unwrap();
+        let target = crate::safe_write::AnchoredTarget::open(&file).unwrap();
+
+        assert!(load_rewrite_source(&file, &target).unwrap().is_none());
     }
 
     #[test]

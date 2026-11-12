@@ -1,7 +1,7 @@
 use super::{
     apply_edits_to_file_with_writer, apply_grouped_edit_files_with_reader, group_edits_by_file,
     planned_mtime_ns_for_file, system_time_to_unix_nanos, ApplyExecution, OverlapRejection,
-    PerFileRewriteOutcome, RewriteEdit,
+    PerFileRewriteOutcome, RewriteEdit, MAX_REWRITE_FILE_BYTES,
 };
 use crate::safe_write::AnchoredTarget;
 use anyhow::{Context, Result};
@@ -29,12 +29,14 @@ pub(super) fn apply_edit_set_with_targets(
             let target = targets
                 .get(file)
                 .with_context(|| format!("no retained rewrite target for {}", file.display()))?;
-            let bytes = target.read().with_context(|| {
-                format!(
-                    "failed to read {} through its retained target",
-                    file.display()
-                )
-            })?;
+            let bytes = target
+                .read_bounded(MAX_REWRITE_FILE_BYTES)
+                .with_context(|| {
+                    format!(
+                        "failed to read {} through its retained target",
+                        file.display()
+                    )
+                })?;
             let source = String::from_utf8(bytes)
                 .map_err(|error| anyhow::anyhow!("invalid UTF-8 in {}: {error}", file.display()))?;
             Ok(source)

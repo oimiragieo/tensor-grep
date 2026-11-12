@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(test)]
 use tensor_grep_rs::backend_ast::AstBackend;
+use tensor_grep_rs::backend_ast::MAX_REWRITE_FILE_BYTES;
 use tensor_grep_rs::safe_write::AnchoredTarget;
 
 #[derive(Debug, Clone, Serialize)]
@@ -31,9 +32,11 @@ pub(super) fn collect_validation_rollback_snapshots(
         .collect::<std::collections::BTreeSet<_>>()
     {
         let target = Arc::new(AnchoredTarget::open(&file)?);
-        let bytes = target.read().with_context(|| {
-            format!("failed to read {} for validation rollback", file.display())
-        })?;
+        let bytes = target
+            .read_bounded(MAX_REWRITE_FILE_BYTES)
+            .with_context(|| {
+                format!("failed to read {} for validation rollback", file.display())
+            })?;
         snapshots.insert(
             file.to_string_lossy().to_string(),
             ValidationRollbackSnapshot {

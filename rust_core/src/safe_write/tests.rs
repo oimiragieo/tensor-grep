@@ -148,6 +148,28 @@ fn atomic_publication_replaces_regular_file_and_reports_visible_commit() {
 }
 
 #[test]
+fn anchored_bounded_read_accepts_at_limit_and_refuses_oversized_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let accepted = dir.path().join("accepted.json");
+    std::fs::write(&accepted, b"exact").unwrap();
+    assert_eq!(
+        AnchoredTarget::open(&accepted)
+            .unwrap()
+            .read_bounded(5)
+            .unwrap(),
+        b"exact"
+    );
+
+    let oversized = dir.path().join("oversized.json");
+    std::fs::write(&oversized, b"one byte over").unwrap();
+    let error = AnchoredTarget::open(&oversized)
+        .unwrap()
+        .read_bounded(12)
+        .expect_err("bounded read must refuse content above its limit");
+    assert!(format!("{error:#}").contains("read limit"));
+}
+
+#[test]
 fn atomic_new_publication_refuses_an_existing_leaf_without_changing_valid_json() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("metadata.json");

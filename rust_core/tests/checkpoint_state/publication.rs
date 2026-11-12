@@ -1,6 +1,6 @@
 use super::create_checkpoint;
 #[cfg(windows)]
-use super::{create_checkpoint_with_publisher, CheckpointArtifact};
+use super::{create_checkpoint_with_publisher, CheckpointArtifact, MAX_CHECKPOINT_INDEX_BYTES};
 use std::fs;
 #[cfg(windows)]
 use std::io::{BufRead, BufReader, Read, Write};
@@ -131,6 +131,34 @@ fn successful_publication_keeps_snapshot_metadata_and_prior_record_consistent() 
     }
     #[cfg(not(unix))]
     assert!(fs::read(index_path(&root)).unwrap().len() > original.len());
+}
+
+#[cfg(windows)]
+#[test]
+fn oversized_checkpoint_catalog_is_refused_without_changing_visible_state() {
+    let (_dir, root, file) = project();
+    let index = index_path(&root);
+    fs::create_dir_all(index.parent().unwrap()).unwrap();
+    let mut prior = record("prior-checkpoint", &root);
+    prior["label"] = serde_json::Value::String("x".repeat(MAX_CHECKPOINT_INDEX_BYTES as usize));
+    let old_index = serde_json::to_vec_pretty(&vec![prior]).unwrap();
+    assert!(old_index.len() as u64 > MAX_CHECKPOINT_INDEX_BYTES);
+    fs::write(&index, &old_index).unwrap();
+
+    let mut publications = Vec::new();
+    let result = create_with(&file, "ckpt-oversized-index", |artifact, target, bytes| {
+        publications.push(artifact);
+        match artifact {
+            CheckpointArtifact::Metadata => target.publish_atomic_new(bytes),
+            CheckpointArtifact::Index => target.publish_atomic_preserving_permissions(bytes),
+        }
+    });
+
+    let error = result.expect_err("oversized catalog must be refused before index publication");
+    assert!(format!("{error:#}").contains("read limit"), "{error:#}");
+    assert_eq!(publications, [CheckpointArtifact::Metadata]);
+    assert_eq!(fs::read(&index).unwrap(), old_index);
+    assert!(!storage(&root).join("ckpt-oversized-index").exists());
 }
 
 #[test]

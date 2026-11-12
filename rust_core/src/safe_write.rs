@@ -120,15 +120,12 @@ impl AnchoredTarget {
                         (Some(leaf_identity::from_file(&file)?), Some(file))
                     }
                     Err(error)
-                        if error
-                            .downcast_ref::<std::io::Error>()
-                            .is_some_and(|error| {
-                                matches!(
-                                    error.kind(),
-                                    std::io::ErrorKind::PermissionDenied
-                                        | std::io::ErrorKind::NotFound
-                                )
-                            }) =>
+                        if error.downcast_ref::<std::io::Error>().is_some_and(|error| {
+                            matches!(
+                                error.kind(),
+                                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+                            )
+                        }) =>
                     {
                         (self.leaf_identity_if_present()?, None)
                     }
@@ -343,6 +340,29 @@ impl AnchoredTarget {
         Ok(bytes)
     }
 
+    /// Reads an anchored regular file while refusing content above `max_bytes`.
+    pub fn read_bounded(&self, max_bytes: u64) -> anyhow::Result<Vec<u8>> {
+        let file = self.open_leaf_read()?;
+        let metadata = file.metadata()?;
+        require_regular_file(&metadata, &self.display_path)?;
+        if metadata.len() > max_bytes {
+            anyhow::bail!(
+                "file exceeds {max_bytes}-byte read limit: {}",
+                self.display_path.display()
+            );
+        }
+        let read_limit = max_bytes.saturating_add(1);
+        let mut bytes = Vec::new();
+        file.take(read_limit).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > max_bytes {
+            anyhow::bail!(
+                "file exceeds {max_bytes}-byte read limit: {}",
+                self.display_path.display()
+            );
+        }
+        Ok(bytes)
+    }
+
     /// Overwrites the opened regular leaf without following a leaf or parent reparse point.
     pub fn write_direct(&self, bytes: &[u8]) -> anyhow::Result<()> {
         let mut file = self.open_leaf_write()?;
@@ -535,9 +555,7 @@ impl AnchoredTarget {
             .lock()
             .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))?;
         match (expected, pinned_leaf.as_ref()) {
-            (Some(expected), Some(pinned))
-                if leaf_identity::from_file(pinned)? != expected =>
-            {
+            (Some(expected), Some(pinned)) if leaf_identity::from_file(pinned)? != expected => {
                 anyhow::bail!(
                     "refusing changed pinned target identity {}",
                     self.display_path.display()
