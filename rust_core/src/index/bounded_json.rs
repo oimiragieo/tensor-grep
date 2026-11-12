@@ -86,8 +86,7 @@ impl DecodeBudget {
         }
         let capacity = values
             .capacity()
-            .checked_mul(2)
-            .unwrap_or(usize::MAX)
+            .saturating_mul(2)
             .max(values.len().saturating_add(1))
             .max(4);
         self.reserve_vec(values, capacity, purpose)
@@ -106,8 +105,7 @@ impl DecodeBudget {
         }
         let capacity = values
             .capacity()
-            .checked_mul(2)
-            .unwrap_or(usize::MAX)
+            .saturating_mul(2)
             .max(values.len().saturating_add(1))
             .max(4);
         let old_bytes = self.hash_map_bytes::<K, V>(values.capacity())?;
