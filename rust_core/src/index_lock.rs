@@ -957,7 +957,9 @@ mod tests {
             let result_tx = result_tx.clone();
             thread::spawn(move || {
                 barrier.wait();
-                result_tx.send(try_os_file_lock_target(&target)).unwrap();
+                let result = try_os_file_lock_target(&target);
+                drop(target);
+                result_tx.send(result).unwrap();
             });
         }
         barrier.wait();
