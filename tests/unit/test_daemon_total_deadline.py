@@ -53,11 +53,13 @@ def test_valid_frame_restores_handler_timeout_before_response_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(sd._SessionDaemonHandler, "timeout", 1.0)
+    original_read = sd._read_bounded_request_line
 
-    def finish_at_deadline(rfile: Any, *args: Any, **kwargs: Any) -> str:
-        del rfile, args
+    def finish_at_deadline(rfile: Any, *args: Any, **kwargs: Any) -> str | None:
+        # Consume the wire frame so teardown cannot reset a socket with unread client bytes.
+        line = original_read(rfile, *args, **kwargs)
         kwargs["connection"].settimeout(0.000001)
-        return '{"command":"ping","token":"secret"}'
+        return line
 
     monkeypatch.setattr(sd, "_read_bounded_request_line", finish_at_deadline)
     server = sd._ThreadedSessionDaemon(tmp_path.resolve(), ("127.0.0.1", 0), token="secret")

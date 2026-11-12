@@ -275,10 +275,14 @@ def test_open_native_parent_handle_when_generation_parent_advertises_unrelated_i
     assert closed == [112]
 
 
-def test_open_native_parent_handle_when_uv_precedes_managed_generation(monkeypatch, tmp_path):
+@pytest.mark.parametrize("intermediary", ["uv", "sidecar", "extended-sidecar"])
+def test_open_native_parent_handle_when_uv_precedes_managed_generation(
+    monkeypatch, tmp_path, intermediary
+):
     stable = tmp_path / ".tensor-grep" / "bin" / "tg.exe"
     generation = tmp_path / ".tensor-grep" / "runtimes" / ("a" * 32) / "bin" / "tg.exe"
-    uv = tmp_path / "uv.exe"
+    sidecar = tmp_path / ".venv" / "Scripts" / "python.exe"
+    uv = tmp_path / "uv.exe" if intermediary == "uv" else sidecar
     closed = []
     kernel = _Kernel(str(uv))
     handles = {321: 112, 654: 113, 987: 114}
@@ -308,7 +312,10 @@ def test_open_native_parent_handle_when_uv_precedes_managed_generation(monkeypat
         "_windows_process_creation_time",
         lambda _kernel, handle: {112: 30, 113: 20, 114: 10, 1000: 40}[handle],
     )
-    monkeypatch.setenv("TG_SIDECAR_PYTHON", str(tmp_path / ".venv" / "Scripts" / "python.exe"))
+    advertised_sidecar = str(sidecar)
+    if intermediary == "extended-sidecar":
+        advertised_sidecar = "\\\\?\\" + advertised_sidecar
+    monkeypatch.setenv("TG_SIDECAR_PYTHON", advertised_sidecar)
     monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(stable))
     monkeypatch.setattr(winsec, "close_handle", closed.append)
 
@@ -321,6 +328,35 @@ def test_open_native_parent_handle_when_uv_precedes_managed_generation(monkeypat
     ]
     assert kernel.inherit_calls == [(114, 1, 1)]
     assert sorted(closed) == [112, 113]
+
+
+@pytest.mark.parametrize("extended_operand", ["stable", "actual", "advertised"])
+def test_native_parent_matches_stable_accepts_extended_path_alias(tmp_path, extended_operand):
+    stable = tmp_path / "tg.exe"
+    stable.touch()
+    paths = {name: str(stable) for name in ("stable", "actual", "advertised")}
+    paths[extended_operand] = "\\\\?\\" + paths[extended_operand]
+    assert windows_parent_process._native_parent_matches_stable(
+        Path(paths["stable"]), paths["actual"], paths["advertised"]
+    )
+
+
+def test_native_parent_matches_stable_rejects_extended_unrelated_image(tmp_path):
+    stable = tmp_path / "tg.exe"
+    other = tmp_path / "other.exe"
+    stable.touch()
+    other.touch()
+    with pytest.raises(RuntimeError, match="environment does not match"):
+        windows_parent_process._native_parent_matches_stable(
+            stable, str(stable), "\\\\?\\" + str(other)
+        )
+
+
+def test_canonical_windows_path_normalizes_extended_unc(monkeypatch):
+    monkeypatch.setattr(os.path, "realpath", lambda path: path)
+    assert windows_parent_process._canonical_windows_path(
+        "\\\\?\\UNC\\server\\share\\tg.exe"
+    ) == os.path.normcase("\\\\server\\share\\tg.exe")
 
 
 def test_open_native_parent_handle_when_stable_pid_was_reused_refuses_activation(
