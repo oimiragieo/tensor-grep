@@ -102,6 +102,18 @@ impl AnchoredTarget {
     where
         F: FnOnce() -> std::io::Result<()>,
     {
+        if self
+            .expected_leaf_identity()
+            .map_err(|error| std::io::Error::other(error.to_string()))?
+            .is_some()
+            && self
+                .pinned_leaf
+                .lock()
+                .map_err(|_| std::io::Error::other("target file handle lock poisoned"))?
+                .is_none()
+        {
+            return Err(std::io::Error::other("refusing unpinned target identity"));
+        }
         #[cfg(unix)]
         {
             self.remove_file_unix(after_identity_check)
@@ -210,7 +222,15 @@ impl AnchoredTarget {
                     ));
                 }
             };
-            if actual_identity != expected_identity {
+            let pinned_identity = self
+                .pinned_leaf
+                .lock()
+                .map_err(|_| std::io::Error::other("target file handle lock poisoned"))?
+                .as_ref()
+                .map(leaf_identity::from_file)
+                .transpose()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            if actual_identity != expected_identity || pinned_identity != Some(actual_identity) {
                 return Err(restore_quarantined_leaf(
                     self.parent.raw_fd(),
                     &quarantine,
@@ -292,6 +312,10 @@ impl AnchoredTarget {
             self.display_path.display()
         );
         *current = None;
+        *self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))? = None;
         Ok(())
     }
 }

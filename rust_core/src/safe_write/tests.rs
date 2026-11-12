@@ -352,6 +352,36 @@ fn direct_write_refuses_bounded_hardlink_swap_before_truncation() {
 }
 
 #[test]
+fn direct_write_refuses_reused_leaf_identity_and_keeps_positive_control() {
+    let dir = tempfile::tempdir().unwrap();
+    let target_path = dir.path().join("target");
+    let replacement_path = dir.path().join("replacement");
+    std::fs::write(&target_path, b"before").unwrap();
+    let target = AnchoredTarget::open(&target_path).unwrap();
+    target.write_direct(b"published").unwrap();
+
+    std::fs::write(&replacement_path, b"UNRELATED_SENTINEL").unwrap();
+    std::fs::remove_file(&target_path).unwrap();
+    std::fs::rename(&replacement_path, &target_path).unwrap();
+    let replacement = std::fs::File::open(&target_path).unwrap();
+    let reused_identity = super::leaf_identity::from_file(&replacement).unwrap();
+    *target.leaf_identity.lock().unwrap() = Some(reused_identity);
+
+    let rollback = target.write_direct(b"rollback");
+    assert_eq!(std::fs::read(&target_path).unwrap(), b"UNRELATED_SENTINEL");
+    assert!(
+        rollback.is_err(),
+        "a forced identity collision must not authorize the unrelated leaf"
+    );
+
+    AnchoredTarget::open(&target_path)
+        .unwrap()
+        .write_direct(b"legitimate rollback")
+        .unwrap();
+    assert_eq!(std::fs::read(&target_path).unwrap(), b"legitimate rollback");
+}
+
+#[test]
 fn direct_create_is_exclusive_and_copy_rejects_hardlink_substitution() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("source");

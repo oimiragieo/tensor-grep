@@ -43,9 +43,14 @@ def _publish_windows(
     temp_ready: Callable[[int, Path], None] | None,
     before_publish: Callable[[], None] | None,
     on_published: Callable[[], None] | None,
+    replace_open_pinned_target: bool,
 ) -> tuple[int, int]:
     """Publish under pinned directory handles, refusing new-destination races atomically."""
-    from tensor_grep.io.windows_publication import discard_open, open_temporary, rename_open
+    from tensor_grep.io.windows_publication import (
+        discard_open,
+        open_temporary,
+        rename_open,
+    )
 
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     if before_create is not None:
@@ -65,7 +70,14 @@ def _publish_windows(
             before_publish()
         if identity is not None and _file_identity(path) != identity:
             raise OSError("confined file changed before publication")
-        rename_open(descriptor, path, replace=identity is not None)
+        if identity is None:
+            rename_open(descriptor, path, replace=False)
+        elif replace_open_pinned_target:
+            from tensor_grep.io.windows_publication import replace_open
+
+            replace_open(descriptor, path)
+        else:
+            rename_open(descriptor, path, replace=True)
         published = True
         if on_published is not None:
             on_published()
@@ -310,6 +322,7 @@ def publish_confined(
                 temp_ready,
                 before_publish,
                 on_published,
+                getattr(expected_file_identity, "_descriptor", None) is not None,
             )
         else:
             temporary = f".{path.name}.{uuid4().hex}.tmp"

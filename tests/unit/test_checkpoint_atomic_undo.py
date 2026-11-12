@@ -579,3 +579,184 @@ def test_undo_later_publication_failure_recovers_prior_mutations(
         assert later.read_bytes() == b"snapshot b"
     else:
         assert later.read_bytes() == b"current b"
+
+
+@pytest.mark.parametrize("replace_after_publish", [False, True])
+@requires_checkpoint_creation
+def test_undo_rollback_refuses_reused_published_identity(
+    tmp_path, monkeypatch, replace_after_publish, request
+):
+    import os
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot a", "b.py": "snapshot b"})
+    created = checkpoint_store.create_checkpoint(str(root))
+    first, later = root / "a.py", root / "b.py"
+    first.write_bytes(b"current a")
+    later.write_bytes(b"current b")
+    replacement = tmp_path / "unrelated replacement"
+    replacement_descriptor = None
+    if os.name == "nt":
+        from tensor_grep.io import windows_publication
+
+        replacement_descriptor = windows_publication.open_temporary(replacement)
+        with os.fdopen(replacement_descriptor, "wb", closefd=False) as stream:
+            stream.write(b"UNRELATED_SENTINEL")
+            stream.flush()
+        os.fsync(replacement_descriptor)
+        replacement_info = os.fstat(replacement_descriptor)
+
+        def close_replacement() -> None:
+            if replacement_descriptor is not None:
+                os.close(replacement_descriptor)
+
+        request.addfinalizer(close_replacement)
+    else:
+        replacement.write_bytes(b"UNRELATED_SENTINEL")
+        replacement_info = replacement.stat()
+    publish = checkpoint_store.publish_restored_file
+    failure = OSError("later publication failure")
+    first_published = False
+
+    def replace_after_first_publish(root_arg, path, *args, **kwargs):
+        nonlocal first_published
+        path = Path(path)
+        if path == later:
+            raise failure
+        if path == first and not first_published:
+            first_published = True
+            if replace_after_publish:
+                record_identity = kwargs["on_new_file_identity"]
+
+                def record_reused_identity(identity):
+                    # Model an inode number reused for the unrelated replacement deterministically.
+                    if hasattr(identity, "_descriptor") and identity._descriptor is not None:
+                        from tensor_grep.cli.checkpoint_undo_io import _PinnedFileIdentity
+
+                        reused = _PinnedFileIdentity(
+                            (replacement_info.st_dev, replacement_info.st_ino),
+                            os.dup(identity._descriptor),
+                        )
+                    else:
+                        reused = (replacement_info.st_dev, replacement_info.st_ino)
+                    record_identity(reused)
+
+                kwargs["on_new_file_identity"] = record_reused_identity
+            publish(root_arg, path, *args, **kwargs)
+            if replace_after_publish:
+                if os.name == "nt":
+                    windows_publication.replace_open(replacement_descriptor, first)
+                else:
+                    os.replace(replacement, first)
+            return
+        return publish(root_arg, path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", replace_after_first_publish)
+
+    if replace_after_publish:
+        caught = None
+        try:
+            checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+        except Exception as error:
+            caught = error
+        if os.name == "nt":
+            assert replacement_descriptor is not None
+            os.close(replacement_descriptor)
+            replacement_descriptor = None
+        assert first.read_bytes() == b"UNRELATED_SENTINEL"
+        assert isinstance(caught, checkpoint_store.CheckpointUndoUnsafeError)
+    else:
+        with pytest.raises(OSError, match="later publication failure"):
+            checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+        assert first.read_bytes() == b"current a"
+
+
+@requires_checkpoint_creation
+def test_undo_callback_failure_after_publish_does_not_reuse_prior_identity(
+    tmp_path, monkeypatch, request
+):
+    import os
+
+    from tensor_grep.io import confined
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(root, {"a.py": "snapshot a", "b.py": "snapshot b"})
+    created = checkpoint_store.create_checkpoint(str(root))
+    first, later = root / "a.py", root / "b.py"
+    first.write_bytes(b"current a")
+    later.write_bytes(b"current b")
+    prior_info = first.stat()
+    replacement = tmp_path / "unrelated replacement"
+    replacement_descriptor = None
+    if os.name == "nt":
+        from tensor_grep.io import windows_publication
+
+        replacement_descriptor = windows_publication.open_temporary(replacement)
+        with os.fdopen(replacement_descriptor, "wb", closefd=False) as stream:
+            stream.write(b"UNRELATED_SENTINEL")
+            stream.flush()
+        os.fsync(replacement_descriptor)
+
+        def close_replacement() -> None:
+            if replacement_descriptor is not None:
+                os.close(replacement_descriptor)
+
+        request.addfinalizer(close_replacement)
+    else:
+        replacement.write_bytes(b"UNRELATED_SENTINEL")
+
+    publish = checkpoint_store.publish_restored_file
+    original_file_identity = confined._file_identity
+    spoof_reused_identity = False
+
+    def report_reused_prior_identity(path):
+        identity = original_file_identity(path)
+        if spoof_reused_identity and Path(path) == first:
+            return (prior_info.st_dev, prior_info.st_ino, identity[2], identity[3])
+        return identity
+
+    failure = OSError("injected post-publication identity callback failure")
+    first_published = False
+
+    def fail_after_first_publish(root_arg, path, *args, **kwargs):
+        nonlocal first_published, spoof_reused_identity
+        path = Path(path)
+        if path == later:
+            raise OSError("later publication failure")
+        if path == first and not first_published:
+            first_published = True
+
+            def fail_after_pin(_identity):
+                raise failure
+
+            kwargs["on_new_file_identity"] = fail_after_pin
+            try:
+                publish(root_arg, path, *args, **kwargs)
+            except OSError as error:
+                if error is failure:
+                    if os.name == "nt":
+                        windows_publication.replace_open(replacement_descriptor, first)
+                    else:
+                        os.replace(replacement, first)
+                    spoof_reused_identity = True
+                    monkeypatch.setattr(confined, "_file_identity", report_reused_prior_identity)
+                raise
+            return
+        return publish(root_arg, path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_after_first_publish)
+
+    with pytest.raises(checkpoint_store.CheckpointUndoUnsafeError) as caught:
+        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+
+    if os.name == "nt":
+        assert replacement_descriptor is not None
+        os.close(replacement_descriptor)
+        replacement_descriptor = None
+    assert caught.value.path == str(first)
+    assert spoof_reused_identity, repr(caught.value.__cause__)
+    assert confined._file_identity(first)[:2] == (prior_info.st_dev, prior_info.st_ino)
+    assert first.read_bytes() == b"UNRELATED_SENTINEL"
+    assert later.read_bytes() == b"current b"

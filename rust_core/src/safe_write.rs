@@ -22,6 +22,7 @@ pub struct AnchoredTarget {
     name: OsString,
     parent: AnchoredDirectory,
     leaf_identity: Mutex<Option<FileIdentity>>,
+    pinned_leaf: Mutex<Option<File>>,
 }
 
 /// An atomic publication error reports whether the replacement became visible.
@@ -73,18 +74,95 @@ impl AnchoredTarget {
             name,
             parent: AnchoredDirectory::open(parent_path)?,
             leaf_identity: Mutex::new(None),
+            pinned_leaf: Mutex::new(None),
         };
         target.capture_leaf_identity()?;
         Ok(target)
     }
 
     fn capture_leaf_identity(&self) -> anyhow::Result<()> {
-        let identity = self.leaf_identity_if_present()?;
+        #[cfg(target_os = "linux")]
+        let (identity, pinned) = match self.open_leaf(libc::O_PATH, 0) {
+            Ok(file) => {
+                require_regular_file(&file.metadata()?, &self.display_path)?;
+                (Some(leaf_identity::from_file(&file)?), Some(file))
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                (None, None)
+            }
+            Err(error) => return Err(error),
+        };
+        #[cfg(all(unix, not(target_os = "linux")))]
+        let (identity, pinned) = match self.open_leaf(libc::O_RDONLY, 0) {
+            Ok(file) => {
+                require_regular_file(&file.metadata()?, &self.display_path)?;
+                (Some(leaf_identity::from_file(&file)?), Some(file))
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                (None, None)
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied) =>
+            {
+                match self.open_leaf(libc::O_WRONLY, 0) {
+                    Ok(file) => {
+                        require_regular_file(&file.metadata()?, &self.display_path)?;
+                        (Some(leaf_identity::from_file(&file)?), Some(file))
+                    }
+                    Err(error)
+                        if error
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|error| {
+                                matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::PermissionDenied
+                                        | std::io::ErrorKind::NotFound
+                                )
+                            }) =>
+                    {
+                        (self.leaf_identity_if_present()?, None)
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        #[cfg(windows)]
+        let (identity, pinned) = match self.open_leaf_metadata() {
+            Ok(file) => {
+                require_regular_file(&file.metadata()?, &self.display_path)?;
+                (Some(leaf_identity::from_file(&file)?), Some(file))
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                (None, None)
+            }
+            Err(error) => return Err(error),
+        };
+        #[cfg(not(any(unix, windows)))]
+        let (identity, pinned) = (self.leaf_identity_if_present()?, None);
         let mut current = self
             .leaf_identity
             .lock()
             .map_err(|_| anyhow::anyhow!("target identity lock poisoned"))?;
         *current = identity;
+        *self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))? = pinned;
         Ok(())
     }
 
@@ -103,6 +181,23 @@ impl AnchoredTarget {
         let metadata = file.metadata()?;
         require_regular_file(&metadata, &self.display_path)?;
         let actual = leaf_identity::from_file(file)?;
+        let pinned_leaf = self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))?;
+        if let Some(pinned) = pinned_leaf.as_ref() {
+            if leaf_identity::from_file(pinned)? != actual {
+                anyhow::bail!(
+                    "refusing changed target object {}",
+                    self.display_path.display()
+                );
+            }
+        } else if expected.is_some() {
+            anyhow::bail!(
+                "refusing unpinned target identity {}",
+                self.display_path.display()
+            );
+        }
         match expected {
             Some(expected) if expected != actual => anyhow::bail!(
                 "refusing changed target identity {}",
@@ -121,6 +216,7 @@ impl AnchoredTarget {
         require_regular_file(&metadata, &self.display_path)?;
         leaf_identity::require_single_link(file, &self.display_path)?;
         let identity = leaf_identity::from_file(file)?;
+        let pinned = file.try_clone()?;
         let mut expected = self
             .leaf_identity
             .lock()
@@ -132,6 +228,10 @@ impl AnchoredTarget {
             );
         }
         *expected = Some(identity);
+        *self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))? = Some(pinned);
         Ok(())
     }
 
@@ -140,12 +240,37 @@ impl AnchoredTarget {
         let metadata = file.metadata()?;
         require_regular_file(&metadata, &self.display_path)?;
         let identity = leaf_identity::from_file(file)?;
+        let pinned = self.open_published_leaf(file)?;
         let mut expected = self
             .leaf_identity
             .lock()
             .map_err(|_| anyhow::anyhow!("target identity lock poisoned"))?;
         *expected = Some(identity);
+        *self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))? = Some(pinned);
         Ok(())
+    }
+
+    fn open_published_leaf(&self, source: &File) -> anyhow::Result<File> {
+        #[cfg(unix)]
+        let pinned = source.try_clone()?;
+        #[cfg(windows)]
+        let pinned = {
+            use std::os::windows::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .read(true)
+                .access_mode(0)
+                .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
+                .custom_flags(windows::OPEN_REPARSE_POINT)
+                .open(self.parent.path.join(&self.name))?
+        };
+        anyhow::ensure!(
+            leaf_identity::from_file(&pinned)? == leaf_identity::from_file(source)?,
+            "published target changed before its opened handle was retained"
+        );
+        Ok(pinned)
     }
 
     fn leaf_identity_if_present(&self) -> anyhow::Result<Option<FileIdentity>> {
@@ -299,7 +424,7 @@ impl AnchoredTarget {
             let file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .share_mode(windows::SHARE_READ | windows::SHARE_WRITE)
+                .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
                 .custom_flags(windows::OPEN_REPARSE_POINT)
                 .open(self.parent.path.join(&self.name))?;
             self.record_new_leaf_identity(&file)
@@ -405,6 +530,29 @@ impl AnchoredTarget {
 
     pub(crate) fn validate_leaf_matches_expected(&self) -> anyhow::Result<()> {
         let expected = self.expected_leaf_identity()?;
+        let pinned_leaf = self
+            .pinned_leaf
+            .lock()
+            .map_err(|_| anyhow::anyhow!("target file handle lock poisoned"))?;
+        match (expected, pinned_leaf.as_ref()) {
+            (Some(expected), Some(pinned))
+                if leaf_identity::from_file(pinned)? != expected =>
+            {
+                anyhow::bail!(
+                    "refusing changed pinned target identity {}",
+                    self.display_path.display()
+                );
+            }
+            (Some(_), None) => anyhow::bail!(
+                "refusing unpinned target identity {}",
+                self.display_path.display()
+            ),
+            (None, Some(_)) => anyhow::bail!(
+                "refusing inconsistent pinned target identity {}",
+                self.display_path.display()
+            ),
+            _ => {}
+        }
         let actual = self.leaf_identity_if_present()?;
         anyhow::ensure!(
             expected == actual,
@@ -493,7 +641,7 @@ impl AnchoredTarget {
         OpenOptions::new()
             .read(true)
             .access_mode(0)
-            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE)
+            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
             .custom_flags(windows::OPEN_REPARSE_POINT | windows::BACKUP_SEMANTICS)
             .open(self.parent.path.join(&self.name))
             .map_err(Into::into)
@@ -504,7 +652,7 @@ impl AnchoredTarget {
         use std::os::windows::fs::OpenOptionsExt;
         let file = OpenOptions::new()
             .read(true)
-            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE)
+            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
             .custom_flags(windows::OPEN_REPARSE_POINT | windows::BACKUP_SEMANTICS)
             .open(self.parent.path.join(&self.name))
             .map_err(anyhow::Error::from)?;
@@ -534,7 +682,7 @@ impl AnchoredTarget {
             .write(true)
             .access_mode(windows::GENERIC_WRITE | windows::WRITE_DAC | windows::READ_CONTROL)
             .create_new(true)
-            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE)
+            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
             .custom_flags(windows::OPEN_REPARSE_POINT)
             .open(self.parent.path.join(&self.name))?;
         self.record_new_leaf_identity(&file)?;
@@ -548,7 +696,7 @@ impl AnchoredTarget {
         let mut options = OpenOptions::new();
         options
             .write(true)
-            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE)
+            .share_mode(windows::SHARE_READ | windows::SHARE_WRITE | windows::SHARE_DELETE)
             .custom_flags(windows::OPEN_REPARSE_POINT);
         let file = match expected {
             Some(_) => options.open(self.parent.path.join(&self.name))?,
@@ -923,6 +1071,7 @@ impl AnchoredDirectory {
             name: name.to_os_string(),
             parent: anchored_directory::clone(self)?,
             leaf_identity: Mutex::new(None),
+            pinned_leaf: Mutex::new(None),
         };
         target.capture_leaf_identity()?;
         Ok(target)

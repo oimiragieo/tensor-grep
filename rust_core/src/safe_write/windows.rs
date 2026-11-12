@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub(super) const SHARE_READ: u32 = 0x0000_0001;
 pub(super) const SHARE_WRITE: u32 = 0x0000_0002;
-const SHARE_DELETE: u32 = 0x0000_0004;
+pub(super) const SHARE_DELETE: u32 = 0x0000_0004;
 const GENERIC_READ: u32 = 0x8000_0000;
 pub(super) const GENERIC_WRITE: u32 = 0x4000_0000;
 const DELETE_ACCESS: u32 = 0x0001_0000;
@@ -21,6 +21,7 @@ pub(super) const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 pub(super) const BACKUP_SEMANTICS: u32 = 0x0200_0000;
 pub(super) const ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 const FILE_RENAME_INFO: i32 = 3;
+const FILE_RENAME_INFO_EX: i32 = 22;
 const FILE_DISPOSITION_INFO: i32 = 4;
 const SE_FILE_OBJECT: u32 = 1;
 const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
@@ -539,9 +540,15 @@ fn rename_handle(
     let size = std::mem::size_of::<RenameInfo>() + name.len() * std::mem::size_of::<u16>();
     let mut storage = vec![0usize; size.div_ceil(std::mem::size_of::<usize>())];
     let info = storage.as_mut_ptr().cast::<RenameInfo>();
+    let (rename_class, rename_flags) = if replace_existing {
+        // POSIX semantics allow replacement while readers retain the opened old object.
+        (FILE_RENAME_INFO_EX, 0x3)
+    } else {
+        (FILE_RENAME_INFO, 0)
+    };
     unsafe {
         info.write(RenameInfo {
-            replace_if_exists: u32::from(replace_existing),
+            replace_if_exists: rename_flags,
             root_directory: std::ptr::null_mut(),
             file_name_length: name_bytes,
             file_name: [0],
@@ -549,7 +556,7 @@ fn rename_handle(
         std::ptr::copy_nonoverlapping(name.as_ptr(), (*info).file_name.as_mut_ptr(), name.len());
         if SetFileInformationByHandle(
             file.as_raw_handle().cast(),
-            FILE_RENAME_INFO,
+            rename_class,
             info.cast(),
             u32::try_from(size)?,
         ) == 0

@@ -34,6 +34,7 @@ from tensor_grep.cli.checkpoint_scope import (
     undo_prune_candidates,
 )
 from tensor_grep.cli.checkpoint_undo_io import (
+    close_published_identity,
     publish_restored_file,
     read_for_rollback,
     rollback_overwrites,
@@ -1301,6 +1302,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 os.stat_result | None,
                 tuple[int, int],
                 list[tuple[int, int] | None],
+                list[bool],
             ]
         ] = []
 
@@ -1370,12 +1372,14 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     if (prior_info.st_dev, prior_info.st_ino) != prior_leaf_identity:
                         raise OSError("checkpoint restore target changed during rollback read")
                 published_identity: list[tuple[int, int] | None] = [None]
+                publication_state = [False]
                 committed_overwrites.append((
                     target,
                     prior_bytes,
                     prior_info,
                     parent_identity,
                     published_identity,
+                    publication_state,
                 ))
 
                 def record_published_identity(
@@ -1383,6 +1387,11 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     published: list[tuple[int, int] | None] = published_identity,
                 ) -> None:
                     published[0] = identity
+
+                def mark_publication(
+                    published: list[bool] = publication_state,
+                ) -> None:
+                    published[0] = True
 
                 publish_restored_file(
                     root,
@@ -1393,6 +1402,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     expected_file_identity=prior_leaf_identity,
                     expect_absent=prior_info is None,
                     on_new_file_identity=record_published_identity,
+                    on_publication=mark_publication,
                 )
 
         except BaseException as original_error:
@@ -1406,6 +1416,9 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     path=str(failed_path),
                 ) from original_error
             raise
+        finally:
+            for _, _, _, _, published_identity, _ in committed_overwrites:
+                close_published_identity(published_identity[0])
 
     finally:
         staging_dir_obj.cleanup()
