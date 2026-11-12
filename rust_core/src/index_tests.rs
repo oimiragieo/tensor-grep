@@ -21,19 +21,117 @@ fn set_modified_time(path: &Path, time: SystemTime) {
 
 #[test]
 fn bincode_deserialize_rejects_hostile_length_prefix_without_oom() {
-    // A crafted index declaring ~4 billion file entries but supplying no data must fail
-    // with a clean error, not pre-allocate a multi-GB Vec and OOM-abort. Without the
-    // bounded_capacity clamp this is Vec::with_capacity(u32::MAX) -> allocation abort;
-    // with it, the read loop fails on the first missing entry and returns Err (audit MED).
+    // A valid v6 header declaring ~4 billion file entries but supplying no data must fail
+    // before reserving a multi-GB Vec.
     let mut data = Vec::new();
     data.extend_from_slice(INDEX_MAGIC);
     data.push(INDEX_FORMAT_VERSION);
-    data.extend_from_slice(&0u32.to_le_bytes()); // root_len = 0
-    data.extend_from_slice(&u32::MAX.to_le_bytes()); // files_count = hostile
-                                                     // no file data follows (truncated)
+    data.push(0); // no_ignore
+    data.extend_from_slice(&0u32.to_le_bytes()); // canonical root length = 0
+    data.extend_from_slice(&0u64.to_le_bytes()); // tree fingerprint
+    data.extend_from_slice(&u32::MAX.to_le_bytes()); // hostile files_count; no file data follows
 
     let result = bincode_deserialize(&data);
-    assert!(result.is_err(), "hostile length prefix must error, not OOM");
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("truncated in file entries"));
+}
+
+#[test]
+fn bincode_load_rejects_trailing_bytes() {
+    let dir = tempdir().unwrap();
+    write_test_file(dir.path(), "a.txt", "hello world\n");
+    let index = TrigramIndex::build(dir.path()).unwrap();
+    let index_path = dir.path().join("trailing.tg_index");
+    let mut data = bincode_serialize(&index).unwrap();
+    data.push(0);
+    fs::write(&index_path, data).unwrap();
+
+    let result = TrigramIndex::load(&index_path);
+    assert!(result.is_err(), "binary index with trailing data must fail");
+}
+
+#[test]
+fn bounded_index_reader_rejects_sparse_over_limit_input() {
+    let sparse_len = MAX_INDEX_INPUT_BYTES + 1;
+    let dir = tempdir().unwrap();
+    let index_path = dir.path().join("sparse.tg_index");
+    fs::write(&index_path, b"TGI\x00").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&index_path)
+        .unwrap()
+        .set_len(sparse_len)
+        .unwrap();
+
+    let result = TrigramIndex::load(&index_path);
+    assert!(result.is_err(), "sparse input over the cap must fail");
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("byte limit (file metadata)"));
+}
+
+#[test]
+fn bounded_index_reader_rejects_data_beyond_limit() {
+    use std::io::Cursor;
+
+    // A file can grow after metadata is checked, so test the reader directly with cap+1 bytes.
+
+    let result = bounded_json::read_bounded_input(
+        Cursor::new(b"TGI\x00!"),
+        Path::new("growing.tg_index"),
+        4,
+    );
+    assert!(result.unwrap_err().to_string().contains("byte limit"));
+}
+
+#[test]
+fn decoded_allocation_budget_rejects_before_reserving() {
+    let mut budget = DecodeBudget::default();
+    let mut files = Vec::<FileEntry>::new();
+    let count = MAX_INDEX_DECODED_ALLOCATION_BYTES / std::mem::size_of::<FileEntry>() + 1;
+
+    let result = budget.reserve_vec(&mut files, count, "test file entries");
+    assert!(result.unwrap_err().to_string().contains("budget exceeded"));
+    assert!(files.is_empty());
+    assert_eq!(files.capacity(), 0);
+}
+
+#[test]
+fn legacy_json_decode_charges_allocation_budget_before_path_allocation() {
+    let data = br#"{"files":[{"path":"a","mtime_ns":0,"size":0,"deleted":false}],"postings":{},"no_ignore":false}"#;
+    let mut budget = DecodeBudget::default();
+    budget
+        .charge(
+            MAX_INDEX_DECODED_ALLOCATION_BYTES - data.len() - 3,
+            "test budget headroom",
+        )
+        .unwrap();
+
+    let error = bounded_json::deserialize_index_json(data, &mut budget).unwrap_err();
+    let diagnostic = format!("{error:#}");
+    assert!(diagnostic.contains("budget exceeded"), "{diagnostic}");
+}
+
+#[test]
+fn legacy_json_load_rejects_trailing_non_whitespace() {
+    let dir = tempdir().unwrap();
+    write_test_file(dir.path(), "a.txt", "hello world\n");
+    let index = TrigramIndex::build(dir.path()).unwrap();
+    let index_path = dir.path().join("legacy.json");
+    index.save_json(&index_path).unwrap();
+    let mut data = fs::read(&index_path).unwrap();
+    data.extend_from_slice(b" \t\r\n");
+    fs::write(&index_path, &data).unwrap();
+    assert!(TrigramIndex::load_json(&index_path).is_ok());
+
+    data.push(b'!');
+    fs::write(&index_path, data).unwrap();
+
+    let result = TrigramIndex::load_json(&index_path);
+    assert!(result.is_err(), "legacy JSON trailing data must fail");
 }
 
 fn serialize_legacy_v1(index: &TrigramIndex) -> Vec<u8> {

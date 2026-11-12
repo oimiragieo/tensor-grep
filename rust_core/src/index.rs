@@ -9,6 +9,8 @@ use regex_syntax::{
     parse as parse_regex_hir,
 };
 use serde::{Deserialize, Serialize};
+mod bounded_json;
+use bounded_json::DecodeBudget;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -17,6 +19,11 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const TRIGRAM_LEN: usize = 3;
+// 1 GiB keeps about 73% headroom over the measured ~621 MB legacy JSON index for this repo.
+// The bounded reader keeps this raw-input buffer separate from the decoded-allocation budget.
+const MAX_INDEX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
+// Includes parser scratch plus decoded vectors, maps, paths, and derived posting lists.
+const MAX_INDEX_DECODED_ALLOCATION_BYTES: usize = 2 * 1024 * 1024 * 1024;
 const MAX_REGEX_CLASS_LITERALS: usize = 10;
 const MAX_REGEX_PREFILTER_LITERALS: usize = 64;
 /// M17 F1 (gate round 2): how many DIRECT children of the canonical root the tree
@@ -198,38 +205,6 @@ impl TrigramIndex {
             no_ignore: self.no_ignore,
         }
     }
-
-    fn from_serializable(s: SerializableIndex) -> Result<Self> {
-        let mut postings = HashMap::new();
-        for (key, value) in s.postings {
-            if key.len() != 6 {
-                anyhow::bail!("invalid trigram key: {key}");
-            }
-            let bytes = hex_to_trigram(&key)?;
-            postings.insert(bytes, value);
-        }
-        // M17 F2 gate: the JSON form is untrusted input too -- an absolute or `..` entry
-        // would break `canonical_root.join(rel)` confinement. Reject before building.
-        for entry in &s.files {
-            validate_entry_rel_path(&entry.path)?;
-        }
-        normalize_postings(&mut postings);
-        let file_trigrams = rebuild_file_trigrams(s.files.len(), &postings)?;
-        Ok(Self {
-            root: PathBuf::new(),
-            // The legacy JSON format never persisted a root; an empty canonical root marks
-            // the index UNVERIFIED: `root_servability_reason` refuses it and the search
-            // surface errors (M17 F4) -- it can never serve.
-            canonical_root: PathBuf::new(),
-            // No persisted identity; the empty canonical root already refuses serving, and
-            // staleness would report the fingerprint mismatch on any attempt to reuse it.
-            tree_fingerprint: 0,
-            files: s.files,
-            file_trigrams,
-            postings,
-            no_ignore: s.no_ignore,
-        })
-    }
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
@@ -372,15 +347,12 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Cap a length-prefixed pre-allocation to the bytes actually remaining in the buffer.
-/// Every element consumes at least one byte, so a declared count larger than the remaining
-/// input is corrupt/hostile; clamping prevents a crafted index file from forcing a multi-GB
-/// Vec/HashMap allocation (OOM-abort DoS) before the read loop fails cleanly. audit MED.
-fn bounded_capacity(declared: usize, data: &[u8], pos: usize) -> usize {
-    declared.min(data.len().saturating_sub(pos))
+fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
+    let mut budget = DecodeBudget::default();
+    bincode_deserialize_with_budget(data, &mut budget)
 }
 
-fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
+fn bincode_deserialize_with_budget(data: &[u8], budget: &mut DecodeBudget) -> Result<TrigramIndex> {
     let mut pos = 0;
 
     if data.len() < 5 {
@@ -410,19 +382,29 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let canonical_root_bytes = read_exact(data, &mut pos, canonical_root_len)?;
     let canonical_root_str = std::str::from_utf8(canonical_root_bytes)
         .with_context(|| "stored canonical root is not valid UTF-8")?;
+    budget.charge(
+        canonical_root_str.len().saturating_add(1).saturating_mul(4),
+        "canonical root paths",
+    )?;
     let canonical_root = PathBuf::from(canonical_root_str);
 
     let tree_fingerprint = read_u64_le(data, &mut pos)?;
 
     let files_count = read_u32_le(data, &mut pos)? as usize;
+    bounded_json::ensure_count_fits(files_count, 29, data, pos, "file entries")?;
 
-    let mut files = Vec::with_capacity(bounded_capacity(files_count, data, pos));
+    let mut files = Vec::new();
+    budget.reserve_vec(&mut files, files_count, "binary file entries")?;
     for _ in 0..files_count {
         let path_len = read_u32_le(data, &mut pos)? as usize;
         // M17 F5 gate: STRICT UTF-8 on entry paths too (from_utf8, never from_utf8_lossy) --
         // a lossy decode collapses distinct non-UTF-8 names into one identity.
         let path_str = std::str::from_utf8(read_exact(data, &mut pos, path_len)?)
             .with_context(|| "index entry path is not valid UTF-8")?;
+        budget.charge(
+            path_str.len().saturating_add(1).saturating_mul(2),
+            "binary index paths",
+        )?;
         let path = PathBuf::from(path_str);
         // M17 F2 gate: reject absolute / prefix / `..` entries on load so
         // `canonical_root.join(rel)` is provably confined to the verified root.
@@ -439,12 +421,18 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     }
 
     let trigram_count = read_u32_le(data, &mut pos)? as usize;
+    bounded_json::ensure_count_fits(trigram_count, 7, data, pos, "trigram entries")?;
 
-    let mut postings = HashMap::with_capacity(bounded_capacity(trigram_count, data, pos));
+    let mut postings = HashMap::new();
     for _ in 0..trigram_count {
         let trigram: [u8; 3] = read_exact(data, &mut pos, 3)?.try_into()?;
+        if postings.contains_key(&trigram) {
+            anyhow::bail!("duplicate trigram entry in binary index");
+        }
         let posting_count = read_u32_le(data, &mut pos)? as usize;
-        let mut entries = Vec::with_capacity(bounded_capacity(posting_count, data, pos));
+        bounded_json::ensure_count_fits(posting_count, 2, data, pos, "posting entries")?;
+        let mut entries = Vec::new();
+        budget.reserve_vec(&mut entries, posting_count, "binary posting entries")?;
         let mut previous_file_id = 0u32;
         let mut previous_line = 0u32;
         let mut first = true;
@@ -470,10 +458,15 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
             previous_line = line;
             first = false;
         }
+        budget.reserve_hash_entry(&mut postings, "binary trigram map")?;
         postings.insert(trigram, entries);
     }
 
-    let file_trigrams = rebuild_file_trigrams(files.len(), &postings)?;
+    if pos != data.len() {
+        anyhow::bail!("index file contains trailing data");
+    }
+
+    let file_trigrams = rebuild_file_trigrams(files.len(), &postings, budget)?;
 
     Ok(TrigramIndex {
         // M17 F2: the wire carries only the canonical root; the display spelling of a
@@ -486,14 +479,6 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         postings,
         no_ignore,
     })
-}
-
-fn hex_to_trigram(hex: &str) -> Result<[u8; 3]> {
-    let b = |i: usize| -> Result<u8> {
-        u8::from_str_radix(&hex[i..i + 2], 16)
-            .map_err(|_| anyhow::anyhow!("invalid hex in trigram key"))
-    };
-    Ok([b(0)?, b(2)?, b(4)?])
 }
 
 #[derive(Debug)]
@@ -1324,8 +1309,7 @@ impl TrigramIndex {
     }
 
     pub fn load(path: &Path) -> Result<Self> {
-        let data = std::fs::read(path)
-            .with_context(|| format!("failed to read index from {}", path.display()))?;
+        let data = bounded_json::read_bounded_index_input(path)?;
         bincode_deserialize(&data)
     }
 
@@ -1338,11 +1322,10 @@ impl TrigramIndex {
     }
 
     pub fn load_json(path: &Path) -> Result<Self> {
-        let data = std::fs::read(path)
-            .with_context(|| format!("failed to read index from {}", path.display()))?;
-        let serializable: SerializableIndex =
-            serde_json::from_slice(&data).context("failed to deserialize index")?;
-        Self::from_serializable(serializable)
+        let data = bounded_json::read_bounded_index_input(path)?;
+        let mut budget = DecodeBudget::default();
+        let serializable = bounded_json::deserialize_index_json(&data, &mut budget)?;
+        bounded_json::from_serializable(serializable, &mut budget)
     }
 
     pub fn file_count(&self) -> usize {
@@ -1457,13 +1440,21 @@ where
 fn rebuild_file_trigrams(
     file_count: usize,
     postings: &HashMap<[u8; 3], Vec<PostingEntry>>,
+    budget: &mut DecodeBudget,
 ) -> Result<Vec<FileTrigramHits>> {
-    let mut file_trigrams = vec![Vec::new(); file_count];
+    let mut file_trigrams = Vec::new();
+    budget.reserve_vec(
+        &mut file_trigrams,
+        file_count,
+        "derived per-file posting lists",
+    )?;
+    file_trigrams.resize_with(file_count, Vec::new);
     for (trigram, entries) in postings {
         for entry in entries {
             let Some(file_hits) = file_trigrams.get_mut(entry.file_id as usize) else {
                 anyhow::bail!("index postings reference missing file id {}", entry.file_id);
             };
+            budget.grow_vec(file_hits, "derived per-file postings")?;
             file_hits.push((*trigram, entry.line));
         }
     }
