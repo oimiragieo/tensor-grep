@@ -26,6 +26,7 @@ use process_control::{ChildExt, Control, Output};
 use serde_json::Value;
 use tempfile::tempdir;
 use tensor_grep_rs::index::TrigramIndex;
+use tensor_grep_rs::index_lock::{IndexLockGuard, IndexLockTimeoutError};
 
 #[path = "../test_support/index_lock_intervals.rs"]
 mod index_lock_intervals;
@@ -503,4 +504,115 @@ fn tg_search_index_reclaims_an_abandoned_stale_lock_without_waiting_out_the_full
         !lock_path.exists(),
         "the reclaiming writer's own lock must be released after it completes"
     );
+}
+
+#[test]
+fn abandoned_regular_lock_is_acquired_and_released() {
+    let dir = tempdir().unwrap();
+    let index_path = dir.path().join(".tg_index");
+    let lock_path = lock_path_for(&index_path);
+    let abandoned = b"999999\nabandoned-regular-lock\n";
+    fs::write(&lock_path, abandoned).unwrap();
+    set_mtime(&lock_path, SystemTime::now() - Duration::from_secs(30));
+    let guard = IndexLockGuard::acquire_with(
+        &index_path,
+        Duration::from_secs(1),
+        Duration::from_millis(50),
+        Duration::from_millis(1),
+    )
+    .expect("an abandoned regular lock must be reclaimable");
+    assert_ne!(fs::read(&lock_path).unwrap(), abandoned);
+    drop(guard);
+    assert!(
+        !lock_path.exists(),
+        "the acquired owner must release its lock"
+    );
+}
+
+#[test]
+fn zero_timeout_stale_reclaim_returns_typed_timeout() {
+    let dir = tempdir().unwrap();
+    let index_path = dir.path().join(".tg_index");
+    let lock_path = lock_path_for(&index_path);
+    fs::write(&lock_path, b"999999\nabandoned-zero-timeout\n").unwrap();
+    set_mtime(&lock_path, SystemTime::now() - Duration::from_secs(30));
+    match IndexLockGuard::acquire_with(
+        &index_path,
+        Duration::ZERO,
+        Duration::from_millis(50),
+        Duration::from_millis(1),
+    ) {
+        Err(IndexLockTimeoutError {
+            lock_path: actual,
+            timeout,
+        }) => {
+            assert_eq!(actual, lock_path);
+            assert_eq!(timeout, Duration::ZERO);
+        }
+        Ok(_) => panic!("stale reclamation must not bypass an expired acquisition deadline"),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn stale_regular_lock_without_delete_sharing_obeys_timeout() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use tensor_grep_rs::safe_write::AnchoredDirectory;
+
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+    let index_path = dir.path().join(".tg_index");
+    let lock_path = lock_path_for(&index_path);
+    let abandoned = b"999999\nabandoned-no-delete-sharing\n";
+    fs::write(&lock_path, abandoned).unwrap();
+    set_mtime(&lock_path, SystemTime::now() - Duration::from_secs(30));
+    let blocker = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x0000_0001 | 0x0000_0002)
+        .open(&lock_path)
+        .unwrap();
+    assert!(fs::symlink_metadata(&lock_path).unwrap().is_file());
+    assert_eq!(
+        fs::remove_file(&lock_path).unwrap_err().raw_os_error(),
+        Some(32)
+    );
+    assert_eq!(fs::read(&lock_path).unwrap(), abandoned);
+    let directory = AnchoredDirectory::open(dir.path()).unwrap();
+    let target = directory.target(lock_path.file_name().unwrap()).unwrap();
+    assert_eq!(
+        target.create_new_file().unwrap_err().kind(),
+        std::io::ErrorKind::AlreadyExists
+    );
+    let modified = target.metadata().unwrap().modified().unwrap();
+    assert!(SystemTime::now().duration_since(modified).unwrap() > Duration::from_secs(10));
+    assert!(target.remove_file().is_err());
+    assert_eq!(fs::read(&lock_path).unwrap(), abandoned);
+    drop(target);
+    drop(directory);
+    eprintln!("CI002_READY_WIN32_32_STALE_BYTES_INTACT");
+
+    let mut cmd = tg();
+    cmd.arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path());
+    let output = run_bounded(cmd, Duration::from_secs(16));
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(output.status.success(), "stderr={stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("hello world") && stdout.contains("hello again"),
+        "stdout={stdout}"
+    );
+    assert!(
+        stderr.contains("lock") || stderr.contains("skip"),
+        "stderr={stderr}"
+    );
+    assert!(!index_path.exists(), "lock timeout must skip persistence");
+    assert_eq!(fs::read(&lock_path).unwrap(), abandoned);
+    drop(blocker);
+    fs::remove_file(&lock_path)
+        .expect("the same ordinary leaf must be deletable without the blocker");
 }

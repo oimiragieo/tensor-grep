@@ -565,8 +565,9 @@ impl IndexLockGuard {
                                 > stale_after
                             {
                                 // GUARDED: two racing reclaimers must not crash the loser.
-                                let _ = target.remove_file();
-                                continue;
+                                if target.remove_file().is_ok() && Instant::now() < deadline {
+                                    continue;
+                                }
                             }
                         }
                     }
