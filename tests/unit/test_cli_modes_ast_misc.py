@@ -15,6 +15,7 @@ from tensor_grep.cli.main import (
     app,
 )
 from tensor_grep.core.config import SearchConfig
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 from tests.unit.test_cli_modes_shared import *  # noqa: F403
 
 # ruff: noqa: F405  -- names come from the shared wildcard import above (W4-d split)
@@ -875,6 +876,7 @@ def test_audit_verify_json_reports_chain_failure(tmp_path):
     assert previous_payload["manifest_sha256"] != wrong_previous
 
 
+@requires_checkpoint_creation
 def test_review_bundle_create_json_packages_artifacts_and_writes_bundle_file(tmp_path):
     from tensor_grep.cli.checkpoint_store import create_checkpoint
 

@@ -1544,7 +1544,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.20.0`), which is distinct from the installed CLI/package version and
+`1.21.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1609,9 +1609,10 @@ checkpoint metadata and the index. Omitted labels serialize as `null` for new re
 records without the key or with malformed label data load as `null` without hiding the checkpoint.
 Labels can repeat and never choose the undo target; undo
 uses the checkpoint ID. An older client that rewrites `index.json` may discard labels it does not
-understand. Contract 1.20.0 routes every checkpoint JSON response through the shared envelope
+understand. Contract 1.21.0 routes every checkpoint JSON response through the shared envelope
 injector, so successful and structured error responses include the standard `incomplete` object;
 checkpoint operations default to `{status: false, cause: null, budget_remediable: false}`.
+On Windows, Python MCP checkpoint creation requires Windows 11 24H2 or Windows Server 2025 with `CreateDirectory2W`. On POSIX, it requires descriptor-relative file operations, `O_NOFOLLOW`, and `O_DIRECTORY`; unsupported runtimes return a structured error before writing checkpoint state.
 - `tg_session_open(path=".", max_repo_files=2000)`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`
@@ -1663,6 +1664,8 @@ Capability modes:
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
 | `meta` | Task-shaped meta-tool composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
+
+The `python-local` mode lists `tg_checkpoint_create` as a registered tool; actual checkpoint creation still requires the Windows API described above. Other tools and the checkpoint list/undo operations remain available according to their own requirements.
 
 Since MCP contract 1.13.0, `tg_query(action="search")` is an exact alias for
 `action="text"`. It accepts the same arguments and returns the same search response,

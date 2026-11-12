@@ -495,9 +495,9 @@ def test_install_sh_should_refresh_tensor_grep_uv_cache_before_stable_install():
     content = _read_script("scripts/install.sh")
 
     assert "Clearing cached tensor-grep package metadata" in content
-    assert "uv cache clean tensor-grep" in content
-    assert content.index("uv cache clean tensor-grep") < content.index(
-        'uv pip install "$PKG_REQUIREMENT"'
+    assert '"$UV_BIN_PATH" cache clean tensor-grep' in content
+    assert content.index('"$UV_BIN_PATH" cache clean tensor-grep') < content.index(
+        '"$UV_BIN_PATH" pip install "$PKG_REQUIREMENT"'
     )
 
 
@@ -666,46 +666,65 @@ def test_install_ps1_downloads_uv_binary_directly_and_verifies_checksum():
     # Must clean up the temporary zip even on failure (inner try/finally).
     assert "Remove-Item -LiteralPath $uvZipPath" in content
 
-    # Must clean up the extract dir in the outer finally block.
-    assert "$uvExtractDir" in content
+    # Must clean up the isolated download and extract directory in the outer finally block.
+    assert "$uvTempDir" in content
     finally_block = content[content.rindex("finally {") :]
-    assert "$uvExtractDir" in finally_block
+    assert "$uvTempDir" in finally_block
 
 
-def test_install_sh_notes_self_verification_of_astral_installer():
-    """install.sh must carry a comment explaining that the versioned astral installer
-    self-verifies on Linux/macOS (so no extra checksum step is needed there).
-    """
+def test_install_sh_notes_self_verification_of_uv_archive():
+    """install.sh must explain that it verifies its pinned uv archive itself."""
     content = _read_script("scripts/install.sh")
-    # The comment should reference the self-verification property and contrast with install.ps1.
     assert "self-verif" in content
-    assert "uv_checksums.json" in content or "install.ps1" in content
+    assert "uv_checksums.json" in content
 
 
-def test_install_ps1_verifies_path_uv_version_before_trusting_it():
-    # H6 (round-4): a uv already on PATH must be trusted only after an EXACT pinned-version check;
-    # any mismatch must fall closed into the checksum-verified download, not silently reuse PATH uv.
+def test_install_ps1_ignores_fake_path_uv_even_when_it_reports_the_pin():
     content = _read_script("scripts/install.ps1")
-    idx = content.index('Get-Command "uv"')
-    end = content.index("[2/4]", idx)
-    branch = content[idx:end]
-    assert "--version" in branch  # the version probe
-    assert "$uvVersion" in branch  # compared against the pin
-    assert "$uvTrusted" in branch  # fail-closed marker gating reuse vs download
-    # The bare unconditional "Found existing uv installation." trust message must be gone.
-    assert "Found existing uv installation." not in content
-    # Exact regex-captured comparison (never -like/substring), so 0.13.43 cannot match 0.13.4.
-    assert "-eq $uvVersion" in branch
+    uv_setup = content[
+        content.index('$uvVersion = "') : content.index("# 2. Detect GPU Configuration")
+    ]
+
+    # A fake PATH uv printing the pin is never queried or selected.
+    assert 'Get-Command "uv"' not in uv_setup
+    assert "--version" not in uv_setup
+    assert '$uvPath = "uv"' not in uv_setup
+    assert "$uvPath = $uvExePath" in uv_setup
+    assert uv_setup.index("Get-FileHash") < uv_setup.index("Expand-Archive")
+    assert uv_setup.index("Expand-Archive") < uv_setup.index("$uvPath = $uvExePath")
+    assert "$uvTempPath = Join-Path $env:TEMP" in uv_setup
+    assert "[guid]::NewGuid()" in uv_setup
+    assert "New-Item -ItemType Directory -Path $uvTempPath -ErrorAction Stop" in uv_setup
+    assert "$uvTempDir = $uvTempPath" in uv_setup
+    assert "$uvZipPath = Join-Path $uvTempDir" in uv_setup
+    assert "& $uvPath venv" in content
 
 
-def test_install_sh_verifies_path_uv_version_before_trusting_it():
+def test_install_sh_ignores_fake_path_uv_even_when_it_reports_the_pin():
     content = _read_script("scripts/install.sh")
-    idx = content.index("command -v uv")
-    end = content.index("[2/4]", idx)
-    branch = content[idx:end]
-    assert "uv --version" in branch  # the version probe
-    assert "${UV_VERSION}" in branch  # compared against the pin
-    assert "uv_trusted" in branch  # fail-closed marker gating reuse vs download
-    assert "Found existing uv installation." not in content
-    # Exact shell string equality, never a glob match.
-    assert '[ "${uv_ver}" = "${UV_VERSION}" ]' in branch
+    uv_setup = content[
+        content.index('UV_VERSION="') : content.index("# 2. Detect GPU Configuration")
+    ]
+
+    # A fake PATH uv printing the pin is never queried or selected.
+    assert content.index('UV_TMP_DIR=""') < content.index("trap restore_original_dir EXIT")
+    assert "command -v uv" not in uv_setup
+    assert "uv --version" not in uv_setup
+    assert "uv_trusted" not in uv_setup
+    checksum_check = uv_setup.index('if [ "${uv_actual_sha}" != "${uv_expected_sha}" ]')
+    extract_archive = uv_setup.index('tar -xzf "${uv_tmp}/uv.tar.gz"')
+    select_archive_binary = uv_setup.index('UV_BIN_PATH="$(find')
+    assert checksum_check < extract_archive < select_archive_binary
+    assert '"$UV_BIN_PATH" venv' in content
+    assert '"$UV_BIN_PATH" pip install' in content
+
+
+def test_install_sh_does_not_persist_bootstrap_uv_to_user_bin():
+    content = _read_script("scripts/install.sh")
+    uv_setup = content[
+        content.index('UV_VERSION="') : content.index("# 2. Detect GPU Configuration")
+    ]
+
+    assert 'cp "$UV_BIN_PATH" "$HOME/.local/bin/uv"' not in uv_setup
+    assert "name uvx" not in uv_setup
+    assert 'export PATH="$HOME/.local/bin:$PATH"' not in uv_setup

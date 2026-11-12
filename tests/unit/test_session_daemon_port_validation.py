@@ -71,7 +71,7 @@ def _metadata_shape(value: object) -> dict[str, bool]:
     }
 
 
-_DAEMON_REQUEST_CALL_LINES = {521: "connect", 526: "send", 528: "read"}
+_DAEMON_REQUEST_CALL_LINES = {526: "connect", 531: "send", 533: "read"}
 
 
 def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:

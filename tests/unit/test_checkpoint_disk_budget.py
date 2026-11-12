@@ -20,6 +20,9 @@ import pytest
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.checkpoint_store import CheckpointBudgetExceededError
+from tensor_grep.io import checkpoint_directory
+from tensor_grep.io.checkpoint_directory import CheckpointDirectoryOwner
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def _storage_dir_entries(root: Path) -> list[Path]:
@@ -33,6 +36,17 @@ def _storage_dir_entries(root: Path) -> list[Path]:
     return [p for p in storage_dir.iterdir() if not p.name.endswith(".lock.os")]
 
 
+def _retained_failed_checkpoint_dir(root: Path) -> Path:
+    directories = [
+        path
+        for path in _storage_dir_entries(root)
+        if path.is_dir() and path.name.startswith("ckpt-")
+    ]
+    assert len(directories) == 1
+    return directories[0]
+
+
+@requires_checkpoint_creation
 def test_create_checkpoint_succeeds_under_default_budget(tmp_path: Path) -> None:
     """Baseline: an ordinary small checkpoint is unaffected by the new default budgets."""
     root = tmp_path / "repo"
@@ -46,6 +60,80 @@ def test_create_checkpoint_succeeds_under_default_budget(tmp_path: Path) -> None
     assert (snapshot / "a.py").read_text(encoding="utf-8") == "small file\n"
 
 
+@pytest.mark.parametrize(
+    ("max_file_bytes", "max_total_bytes", "growth", "expected_env"),
+    [
+        (7, 20, b"+++", checkpoint_store._CHECKPOINT_MAX_FILE_BYTES_ENV),
+        (8, 12, b"++", checkpoint_store._CHECKPOINT_MAX_TOTAL_BYTES_ENV),
+    ],
+    ids=["per-file-limit", "remaining-total-limit"],
+)
+@requires_checkpoint_creation
+def test_create_checkpoint_caps_streamed_growth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    max_file_bytes: int,
+    max_total_bytes: int,
+    growth: bytes,
+    expected_env: str,
+) -> None:
+    monkeypatch.setenv("TG_CHECKPOINT_MAX_FILE_BYTES", str(max_file_bytes))
+    monkeypatch.setenv("TG_CHECKPOINT_MAX_TOTAL_BYTES", str(max_total_bytes))
+    monkeypatch.setenv("TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES", "1")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.bin").write_bytes(b"1234567")
+    growing_file = root / "b.bin"
+    growing_file.write_bytes(b"abcde")
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    first_snapshot = checkpoint_store._snapshot_path(root, created.checkpoint_id)
+    assert (first_snapshot / "a.bin").read_bytes() == b"1234567"
+    assert (first_snapshot / "b.bin").read_bytes() == b"abcde"
+    index_path = checkpoint_store._index_path(root)
+    prior_index = index_path.read_bytes()
+    storage_before = {path.resolve() for path in _storage_dir_entries(root) if path.is_dir()}
+    original_read = checkpoint_directory.os.read
+    source_identity = growing_file.stat()
+    appended = False
+
+    def append_after_source_read(fd: int, size: int) -> bytes:
+        nonlocal appended
+        block = original_read(fd, size)
+        opened = checkpoint_directory.os.fstat(fd)
+        if (
+            block
+            and not appended
+            and (opened.st_dev, opened.st_ino) == (source_identity.st_dev, source_identity.st_ino)
+        ):
+            with growing_file.open("ab") as stream:
+                stream.write(growth)
+            appended = True
+        return block
+
+    monkeypatch.setattr(checkpoint_directory.os, "read", append_after_source_read)
+    with pytest.raises(CheckpointBudgetExceededError) as error:
+        checkpoint_store.create_checkpoint(str(root))
+    assert "source grew beyond" in str(error.value)
+    assert expected_env in str(error.value)
+
+    assert appended, "the source-growth control did not run"
+    assert index_path.read_bytes() == prior_index, "failed copy changed the published index"
+    new_dirs = [
+        path
+        for path in _storage_dir_entries(root)
+        if path.is_dir() and path.resolve() not in storage_before
+    ]
+    assert len(new_dirs) == 1
+    copied_files = [path for path in (new_dirs[0] / "snapshot").rglob("*") if path.is_file()]
+    assert all(path.stat().st_size <= max_file_bytes for path in copied_files)
+    assert sum(path.stat().st_size for path in copied_files) <= max_total_bytes
+    assert (new_dirs[0] / "snapshot" / "a.bin").read_bytes() == b"1234567"
+    assert (new_dirs[0] / "snapshot" / "b.bin").read_bytes() == b"abcde"
+    assert created.file_count == 2
+
+
+@requires_checkpoint_creation
 def test_create_checkpoint_refuses_file_over_per_file_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -62,6 +150,7 @@ def test_create_checkpoint_refuses_file_over_per_file_cap(
     assert _storage_dir_entries(root) == [], "a checkpoint dir was left behind on refusal"
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_refuses_when_total_bytes_exceed_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -80,6 +169,7 @@ def test_create_checkpoint_refuses_when_total_bytes_exceed_cap(
     assert _storage_dir_entries(root) == [], "a checkpoint dir was left behind on refusal"
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_refuses_when_free_space_margin_violated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -99,75 +189,74 @@ def test_create_checkpoint_refuses_when_free_space_margin_violated(
     assert _storage_dir_entries(root) == [], "a checkpoint dir was left behind on refusal"
 
 
-def test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_failure(
+@requires_checkpoint_creation
+def test_create_checkpoint_retains_snapshot_dir_on_mid_copy_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A failure DURING the copy loop (after the pre-flight budget check passed) must not
-    leave a half-copied snapshot directory behind -- e.g. a file grows or a permission
-    error appears between the pre-flight stat and the actual copy."""
+    """A failed create retains its owner-created snapshot for inspection."""
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "a.py").write_text("a\n", encoding="utf-8")
+    (root / "a.py").write_bytes(b"a\n")
     (root / "b.py").write_text("b\n", encoding="utf-8")
 
-    original_copy2 = checkpoint_store.shutil.copy2
+    original_copy = CheckpointDirectoryOwner.copy_snapshot_file
     calls = {"n": 0}
 
-    def _boom_on_second_copy(src, dst, *args, **kwargs):
+    def _boom_on_second_copy(owner, root_arg, snapshot_arg, relative_path):
         calls["n"] += 1
         if calls["n"] == 2:
             raise OSError("simulated mid-copy failure")
-        return original_copy2(src, dst, *args, **kwargs)
+        return original_copy(owner, root_arg, snapshot_arg, relative_path)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _boom_on_second_copy)
+    monkeypatch.setattr(CheckpointDirectoryOwner, "copy_snapshot_file", _boom_on_second_copy)
 
     with pytest.raises(OSError):
         checkpoint_store.create_checkpoint(str(root))
 
-    assert _storage_dir_entries(root) == [], "a half-copied checkpoint dir was left behind"
+    retained = _retained_failed_checkpoint_dir(root)
+    assert (retained / "snapshot").is_dir()
+    assert not (retained / "metadata.json").exists()
+    assert not checkpoint_store._index_path(root).exists()
 
 
-def test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_keyboard_interrupt(
+@requires_checkpoint_creation
+def test_create_checkpoint_retains_snapshot_dir_on_mid_copy_keyboard_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """audit #125a: KeyboardInterrupt/SystemExit are BaseException, not Exception -- a Ctrl+C
-    mid-copy must trigger the same half-copied-dir cleanup as an ordinary OSError (see
-    test_create_checkpoint_cleans_up_snapshot_dir_on_mid_copy_failure above), and the interrupt
-    must still propagate to the caller afterward, not be swallowed by the cleanup handler."""
+    """KeyboardInterrupt propagates and leaves the owner-created tree available for inspection."""
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "a.py").write_text("a\n", encoding="utf-8")
+    (root / "a.py").write_bytes(b"a\n")
     (root / "b.py").write_text("b\n", encoding="utf-8")
 
-    original_copy2 = checkpoint_store.shutil.copy2
+    original_copy = CheckpointDirectoryOwner.copy_snapshot_file
     calls = {"n": 0}
 
-    def _interrupt_on_second_copy(src, dst, *args, **kwargs):
+    def _interrupt_on_second_copy(owner, root_arg, snapshot_arg, relative_path):
         calls["n"] += 1
         if calls["n"] == 2:
             raise KeyboardInterrupt
-        return original_copy2(src, dst, *args, **kwargs)
+        return original_copy(owner, root_arg, snapshot_arg, relative_path)
 
-    monkeypatch.setattr(checkpoint_store.shutil, "copy2", _interrupt_on_second_copy)
+    monkeypatch.setattr(CheckpointDirectoryOwner, "copy_snapshot_file", _interrupt_on_second_copy)
 
     with pytest.raises(KeyboardInterrupt):
         checkpoint_store.create_checkpoint(str(root))
 
-    assert _storage_dir_entries(root) == [], (
-        "a half-copied checkpoint dir was left behind after a KeyboardInterrupt"
-    )
+    retained = _retained_failed_checkpoint_dir(root)
+    assert (retained / "snapshot").is_dir()
+    assert not (retained / "metadata.json").exists()
+    assert not checkpoint_store._index_path(root).exists()
 
 
-def test_create_checkpoint_cleans_up_snapshot_dir_on_metadata_write_failure(
+@requires_checkpoint_creation
+def test_create_checkpoint_retains_snapshot_dir_on_metadata_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """audit #125a: the cleanup try/except must extend through the metadata-write step, not
-    stop at the end of the copy loop -- a failure while writing metadata.json (after the copy
-    has fully succeeded) must not orphan the now fully-copied-but-unindexed per-checkpoint
-    directory."""
+    """A metadata failure retains the completed snapshot without publishing an index record."""
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "a.py").write_text("a\n", encoding="utf-8")
+    (root / "a.py").write_bytes(b"a\n")
 
     def _boom_metadata_write(*args, **kwargs):
         raise OSError("simulated metadata write failure")
@@ -177,23 +266,20 @@ def test_create_checkpoint_cleans_up_snapshot_dir_on_metadata_write_failure(
     with pytest.raises(OSError):
         checkpoint_store.create_checkpoint(str(root))
 
-    assert _storage_dir_entries(root) == [], (
-        "a fully-copied checkpoint dir was left behind after a metadata-write failure"
-    )
+    retained = _retained_failed_checkpoint_dir(root)
+    assert (retained / "snapshot" / "a.py").read_bytes() == b"a\n"
+    assert not (retained / "metadata.json").exists()
+    assert not checkpoint_store._index_path(root).exists()
 
 
-def test_create_checkpoint_cleans_up_snapshot_dir_on_index_write_failure(
+@requires_checkpoint_creation
+def test_create_checkpoint_retains_snapshot_dir_on_index_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Item 2 (audit #178, surfaced by the #610 gate): audit #125a's cleanup try/except widened
-    to cover the copy loop AND the metadata write, but the index.json read/parse/write that
-    follows (the q10 RMW block) ran entirely OUTSIDE that try/except. A failure while loading or
-    writing index.json -- after the copy loop AND metadata.json had both already fully succeeded
-    -- previously orphaned the fully-populated per-checkpoint directory forever. The guard must
-    widen once more to also cover the index write."""
+    """An index failure retains the complete unpublished checkpoint for inspection."""
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "a.py").write_text("a\n", encoding="utf-8")
+    (root / "a.py").write_bytes(b"a\n")
 
     def _boom_write_index(*args, **kwargs):
         raise OSError("simulated index write failure")
@@ -203,12 +289,13 @@ def test_create_checkpoint_cleans_up_snapshot_dir_on_index_write_failure(
     with pytest.raises(OSError):
         checkpoint_store.create_checkpoint(str(root))
 
-    assert _storage_dir_entries(root) == [], (
-        "a fully-copied-and-metadata-written checkpoint dir was left behind after an "
-        "index-write failure"
-    )
+    retained = _retained_failed_checkpoint_dir(root)
+    assert (retained / "snapshot" / "a.py").read_bytes() == b"a\n"
+    assert (retained / "metadata.json").is_file()
+    assert not checkpoint_store._index_path(root).exists()
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_respects_raised_env_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -227,6 +314,7 @@ def test_create_checkpoint_respects_raised_env_cap(
     assert created.file_count == 1
 
 
+@requires_checkpoint_creation
 def test_create_checkpoint_undo_roundtrip_still_works_after_budget_fix(tmp_path: Path) -> None:
     """Baseline: a normal create -> modify -> undo roundtrip is unaffected by the budget
     pre-flight (default budgets are generous relative to test-sized fixtures)."""

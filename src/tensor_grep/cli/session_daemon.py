@@ -22,6 +22,11 @@ from uuid import uuid4
 
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli.session_daemon_deadlines import (
+    _HandlerAdmissionThreads,
+    _load_payload_with_status_retry,
+    _read_bounded_request_line,
+)
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_start_capture import (
     cleanup_daemon_start_capture,
@@ -1002,19 +1007,6 @@ def request_running_session_daemon(path: str, request: dict[str, Any]) -> dict[s
     )
 
 
-def _load_payload_with_status_retry(
-    cache: _SessionServeCache, session_id: str, path: str
-) -> tuple[dict[str, Any], str]:
-    deadline = time.time() + _DAEMON_SESSION_LOOKUP_RETRY_SECONDS
-    while True:
-        try:
-            return cache.load_with_status(session_id, path)
-        except (FileNotFoundError, json.JSONDecodeError):
-            if time.time() >= deadline:
-                raise
-            time.sleep(0.05)
-
-
 def _path_cache_key(path: str) -> str:
     resolved = str(_resolve_root(Path(path)))
     return resolved.lower() if sys.platform.startswith("win") else resolved
@@ -1300,6 +1292,7 @@ def _implicit_session_id_for_request(
     session_id: str,
     path: str,
     request: dict[str, Any],
+    deadline_monotonic: float | None = None,
 ) -> str:
     if session_id or command not in _IMPLICIT_SESSION_COMMANDS:
         return session_id
@@ -1314,6 +1307,7 @@ def _implicit_session_id_for_request(
         opened = open_session(
             path,
             max_repo_files=max_repo_files,
+            deadline_monotonic=deadline_monotonic,
         )
         server.implicit_session_ids[key] = opened.session_id
         while len(server.implicit_session_ids) > _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES:
@@ -1704,12 +1698,14 @@ def _attach_demand_metrics(status: dict[str, Any], metrics_root: Path) -> dict[s
     return status
 
 
-class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
+class _ThreadedSessionDaemon(_HandlerAdmissionThreads, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    _max_concurrent_connections = 32
 
     def __init__(self, root: Path, server_address: tuple[str, int], *, token: str = "") -> None:
         super().__init__(server_address, _SessionDaemonHandler)
+        self._init_handler_admission(_DAEMON_HANDLER_TIMEOUT_SECONDS)
         self.root = root
         # audit S3: shared secret every client must present before any command is dispatched.
         self.token = token
@@ -1754,36 +1750,37 @@ class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer
         return hmac.compare_digest(provided, self.token)
 
 
-def _read_bounded_request_line(
-    rfile: Any, max_bytes: int = _MAX_DAEMON_REQUEST_BYTES
-) -> str | None:
-    """Read one request line from an untrusted client, bounded to ``max_bytes``.
-
-    audit (round-3 pre-auth DoS): ``rfile.readline()`` with no size argument buffers the
-    entire line into memory before the caller can authenticate, so a hostile local client
-    can stream unbounded bytes with no newline and exhaust the daemon. Reading ``max_bytes + 1``
-    caps the allocation, and a line that exceeds the cap (or a read that errors/times out) is
-    refused as ``None`` before any parse or token check. Returns the decoded, stripped line, or
-    ``None`` when the client sent nothing, exceeded the cap, or the read failed.
-    """
-    try:
-        raw: bytes = rfile.readline(max_bytes + 1)
-    except (TimeoutError, OSError):
-        return None
-    if not raw or len(raw) > max_bytes:
-        return None
-    return raw.decode("utf-8", errors="replace").strip()
-
-
 class _SessionDaemonHandler(socketserver.StreamRequestHandler):
     # audit (round-3 pre-auth DoS): time out a silent/slow client so it cannot pin a worker
     # thread indefinitely before authenticating. StreamRequestHandler.setup() applies this via
     # connection.settimeout().
     timeout = _DAEMON_HANDLER_TIMEOUT_SECONDS
 
+    def _write_response(self, response: dict[str, Any], deadline: float) -> bool:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            self.connection.close()
+            return False
+        self.connection.settimeout(remaining)
+        self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
+        self.wfile.flush()
+        return True
+
     def handle(self) -> None:
         server = cast(_ThreadedSessionDaemon, self.server)
-        line = _read_bounded_request_line(self.rfile)
+        with server._handler_deadline_lock:
+            handler_request = getattr(self, "request", None)
+            admitted_at = server._handler_admissions.get(handler_request, monotonic())
+            handler_deadline = server._handler_deadlines.get(handler_request)
+        if handler_deadline is None:
+            handler_deadline = admitted_at + _DAEMON_HANDLER_TIMEOUT_SECONDS
+        work_deadline = admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+        line = _read_bounded_request_line(
+            self.rfile,
+            max_bytes=_MAX_DAEMON_REQUEST_BYTES,
+            deadline=handler_deadline,
+            connection=getattr(self, "connection", None),
+        )
         if not line:
             return
         response: dict[str, Any]
@@ -1802,8 +1799,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "session_id": "",
                     "error": {"code": "unauthorized", "message": "invalid or missing daemon token"},
                 }
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                self._write_response(response, work_deadline)
                 return
             server.note_activity()
             # audit r8: mark this request in-flight (after auth, so unauthorized clients don't
@@ -1836,14 +1832,15 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 session_id=request_session_id,
                 path=request_path,
                 request=request,
+                deadline_monotonic=work_deadline,
             )
             if request_session_id:
                 request["session_id"] = request_session_id
 
             if command == "stop":
                 response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                if not self._write_response(response, work_deadline):
+                    return
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
             if command == "ping":
@@ -1853,8 +1850,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         request.get("nonce"), server.root, int(server.server_address[1])
                     )
                 )
-                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-                self.wfile.flush()
+                self._write_response(response, work_deadline)
                 return
 
             if command == "stats":
@@ -1891,16 +1887,18 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     server.payload_cache,
                     request_session_id,
                     request_path,
+                    deadline_monotonic=work_deadline,
                 )
-                response = _session_health_payload(request_session_id, payload)
+                response = _session_health_payload(
+                    request_session_id, payload, deadline_monotonic=work_deadline
+                )
                 response["serve_cache"] = {
                     "status": cache_status,
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
                 }
             else:
-                overall_started_at = monotonic()
-                request_deadline = overall_started_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
+                overall_started_at = admitted_at
                 response_cache_status = "bypass"
                 refresh_trigger = ""
                 try:
@@ -1909,6 +1907,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         server.payload_cache,
                         request_session_id,
                         request_path,
+                        deadline_monotonic=work_deadline,
                     )
                     loaded_at = monotonic()
                     response, response_cache_status = _serve_daemon_response_with_cache(
@@ -1918,7 +1917,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         path=request_path,
                         request=request,
                         payload=payload,
-                        deadline_monotonic=request_deadline,
+                        deadline_monotonic=work_deadline,
                     )
                     served_at = monotonic()
                 except Exception as exc:
@@ -1934,13 +1933,14 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                             request_session_id,
                             request_path,
                             payload_cache=server.payload_cache,
-                            deadline_monotonic=request_deadline,
+                            deadline_monotonic=work_deadline,
                         )
                         server.payload_cache.record_refresh()
                         payload, cache_status = _load_payload_with_status_retry(
                             server.payload_cache,
                             request_session_id,
                             request_path,
+                            deadline_monotonic=work_deadline,
                         )
                         loaded_at = monotonic()
                         response, response_cache_status = _serve_daemon_response_with_cache(
@@ -1950,7 +1950,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                             path=request_path,
                             request=request,
                             payload=payload,
-                            deadline_monotonic=request_deadline,
+                            deadline_monotonic=work_deadline,
                         )
                         served_at = monotonic()
                     except Exception as rebuild_exc:
@@ -2011,8 +2011,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 with server._request_lock:
                     server.inflight_requests -= 1
 
-        self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-        self.wfile.flush()
+        self._write_response(response, work_deadline)
 
 
 def _run_daemon_lifecycle_monitor(

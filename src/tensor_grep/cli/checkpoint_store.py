@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -11,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import uuid4  # noqa: F401 -- checkpoint_create uses this facade for test seams
 
 import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
@@ -21,31 +22,28 @@ from tensor_grep.cli._index_lock import (
     index_lock,
 )
 
-# NOTE: only the two names this file actually calls are imported here.
-# `_configured_checkpoint_max`, `_prune_checkpoint_records`,
-# `_configured_positive_int`, `_configured_checkpoint_max_file_bytes`,
-# `_configured_checkpoint_max_total_bytes`, and
-# `_configured_checkpoint_free_space_margin_bytes` moved to
-# `checkpoint_retention.py` too but are neither called here nor referenced by
-# any test via `checkpoint_store.<name>` (verified) -- re-export via
-# `checkpoint_retention.<name>` instead of widening this facade's surface.
+# The creation helper reads these through this module so existing monkeypatch seams remain live.
 from tensor_grep.cli.checkpoint_retention import (
-    _check_checkpoint_disk_budget,
-    _select_retained_checkpoints,
+    _check_checkpoint_disk_budget,  # noqa: F401
+    _select_retained_checkpoints,  # noqa: F401 -- retained module attribute used by tests
 )
 from tensor_grep.cli.checkpoint_scope import (
     matches_scoped_paths,
-    resolved_rel_within,
+    resolved_rel_within,  # noqa: F401 -- used by checkpoint_create through this facade
     scope_violation,
     undo_prune_candidates,
 )
 from tensor_grep.cli.checkpoint_undo_io import (
-    check_restore_target,
+    close_published_identity,
+    publish_restored_file,
     read_for_rollback,
     rollback_overwrites,
     rollback_removes,
+    unlink_with_pinned_parent,
 )
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+
+_LOGGER = logging.getLogger(__name__)
 
 _CHECKPOINT_VERSION = 1
 _CHECKPOINT_DIRNAME = ".tensor-grep"
@@ -169,7 +167,9 @@ def _is_generated_discovery_dir(path: Path) -> bool:
     return path.name in _DISCOVERY_IGNORED_DIRS or path.name.startswith(".tmp")
 
 
-def _write_json_atomic(path: Path, payload: Any) -> None:
+def _write_json_atomic(
+    path: Path, payload: Any, *, root: Path | None = None, owner: Any | None = None
+) -> None:
     """Write ``payload`` as pretty JSON to ``path`` atomically, refusing a pre-existing symlink.
 
     Thin wrapper over the shared C4/#659 hardening baseline (`_index_lock.atomic_write_json`).
@@ -178,7 +178,18 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     -- routing through the shared helper closes that gap uniformly instead of re-patching a third
     copy of the same pattern in place.
     """
-    atomic_write_json(path, payload)
+    if owner is None:
+        atomic_write_json(path, payload)
+    else:
+        if root is None:
+            raise ValueError("anchored checkpoint writes require their scope root")
+        owner.write_json(
+            root,
+            path,
+            payload,
+            atomic_write_json=atomic_write_json,
+            atomic_write_bytes_confined=atomic_write_bytes_confined,
+        )
 
 
 def _resolve_within_root(root: Path, root_resolved: Path, rel_path: str) -> Path:
@@ -642,9 +653,9 @@ def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
     return _index_path(root)
 
 
-def _write_index(root: Path, records: list[CheckpointRecord]) -> None:
+def _write_index(root: Path, records: list[CheckpointRecord], *, owner: Any | None = None) -> None:
     index_path = _index_path(root)
-    _write_json_atomic(index_path, [asdict(record) for record in records])
+    _write_json_atomic(index_path, [asdict(record) for record in records], root=root, owner=owner)
 
 
 def _git_snapshot_entries(root: Path) -> tuple[dict[str, bool], list[str]]:
@@ -773,6 +784,7 @@ def _write_checkpoint_metadata(
     scope_kind: str,
     original_path: Path,
     scoped_paths: list[str] | None = None,
+    owner: Any | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "version": _CHECKPOINT_VERSION,
@@ -794,155 +806,38 @@ def _write_checkpoint_metadata(
     }
     if scoped_paths is not None:
         payload["scoped_paths"] = scoped_paths
-    _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
+    _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload, root=root, owner=owner)
 
 
 def create_checkpoint(
     path: str = ".", paths: list[str] | None = None, *, label: str | None = None
 ) -> CheckpointCreateResult:
+    from tensor_grep.io.checkpoint_directory import CheckpointDirectoryOwner, require_supported
+
     normalized_label = checkpoint_labels.normalize_checkpoint_label(label)
-    target = Path(path).expanduser().resolve()
+    # Keep the caller's normalized lexical path until its directory chain is pinned. Resolving
+    # first would erase a junction/reparse ancestor (including one swapped in after MCP path
+    # confinement) and make the owner pin the redirected destination instead of refusing it.
+    target = Path(path).expanduser().absolute()
     # A missing SUFFIXED path under an existing directory is deliberately file-scoped (undo of a
     # to-be-created file, see _detect_checkpoint_scope); anything else is a typo, not a scope.
     if not target.exists() and not (target.suffix and target.parent.is_dir()):
         raise FileNotFoundError(f"Path not found: {path}")
-    scope = _detect_checkpoint_scope(Path(path))
-    root = scope.root
-    mode = scope.mode
-    root_resolved = root.resolve()
-
-    scoped_paths: list[str] | None = None
-    if paths is not None:
-        if scope.scope_kind == "file":
-            raise ValueError("Cannot specify both a single-file path and --paths")
-        scoped_rel_paths: set[str] = set()
-        for p in paths:
-            cand = Path(p) if Path(p).is_absolute() else root / p
-            rel = resolved_rel_within(root_resolved, cand)
-            if rel is None:
-                raise ValueError(f"Path outside checkpoint root: {p!r}")
-            _resolve_within_root(root, root_resolved, rel)
-            scoped_rel_paths.add(rel)
-        scoped_paths = sorted(scoped_rel_paths)
-
-    created_at = datetime.now(UTC).isoformat()
-    checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
-    entries, skipped_nested_repos = _snapshot_entries(scope)
-
-    if scoped_paths is not None:
-        entries = {k: v for k, v in entries.items() if matches_scoped_paths(k, scoped_paths)}
-
-    # audit H4: refuse BEFORE any snapshot directory exists if the copy would blow a
-    # configured size/free-space budget -- see _check_checkpoint_disk_budget.
-    _check_checkpoint_disk_budget(root, entries)
-
-    # Create the storage root up front so its resolve() is stable: under concurrent first-time
-    # creates, resolving _snapshot_path while another writer is still mkdir-ing .tensor-grep/
-    # checkpoints can transiently mis-resolve and trip the containment guard on a valid id.
-    _checkpoint_storage_dir(root).mkdir(parents=True, exist_ok=True)
-
-    snapshot_dir = _snapshot_path(root, checkpoint_id)
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-
+    require_supported()
+    owner = CheckpointDirectoryOwner(target.parent)
     try:
-        # M1 (A38 class fix, A27/A39 twin-crossing): guard the create-side SOURCE the same
-        # way the undo side guards its snapshot source (audit H3). follow_symlinks=False
-        # below refuses only a link AT THE LEAF; a symlinked or (Windows) junctioned
-        # ANCESTOR under root would otherwise be traversed transparently by the OS,
-        # copying OUT-OF-ROOT file content into the snapshot. Resolve ONLY the parent
-        # chain and refuse escapes; the leaf keeps its raw identity, so a legitimately
-        # tracked out-of-root-pointing LEAF symlink is still stored AS a link.
-        # Named follow-ups (A49 governance, recorded canonically):
-        # (a) M1-FU1 ``CHECKPOINT-A48-HANDLES`` -- A48 opened-parent-handle anchoring for the
-        #     create-side copy (Event-gated parent swap between resolve and copy, Unix +
-        #     Windows) is NOT closed by this resolve-then-copy shape; this PR's source-side
-        #     parent-containment guard covers pre-planted chains. OWNER: M1 change-control.
-        #     DISPOSITION: DEFERRED, not claimed. REOPEN TRIGGER: a concrete attacker able to
-        #     race a parent swap inside a repo-checkout snapshot window (a junction written
-        #     between resolve() and copy2()), or a consumer requiring handle-anchored writes.
-        # (b) M1-FU2 ``CHECKPOINT-UNDO-LEAF-RESIDUAL`` -- the undo side's leaf-following
-        #     residual (``_resolve_within_root`` resolves the full leaf at :161, so an
-        #     out-of-root-pointing STORED leaf symlink is refused instead of restored as a
-        #     link). OWNER: undo-change-control. DISPOSITION: DEFERRED. REOPEN TRIGGER: a
-        #     checkpoint containing a tracked out-of-root-pointing leaf symlink that undo
-        #     must restore as a link (cannot today).
-        for rel_path, exists in entries.items():
-            if not exists:
-                continue
-            resolved_parent, leaf = _resolve_parent_within_root(root, root_resolved, rel_path)
-            source = resolved_parent / leaf
-            destination = snapshot_dir / rel_path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            # follow_symlinks=False: store a symlink AS a link, never copy its (possibly
-            # out-of-root) target content into the snapshot (audit HIGH — symlink disclosure).
-            shutil.copy2(source, destination, follow_symlinks=False)
+        if target.is_dir():
+            # Pin an explicit directory operand after its parents. This rejects a directory
+            # symlink/junction at the leaf instead of silently treating its resolved destination
+            # as the caller's scope.
+            owner.open_existing(target)
+        scope = _detect_checkpoint_scope(target)
+        owner.assert_pinned(scope.root)
+        from tensor_grep.cli.checkpoint_create import create_checkpoint_with_owner
 
-        result = CheckpointCreateResult(
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            root=str(root),
-            created_at=created_at,
-            file_count=len(entries),
-            undo_argv=_undo_argv(scope, checkpoint_id),
-            undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
-            skipped_nested_repos=skipped_nested_repos,
-            scoped_paths=scoped_paths,
-            label=normalized_label,
-        )
-        _write_checkpoint_metadata(
-            root,
-            result,
-            entries,
-            scope_kind=scope.scope_kind,
-            original_path=scope.original_path,
-            scoped_paths=scoped_paths,
-        )
-
-        # audit #178 (surfaced by the #610 gate): the guarded region must also extend through
-        # the index write below -- q10's load->mutate->write RMW of index.json, cross-process
-        # and cross-thread (see _index_lock.index_lock docstring / AGENTS.md Backend Fail-Closed
-        # Contract). Before this fix that RMW ran entirely OUTSIDE this try/except: a failure
-        # loading, parsing, or writing index.json after the copy loop AND metadata.json had both
-        # already fully succeeded still orphaned the fully-populated per-checkpoint directory
-        # forever -- audit #125a's widening (below) only reached the metadata write, not this
-        # index write. Retention selection stays inside the lock (pure, no I/O); the actual
-        # rmtree of dropped (OTHER, already-retired) snapshot dirs happens AFTER this try/except
-        # -- once our own new checkpoint is durably indexed, a failure pruning old dirs is a
-        # separate, best-effort concern and must not roll back the checkpoint just committed.
-        with index_lock(_index_path(root)):
-            records = _load_index(root)
-            records.insert(
-                0,
-                CheckpointRecord(
-                    version=_CHECKPOINT_VERSION,
-                    checkpoint_id=checkpoint_id,
-                    mode=mode,
-                    root=str(root),
-                    created_at=created_at,
-                    file_count=len(entries),
-                    label=normalized_label,
-                ),
-            )
-            records, dropped_dirs = _select_retained_checkpoints(root, records)
-            _write_index(root, records)
-    except BaseException:
-        # audit #125a: catch BaseException, not Exception -- KeyboardInterrupt/SystemExit
-        # subclass BaseException directly (not Exception), so a Ctrl+C here previously escaped
-        # this handler entirely and left an uncleaned checkpoint dir behind. The guarded region
-        # extends through the metadata write AND (audit #178) the index write above: a failure
-        # writing metadata.json OR index.json after a fully successful copy must not orphan that
-        # directory either -- audit H4's original cleanup only covered the copy loop. Remove the
-        # WHOLE per-checkpoint dir (metadata.json may or may not have been written yet, but
-        # snapshot_dir's own parent must go too, not just the snapshot/ subdir) -- matches how
-        # _prune_checkpoint_records removes a checkpoint. Always re-raise: the interrupt or
-        # exception must still propagate to the caller, never be swallowed here.
-        shutil.rmtree(snapshot_dir.parent, ignore_errors=True)
-        raise
-
-    for directory in dropped_dirs:
-        shutil.rmtree(directory, ignore_errors=True)
-    _prime_bounded_discovery_caches_for_root(root)
-    return result
+        return create_checkpoint_with_owner(scope, paths, normalized_label, owner)
+    finally:
+        owner.close()
 
 
 def list_checkpoints(path: str = ".") -> list[CheckpointRecord]:
@@ -1399,8 +1294,17 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # round-7 rank-6: store (path, prior_bytes) -- NOT just the path -- so a commit-phase
         # failure can recreate a file it already unlinked. Previously the revert had only the path
         # and permanently lost the content.
-        committed_removes: list[tuple[Path, bytes, tuple[int, int]]] = []
-        committed_overwrites: list[tuple[Path, bytes | None, tuple[int, int], tuple[int, int]]] = []
+        committed_removes: list[tuple[Path, bytes, os.stat_result, tuple[int, int]]] = []
+        committed_overwrites: list[
+            tuple[
+                Path,
+                bytes | None,
+                os.stat_result | None,
+                tuple[int, int],
+                list[tuple[int, int] | None],
+                list[bool],
+            ]
+        ] = []
 
         try:
             # Remove files that exist in the current tree but not in the snapshot.
@@ -1413,11 +1317,19 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     # exact permanent loss the round-7 rank-6 note above says was fixed. Aborting
                     # here is strictly better: the `except Exception` handler rolls back every
                     # mutation already applied and re-raises, so the tree stays consistent.
-                    removed_bytes, removed_parent, _ = read_for_rollback(
+                    removed_info = current_path.lstat()
+                    removed_bytes, removed_parent, removed_leaf = read_for_rollback(
                         root, current_path, checkpoint_id, _bytes_or_abort_undo
                     )
-                    current_path.unlink()
-                    committed_removes.append((current_path, removed_bytes, removed_parent))
+                    if (removed_info.st_dev, removed_info.st_ino) != removed_leaf:
+                        raise OSError("checkpoint removal target changed during rollback read")
+                    committed_removes.append((
+                        current_path,
+                        removed_bytes,
+                        removed_info,
+                        removed_parent,
+                    ))
+                    unlink_with_pinned_parent(root, current_path, removed_parent, removed_leaf)
                     removed_paths += 1
 
             # Remove files that the snapshot records as deleted.
@@ -1426,11 +1338,19 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     target = resolved_targets[rel_path]
                     if target.exists():
                         # Task #297, same reasoning as the branch above.
-                        removed_bytes, removed_parent, _ = read_for_rollback(
+                        removed_info = target.lstat()
+                        removed_bytes, removed_parent, removed_leaf = read_for_rollback(
                             root, target, checkpoint_id, _bytes_or_abort_undo
                         )
-                        target.unlink()
-                        committed_removes.append((target, removed_bytes, removed_parent))
+                        if (removed_info.st_dev, removed_info.st_ino) != removed_leaf:
+                            raise OSError("checkpoint removal target changed during rollback read")
+                        committed_removes.append((
+                            target,
+                            removed_bytes,
+                            removed_info,
+                            removed_parent,
+                        ))
+                        unlink_with_pinned_parent(root, target, removed_parent, removed_leaf)
                         removed_paths += 1
 
             # Swap staged copies into the working tree.
@@ -1439,31 +1359,72 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 target.parent.mkdir(parents=True, exist_ok=True)
                 parent_identity = dir_identity(target.parent)
                 prior_bytes: bytes | None = None
+                prior_info: os.stat_result | None = None
+                prior_leaf_identity: tuple[int, int] | None = None
                 if target.exists():
                     # Task #297: an unreadable target used to be OVERWRITTEN with
                     # `prior_bytes = None`, so its original content never reached
                     # `committed_overwrites` and the revert left it clobbered for good.
-                    prior_bytes, parent_identity, leaf_identity = read_for_rollback(
+                    prior_info = target.lstat()
+                    prior_bytes, parent_identity, prior_leaf_identity = read_for_rollback(
                         root, target, checkpoint_id, _bytes_or_abort_undo
                     )
-                else:
-                    # Claim the absent leaf without clobbering a concurrent arrival.
-                    leaf_identity = atomic_write_bytes_confined(root, target, b"", replace=False)
-                # Journal before copy2: content or metadata copying can fail after mutation.
-                committed_overwrites.append((target, prior_bytes, parent_identity, leaf_identity))
-                check_restore_target(root, target, parent_identity, leaf_identity)
-                shutil.copy2(staged, target, follow_symlinks=False)
+                    if (prior_info.st_dev, prior_info.st_ino) != prior_leaf_identity:
+                        raise OSError("checkpoint restore target changed during rollback read")
+                published_identity: list[tuple[int, int] | None] = [None]
+                publication_state = [False]
+                committed_overwrites.append((
+                    target,
+                    prior_bytes,
+                    prior_info,
+                    parent_identity,
+                    published_identity,
+                    publication_state,
+                ))
 
-        except Exception:
-            rollback_overwrites(root, committed_overwrites)
-            rollback_removes(root, committed_removes)
+                def record_published_identity(
+                    identity: tuple[int, int],
+                    published: list[tuple[int, int] | None] = published_identity,
+                ) -> None:
+                    published[0] = identity
+
+                def mark_publication(
+                    published: list[bool] = publication_state,
+                ) -> None:
+                    published[0] = True
+
+                publish_restored_file(
+                    root,
+                    target,
+                    staged.read_bytes(),
+                    staged.stat(follow_symlinks=False),
+                    expected_parent_identity=parent_identity,
+                    expected_file_identity=prior_leaf_identity,
+                    expect_absent=prior_info is None,
+                    on_new_file_identity=record_published_identity,
+                    on_publication=mark_publication,
+                )
+
+        except BaseException as original_error:
+            rollback_failures = rollback_overwrites(root, committed_overwrites)
+            rollback_failures.extend(rollback_removes(root, committed_removes))
+            if rollback_failures:
+                failed_path = rollback_failures[0]
+                raise CheckpointUndoUnsafeError(
+                    "Checkpoint undo rollback is incomplete. Original files could not all be "
+                    f"restored safely; check {failed_path} before retrying.",
+                    path=str(failed_path),
+                ) from original_error
             raise
+        finally:
+            for _, _, _, _, published_identity, _ in committed_overwrites:
+                close_published_identity(published_identity[0])
 
     finally:
         staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
-        for directory in undo_prune_candidates(root, [p for p, _, _ in committed_removes]):
+        for directory in undo_prune_candidates(root, [entry[0] for entry in committed_removes]):
             # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
             # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
             # directory symlink (or, on some platforms, act through it) -- the symlink-follow

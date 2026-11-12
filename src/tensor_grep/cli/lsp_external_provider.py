@@ -11,6 +11,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
+from tensor_grep.cli import lsp_session as _lsp_session
 from tensor_grep.cli.lsp_probe_budget import ProbeBudget, client_lock, remaining_seconds
 from tensor_grep.cli.lsp_proof_fields import (
     _attach_lsp_proof_fields as _attach_lsp_proof_fields,
@@ -32,8 +33,15 @@ from tensor_grep.cli.lsp_readiness import ReadinessMixin
 from tensor_grep.cli.lsp_session import (
     ProviderSession,
     SessionBackedState,
+    _read_message,
     proof_request,
     reset_after_stop,
+)
+from tensor_grep.cli.lsp_stderr import (
+    _LSP_STDERR_MAX_LINES,
+    _LSP_STDERR_MAX_TEXT_BYTES,
+    _iter_lsp_stderr_lines,
+    _truncate_lsp_stderr_line,
 )
 from tensor_grep.cli.lsp_transport_writer import bounded_stdin
 from tensor_grep.cli.process_containment import (
@@ -81,6 +89,11 @@ _GENERATED_CACHE_EXCLUDES = [
 _CLOSED_SENTINEL: dict[str, Any] = {}
 # Bound on buffered responses whose request slot is not yet registered (audit B12).
 _MAX_ORPHAN_RESPONSES = 64
+_MAX_ORPHAN_RESPONSE_BYTES = 1024 * 1024
+_MAX_LSP_HEADER_BYTES = _lsp_session._MAX_LSP_HEADER_BYTES
+_MAX_LSP_HEADER_LINES = _lsp_session._MAX_LSP_HEADER_LINES
+_MAX_LSP_MESSAGE_BYTES = _lsp_session._MAX_LSP_MESSAGE_BYTES
+_read_bounded_line = _lsp_session._read_bounded_line
 
 
 def _configured_timeout_seconds(env_var: str, default: float) -> float:
@@ -106,87 +119,6 @@ def _configured_positive_int(env_var: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
-
-
-# Audit MED (DoS): cap the framed-message body size so a malicious or buggy external LSP
-# provider cannot declare a huge Content-Length and force an unbounded read/allocation.
-_MAX_LSP_MESSAGE_BYTES = 64 * 1024 * 1024
-
-# Audit #116 (DoS): bound the header preamble itself -- mirrors mcp_server.py's audit #49 fix
-# for the identical unbounded-header-skip shape in the MCP stdio reader. A malformed or
-# malicious language-server subprocess that streams endless header lines, or a single giant
-# line with no newline terminator, or one that never sends the blank-line terminator, must not
-# hang the reader or exhaust memory BEFORE the Content-Length size check below ever runs.
-# Three caps apply, fail-closed on any breach: a hard iteration cap on the NUMBER of header
-# lines (_MAX_LSP_HEADER_LINES), a hard byte cap on any SINGLE line (enforced by the bounded
-# readline() below), and a cumulative byte cap across the whole preamble -- the two byte caps
-# reuse one constant (_MAX_LSP_HEADER_BYTES), mirroring #49's reuse of a single constant for
-# both roles.
-_MAX_LSP_HEADER_LINES = 128
-_MAX_LSP_HEADER_BYTES = 64 * 1024
-
-
-def _read_bounded_line(stream: Any, limit: int) -> Any:
-    """``stream.readline()``, but never buffer more than ``limit`` bytes/chars for one line.
-
-    Named to mirror mcp_server.py's ``_read_bounded_line`` (audit #49). That MCP reader wraps
-    an ``anyio.AsyncFile``, whose ``readline()`` does not forward a size bound -- it needs a
-    reach-into-``.wrapped`` thread trick to get one. ``_read_message`` here is a plain
-    synchronous function reading a subprocess pipe (or a test double), and both
-    ``io.BufferedReader.readline(size)`` and text-stream ``readline(size)`` already accept a
-    size bound directly, so this is a direct pass-through -- kept as a named helper purely to
-    mirror the #49 shape for anyone diffing the two readers.
-    """
-    return stream.readline(limit)
-
-
-def _read_message(stream: Any) -> dict[str, Any] | None:
-    headers: dict[str, str] = {}
-    header_bytes_total = 0
-    for _ in range(_MAX_LSP_HEADER_LINES):
-        line = _read_bounded_line(stream, _MAX_LSP_HEADER_BYTES)
-        if line in ("", b""):
-            return None
-        ends_with_newline = line.endswith(b"\n") if isinstance(line, bytes) else line.endswith("\n")
-        if len(line) >= _MAX_LSP_HEADER_BYTES and not ends_with_newline:
-            # Fail closed: this single line reached the per-line read cap with no newline
-            # terminator -- a giant or never-terminating header line. A complete line exactly
-            # at the cap still ends in "\n", so a legitimate message is never truncated.
-            return None
-        header_bytes_total += len(line)
-        if header_bytes_total > _MAX_LSP_HEADER_BYTES:
-            # Fail closed: too many header lines summed past the cumulative byte budget
-            # before a blank-line terminator ever showed up.
-            return None
-        if line in ("\r\n", "\n", b"\r\n", b"\n"):
-            break
-        if isinstance(line, bytes):
-            line = line.decode("ascii", errors="replace")
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        headers[key.strip().lower()] = value.strip()
-    else:
-        # Fail closed: too many header lines without a blank-line terminator.
-        return None
-    try:
-        content_length = int(headers.get("content-length", "0"))
-    except (TypeError, ValueError):
-        return None
-    if content_length <= 0:
-        return None
-    if content_length > _MAX_LSP_MESSAGE_BYTES:
-        # Refuse an oversized frame rather than allocating/reading an unbounded body.
-        return None
-    body = stream.read(content_length)
-    if not body:
-        return None
-    if isinstance(body, bytes):
-        body = body.decode("utf-8", errors="replace")
-    parsed = json.loads(body)
-    if not isinstance(parsed, dict):
-        return None
-    return cast(dict[str, Any], parsed)
 
 
 def _write_message(stream: Any, payload: dict[str, Any]) -> None:
@@ -403,6 +335,9 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self._debug_trace_enabled = False
         self._debug_trace_started_monotonic = time.monotonic()
         self._debug_trace: list[dict[str, Any]] = []
+        self._stderr_trace_lock = threading.Lock()
+        self._stderr_trace_lines = 0
+        self._stderr_trace_bytes = 0
         self.request_timeout_seconds = (
             _configured_timeout_seconds(
                 _LSP_REQUEST_TIMEOUT_ENV_VAR, _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS
@@ -431,9 +366,12 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self.disabled_until_monotonic = 0.0
 
     def enable_debug_trace(self) -> None:
-        self._debug_trace_enabled = True
-        self._debug_trace_started_monotonic = time.monotonic()
-        self._debug_trace = []
+        with client_lock(self, lock=self._stderr_trace_lock):
+            self._debug_trace_enabled = True
+            self._debug_trace_started_monotonic = time.monotonic()
+            self._debug_trace = []
+            self._stderr_trace_lines = 0
+            self._stderr_trace_bytes = 0
 
     def debug_trace(self) -> list[dict[str, Any]]:
         return list(self._debug_trace)
@@ -454,6 +392,12 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
     ) -> None:
         if not self._debug_trace_enabled:
             return
+        diagnostic_bytes = 0
+        if event in {"stderr", "stderr_error"}:
+            detail = dict(detail or {})
+            message = _truncate_lsp_stderr_line(str(detail.get("message", "")))
+            detail["message"] = message
+            diagnostic_bytes = len(message.encode("utf-8"))
         entry: dict[str, Any] = {
             "event": event,
             "elapsed_ms": round(
@@ -467,6 +411,17 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             entry["id"] = request_id
         if detail:
             entry.update(detail)
+        if event in {"stderr", "stderr_error"}:
+            with client_lock(self, lock=self._stderr_trace_lock, follow_deadline=False):
+                if (
+                    self._stderr_trace_lines >= _LSP_STDERR_MAX_LINES
+                    or self._stderr_trace_bytes + diagnostic_bytes > _LSP_STDERR_MAX_TEXT_BYTES
+                ):
+                    return
+                self._debug_trace.append(entry)
+                self._stderr_trace_lines += 1
+                self._stderr_trace_bytes += diagnostic_bytes
+            return
         self._debug_trace.append(entry)
 
     def start(self) -> None:
@@ -477,8 +432,9 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             raise LSPTransportError(
                 self.last_error or "LSP client is unusable after failed teardown"
             )
-        process = self._session.process  # fast path (no lock): already running
-        if process is not None and process.poll() is None:
+        session = self._session
+        process = session.process  # fast path (no lock): already running
+        if not session.unusable and process is not None and process.poll() is None:
             return
         # Serialize the check-then-spawn (round-6 r9): two daemon worker threads calling into the
         # SAME cached client (get_client is shared per (root,language)) must not both pass the None
@@ -486,8 +442,9 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         with client_lock(self, lock=self._start_lock):
             if self._starting:  # re-entered by our own initialize handshake: never respawn
                 return
-            process = self._session.process
-            if process is not None and process.poll() is None:
+            session = self._session
+            process = session.process
+            if not session.unusable and process is not None and process.poll() is None:
                 return
             self._starting = True
             try:
@@ -674,7 +631,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 request_id = self._request_id
                 session.pending_requests[request_id] = slot
                 self._write_request(request_id, "shutdown", None)
-                buffered = session.orphan_responses.pop(request_id, None)
+                buffered = session.pop_orphan_response(request_id)
             if buffered is not None:
                 try:
                     slot.put_nowait(buffered)
@@ -721,12 +678,14 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         request_id: int | None = None
         try:  # registration, the write and the wait share ONE cleanup scope: no slot can leak
             with client_lock(self):
+                if session.unusable:
+                    raise LSPTransportError("LSP session is unusable")
                 self._request_id += 1
                 request_id = self._request_id
                 pending[request_id] = slot
                 self._write_request(request_id, method, params, session=session)
                 # Claim a response that the reader dispatched before this slot existed.
-                buffered = session.orphan_responses.pop(request_id, None)
+                buffered = session.pop_orphan_response(request_id)
             if buffered is not None:
                 try:
                     slot.put_nowait(buffered)
@@ -736,13 +695,37 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             try:
                 message = slot.get(timeout=timeout_seconds)
             except queue.Empty as exc:
-                raise self._reject(
+                error = self._reject(
                     "request_timeout",
                     method,
                     request_id,
                     f"timeout waiting for LSP response: {method}",
                     timeout_seconds=timeout_seconds,
-                ) from exc
+                )
+                with client_lock(self, follow_deadline=False):
+                    session.unusable = True
+                try:
+                    with client_lock(
+                        self,
+                        cleanup_budget_seconds(
+                            self.request_timeout_seconds,
+                            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+                            self.stop_grace_seconds,
+                        ),
+                        follow_deadline=False,
+                        lock=self._start_lock,
+                    ):
+                        self._stop(session)
+                        reported_error = str(error)
+                        cleanup_error = self.teardown_error
+                        if cleanup_error is None and self.last_error != reported_error:
+                            cleanup_error = self.last_error
+                        self.last_error = reported_error
+                        if cleanup_error:
+                            self.last_error += f"; provider teardown failed: {cleanup_error}"
+                except TimeoutError as cleanup_error:
+                    self.last_error = f"{error}; provider teardown deferred: {cleanup_error}"
+                raise error from exc
             if message is _CLOSED_SENTINEL:
                 raise self._reject(
                     "request_closed",
@@ -770,8 +753,13 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             return message.get("result")
         finally:
             if request_id is not None:
-                pending.pop(request_id, None)
-                session.orphan_responses.pop(request_id, None)
+                try:
+                    with client_lock(self, timeout=0.0, follow_deadline=False):
+                        pending.pop(request_id, None)
+                        session.pop_orphan_response(request_id)
+                except TimeoutError:
+                    # Do not hold a completed request; orphan retention has a strict byte cap.
+                    pending.pop(request_id, None)
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
@@ -781,6 +769,8 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
         with client_lock(self):
+            if session.unusable:
+                raise LSPTransportError("LSP session is unusable")
             self._write_notification(method, params, session=session)
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
@@ -1007,7 +997,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 # begun token counts as active: the create->begin window must not read as "ready".
                 token = (message.get("params") or {}).get("token")
                 if token is not None:
-                    self._note_progress_started(str(token), session)
+                    self._note_progress_started(token, session)
                 result = None
             else:
                 with client_lock(self, follow_deadline=False):
@@ -1059,7 +1049,11 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                         "has_error": "error" in message,
                     },
                 )
-                self._dispatch_response(message, session)
+                self._dispatch_response(
+                    message,
+                    session,
+                    encoded_bytes=getattr(message, "encoded_json_bytes", None),
+                )
         except Exception as exc:
             self.last_error = str(exc)
             self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
@@ -1079,7 +1073,11 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 pass  # already gone (or not ours to signal); stop() owns the escalation
 
     def _dispatch_response(
-        self, message: dict[str, Any], session: ProviderSession | None = None
+        self,
+        message: dict[str, Any],
+        session: ProviderSession | None = None,
+        *,
+        encoded_bytes: int | None = None,
     ) -> None:
         """Route a response message to the correct per-id slot (audit B12)."""
         session = session or self._session
@@ -1102,9 +1100,13 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 # pre-queued response). Buffer it so request() can claim it on
                 # registration; bound the buffer so late/duplicate responses for
                 # ids that will never be requested cannot leak.
-                session.orphan_responses[request_id] = message
-                while len(session.orphan_responses) > _MAX_ORPHAN_RESPONSES:
-                    session.orphan_responses.pop(next(iter(session.orphan_responses)))
+                session.retain_orphan_response(
+                    request_id,
+                    message,
+                    encoded_bytes,
+                    max_count=_MAX_ORPHAN_RESPONSES,
+                    max_bytes=_MAX_ORPHAN_RESPONSE_BYTES,
+                )
                 return
         try:
             slot.put_nowait(message)
@@ -1124,22 +1126,37 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
 
     def _stderr_loop(self, session: ProviderSession | None = None) -> None:
         session = session or self._session
+        if self._session is not session:
+            return
         process = session.process
         if process is None or process.stderr is None:
             return
         try:
-            for line in process.stderr:
-                if isinstance(line, bytes):
-                    line = line.decode("utf-8", errors="replace")
-                text = line.rstrip("\r\n")
+            for text in _iter_lsp_stderr_lines(process.stderr):
+                if self._session is not session:
+                    return
                 if not text:
                     continue
+                text_bytes = len(text.encode("utf-8", errors="replace"))
+                while session.stderr_tail and (
+                    len(session.stderr_tail) >= _LSP_STDERR_MAX_LINES
+                    or session.stderr_tail_bytes + text_bytes > _LSP_STDERR_MAX_TEXT_BYTES
+                ):
+                    if self._session is not session:
+                        return
+                    removed = session.stderr_tail.pop(0)
+                    session.stderr_tail_bytes -= len(removed.encode("utf-8", errors="replace"))
                 session.stderr_tail.append(text)
-                if len(session.stderr_tail) > 50:
-                    del session.stderr_tail[:-50]
+                session.stderr_tail_bytes += text_bytes
+                if self._session is not session:
+                    return
                 self._record_debug_trace(event="stderr", detail={"message": text})
         except Exception as exc:
-            self._record_debug_trace(event="stderr_error", detail={"message": str(exc)})
+            if self._session is not session:
+                return
+            self._record_debug_trace(
+                event="stderr_error", detail={"message": _truncate_lsp_stderr_line(str(exc))}
+            )
 
 
 class ExternalLSPProviderManager:

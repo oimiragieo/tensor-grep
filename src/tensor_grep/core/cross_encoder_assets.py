@@ -63,6 +63,32 @@ def _read_verified(path: Path, sha256: str, size: int) -> bytes:
     return data
 
 
+def scorer_assets(
+    root: Path, *, deadline_monotonic: float | None = None
+) -> tuple[Path, Path, Path]:
+    """Resolve installed assets and classify missing files without reading their contents."""
+    if not root.is_dir():
+        raise CrossEncoderUnavailable("assets not installed")
+    manifest = runtime_manifest()
+    for name in {**MODEL_FILES, **manifest["libraries"]}:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            raise BackendExecutionError(
+                "cross-encoder shared deadline exceeded during asset validation"
+            )
+        try:
+            (root / name).stat()
+        except FileNotFoundError as exc:
+            raise CrossEncoderUnavailable(f"missing asset {name}") from exc
+        except OSError as exc:
+            raise BackendExecutionError(f"cannot inspect cross-encoder asset: {exc}") from exc
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        raise BackendExecutionError(
+            "cross-encoder shared deadline exceeded during asset validation"
+        )
+    runtime = next(name for name in manifest["libraries"] if "providers_shared" not in name)
+    return root / "model.onnx", root / "tokenizer.json", root / runtime
+
+
 def verified_assets(
     root: Path, *, deadline_monotonic: float | None = None
 ) -> tuple[Path, Path, Path]:

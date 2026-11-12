@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 def test_checkpoint_create_list_and_undo_restores_non_git_tree(tmp_path: Path) -> None:
@@ -160,6 +161,7 @@ def test_checkpoint_create_for_file_inside_git_repo_stays_file_scoped(tmp_path: 
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_checkpoint_undo_git_scope_uses_git_entries_instead_of_filesystem_walk(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -286,6 +288,7 @@ def test_checkpoint_snapshot_still_excludes_artifacts_content(tmp_path: Path) ->
     assert payload["file_count"] == 1
 
 
+@requires_checkpoint_creation
 def test_checkpoint_discover_ignores_stale_false_negative_cache_for_artifacts_policy(
     tmp_path: Path,
 ) -> None:
@@ -422,6 +425,7 @@ def test_checkpoint_list_discover_keeps_bounded_recursive_opt_in(tmp_path: Path)
     assert payload["discovered_scopes"][0]["checkpoints"][0]["checkpoint_id"] == checkpoint_id
 
 
+@requires_checkpoint_creation
 def test_checkpoint_discover_reuses_valid_index_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -448,6 +452,7 @@ def test_checkpoint_discover_reuses_valid_index_cache(
     assert second[0].checkpoints[0].checkpoint_id == checkpoint.checkpoint_id
 
 
+@requires_checkpoint_creation
 def test_checkpoint_create_primes_parent_discovery_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -506,6 +511,7 @@ def test_checkpoint_discovery_cache_roots_stop_at_user_home(tmp_path: Path, monk
     assert home.resolve().parent not in cache_roots
 
 
+@requires_checkpoint_creation
 def test_checkpoint_create_does_not_fail_when_parent_cache_is_unwritable(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -535,6 +541,7 @@ def test_checkpoint_create_does_not_fail_when_parent_cache_is_unwritable(
     assert checkpoint.checkpoint_id.startswith("ckpt-")
 
 
+@requires_checkpoint_creation
 def test_checkpoint_create_merges_parent_discovery_cache(tmp_path: Path) -> None:
     from tensor_grep.cli import checkpoint_store
 
@@ -594,6 +601,7 @@ def test_checkpoint_list_discover_uses_primed_cache_for_multiple_scopes_without_
     )
 
 
+@requires_checkpoint_creation
 def test_checkpoint_discover_rebuilds_missing_index_from_metadata(tmp_path: Path) -> None:
     from tensor_grep.cli import checkpoint_store
 
@@ -989,6 +997,7 @@ def _add_nested_repo_as_gitlink(project: Path, rel_path: str) -> Path:
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_skips_git_submodule_without_crashing(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()
@@ -1007,6 +1016,7 @@ def test_create_checkpoint_skips_git_submodule_without_crashing(tmp_path: Path) 
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_discloses_skipped_nested_repo(tmp_path: Path) -> None:
     project = tmp_path / "repo"
     project.mkdir()
@@ -1030,6 +1040,7 @@ def test_create_checkpoint_discloses_skipped_nested_repo(tmp_path: Path) -> None
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_scoped_to_subdir_still_captures_all_files(tmp_path: Path) -> None:
     """Regression: checkpointing a subdirectory (not git top-level) takes the
     filesystem-snapshot path (_filesystem_snapshot_entries), which the new is_dir() gitlink
@@ -1058,6 +1069,7 @@ def test_create_checkpoint_scoped_to_subdir_still_captures_all_files(tmp_path: P
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_then_undo_is_clean_with_skipped_submodule(tmp_path: Path) -> None:
     """e2e: the excluded gitlink entry is absent from metadata, so undo_checkpoint's
     pre-flight (which iterates every metadata entry) never chokes on a phantom directory --
@@ -1084,6 +1096,7 @@ def test_create_checkpoint_then_undo_is_clean_with_skipped_submodule(tmp_path: P
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git is required for git checkpoint tests")
+@requires_checkpoint_creation
 def test_create_checkpoint_does_not_skip_tracked_symlink_to_directory(tmp_path: Path) -> None:
     """The is_dir() gitlink-skip guard must not swallow a legitimately tracked SYMLINK whose
     target happens to be a directory -- git stores that as a mode-120000 blob (a normal file

@@ -1,7 +1,8 @@
 //! Cross-process advisory locking for the persisted trigram index file, mirroring
 //! `src/tensor_grep/cli/_index_lock.py` (the Python checkpoint-store lock primitives) so the
-//! Rust-side `.tg_index` persistence gets the same fail-closed guarantees: an `O_CREAT | O_EXCL`
-//! lockfile records an owner (pid + random token), a lock older than [`DEFAULT_STALE_AFTER`] is
+//! Rust-side `.tg_index` persistence gets the same fail-closed guarantees: a persistent
+//! `.lock.os` byte-range sidecar is held through the lifecycle while an `O_CREAT | O_EXCL`
+//! lockfile records an owner (pid + random token). A lock older than [`DEFAULT_STALE_AFTER`] is
 //! reclaimed from a presumed-dead holder, and a live holder keeps its lock fresh via a heartbeat
 //! thread so a waiter never mistakes "slow" for "dead" mid-hold.
 //!
@@ -11,11 +12,12 @@
 //! `index.rs::save`/`save_json`, and the decision of WHERE to acquire the lock (write sections
 //! only -- readers stay lock-free) lives in `main.rs`'s `save_index_locked`.
 
+use crate::safe_write::{AnchoredDirectory, AnchoredTarget};
 use std::collections::hash_map::RandomState;
 use std::fmt;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions, TryLockError};
 use std::hash::{BuildHasher, Hasher};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -46,6 +48,8 @@ pub const DEFAULT_STALE_AFTER: Duration = Duration::from_secs(10);
 pub const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(12);
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+// The pid and 32-hex ownership token fit comfortably below this bound.
+const MAX_LOCK_METADATA_BYTES: u64 = 4 * 1024;
 
 /// Bound on how long [`IndexLockGuard`]'s drop waits for the heartbeat thread to acknowledge a
 /// stop signal before giving up on it and releasing the lock anyway -- mirrors
@@ -93,9 +97,80 @@ fn lock_path_for(index_path: &Path) -> PathBuf {
     index_path.with_file_name(format!(".{name}.lock"))
 }
 
+/// Persistent OS lock shared byte-for-byte with Python's `_os_lock_path_for` sidecar.
+fn os_lock_path_for(lock_path: &Path) -> PathBuf {
+    let mut name = lock_path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new(".index.lock"))
+        .to_os_string();
+    name.push(".os");
+    lock_path.with_file_name(name)
+}
+
+/// Holds the persistent Python-compatible sidecar lock until the handle closes. Rust maps
+/// `File::try_lock` to Unix `flock` and Windows `LockFileEx`; the Windows whole-file range
+/// overlaps Python's `_locking` byte-0 range.
+struct OsFileLock {
+    _file: File,
+}
+
+impl OsFileLock {
+    fn try_acquire(file: File) -> io::Result<Option<Self>> {
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self { _file: file })),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(error)) => Err(error),
+        }
+    }
+}
+
+fn try_os_file_lock_target(target: &AnchoredTarget) -> io::Result<Option<OsFileLock>> {
+    let file = match target.open_os_lock_file() {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(lock) = OsFileLock::try_acquire(file)? else {
+        return Ok(None);
+    };
+    if target.validate_leaf_matches_expected().is_err() {
+        drop(lock);
+        return Ok(None);
+    }
+    Ok(Some(lock))
+}
+
+fn acquire_os_sidecar_with_hook<F>(
+    directory: &AnchoredDirectory,
+    name: &std::ffi::OsStr,
+    deadline: Instant,
+    poll_interval: Duration,
+    mut on_contention: F,
+) -> Option<OsFileLock>
+where
+    F: FnMut(),
+{
+    loop {
+        let attempt = directory
+            .target(name)
+            .map_err(|_| ())
+            .and_then(|target| try_os_file_lock_target(&target).map_err(|_| ()))
+            .ok()
+            .flatten();
+        if attempt.is_some() {
+            return attempt;
+        }
+        on_contention();
+        if Instant::now() >= deadline {
+            return None;
+        }
+        thread::sleep(poll_interval);
+    }
+}
+
 /// Process-local, non-cryptographic randomness for lock ownership tokens and temp-file name
-/// disambiguation -- collision-avoidance only (mutual exclusion itself comes from
-/// `O_CREAT | O_EXCL`, not from this being unguessable). Deliberately std-only (no new crate
+/// disambiguation -- collision-avoidance only (mutual exclusion comes from the OS sidecar lock,
+/// not from this being unguessable). Deliberately std-only (no new crate
 /// dependency): `RandomState::new()` mixes a per-thread call counter into an OS-random-seeded key
 /// on every construction, so hashing through a fresh instance yields a different digest each call
 /// within the same process (and a different seed across processes/threads).
@@ -109,8 +184,30 @@ pub fn random_token() -> String {
 /// `{pid}\n{token}\n`). Returns `None` if the file is gone, unreadable, or lacks a token line
 /// (e.g. a partially-written or legacy lock) -- callers must treat `None` as "not mine," never as
 /// a match.
-fn token_for_lock(lock_path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(lock_path).ok()?;
+#[derive(Clone)]
+struct LockLocation {
+    path: PathBuf,
+    target: Option<Arc<AnchoredTarget>>,
+}
+
+fn token_for_lock(location: &LockLocation) -> Option<String> {
+    let bytes = match &location.target {
+        Some(target) => target.read_bounded(MAX_LOCK_METADATA_BYTES).ok()?,
+        None => {
+            let file = File::open(&location.path).ok()?;
+            if file.metadata().ok()?.len() > MAX_LOCK_METADATA_BYTES {
+                return None;
+            }
+            let read_limit = MAX_LOCK_METADATA_BYTES.checked_add(1)?;
+            let mut bytes = Vec::new();
+            file.take(read_limit).read_to_end(&mut bytes).ok()?;
+            if bytes.len() as u64 > MAX_LOCK_METADATA_BYTES {
+                return None;
+            }
+            bytes
+        }
+    };
+    let content = String::from_utf8(bytes).ok()?;
     let mut lines = content.lines();
     let _pid_line = lines.next()?;
     let token_line = lines.next()?;
@@ -127,11 +224,37 @@ fn token_for_lock(lock_path: &Path) -> Option<String> {
 /// slow-but-alive, the token on disk no longer matches -- leave that live lock alone instead of
 /// deleting it out from under the new owner (the lost-update / two-holders race). Tolerates the
 /// lock already being gone.
-fn release_lock(lock_path: &Path, token: &str) {
-    if token_for_lock(lock_path).as_deref() != Some(token) {
-        return;
+fn release_lock(location: &LockLocation, token: &str) {
+    let _ = release_lock_with(location, token, || Ok(()));
+}
+
+fn release_lock_with<F>(
+    location: &LockLocation,
+    token: &str,
+    after_token_check: F,
+) -> io::Result<()>
+where
+    F: FnOnce() -> io::Result<()>,
+{
+    if token_for_lock(location).as_deref() != Some(token) {
+        return Ok(());
     }
-    let _ = std::fs::remove_file(lock_path);
+    if let Some(target) = &location.target {
+        #[cfg(test)]
+        return target.remove_file_with_hook(after_token_check);
+        #[cfg(not(test))]
+        {
+            after_token_check()?;
+            target.remove_file()
+        }
+    } else {
+        after_token_check()?;
+        match std::fs::remove_file(&location.path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 /// Test-only observability hook (zero-cost/no-op unless `TG_INDEX_LOCK_DEBUG_LOG_DIR` is set):
@@ -154,10 +277,14 @@ fn debug_log_event(token: &str, suffix: &str) {
 
 /// Sets the lock file's mtime to now, mirroring `_index_lock.py`'s `os.utime(lock_path, None)`
 /// heartbeat touch.
-fn touch(path: &Path) -> io::Result<()> {
-    let file = OpenOptions::new().write(true).open(path)?;
-    let times = std::fs::FileTimes::new().set_modified(SystemTime::now());
-    file.set_times(times)
+fn touch(location: &LockLocation) -> io::Result<()> {
+    if let Some(target) = &location.target {
+        target.touch()
+    } else {
+        let file = OpenOptions::new().write(true).open(&location.path)?;
+        let times = std::fs::FileTimes::new().set_modified(SystemTime::now());
+        file.set_times(times)
+    }
 }
 
 /// Well under `stale_after` so a live-but-slow holder's mtime never crosses the staleness
@@ -186,7 +313,11 @@ struct HeartbeatControl {
 /// its stop on release. The thread re-checks ownership (via [`token_for_lock`]) before every
 /// touch so a heartbeat that outlives its own lock (release already ran, or -- defensively --
 /// someone else reclaimed) never props up a DIFFERENT holder's lock.
-fn spawn_heartbeat(lock_path: PathBuf, token: String, interval: Duration) -> Arc<HeartbeatControl> {
+fn spawn_heartbeat(
+    location: LockLocation,
+    token: String,
+    interval: Duration,
+) -> Arc<HeartbeatControl> {
     let control = Arc::new(HeartbeatControl {
         state: Mutex::new(HeartbeatState {
             stop: false,
@@ -226,7 +357,7 @@ fn spawn_heartbeat(lock_path: PathBuf, token: String, interval: Duration) -> Arc
         }
         drop(guard);
         if timeout_result.timed_out() {
-            if token_for_lock(&lock_path).as_deref() != Some(token.as_str()) {
+            if token_for_lock(&location).as_deref() != Some(token.as_str()) {
                 let mut guard = thread_control
                     .state
                     .lock()
@@ -235,7 +366,7 @@ fn spawn_heartbeat(lock_path: PathBuf, token: String, interval: Duration) -> Arc
                 thread_control.condvar.notify_all();
                 return;
             }
-            let _ = touch(&lock_path); // transient failure (e.g. Windows delete-pending); next beat retries
+            let _ = touch(&location); // transient failure (e.g. Windows delete-pending); next beat retries
         }
     });
     control
@@ -246,9 +377,10 @@ fn spawn_heartbeat(lock_path: PathBuf, token: String, interval: Duration) -> Arc
 /// guard releases the lock (token-guarded) after signaling the heartbeat thread to stop and
 /// bounded-waiting (up to [`HEARTBEAT_JOIN_BOUND`]) for it to acknowledge.
 pub struct IndexLockGuard {
-    lock_path: PathBuf,
+    location: LockLocation,
     token: String,
     heartbeat: Arc<HeartbeatControl>,
+    _sidecar_lock: OsFileLock,
 }
 
 impl IndexLockGuard {
@@ -289,16 +421,121 @@ impl IndexLockGuard {
         writer: impl FnOnce(&mut std::fs::File, &str) -> io::Result<()>,
     ) -> Result<Self, IndexLockTimeoutError> {
         let lock_path = lock_path_for(index_path);
-        if let Some(parent) = lock_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        let parent = lock_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let _ = std::fs::create_dir_all(parent);
+        let absolute_parent = if parent.is_absolute() {
+            parent.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(parent)
+        };
+        let directory =
+            AnchoredDirectory::open(&absolute_parent).map_err(|_| IndexLockTimeoutError {
+                lock_path: lock_path.clone(),
+                timeout,
+            })?;
+        Self::acquire_at(
+            &lock_path,
+            &directory,
+            timeout,
+            stale_after,
+            poll_interval,
+            writer,
+        )
+    }
+
+    /// Acquires the same Python-compatible sidecar through an already-validated directory.
+    pub fn acquire_anchored(
+        index_path: &Path,
+        directory: &AnchoredDirectory,
+    ) -> Result<Self, IndexLockTimeoutError> {
+        let lock_path = lock_path_for(index_path);
+        let directory = directory.try_clone().map_err(|_| IndexLockTimeoutError {
+            lock_path: lock_path.clone(),
+            timeout: DEFAULT_ACQUIRE_TIMEOUT,
+        })?;
+        Self::acquire_at(
+            &lock_path,
+            &directory,
+            DEFAULT_ACQUIRE_TIMEOUT,
+            DEFAULT_STALE_AFTER,
+            DEFAULT_POLL_INTERVAL,
+            write_owner_record,
+        )
+    }
+
+    fn acquire_at(
+        lock_path: &Path,
+        directory: &AnchoredDirectory,
+        timeout: Duration,
+        stale_after: Duration,
+        poll_interval: Duration,
+        writer: impl FnOnce(&mut std::fs::File, &str) -> io::Result<()>,
+    ) -> Result<Self, IndexLockTimeoutError> {
+        Self::acquire_at_with_contention_hook(
+            lock_path,
+            directory,
+            timeout,
+            stale_after,
+            poll_interval,
+            writer,
+            || {},
+        )
+    }
+
+    fn acquire_at_with_contention_hook<F>(
+        lock_path: &Path,
+        directory: &AnchoredDirectory,
+        timeout: Duration,
+        stale_after: Duration,
+        poll_interval: Duration,
+        writer: impl FnOnce(&mut std::fs::File, &str) -> io::Result<()>,
+        on_sidecar_contention: F,
+    ) -> Result<Self, IndexLockTimeoutError>
+    where
+        F: FnMut(),
+    {
+        let lock_path = lock_path.to_path_buf();
         let deadline = Instant::now() + timeout;
+        let sidecar_path = os_lock_path_for(&lock_path);
+        let sidecar_name = sidecar_path
+            .file_name()
+            .expect("sidecar path always has a file name");
+        let sidecar_lock = acquire_os_sidecar_with_hook(
+            directory,
+            sidecar_name,
+            deadline,
+            poll_interval,
+            on_sidecar_contention,
+        )
+        .ok_or_else(|| IndexLockTimeoutError {
+            lock_path: lock_path.clone(),
+            timeout,
+        })?;
+        let lock_name = lock_path
+            .file_name()
+            .expect("legacy lock path always has a file name");
         loop {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true) // O_CREAT | O_EXCL
-                .open(&lock_path)
-            {
+            let target = match directory.target(lock_name) {
+                Ok(target) => Arc::new(target),
+                Err(_) => {
+                    if Instant::now() >= deadline {
+                        return Err(IndexLockTimeoutError { lock_path, timeout });
+                    }
+                    thread::sleep(poll_interval);
+                    continue;
+                }
+            };
+            let location = LockLocation {
+                path: lock_path.clone(),
+                target: Some(Arc::clone(&target)),
+            };
+            let creation = target.create_new_file();
+            match creation {
                 Ok(mut file) => {
                     let token = random_token();
                     // Best-effort content write, matching _index_lock.py: an OSError writing the
@@ -310,16 +547,17 @@ impl IndexLockGuard {
                     drop(file);
                     debug_log_event(&token, "start");
                     let hb_interval = default_heartbeat_interval(stale_after, poll_interval);
-                    let heartbeat = spawn_heartbeat(lock_path.clone(), token.clone(), hb_interval);
+                    let heartbeat = spawn_heartbeat(location.clone(), token.clone(), hb_interval);
                     return Ok(IndexLockGuard {
-                        lock_path,
+                        location,
                         token,
                         heartbeat,
+                        _sidecar_lock: sidecar_lock,
                     });
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                     // Lock is held. Reclaim it if stale (dead holder), else fall through to wait.
-                    if let Ok(meta) = std::fs::metadata(&lock_path) {
+                    if let Ok(meta) = target.metadata() {
                         if let Ok(modified) = meta.modified() {
                             if SystemTime::now()
                                 .duration_since(modified)
@@ -327,7 +565,7 @@ impl IndexLockGuard {
                                 > stale_after
                             {
                                 // GUARDED: two racing reclaimers must not crash the loser.
-                                let _ = std::fs::remove_file(&lock_path);
+                                let _ = target.remove_file();
                                 continue;
                             }
                         }
@@ -374,7 +612,7 @@ impl Drop for IndexLockGuard {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         debug_log_event(&self.token, "end");
-        release_lock(&self.lock_path, &self.token);
+        release_lock(&self.location, &self.token);
     }
 }
 
@@ -472,6 +710,38 @@ mod tests {
     }
 
     #[test]
+    fn oversized_lock_metadata_is_not_ownership_evidence() {
+        let dir = tempdir().unwrap();
+        for (name, anchored) in [("anchored.lock", true), ("legacy.lock", false)] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"123\nsmall-token\n").unwrap();
+            let target = anchored.then(|| Arc::new(AnchoredTarget::open(&path).unwrap()));
+            let location = LockLocation {
+                path: path.clone(),
+                target,
+            };
+            assert_eq!(token_for_lock(&location).as_deref(), Some("small-token"));
+
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&vec![b'x'; MAX_LOCK_METADATA_BYTES as usize])
+                .unwrap();
+            drop(file);
+            let oversized = std::fs::read(&path).unwrap();
+            assert!(oversized.len() as u64 > MAX_LOCK_METADATA_BYTES);
+            assert_eq!(token_for_lock(&location), None);
+
+            let mut removal_check_ran = false;
+            release_lock_with(&location, "small-token", || {
+                removal_check_ran = true;
+                Ok(())
+            })
+            .unwrap();
+            assert!(!removal_check_ran);
+            assert_eq!(std::fs::read(&path).unwrap(), oversized);
+        }
+    }
+
+    #[test]
     fn second_acquire_times_out_while_first_is_held() {
         let dir = tempdir().unwrap();
         let index_path = dir.path().join(".tg_index");
@@ -514,6 +784,7 @@ mod tests {
         let file = OpenOptions::new().write(true).open(&lock_path).unwrap();
         file.set_times(std::fs::FileTimes::new().set_modified(backdated))
             .unwrap();
+        drop(file);
 
         let timeout = Duration::from_secs(5); // generous; the assertion is on ELAPSED, not this
         let started = Instant::now();
@@ -667,6 +938,142 @@ mod tests {
             1,
             "at most one thread must hold the lock at any instant"
         );
+    }
+
+    #[test]
+    fn simultaneous_first_sidecar_creation_retries_with_a_fresh_target() {
+        let dir = tempdir().unwrap();
+        let directory = AnchoredDirectory::open(dir.path()).unwrap();
+        let lock_path = lock_path_for(&dir.path().join(".tg_index"));
+        let sidecar_path = os_lock_path_for(&lock_path);
+        let name = sidecar_path.file_name().unwrap();
+        let first = directory.target(name).unwrap();
+        let second = directory.target(name).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+
+        for target in [first, second] {
+            let barrier = Arc::clone(&barrier);
+            let result_tx = result_tx.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                let result = try_os_file_lock_target(&target);
+                drop(target);
+                result_tx.send(result).unwrap();
+            });
+        }
+        barrier.wait();
+
+        let first_result = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first sidecar create attempt must finish")
+            .expect("first sidecar create attempt must not fail");
+        let second_result = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("second sidecar create attempt must finish")
+            .expect("EEXIST or byte-lock contention must request a retry");
+        let (held, retry_needed) = match (first_result, second_result) {
+            (Some(held), None) | (None, Some(held)) => (held, true),
+            _ => panic!("exactly one simultaneous first acquisition must hold the sidecar"),
+        };
+        assert!(retry_needed);
+
+        assert!(
+            try_os_file_lock_target(&directory.target(name).unwrap())
+                .unwrap()
+                .is_none(),
+            "a fresh opener must observe the held byte-range lock"
+        );
+        drop(held);
+        let refreshed = directory.target(name).unwrap();
+        assert!(
+            try_os_file_lock_target(&refreshed).unwrap().is_some(),
+            "re-anchoring after EEXIST must open and lock the persistent sidecar"
+        );
+        assert!(sidecar_path.exists());
+    }
+
+    #[test]
+    fn waiter_reanchors_legacy_lock_after_sidecar_owner_releases() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join(".tg_index");
+        let lock_path = lock_path_for(&index_path);
+        let holder = IndexLockGuard::acquire_with(
+            &index_path,
+            Duration::from_secs(3),
+            Duration::from_secs(1),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        let directory = AnchoredDirectory::open(dir.path()).unwrap();
+        let (contended_tx, contended_rx) = std::sync::mpsc::channel();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let result = IndexLockGuard::acquire_at_with_contention_hook(
+                &lock_path,
+                &directory,
+                Duration::from_secs(4),
+                Duration::from_secs(1),
+                Duration::from_millis(5),
+                write_owner_record,
+                || {
+                    let _ = contended_tx.send(());
+                },
+            );
+            acquired_tx.send(result.is_ok()).unwrap();
+        });
+
+        contended_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("waiter must prove it attempted the held sidecar");
+        drop(holder);
+        assert!(
+            acquired_rx
+                .recv_timeout(Duration::from_secs(4))
+                .expect("waiter must finish after release"),
+            "waiter must refresh the old lock leaf anchor and acquire successfully"
+        );
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn token_checked_release_preserves_a_substituted_successor_lock() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join(".tg_index");
+        let lock_path = lock_path_for(&index_path);
+        #[cfg(windows)]
+        let displaced_path = dir.path().join("displaced-lock");
+        let successor = b"999999\nsuccessor-token\n";
+        let guard = IndexLockGuard::acquire_with(
+            &index_path,
+            Duration::from_secs(3),
+            Duration::from_secs(1),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        #[cfg(windows)]
+        let owned_bytes = std::fs::read(&lock_path).unwrap();
+
+        let result = release_lock_with(&guard.location, &guard.token, || {
+            #[cfg(unix)]
+            std::fs::write(&lock_path, successor)?;
+            #[cfg(windows)]
+            {
+                std::fs::rename(&lock_path, &displaced_path)?;
+                std::fs::write(&lock_path, successor)?;
+            }
+            Ok(())
+        });
+
+        #[cfg(unix)]
+        assert!(result.is_ok());
+        #[cfg(windows)]
+        assert!(result.is_err(), "the successor identity must be refused");
+        assert_eq!(std::fs::read(&lock_path).unwrap(), successor);
+        drop(guard);
+        assert_eq!(std::fs::read(&lock_path).unwrap(), successor);
+        #[cfg(windows)]
+        assert_eq!(std::fs::read(displaced_path).unwrap(), owned_bytes);
     }
 }
 

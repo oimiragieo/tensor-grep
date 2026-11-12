@@ -16,6 +16,7 @@ from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
 
 from tensor_grep.cli import checkpoint_store, mcp_server
 from tensor_grep.cli.mcp_checkpoint_label_args import install_checkpoint_label_arguments
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
 @pytest.fixture
@@ -65,6 +66,7 @@ def test_real_mcp_create_preserves_printable_label_strings(
 
 @pytest.mark.parametrize("tool", ["tg_checkpoint_create", "tg_checkpoint"])
 @pytest.mark.parametrize("label", [123, True, [], {}])
+@requires_checkpoint_creation
 def test_real_mcp_nontext_labels_are_protocol_refusals_without_writes(
     project: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -100,6 +102,7 @@ def test_real_legacy_invalid_label_never_echoes_unconfined_path(
 
 @pytest.mark.parametrize("action", ["list", "undo"])
 @pytest.mark.parametrize("label", ["null", '["x"]', "123"])
+@requires_checkpoint_creation
 def test_real_meta_labels_are_refused_before_list_or_undo_dispatch(
     project: Path,
     monkeypatch: pytest.MonkeyPatch,

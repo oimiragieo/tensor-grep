@@ -39,13 +39,22 @@ def _publish_windows(
     path: Path,
     data: bytes,
     identity: tuple[int, int, int, int] | None,
+    before_create: Callable[[], None] | None,
+    temp_ready: Callable[[int, Path], None] | None,
     before_publish: Callable[[], None] | None,
     on_published: Callable[[], None] | None,
+    replace_open_pinned_target: bool,
 ) -> tuple[int, int]:
     """Publish under pinned directory handles, refusing new-destination races atomically."""
-    from tensor_grep.io.windows_publication import discard_open, open_temporary, rename_open
+    from tensor_grep.io.windows_publication import (
+        discard_open,
+        open_temporary,
+        rename_open,
+    )
 
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    if before_create is not None:
+        before_create()
     descriptor = open_temporary(temporary)
     published = False
     try:
@@ -54,12 +63,21 @@ def _publish_windows(
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(data)
             stream.flush()
-            os.fsync(stream.fileno())
-        if identity is not None and _file_identity(path) != identity:
-            raise OSError("confined file changed before publication")
+        if temp_ready is not None:
+            temp_ready(descriptor, temporary)
+        os.fsync(descriptor)
         if before_publish is not None:
             before_publish()
-        rename_open(descriptor, path, replace=identity is not None)
+        if identity is not None and _file_identity(path) != identity:
+            raise OSError("confined file changed before publication")
+        if identity is None:
+            rename_open(descriptor, path, replace=False)
+        elif replace_open_pinned_target:
+            from tensor_grep.io.windows_publication import replace_open
+
+            replace_open(descriptor, path)
+        else:
+            rename_open(descriptor, path, replace=True)
         published = True
         if on_published is not None:
             on_published()
@@ -258,9 +276,13 @@ def publish_confined(
     data: bytes,
     *,
     only_if_missing: bool = False,
+    before_create: Callable[[], None] | None = None,
+    temp_ready: Callable[[int, Path], None] | None = None,
     before_publish: Callable[[], None] | None = None,
     on_published: Callable[[], None] | None = None,
     parent_fd: int | None = None,
+    expected_parent_identity: tuple[int, int] | None = None,
+    expected_file_identity: tuple[int, int] | None = None,
 ) -> tuple[int, int]:
     """Publish rebuildable advisory bytes; this is not a same-user filesystem CAS boundary.
 
@@ -276,7 +298,13 @@ def publish_confined(
     if parent_fd is not None and os.name != "posix":
         raise OSError("borrowed parent descriptors require POSIX")
     parents = _real_components(root, path)
+    if expected_parent_identity is not None and parents[-1][1] != expected_parent_identity:
+        raise OSError(f"confined parent identity changed: {path.parent}")
     identity = _file_identity(path) if os.path.lexists(path) else None
+    if expected_file_identity is not None and (
+        identity is None or identity[:2] != expected_file_identity
+    ):
+        raise OSError(f"confined file identity changed before rollback: {path}")
     if identity is not None:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
@@ -286,7 +314,16 @@ def publish_confined(
     _verify_parents(parents)
     with _pin_windows_parents(parents):
         if os.name == "nt":
-            owned_identity = _publish_windows(path, data, identity, before_publish, on_published)
+            owned_identity = _publish_windows(
+                path,
+                data,
+                identity,
+                before_create,
+                temp_ready,
+                before_publish,
+                on_published,
+                getattr(expected_file_identity, "_descriptor", None) is not None,
+            )
         else:
             temporary = f".{path.name}.{uuid4().hex}.tmp"
             descriptor = None
@@ -300,7 +337,13 @@ def publish_confined(
             )
             try:
                 _verify_open_directory(parent_fd, parents)
+                if expected_parent_identity is not None:
+                    opened_parent = os.fstat(parent_fd)
+                    if (opened_parent.st_dev, opened_parent.st_ino) != expected_parent_identity:
+                        raise OSError(f"confined opened parent identity changed: {path.parent}")
                 _verify_parents(parents)
+                if before_create is not None:
+                    before_create()
                 descriptor = os.open(
                     temporary,
                     os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
@@ -312,7 +355,9 @@ def publish_confined(
                 with os.fdopen(descriptor, "wb", closefd=False) as stream:
                     stream.write(data)
                     stream.flush()
-                    os.fsync(stream.fileno())
+                if temp_ready is not None:
+                    temp_ready(descriptor, path.parent / temporary)
+                os.fsync(descriptor)
                 _verify_parents(parents)
                 if identity is None:
                     if before_publish is not None:
@@ -325,10 +370,10 @@ def publish_confined(
                         follow_symlinks=False,
                     )
                 else:
-                    if _file_identity(path) != identity:
-                        raise OSError("symbol cache changed before publication")
                     if before_publish is not None:
                         before_publish()
+                    if _file_identity(path) != identity:
+                        raise OSError("symbol cache changed before publication")
                     os.replace(temporary, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
                 if on_published is not None:
                     on_published()
@@ -344,6 +389,157 @@ def publish_confined(
                     os.close(parent_fd)
     _verify_parents(parents)
     return owned_identity
+
+
+def _restore_quarantined_file(parent_fd: int, quarantine: str, name: str) -> None:
+    os.link(
+        quarantine,
+        name,
+        src_dir_fd=parent_fd,
+        dst_dir_fd=parent_fd,
+        follow_symlinks=False,
+    )
+    os.unlink(quarantine, dir_fd=parent_fd)
+
+
+def _unlink_expected_file_at(
+    parent_fd: int,
+    name: str,
+    path: Path,
+    expected_identity: tuple[int, int],
+    *,
+    allow_reparse: bool = False,
+) -> None:
+    # POSIX has no unlink-by-handle; quarantine still ends in a name-based unlink.
+    quarantine = f".{name}.{uuid4().hex}.undo"
+    os.rename(name, quarantine, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    descriptor = None
+    try:
+        current = os.stat(quarantine, dir_fd=parent_fd, follow_symlinks=False)
+        is_reparse = stat.S_ISLNK(current.st_mode) or bool(
+            getattr(current, "st_file_attributes", 0) & 0x400
+        )
+        if (current.st_dev, current.st_ino) != expected_identity or (
+            not stat.S_ISREG(current.st_mode) and not (allow_reparse and is_reparse)
+        ):
+            raise OSError(f"confined leaf identity changed: {path}")
+        if not is_reparse:
+            descriptor = os.open(
+                quarantine,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=parent_fd,
+            )
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != expected_identity
+            ):
+                raise OSError(f"confined leaf identity changed: {path}")
+        os.unlink(quarantine, dir_fd=parent_fd)
+    except BaseException as exc:
+        try:
+            _restore_quarantined_file(parent_fd, quarantine, name)
+        except OSError as restore_error:
+            raise OSError(
+                f"confined rollback left a changed leaf at {path.parent / quarantine}"
+            ) from restore_error
+        raise exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _remove_confined(
+    root: Path,
+    path: Path,
+    *,
+    directory: bool,
+    expected_parent_identity: tuple[int, int] | None = None,
+    expected_file_identity: tuple[int, int] | None = None,
+    allow_reparse_leaf: bool = False,
+) -> None:
+    parents = _real_components(root, path)
+    if expected_parent_identity is not None and parents[-1][1] != expected_parent_identity:
+        raise OSError(f"confined parent identity changed: {path.parent}")
+    if directory and expected_file_identity is not None:
+        raise ValueError("directory removal cannot use a regular-file identity")
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    kind = "directory" if directory else "regular file"
+    with _pin_windows_parents(parents):
+        if os.name == "nt":
+            if expected_file_identity is not None:
+                from tensor_grep.io.windows_publication import unlink_open
+
+                unlink_open(path, expected_file_identity, allow_reparse=allow_reparse_leaf)
+            else:
+                info = path.lstat()
+                if not expected(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                    raise OSError(f"confined removal refuses non-{kind}: {path}")
+                path.rmdir() if directory else path.unlink()
+        else:
+            parent_fd = os.open(
+                path.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                _verify_open_directory(parent_fd, parents)
+                _verify_parents(parents)
+                info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+                is_reparse = stat.S_ISLNK(info.st_mode) or bool(
+                    getattr(info, "st_file_attributes", 0) & 0x400
+                )
+                if not expected(info.st_mode) and not (
+                    not directory and allow_reparse_leaf and is_reparse
+                ):
+                    raise OSError(f"confined removal refuses non-{kind}: {path}")
+                if (
+                    expected_file_identity is not None
+                    and (
+                        info.st_dev,
+                        info.st_ino,
+                    )
+                    != expected_file_identity
+                ):
+                    raise OSError(f"confined leaf identity changed: {path}")
+                if directory:
+                    os.rmdir(path.name, dir_fd=parent_fd)
+                elif expected_file_identity is not None:
+                    _unlink_expected_file_at(
+                        parent_fd,
+                        path.name,
+                        path,
+                        expected_file_identity,
+                        allow_reparse=allow_reparse_leaf,
+                    )
+                else:
+                    os.unlink(path.name, dir_fd=parent_fd)
+            finally:
+                os.close(parent_fd)
+    _verify_parents(parents)
+
+
+def unlink_confined(
+    root: Path,
+    path: Path,
+    *,
+    expected_parent_identity: tuple[int, int] | None = None,
+    expected_file_identity: tuple[int, int] | None = None,
+    allow_reparse_leaf: bool = False,
+) -> None:
+    """Unlink a confined regular file, optionally binding rollback to both identities."""
+    _remove_confined(
+        root,
+        path,
+        directory=False,
+        expected_parent_identity=expected_parent_identity,
+        expected_file_identity=expected_file_identity,
+        allow_reparse_leaf=allow_reparse_leaf,
+    )
+
+
+def rmdir_confined(root: Path, path: Path) -> None:
+    """Remove an empty real directory beneath root relative to a retained parent."""
+    _remove_confined(root, path, directory=True)
 
 
 def prepare_directory(root: Path, directory: Path) -> None:

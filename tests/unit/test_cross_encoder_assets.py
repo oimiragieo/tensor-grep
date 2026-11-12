@@ -57,6 +57,26 @@ def test_installer_extracts_only_pinned_leaf_names(
     )
 
 
+def test_scorer_asset_resolution_checks_presence_without_reading_contents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    data = fake_assets(monkeypatch)
+    root = tmp_path / "assets"
+    root.mkdir()
+    for name, body in data.items():
+        (root / name).write_bytes(body)
+
+    def refused(*args: object) -> bytes:
+        raise AssertionError("scorer asset resolution must not read or hash contents")
+
+    monkeypatch.setattr(assets, "_read_verified", refused)
+    assert assets.scorer_assets(root) == (
+        root / "model.onnx",
+        root / "tokenizer.json",
+        root / "onnxruntime.dll",
+    )
+
+
 def test_reinstall_verifies_without_network(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

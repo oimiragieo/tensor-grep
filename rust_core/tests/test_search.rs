@@ -299,7 +299,11 @@ fn tg066_existing_file_and_directory_keep_matches() {
             let with_paths = backend
                 .search_with_paths(pattern, path, ignore_case, fixed, invert)
                 .unwrap();
-            assert_eq!(count, expected.len());
+            assert_eq!(
+                count,
+                expected.len(),
+                "count mismatch: root={root:?}, pattern={pattern:?}, ignore_case={ignore_case}, fixed={fixed}, invert={invert}"
+            );
             assert_eq!(
                 search
                     .iter()

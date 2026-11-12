@@ -47,8 +47,9 @@ checkpoint_store.create_checkpoint(path)      <- pure business logic, no Typer/J
         |
         +-- _check_checkpoint_disk_budget()   <- refuse BEFORE writing anything if too big
         |
-        +-- copy loop: shutil.copy2(..., follow_symlinks=False) into
+        +-- copy loop: owner.copy_snapshot_file(root, snapshot_dir, rel_path) into
         |     .tensor-grep/checkpoints/<checkpoint_id>/snapshot/<rel_path>
+        |     (source and destination parents stay anchored; Windows verifies the opened source leaf)
         |
         +-- _write_checkpoint_metadata()      <- .../metadata.json  (entries manifest, mode, root)
         |
@@ -82,6 +83,12 @@ true: everything that can fail because of a *missing or unreadable* file happens
 have not touched the working tree yet. Only the commit phase mutates real files, and it captures
 enough (`committed_removes`, `committed_overwrites`, each holding the actual prior bytes) to revert
 itself if it dies partway through.
+
+After a successful restore, undo removes only tracked staging objects whose identities still match.
+Unexpected entries, reparse points, or identity-query failures make cleanup fail closed and report
+the staging path for inspection. Windows deletes opened objects by handle. POSIX cleanup uses
+directory-relative operations, but the platform has no atomic compare-and-unlink operation, so a
+same-user race on a final staging name remains a limitation.
 
 ## 3. Every file involved, and what each contributes
 

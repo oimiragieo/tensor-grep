@@ -746,6 +746,12 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "verified parents and the authorized original leaf identity are checked before replace. "
         "Absent destinations use atomic no-clobber link instead. Refusals have positive controls."
     ),
+    ("io/confined.py", "_unlink_expected_file_at", "os.rename"): (
+        "Quarantines an expected leaf under the already-open parent descriptor, with both names "
+        "relative to that same descriptor. The moved entry is checked against its recorded "
+        "identity before unlink; a mismatch restores it under the original name. This is the "
+        "POSIX unlink identity fallback, and name-based races are not claimed closed."
+    ),
     ("dogfood_features.py", "_build_fixture", "Path.write_text"): (
         "Private fixture builder's sole production caller is main, passing repo under its "
         "owned TemporaryDirectory. Fixed fixture leaf names and fixed bytes only; never a "
@@ -844,20 +850,23 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "in THIS SAME function to stage an embedded manifest for signature re-verification -- a "
         "self-contained temp artifact, never published outside the function's own scope."
     ),
-    ("checkpoint_store.py", "create_checkpoint", "shutil.copy2"): (
-        "Snapshot copy explicitly passes `follow_symlinks=False` (audit HIGH -- symlink "
-        "disclosure): a symlinked entry is stored AS a link, never resolved and copied through, "
-        "so this call carries the same destination-identity guarantee os.replace does. Was "
-        'previously listed under a `("checkpoint_store.py", "*", ...)` wildcard key that the '
-        "matcher (keyed on the exact (module, outer_function, operation) triple) never actually "
-        "matched -- the module was simply outside the old 3-file scan scope, so the wildcard was "
-        "dead. Fixed to real per-function entries now that the census walks this file."
+    ("mcp_batch_worker.py", "_write", "os.write"): (
+        "Writes bounded JSON protocol chunks to the already-open result pipe duplicated from "
+        "stdout. `check_json_size` and `iter_json_bytes` enforce `MAX_WORKER_OUTPUT_BYTES`; "
+        "the descriptor is a pipe, not a caller-selected filesystem destination."
+    ),
+    ("mcp_batch_worker.py", "main", "os.open"): (
+        "Opens the fixed `os.devnull` device, then redirects fd 1 to it so tool diagnostics "
+        "cannot mix with the result protocol. This does not open a caller-selected path."
+    ),
+    ("mcp_batch_worker.py", "main", "builtin.open"): (
+        "Rebinds `sys.stdout` to the fixed `os.devnull` device after fd 1 redirection, keeping "
+        "tool output separate from the result protocol; no caller-selected path is opened."
     ),
     ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"): (
-        "Same `follow_symlinks=False` guarantee as the `create_checkpoint` entry above, at both "
-        "the stage-to-temp copy and the commit-phase copy-into-working-tree in this function "
-        "(two call sites sharing this one function-level fingerprint, same pattern as the "
-        "`_repair_windows_python_subprocess_launcher` entry above)."
+        "Stages validated snapshot bytes under the private `TemporaryDirectory` used by undo; "
+        "this copy does not publish to the caller's working tree. `follow_symlinks=False` "
+        "preserves snapshot leaf links instead of reading their targets."
     ),
     ("lsp_provider_setup.py", "_ensure_node_runtime", "os.replace"): (
         "Three `os.replace` calls share this fingerprint, and NOT all three are the same shape -- "
@@ -1685,18 +1694,8 @@ _EXPECTED_HELPER_BACKED = {
         "tensor_grep.cli._index_lock.atomic_write_bytes",
     ),
     (
-        "checkpoint_store.py",
-        "undo_checkpoint",
-        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
-    ),
-    (
         "checkpoint_undo_io.py",
-        "rollback_overwrites",
-        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
-    ),
-    (
-        "checkpoint_undo_io.py",
-        "rollback_removes",
+        "publish_restored_file",
         "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
     ),
     (
@@ -1735,6 +1734,7 @@ _EXPECTED_HELPER_BACKED = {
 # `_SANCTIONED_SITES` above for the per-entry rationale.
 _EXPECTED_SANCTIONED = {
     ("io/directory_publication.py", "publish_directory_no_replace", "os.rename"),
+    ("io/confined.py", "_unlink_expected_file_at", "os.rename"),
     ("symbols_cache_io.py", "_try_cache_lock", "os.open"),
     ("io/confined.py", "publish_confined", "os.open"),
     ("io/confined.py", "publish_confined", "os.replace"),
@@ -1757,8 +1757,10 @@ _EXPECTED_SANCTIONED = {
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---
     ("agent_capsule.py", "_agent_gpu_evidence", "Path.write_text"),
     ("audit_manifest.py", "verify_review_bundle", "Path.write_text"),
-    ("checkpoint_store.py", "create_checkpoint", "shutil.copy2"),
     ("checkpoint_store.py", "undo_checkpoint", "shutil.copy2"),
+    ("mcp_batch_worker.py", "_write", "os.write"),
+    ("mcp_batch_worker.py", "main", "os.open"),
+    ("mcp_batch_worker.py", "main", "builtin.open"),
     ("lsp_provider_setup.py", "_ensure_node_runtime", "os.replace"),
     ("lsp_provider_setup.py", "_safe_extract_tar", "archive.extractall"),
     ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"),
@@ -1854,8 +1856,8 @@ def test_population_sanctioned_matches_pinned_set() -> None:
     )
 
 
-def test_population_violating_matches_pinned_four_live_violations() -> None:
-    """The inventory stays GREEN while expecting these four known, cited violations to remain --
+def test_population_violating_matches_pinned_residuals() -> None:
+    """The inventory stays GREEN while expecting the cited residual violation to remain --
     this test is NOT asserting they are fixed (that is out of this task's scope; see the module
     docstring). It fails the moment the set changes in EITHER direction: a fix that isn't
     reflected here, or a brand-new unreviewed violation appearing anywhere in the scanned files."""
@@ -1958,7 +1960,7 @@ def test_mutation_control_reverted_is_byte_identical_and_green() -> None:
     )
 
 
-def test_population_includes_previously_unscanned_checkpoint_store_write_bytes() -> None:
+def test_population_includes_checkpoint_undo_confined_publication() -> None:
     """RED-before-fix regression guard (task #859 class ratchet): the population census used to
     be scoped to a hardcoded 3-file ``_SCANNED_PRODUCTION_FILES`` tuple, so a real unsafe writer
     living in any OTHER cli module -- here, ``checkpoint_store.py``'s rollback ``write_bytes`` in
@@ -1968,16 +1970,15 @@ def test_population_includes_previously_unscanned_checkpoint_store_write_bytes()
     an ImportError/NameError -- a missing-module red proves nothing) and passes once the census
     walks the whole ``_CLI_SRC`` directory.
 
-    Checkpoint rollback now uses confined writers in a dedicated module. Assert both that
-    module and the store's no-clobber claim remain visible to the directory-wide census."""
+    Checkpoint restore and rollback publication now share one confined helper. Assert its
+    atomic writer remains visible to the directory-wide census."""
     candidates = _scan_all_scoped_files()
     identities = {(c.module, c.outer_function, c.operation) for c in candidates}
     expected = {
-        (module, function, "tensor_grep.cli._index_lock.atomic_write_bytes_confined")
-        for module, function in (
-            ("checkpoint_store.py", "undo_checkpoint"),
-            ("checkpoint_undo_io.py", "rollback_overwrites"),
-            ("checkpoint_undo_io.py", "rollback_removes"),
+        (
+            "checkpoint_undo_io.py",
+            "publish_restored_file",
+            "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
         )
     }
     assert expected <= identities, (

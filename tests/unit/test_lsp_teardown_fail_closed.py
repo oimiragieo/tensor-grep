@@ -1239,7 +1239,7 @@ def test_readiness_state_belongs_to_the_session_and_starts_fresh(
     client = _client(tmp_path, monkeypatch)
     session_a = install_session(client, process=_FakeProcess())
     client._note_progress_started("tok", session_a)
-    assert session_a.active_progress_tokens == {"tok"}
+    assert session_a.active_progress_tokens == {"s:tok"}
     session_b = install_session(client, process=_FakeProcess())
     assert session_b.active_progress_tokens == set() and session_b.index_ready is False
     client._note_progress_started("old", session_a)  # stale: ignored

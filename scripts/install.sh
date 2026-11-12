@@ -5,10 +5,14 @@ set -e
 ORIGINAL_DIR="$(pwd)"
 INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
+UV_TMP_DIR=""
 
 restore_original_dir() {
     if [ -n "${STAGING_INSTALL_DIR:-}" ] && [ -d "$STAGING_INSTALL_DIR" ]; then
         rm -rf "$STAGING_INSTALL_DIR"
+    fi
+    if [ -n "${UV_TMP_DIR:-}" ] && [ -d "$UV_TMP_DIR" ]; then
+        rm -rf "$UV_TMP_DIR"
     fi
     cd "$ORIGINAL_DIR" || return
     echo "Returned to original directory: $ORIGINAL_DIR"
@@ -21,7 +25,7 @@ clear_tensor_grep_uv_cache() {
         return
     fi
     echo "      Clearing cached tensor-grep package metadata for stable install..."
-    if ! uv cache clean tensor-grep; then
+    if ! "$UV_BIN_PATH" cache clean tensor-grep; then
         echo "      Unable to clear cached tensor-grep package metadata; continuing with fresh install attempt." >&2
     fi
 }
@@ -51,9 +55,9 @@ restore_previous_install() {
     mv "$BACKUP_INSTALL_DIR" "$INSTALL_DIR"
 }
 
-# Verify a downloaded release asset against the published CHECKSUMS.txt manifest BEFORE
-# it is ever made executable or run. Without this, a compromised release/account or a
-# TLS-intercepting proxy could persist arbitrary code as the default `tg` (audit S4).
+# Compare a downloaded release asset with the published CHECKSUMS.txt before it is
+# made executable or run. The unsigned manifest checks consistency only; an attacker
+# who can replace both the asset and manifest can still install arbitrary code (audit S4).
 _compute_sha256_hex() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" 2>/dev/null | awk '{print $1}'
@@ -107,84 +111,59 @@ echo "=========================================================="
 echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
 echo "=========================================================="
 
-# 1. Install or locate uv
+# 1. Download and verify uv
 # Pin uv to an exact version AND verify its SHA-256 before use. We download the uv release archive
 # directly from GitHub and check it against a committed, inlined checksum table (mirrored in
 # scripts/uv_checksums.json) instead of piping the astral.sh remote installer *script* to a shell,
 # which executes an unverified remote script (audit: bring Linux/macOS to install.ps1 parity;
 # see https://github.com/astral-sh/uv/issues/13074). Bump UV_VERSION + every checksum together.
 UV_VERSION="0.13.4"
-# H6 hardening: trust a uv already on PATH ONLY if it reports EXACTLY the pinned version; any
-# mismatch/unparsable value falls CLOSED into the checksum-verified download below, so a stale or
-# hijacked PATH uv can no longer bypass the pinned-uv supply-chain gate. (Mirror of install.ps1.)
-uv_trusted=0
-if command -v uv &> /dev/null; then
-    uv_ver="$(uv --version 2>/dev/null | awk '{print $2}')"
-    # Shell string equality is EXACT, never a glob, so "0.11.253" cannot false-match "0.11.25".
-    if [ "${uv_ver}" = "${UV_VERSION}" ]; then
-        uv_trusted=1
-    else
-        echo "Existing PATH uv reports '${uv_ver:-unknown}', not pinned ${UV_VERSION}; ignoring it and downloading the pinned, checksum-verified release instead." >&2
-    fi
-fi
-if [ "${uv_trusted}" = "1" ]; then
-    echo "[1/4] Found existing uv ${UV_VERSION} on PATH (matches pinned version)."
-else
-    echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION}, checksum-verified)..."
-    # Residual risk (accepted): a version-string gate catches stale/accidental uv but not a
-    # deliberate PATH-hijack that hardcodes --version to print the pin (no committed resident-binary
-    # hash exists; only the release archive is hashed). Fake binary is explicitly out of scope.
-    uv_os="$(uname -s)"
-    uv_machine="$(uname -m)"
-    case "${uv_os}-${uv_machine}" in
-        Linux-x86_64)              uv_triple="x86_64-unknown-linux-gnu" ;;
-        Linux-aarch64|Linux-arm64) uv_triple="aarch64-unknown-linux-gnu" ;;
-        Darwin-x86_64)             uv_triple="x86_64-apple-darwin" ;;
-        Darwin-arm64)              uv_triple="aarch64-apple-darwin" ;;
-        *)
-            echo "ERROR: unsupported platform '${uv_os}-${uv_machine}' for the pinned uv install." >&2
-            echo "Install uv ${UV_VERSION} manually (https://docs.astral.sh/uv/) and re-run." >&2
-            exit 1
-            ;;
-    esac
-    # SHA-256 of uv-<triple>.tar.gz (source of truth: scripts/uv_checksums.json). Inlined so this
-    # script self-verifies even when run via `curl ... | sh`.
-    case "${uv_triple}" in
-        x86_64-unknown-linux-gnu)  uv_expected_sha="2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f" ;;
-        aarch64-unknown-linux-gnu) uv_expected_sha="1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab" ;;
-        x86_64-apple-darwin)       uv_expected_sha="7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6" ;;
-        aarch64-apple-darwin)      uv_expected_sha="e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1" ;;
-    esac
-    uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_triple}.tar.gz"
-    uv_tmp="$(mktemp -d)"
-    if ! curl -fLsS "${uv_url}" -o "${uv_tmp}/uv.tar.gz"; then
-        echo "ERROR: failed to download uv archive from ${uv_url}" >&2
-        rm -rf "${uv_tmp}"; exit 1
-    fi
-    if command -v sha256sum &> /dev/null; then
-        uv_actual_sha="$(sha256sum "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
-    else
-        uv_actual_sha="$(shasum -a 256 "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
-    fi
-    if [ "${uv_actual_sha}" != "${uv_expected_sha}" ]; then
-        echo "ERROR: uv archive checksum mismatch for ${uv_triple}." >&2
-        echo "  expected ${uv_expected_sha}" >&2
-        echo "  actual   ${uv_actual_sha}" >&2
-        rm -rf "${uv_tmp}"; exit 1
-    fi
-    tar -xzf "${uv_tmp}/uv.tar.gz" -C "${uv_tmp}"
-    mkdir -p "$HOME/.local/bin"
-    find "${uv_tmp}" -type f -name uv -exec cp {} "$HOME/.local/bin/uv" \;
-    find "${uv_tmp}" -type f -name uvx -exec cp {} "$HOME/.local/bin/uvx" \;
-    chmod +x "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" 2>/dev/null || true
-    rm -rf "${uv_tmp}"
-    export PATH="$HOME/.local/bin:$PATH"
-    if ! command -v uv &> /dev/null; then
-        echo "ERROR: uv install completed but 'uv' is not on PATH ($HOME/.local/bin)." >&2
+echo "[1/4] Downloading uv package manager (pinned ${UV_VERSION}, checksum-verified)..."
+uv_os="$(uname -s)"
+uv_machine="$(uname -m)"
+case "${uv_os}-${uv_machine}" in
+    Linux-x86_64)              uv_triple="x86_64-unknown-linux-gnu" ;;
+    Linux-aarch64|Linux-arm64) uv_triple="aarch64-unknown-linux-gnu" ;;
+    Darwin-x86_64)             uv_triple="x86_64-apple-darwin" ;;
+    Darwin-arm64)              uv_triple="aarch64-apple-darwin" ;;
+    *)
+        echo "ERROR: unsupported platform '${uv_os}-${uv_machine}' for the pinned uv install." >&2
+        echo "Install uv ${UV_VERSION} manually (https://docs.astral.sh/uv/) and re-run." >&2
         exit 1
-    fi
+        ;;
+esac
+# SHA-256 of uv-<triple>.tar.gz (source of truth: scripts/uv_checksums.json). Inlined so this
+# script self-verifies even when run via `curl ... | sh`.
+case "${uv_triple}" in
+    x86_64-unknown-linux-gnu)  uv_expected_sha="2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f" ;;
+    aarch64-unknown-linux-gnu) uv_expected_sha="1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab" ;;
+    x86_64-apple-darwin)       uv_expected_sha="7be2dcd316122f4b3e5a0a7889f6248266c14425374e105ff7dc9779184603a6" ;;
+    aarch64-apple-darwin)      uv_expected_sha="e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1" ;;
+esac
+uv_url="https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-${uv_triple}.tar.gz"
+uv_tmp="$(mktemp -d)"
+UV_TMP_DIR="${uv_tmp}"
+if ! curl -fLsS "${uv_url}" -o "${uv_tmp}/uv.tar.gz"; then
+    echo "ERROR: failed to download uv archive from ${uv_url}" >&2
+    rm -rf "${uv_tmp}"; exit 1
 fi
-
+if command -v sha256sum &> /dev/null; then
+    uv_actual_sha="$(sha256sum "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
+else
+    uv_actual_sha="$(shasum -a 256 "${uv_tmp}/uv.tar.gz" | awk '{print $1}')"
+fi
+if [ "${uv_actual_sha}" != "${uv_expected_sha}" ]; then
+    echo "ERROR: uv archive checksum mismatch for ${uv_triple}." >&2
+    echo "  expected ${uv_expected_sha}" >&2
+    echo "  actual   ${uv_actual_sha}" >&2
+    rm -rf "${uv_tmp}"; exit 1
+fi
+tar -xzf "${uv_tmp}/uv.tar.gz" -C "${uv_tmp}"
+UV_BIN_PATH="$(find "${uv_tmp}" -type f -name uv -print -quit)"
+if [ -z "${UV_BIN_PATH}" ] || [ ! -x "${UV_BIN_PATH}" ]; then
+    echo "ERROR: verified uv archive did not contain an executable uv binary." >&2
+    exit 1
+fi
 # 2. Detect GPU Configuration
 echo "[2/4] Detecting hardware for optimal routing..."
 HARDWARE_FLAG="cpu"
@@ -212,7 +191,7 @@ mkdir -p "$STAGING_INSTALL_DIR"
 echo "[3/4] Building isolated Python 3.12 environment..."
 clear_tensor_grep_uv_cache
 cd "$STAGING_INSTALL_DIR"
-uv venv --python 3.12 .venv
+"$UV_BIN_PATH" venv --python 3.12 .venv
 
 # 4. Install PyTorch bindings and the tool
 echo "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA/ROCm)..."
@@ -229,7 +208,7 @@ if [ "$INSTALL_CHANNEL" = "stable" ]; then
 fi
 
 if [ "$HARDWARE_FLAG" != "cpu" ]; then
-    uv pip install torch torchvision torchaudio $INDEX_URL --python .venv/bin/python
+    "$UV_BIN_PATH" pip install torch torchvision torchaudio $INDEX_URL --python .venv/bin/python
     # For linux, we also install kvikio and cudf dependencies if NVIDIA
     if [ "$HARDWARE_FLAG" == "nvidia" ]; then
         if [ "$INSTALL_CHANNEL" = "main" ]; then
@@ -237,14 +216,14 @@ if [ "$HARDWARE_FLAG" != "cpu" ]; then
         else
             PKG_REQUIREMENT="$PKG_SPEC[gpu,nlp,ast]"
         fi
-        uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
+        "$UV_BIN_PATH" pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     else
         if [ "$INSTALL_CHANNEL" = "main" ]; then
             PKG_REQUIREMENT="tensor-grep[gpu-win,nlp,ast] @ $PKG_SPEC"
         else
             PKG_REQUIREMENT="$PKG_SPEC[gpu-win,nlp,ast]"
         fi
-        uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
+        "$UV_BIN_PATH" pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     fi
 else
     if [ "$INSTALL_CHANNEL" = "main" ]; then
@@ -252,11 +231,11 @@ else
     else
         PKG_REQUIREMENT="$PKG_SPEC[ast,nlp]"
     fi
-    uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
+    "$UV_BIN_PATH" pip install "$PKG_REQUIREMENT" --python .venv/bin/python
 fi
 
 # Ensure AST runtime grammars are present explicitly across environments.
-uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
+"$UV_BIN_PATH" pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
 
 # 5. Prepare the front-door wrapper inside the staged install before replacing
 # the existing managed directory. A failed native download or interrupted shim

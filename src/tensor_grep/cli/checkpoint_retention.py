@@ -1,22 +1,8 @@
-"""Checkpoint retention and disk-budget helpers, split out of `checkpoint_store.py`
-(enterprise file-size campaign, Wave 1) to bring that module under the 1500-line
-core limit.
-
-Verified via `scripts/monkeypatch_binding_audit.py --module cli.checkpoint_store`:
-none of the functions moved here are directly monkeypatched by tests, and none
-of them touch the 3 early-binding hazard symbols that ARE monkeypatched
-(`datetime`, `uuid4`, `index_lock`) -- those stay defined in `checkpoint_store.py`
-and this module never needs them. The one facade symbol this module DOES call
-(`_checkpoint_dir`) is also unpatched, so it is safe to reach via a deferred,
-module-qualified import (`from tensor_grep.cli import checkpoint_store`, called
-inside the function body) rather than `from checkpoint_store import
-_checkpoint_dir` -- this avoids a real import-order-dependent circular-import
-failure (the facade imports this module for its re-exports at its own top
-level), matching the pattern used for the sibling `ast_workflow_rules.py` split.
-"""
+"""Checkpoint retention and disk-budget helpers split from `checkpoint_store.py`."""
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import TYPE_CHECKING
@@ -25,6 +11,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from tensor_grep.cli.checkpoint_store import CheckpointRecord
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _configured_checkpoint_max() -> int:
@@ -46,13 +34,10 @@ def _select_retained_checkpoints(
     *,
     max_records: int | None = None,
 ) -> tuple[list[CheckpointRecord], list[Path]]:
-    """Pure selector for bounded on-disk checkpoint retention (round-4 DoS).
+    """Bound index records while retaining snapshots whose cleanup ownership is unknown.
 
-    Keep at most ``max_records`` newest records. Returns ``(retained, dirs_to_delete)`` and
-    performs NO filesystem mutation -- the caller removes ``dirs_to_delete`` (metadata.json +
-    the full snapshot copy for each dropped checkpoint). Doing no I/O here lets
-    ``create_checkpoint`` run this selector INSIDE the index lock and defer the slow,
-    index-unrelated ``rmtree`` calls until after the lock is released (q10 RMW race fix).
+    Keep at most ``max_records`` newest records. The empty second result preserves the internal
+    return shape; records from the shared index do not authorize recursive deletion.
 
     M8: ``created_at`` is stamped BEFORE the caller acquires ``index_lock``, so under
     concurrent writers the insert (lock-arrival) order does not reliably match creation
@@ -60,21 +45,17 @@ def _select_retained_checkpoints(
     checkpoint (the ``checkpoint undo`` safety net) and keep an older one. Re-sort by
     ``created_at`` (newest first) immediately before slicing.
     """
-    from tensor_grep.cli import checkpoint_store
-
     limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
     if len(records) <= limit:
         return records, []
     ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
     retained = ordered[:limit]
-    dirs_to_delete: list[Path] = []
-    for dropped in ordered[limit:]:
-        try:
-            dirs_to_delete.append(checkpoint_store._checkpoint_dir(root, dropped.checkpoint_id))
-        except (OSError, ValueError):
-            # ValueError: a traversal-shaped id in a tampered index is refused by _checkpoint_dir.
-            pass
-    return retained, dirs_to_delete
+    _LOGGER.warning(
+        "checkpoint retention selected %d older index record(s); their directories are retained "
+        "because the shared index cannot prove cleanup ownership",
+        len(ordered) - limit,
+    )
+    return retained, []
 
 
 def _prune_checkpoint_records(
@@ -83,17 +64,8 @@ def _prune_checkpoint_records(
     *,
     max_records: int | None = None,
 ) -> list[CheckpointRecord]:
-    """Bound on-disk checkpoint retention (round-4 DoS).
-
-    Thin wrapper over ``_select_retained_checkpoints`` that removes the dropped checkpoints'
-    directories immediately, so any existing caller/test that expects synchronous pruning is
-    unchanged. Each dropped checkpoint's entire directory (metadata.json + the full snapshot
-    copy) is removed so disk usage stays bounded — an uncapped store grows by ~one full scope
-    copy per checkpoint.
-    """
-    retained, dirs_to_delete = _select_retained_checkpoints(root, records, max_records=max_records)
-    for directory in dirs_to_delete:
-        shutil.rmtree(directory, ignore_errors=True)
+    """Bound index records without deleting snapshot directories from untrusted paths."""
+    retained, _dirs_to_delete = _select_retained_checkpoints(root, records, max_records=max_records)
     return retained
 
 

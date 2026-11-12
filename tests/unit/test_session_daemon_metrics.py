@@ -83,12 +83,17 @@ def _stub_dispatch(monkeypatch: Any, root: Path) -> None:
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request: session_id or "session-x",
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+            session_id or "session-x"
+        ),
     )
     monkeypatch.setattr(
         session_daemon,
         "_load_payload_with_status_retry",
-        lambda cache, session_id, path: ({"root": str(root), "repo_map": {}}, "miss"),
+        lambda cache, session_id, path, *, deadline_monotonic=None: (
+            {"root": str(root), "repo_map": {}},
+            "miss",
+        ),
     )
 
 
@@ -527,12 +532,17 @@ def test_client_pid_does_not_fragment_response_cache(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request: session_id or "session-x",
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+            session_id or "session-x"
+        ),
     )
     monkeypatch.setattr(
         session_daemon,
         "_load_payload_with_status_retry",
-        lambda cache, session_id, path: ({"root": str(root), "repo_map": {}}, "miss"),
+        lambda cache, session_id, path, *, deadline_monotonic=None: (
+            {"root": str(root), "repo_map": {}},
+            "miss",
+        ),
     )
 
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")

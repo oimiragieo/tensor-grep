@@ -28,6 +28,7 @@ import click
 import typer
 from typer.core import TyperGroup
 
+from tensor_grep.cli import _index_lock as _index_lock
 from tensor_grep.cli import ast_scan as _ast_scan
 from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import citations as _citations
@@ -37,7 +38,7 @@ from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
-from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
+from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
@@ -10405,7 +10406,7 @@ def new(
         if os.path.lexists(target_path):
             raise FileExistsError(f"Scaffold target already exists: {target_path}")
         target_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_bytes_anchored(
+        _index_lock.atomic_write_bytes_anchored(
             target_path, contents.encode("utf-8"), mode=0o644, replace=False
         )
     except (FileExistsError, ValueError, OSError) as exc:

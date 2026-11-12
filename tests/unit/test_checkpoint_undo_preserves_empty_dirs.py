@@ -5,8 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from tensor_grep.cli import checkpoint_store
+from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
 
+@requires_checkpoint_creation
 def test_undo_keeps_untouched_empty_dirs_and_prunes_the_ones_it_emptied(tmp_path: Path) -> None:
     project = tmp_path / "project"
     (project / "keep_empty").mkdir(parents=True)

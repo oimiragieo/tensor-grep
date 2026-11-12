@@ -50,6 +50,13 @@ orchestrates retrieval; `rank_fusion.cross_encoder.scoring: Rust-ONNX-CPU`
 identifies native model scoring. `tg agent --rerank cross-encoder` orders existing
 context snippets as advisory evidence and preserves target selection and line maps.
 
+Native initialization verifies the model, tokenizer, and runtime assets and builds
+the scorer from the verified bytes. Later calls check file identity and reuse the
+initialized scorer for unchanged assets, avoiding full reads or hashes. Changed
+model or tokenizer assets are verified again; changed runtime assets require a
+process restart because ONNX Runtime is process-global. Windows caches retain
+handles that deny asset writes and replacement while active.
+
 The default is `--rerank off`. `auto` discloses missing assets and keeps the
 existing order; `cross-encoder` refuses missing assets. Corrupt assets and
 inference failures are execution errors in both modes. A generic relevance model

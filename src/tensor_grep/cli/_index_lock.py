@@ -471,7 +471,12 @@ def atomic_write_bytes_confined(
     *,
     replace: bool = True,
     parent_fd: int | None = None,
+    before_create: Callable[[], None] | None = None,
+    temp_ready: Callable[[int, Path], None] | None = None,
     before_publish: Callable[[], None] | None = None,
+    expected_parent_identity: tuple[int, int] | None = None,
+    expected_file_identity: tuple[int, int] | None = None,
+    after_publish: Callable[[], None] | None = None,
 ) -> tuple[int, int]:
     """Publish authorized bytes; a borrowed POSIX parent must already exist and stays open."""
     if parent_fd is not None and os.name != "posix":
@@ -498,7 +503,7 @@ def atomic_write_bytes_confined(
             auth = _dc_replace(auth, parent_identity=dir_identity(path.parent))
         _enforce_parent(path, auth)
     check_before_publish = before_publish
-    on_published = None
+    on_published = after_publish
     if scope is not None and auth is not None:
 
         def check_before_publish() -> None:
@@ -508,15 +513,27 @@ def atomic_write_bytes_confined(
 
         def on_published() -> None:
             scope.written.append(auth.label)
+            if after_publish is not None:
+                after_publish()
 
-    options: dict[str, Any] = {"parent_fd": parent_fd} if parent_fd is not None else {}
+    options: dict[str, Any] = {
+        "before_publish": check_before_publish,
+        "on_published": on_published,
+    }
+    for name, value in (
+        ("parent_fd", parent_fd),
+        ("before_create", before_create),
+        ("temp_ready", temp_ready),
+        ("expected_parent_identity", expected_parent_identity),
+        ("expected_file_identity", expected_file_identity),
+    ):
+        if value is not None:
+            options[name] = value
     return confined.publish_confined(
         root,
         path,
         data,
         only_if_missing=not effective_replace,
-        before_publish=check_before_publish,
-        on_published=on_published,
         **options,
     )
 
@@ -896,18 +913,25 @@ def _acquire_sidecar(
         time.sleep(poll_interval_s)
 
 
+def _deadline_options(deadline_monotonic: float | None) -> dict[str, float]:
+    return {} if deadline_monotonic is None else {"deadline_monotonic": deadline_monotonic}
+
+
 @contextmanager
 def index_lock(
     index_path: Path,
     *,
     poll_interval_s: float = _POLL_S,
     timeout_s: float = _TIMEOUT_S,
+    deadline_monotonic: float | None = None,
     stale_after_s: float = _STALE_AFTER_S,
     heartbeat_interval_s: float | None = None,
 ) -> Iterator[None]:
     owner_pid = os.getpid()  # computed BEFORE anything is acquired
     sidecar = _os_lock_path_for(index_path)
     sidecar.parent.mkdir(parents=True, exist_ok=True)
+    if deadline_monotonic is not None:
+        timeout_s = min(timeout_s, max(0.0, deadline_monotonic - time.monotonic()))
     deadline = time.monotonic() + timeout_s
     fd = _acquire_sidecar(index_path, sidecar, deadline, timeout_s, poll_interval_s)
     try:

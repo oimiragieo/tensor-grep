@@ -28,7 +28,11 @@ def native(monkeypatch: pytest.MonkeyPatch, scores: list[float]) -> list[tuple[o
         return scores
 
     monkeypatch.setattr(rust_core, "cross_encoder_scores", score, raising=False)
-    monkeypatch.setattr(assets, "verified_assets", lambda root: (Path("m"), Path("t"), Path("r")))
+    monkeypatch.setattr(
+        assets,
+        "scorer_assets",
+        lambda root, **kwargs: (Path("m"), Path("t"), Path("r")),
+    )
     return calls
 
 
@@ -36,7 +40,7 @@ def test_off_preserves_order_and_does_not_probe_assets(monkeypatch: pytest.Monke
     def refused(root: Path) -> None:
         raise AssertionError("off must not load or probe")
 
-    monkeypatch.setattr(assets, "verified_assets", refused)
+    monkeypatch.setattr(assets, "scorer_assets", refused)
     original = result()
     before = original.matches.copy()
     assert apply_cross_encoder(original, "query", "off").matches == before
@@ -87,14 +91,29 @@ def test_missing_assets_auto_discloses_explicit_refuses(
         apply_cross_encoder(result(), "query", "cross-encoder")
 
 
-def test_corruption_never_falls_back(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_corruption_never_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     from tensor_grep import rust_core
 
-    monkeypatch.setattr(rust_core, "cross_encoder_scores", lambda *args: [], raising=False)
-    (tmp_path / "model.onnx").write_bytes(b"corrupt")
-    monkeypatch.setenv("TG_CROSS_ENCODER_DIR", str(tmp_path))
+    monkeypatch.setattr(assets, "scorer_assets", lambda root: (Path("m"), Path("t"), Path("r")))
+
+    def reject_corruption(*args: object) -> list[float]:
+        raise RuntimeError("cross-encoder asset checksum mismatch")
+
+    monkeypatch.setattr(rust_core, "cross_encoder_scores", reject_corruption, raising=False)
     with pytest.raises(BackendExecutionError, match="checksum mismatch"):
         apply_cross_encoder(result(), "query", "auto")
+
+
+def test_empty_candidates_still_delegate_asset_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = native(monkeypatch, [])
+    empty = result(0)
+    apply_cross_encoder(empty, "query", "cross-encoder")
+    assert len(calls) == 1
+    assert calls[0][-2] == []
+    assert empty.rank_fusion["cross_encoder"]["executed"] is False
+    assert empty.rank_fusion["cross_encoder"]["candidates"] == 0
 
 
 def test_native_inference_failure_never_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
