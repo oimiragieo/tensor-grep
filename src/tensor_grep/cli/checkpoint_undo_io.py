@@ -54,7 +54,7 @@ def _pin_published_file(path: Path, source_descriptor: int) -> int:
         import msvcrt
         from ctypes import wintypes
 
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
         create = kernel.CreateFileW
         create.argtypes = [
             wintypes.LPCWSTR,
@@ -76,9 +76,11 @@ def _pin_published_file(path: Path, source_descriptor: int) -> int:
             None,
         )
         if handle == ctypes.c_void_p(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
         try:
-            descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+            descriptor = msvcrt.open_osfhandle(  # type: ignore[attr-defined]
+                handle, os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            )
         except BaseException:
             kernel.CloseHandle.argtypes = [wintypes.HANDLE]
             kernel.CloseHandle(handle)
