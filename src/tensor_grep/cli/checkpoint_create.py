@@ -19,6 +19,11 @@ def create_checkpoint_with_owner(
     # Import the store lazily so it remains the single source of checkpoint contracts and
     # test seams while avoiding a module import cycle during normal store initialization.
     from tensor_grep.cli import checkpoint_store
+    from tensor_grep.cli.checkpoint_retention import (
+        _configured_checkpoint_max_file_bytes,
+        _configured_checkpoint_max_total_bytes,
+    )
+    from tensor_grep.io.checkpoint_directory import _SnapshotCopyLimitExceededError
 
     store: Any = checkpoint_store
 
@@ -57,6 +62,9 @@ def create_checkpoint_with_owner(
 
     # Check budgets before creating any snapshot directories.
     store._check_checkpoint_disk_budget(root, entries)
+    owner.set_snapshot_byte_limits(
+        _configured_checkpoint_max_file_bytes(), _configured_checkpoint_max_total_bytes()
+    )
 
     try:
         owner.ensure_storage(root, storage_dir)
@@ -70,6 +78,12 @@ def create_checkpoint_with_owner(
                 continue
             try:
                 owner.copy_snapshot_file(root, snapshot_dir, relative_path)
+            except _SnapshotCopyLimitExceededError as exc:
+                raise store.CheckpointBudgetExceededError(
+                    f"Checkpoint refused: {relative_path!r} {exc.strerror} (raise "
+                    f"{store._CHECKPOINT_MAX_FILE_BYTES_ENV} or "
+                    f"{store._CHECKPOINT_MAX_TOTAL_BYTES_ENV} to allow a larger snapshot)."
+                ) from exc
             except OSError as exc:
                 if "refuses a reparse point" in str(exc) or "is not a real directory" in str(exc):
                     store._resolve_parent_within_root(root, root_resolved, relative_path)

@@ -20,6 +20,7 @@ import pytest
 
 from tensor_grep.cli import checkpoint_store
 from tensor_grep.cli.checkpoint_store import CheckpointBudgetExceededError
+from tensor_grep.io import checkpoint_directory
 from tensor_grep.io.checkpoint_directory import CheckpointDirectoryOwner
 from tests.helpers.checkpoint_creation import requires_checkpoint_creation
 
@@ -57,6 +58,79 @@ def test_create_checkpoint_succeeds_under_default_budget(tmp_path: Path) -> None
     assert created.file_count == 1
     snapshot = checkpoint_store._snapshot_path(root, created.checkpoint_id)
     assert (snapshot / "a.py").read_text(encoding="utf-8") == "small file\n"
+
+
+@pytest.mark.parametrize(
+    ("max_file_bytes", "max_total_bytes", "growth", "expected_env"),
+    [
+        (7, 20, b"+++", checkpoint_store._CHECKPOINT_MAX_FILE_BYTES_ENV),
+        (8, 12, b"++", checkpoint_store._CHECKPOINT_MAX_TOTAL_BYTES_ENV),
+    ],
+    ids=["per-file-limit", "remaining-total-limit"],
+)
+@requires_checkpoint_creation
+def test_create_checkpoint_caps_streamed_growth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    max_file_bytes: int,
+    max_total_bytes: int,
+    growth: bytes,
+    expected_env: str,
+) -> None:
+    monkeypatch.setenv("TG_CHECKPOINT_MAX_FILE_BYTES", str(max_file_bytes))
+    monkeypatch.setenv("TG_CHECKPOINT_MAX_TOTAL_BYTES", str(max_total_bytes))
+    monkeypatch.setenv("TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES", "1")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a.bin").write_bytes(b"1234567")
+    growing_file = root / "b.bin"
+    growing_file.write_bytes(b"abcde")
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    first_snapshot = checkpoint_store._snapshot_path(root, created.checkpoint_id)
+    assert (first_snapshot / "a.bin").read_bytes() == b"1234567"
+    assert (first_snapshot / "b.bin").read_bytes() == b"abcde"
+    index_path = checkpoint_store._index_path(root)
+    prior_index = index_path.read_bytes()
+    storage_before = {path.resolve() for path in _storage_dir_entries(root) if path.is_dir()}
+    original_read = checkpoint_directory.os.read
+    source_identity = growing_file.stat()
+    appended = False
+
+    def append_after_source_read(fd: int, size: int) -> bytes:
+        nonlocal appended
+        block = original_read(fd, size)
+        opened = checkpoint_directory.os.fstat(fd)
+        if (
+            block
+            and not appended
+            and (opened.st_dev, opened.st_ino) == (source_identity.st_dev, source_identity.st_ino)
+        ):
+            with growing_file.open("ab") as stream:
+                stream.write(growth)
+            appended = True
+        return block
+
+    monkeypatch.setattr(checkpoint_directory.os, "read", append_after_source_read)
+    with pytest.raises(CheckpointBudgetExceededError) as error:
+        checkpoint_store.create_checkpoint(str(root))
+    assert "source grew beyond" in str(error.value)
+    assert expected_env in str(error.value)
+
+    assert appended, "the source-growth control did not run"
+    assert index_path.read_bytes() == prior_index, "failed copy changed the published index"
+    new_dirs = [
+        path
+        for path in _storage_dir_entries(root)
+        if path.is_dir() and path.resolve() not in storage_before
+    ]
+    assert len(new_dirs) == 1
+    copied_files = [path for path in (new_dirs[0] / "snapshot").rglob("*") if path.is_file()]
+    assert all(path.stat().st_size <= max_file_bytes for path in copied_files)
+    assert sum(path.stat().st_size for path in copied_files) <= max_total_bytes
+    assert (new_dirs[0] / "snapshot" / "a.bin").read_bytes() == b"1234567"
+    assert (new_dirs[0] / "snapshot" / "b.bin").read_bytes() == b"abcde"
+    assert created.file_count == 2
 
 
 @requires_checkpoint_creation

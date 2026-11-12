@@ -80,6 +80,13 @@ def _fsync_directory(descriptor: int) -> None:
             raise
 
 
+class _SnapshotCopyLimitExceededError(OSError):
+    """A source grew beyond the configured snapshot copy byte budget."""
+
+    def __init__(self, message: str, relative_path: str) -> None:
+        super().__init__(errno.EFBIG, message, relative_path)
+
+
 class CheckpointDirectoryOwner:
     """Pin checkpoint paths with POSIX directory descriptors or Windows handles."""
 
@@ -88,6 +95,8 @@ class CheckpointDirectoryOwner:
         self._handles: dict[str, tuple[int, tuple[int, int]]] = {}
         self._order: list[str] = []
         self._created_paths: list[Path] = []
+        self._snapshot_max_file_bytes: int | None = None
+        self._snapshot_remaining_total_bytes: int | None = None
         if os.name == "posix":
             try:
                 self._open_posix_chain(root)
@@ -420,6 +429,45 @@ class CheckpointDirectoryOwner:
             parent = parent / part
             self.open_existing(parent)
 
+    def set_snapshot_byte_limits(self, max_file_bytes: int, max_total_bytes: int) -> None:
+        if max_file_bytes <= 0 or max_total_bytes <= 0:
+            raise ValueError("checkpoint snapshot byte limits must be positive")
+        self._snapshot_max_file_bytes = max_file_bytes
+        self._snapshot_remaining_total_bytes = max_total_bytes
+
+    def _copy_regular_file_contents(
+        self, source_fd: int, destination_fd: int, relative_path: str
+    ) -> None:
+        max_file_bytes = self._snapshot_max_file_bytes
+        remaining_total_bytes = self._snapshot_remaining_total_bytes
+        if max_file_bytes is None or remaining_total_bytes is None:
+            raise RuntimeError("checkpoint snapshot byte limits were not configured")
+        limit = min(max_file_bytes, remaining_total_bytes)
+        limit_kind = (
+            "per-file" if max_file_bytes <= remaining_total_bytes else "per-checkpoint total"
+        )
+        copied = 0
+        while True:
+            remaining = limit - copied
+            block = os.read(source_fd, min(1024 * 1024, remaining + 1))
+            if not block:
+                break
+            if len(block) > remaining:
+                raise _SnapshotCopyLimitExceededError(
+                    f"source grew beyond the {limit_kind} snapshot byte limit of {limit} bytes",
+                    relative_path,
+                )
+            view = memoryview(block)
+            while view:
+                written = os.write(destination_fd, view)
+                if written == 0:
+                    raise OSError(
+                        errno.EIO, "checkpoint snapshot write made no progress", relative_path
+                    )
+                view = view[written:]
+            copied += len(block)
+        self._snapshot_remaining_total_bytes = remaining_total_bytes - copied
+
     def copy_snapshot_file(self, root: Path, snapshot: Path, relative_path: str) -> None:
         """Copy a file or link using retained source and destination parent descriptors."""
         from pathlib import PurePosixPath
@@ -495,10 +543,7 @@ class CheckpointDirectoryOwner:
             if fchmod is None:
                 raise OSError(errno.ENOTSUP, "checkpoint snapshots require fchmod")
             fchmod(destination_fd_file, stat.S_IMODE(opened.st_mode))
-            while block := os.read(source_fd_file, 1024 * 1024):
-                view = memoryview(block)
-                while view:
-                    view = view[os.write(destination_fd_file, view) :]
+            self._copy_regular_file_contents(source_fd_file, destination_fd_file, relative_path)
             after = os.fstat(source_fd_file)
             if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
                 opened.st_dev,
@@ -597,10 +642,9 @@ class CheckpointDirectoryOwner:
             raise
         try:
             opened = os.fstat(source_descriptor)
-            while block := os.read(source_descriptor, 1024 * 1024):
-                view = memoryview(block)
-                while view:
-                    view = view[os.write(destination_descriptor, view) :]
+            self._copy_regular_file_contents(
+                source_descriptor, destination_descriptor, relative_path
+            )
             after = os.fstat(source_descriptor)
             if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != (
                 opened.st_dev,
