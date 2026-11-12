@@ -8,7 +8,13 @@ from typing import Any
 
 
 def _canonical_windows_path(path: str | Path) -> str:
-    return os.path.normcase(os.path.realpath(os.fspath(path)))
+    resolved = os.path.realpath(os.fspath(path))
+    # Rust's canonical paths include the prefix absent from OS process-image queries.
+    if resolved.startswith("\\\\?\\UNC\\"):
+        resolved = "\\\\" + resolved[8:]
+    elif resolved.startswith("\\\\?\\"):
+        resolved = resolved[4:]
+    return os.path.normcase(resolved)
 
 
 def _native_parent_matches_stable(
