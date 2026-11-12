@@ -105,7 +105,7 @@ fn legacy_json_decode_charges_allocation_budget_before_path_allocation() {
     let mut budget = DecodeBudget::default();
     budget
         .charge(
-            MAX_INDEX_DECODED_ALLOCATION_BYTES - data.len() - 3,
+            MAX_INDEX_DECODED_ALLOCATION_BYTES - 2 * data.len() - 3,
             "test budget headroom",
         )
         .unwrap();
@@ -113,6 +113,35 @@ fn legacy_json_decode_charges_allocation_budget_before_path_allocation() {
     let error = bounded_json::deserialize_index_json(data, &mut budget).unwrap_err();
     let diagnostic = format!("{error:#}");
     assert!(diagnostic.contains("budget exceeded"), "{diagnostic}");
+}
+
+#[test]
+fn legacy_json_decode_precharges_escaped_unknown_identifier_scratch() {
+    let ordinary = br#"{"files":[],"postings":{},"no_ignore":false}"#;
+    let mut ordinary_budget = DecodeBudget::default();
+    let decoded = bounded_json::deserialize_index_json(ordinary, &mut ordinary_budget).unwrap();
+    assert!(decoded.files.is_empty());
+    assert!(decoded.postings.is_empty());
+
+    let prefix = "a".repeat(4096);
+    let data = format!(
+        r#"{{"files":[],"postings":{{"000000":[]}},"no_ignore":false,"{prefix}\u0061":null}}"#
+    );
+    let headroom = data.len() + data.len() / 2;
+    let mut budget = DecodeBudget::default();
+    budget
+        .charge(
+            MAX_INDEX_DECODED_ALLOCATION_BYTES - headroom,
+            "test escaped identifier headroom",
+        )
+        .unwrap();
+
+    let error = bounded_json::deserialize_index_json(data.as_bytes(), &mut budget).unwrap_err();
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("legacy JSON parser scratch bound"),
+        "{diagnostic}"
+    );
 }
 
 #[test]

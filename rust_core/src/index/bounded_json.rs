@@ -622,7 +622,12 @@ pub(super) fn deserialize_index_json(
     data: &[u8],
     budget: &mut DecodeBudget,
 ) -> Result<SerializableIndex> {
-    budget.charge(data.len(), "legacy JSON parser scratch bound")?;
+    // Serde's escaped-string scratch can double before the visitor runs.
+    let scratch_bound = data
+        .len()
+        .checked_mul(2)
+        .ok_or_else(|| anyhow::anyhow!("decoded index allocation size overflow"))?;
+    budget.charge(scratch_bound, "legacy JSON parser scratch bound")?;
     let mut deserializer = serde_json::Deserializer::from_slice(data);
     let index = BudgetedJsonIndexSeed { budget }
         .deserialize(&mut deserializer)
