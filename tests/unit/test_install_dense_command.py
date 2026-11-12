@@ -20,9 +20,21 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
+
+
+@pytest.fixture(autouse=True)
+def _trusted_uv(monkeypatch, tmp_path):
+    from tensor_grep.cli import runtime_paths
+
+    monkeypatch.setattr(
+        runtime_paths,
+        "resolve_executable_path",
+        lambda _name: str(tmp_path / "trusted-tools" / "uv.exe"),
+    )
 
 
 class _FakeHTTPResponse:
@@ -157,7 +169,8 @@ def test_install_dense_pip_cascade_targets_semantic_extra(monkeypatch, tmp_path:
     assert result.exit_code == 0, result.output
     assert calls, "subprocess.run was never invoked -- the pip cascade never ran"
     first_call = calls[0]
-    assert first_call[0] == "uv", f"uv must be tried first (upgrade's cascade order), got {calls}"
+    assert Path(first_call[0]).is_absolute() and Path(first_call[0]).stem == "uv", calls
+    assert first_call[1:3] == ["--no-config", "pip"]
     assert "tensor-grep[semantic]" in first_call, (
         f"the semantic extra spec must be threaded through, got {first_call}"
     )
@@ -172,12 +185,13 @@ def test_install_dense_falls_back_through_cascade_when_uv_missing(
 ) -> None:
     """Mirrors `tg upgrade`'s own uv-missing-falls-back-to-pip coverage, proving `install-dense`
     reuses the identical `_run_upgrade` retry loop (not a hand-rolled duplicate)."""
+    from tensor_grep.cli import runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_executable_path", lambda _name: None)
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         calls.append(list(cmd))
-        if cmd[0] == "uv":
-            raise FileNotFoundError("uv not found")
         return subprocess.CompletedProcess(cmd, 0, stdout="Installed 2 packages", stderr="")
 
     monkeypatch.setattr("subprocess.run", _fake_run)
@@ -191,7 +205,10 @@ def test_install_dense_falls_back_through_cascade_when_uv_missing(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["steps"]["pip_install"]["method"] == "pip"
-    assert len(calls) == 2, f"expected uv (failed) then pip (succeeded), got {calls}"
+    assert len(calls) == 1, (
+        f"unavailable uv must be skipped before the successful pip call: {calls}"
+    )
+    assert calls[0][1:3] == ["-m", "pip"]
 
 
 def test_install_dense_pip_cascade_exhausted_skips_fetch_never_touches_network(

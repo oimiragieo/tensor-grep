@@ -14,6 +14,8 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+from tensor_grep.io.executable_paths import resolve_executable_path as resolve_executable_path
+
 NATIVE_FRONTDOOR_METADATA_FILENAME = "tg-native-metadata.json"
 
 
@@ -597,28 +599,6 @@ def gpu_probe_timeout_s(
     if cross_domain:
         return max(default_s, CROSS_DOMAIN_GPU_PROBE_TIMEOUT_S)
     return default_s
-
-
-def resolve_executable_path(binary_name: str) -> str | None:
-    import shutil
-
-    cwd = Path.cwd().resolve()
-    for directory in os.environ.get("PATH", "").split(os.pathsep):
-        path_dir = Path(directory or os.curdir).expanduser()
-        try:
-            path_dir = path_dir.resolve()
-        except OSError:
-            continue
-        if path_dir == cwd or cwd in path_dir.parents:
-            continue
-        if candidate := shutil.which(str(path_dir / binary_name)):
-            try:
-                resolved = Path(candidate).resolve()
-            except (OSError, RuntimeError):
-                continue
-            if resolved != cwd and cwd not in resolved.parents:
-                return str(resolved)
-    return None
 
 
 @lru_cache(maxsize=1)

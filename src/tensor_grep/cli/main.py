@@ -11333,7 +11333,7 @@ def upgrade() -> None:
                 "post-upgrade verification failed: expected tensor-grep "
                 f"{latest_version} from PyPI but target Python reports {current_version}"
             )
-        native_refresh_message = _refresh_managed_native_frontdoor(current_version)
+        native_refresh_message = _self._refresh_managed_native_frontdoor(current_version)
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )

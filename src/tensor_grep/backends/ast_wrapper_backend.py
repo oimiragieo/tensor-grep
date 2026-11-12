@@ -111,7 +111,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         return self._get_binary_name() != "ast-grep"
 
     def _get_binary_name(self) -> str:
-        from tensor_grep.cli.runtime_paths import resolve_executable_path
+        from tensor_grep.io.executable_paths import resolve_executable_path
 
         if self._resolved_binary_name is not None:
             return self._resolved_binary_name

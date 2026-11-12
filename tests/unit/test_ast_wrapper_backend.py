@@ -53,7 +53,7 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
     mock_result.stderr = ""
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
@@ -73,7 +73,7 @@ def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
     mock_result.stderr = ""
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
@@ -95,7 +95,7 @@ def test_ast_wrapper_backend_should_accept_verified_sg_alias():
     mock_result.stderr = ""
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
@@ -121,7 +121,7 @@ def test_ast_grep_backend_probes_primary_name_before_trusting_it():
     backend = AstGrepWrapperBackend()
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch(
             "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
             side_effect=OSError("[Errno 8] Exec format error"),
@@ -149,7 +149,7 @@ def test_ast_grep_backend_still_trusts_working_binary():
     mock_result.stderr = ""
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
@@ -176,7 +176,7 @@ def test_ast_grep_backend_rejects_shim_that_exits_nonzero_with_marker():
     mock_result.stderr = "ast-grep: command not found\n"
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
@@ -200,7 +200,7 @@ def test_ast_grep_backend_memoizes_binary_probe():
 
     with (
         patch(
-            "tensor_grep.cli.runtime_paths.resolve_executable_path",
+            "tensor_grep.io.executable_paths.resolve_executable_path",
             side_effect=lambda name: "/real/path/ast-grep",
         ),
         patch(
@@ -264,7 +264,7 @@ def test_doctor_ast_grep_available_false_when_shim_broken():
     from tensor_grep.cli.main import _doctor_ast_grep_status
 
     with (
-        patch("tensor_grep.cli.runtime_paths.resolve_executable_path") as which,
+        patch("tensor_grep.io.executable_paths.resolve_executable_path") as which,
         patch(
             "tensor_grep.backends.ast_wrapper_backend.subprocess.run",
             side_effect=OSError("[Errno 8] Exec format error"),

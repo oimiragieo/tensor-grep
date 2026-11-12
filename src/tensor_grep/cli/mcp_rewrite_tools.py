@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -653,9 +654,17 @@ def _run_rewrite_subprocess(
     )
 
 
-def _execute_rewrite_json_command(command: list[str]) -> str:
+def _execute_rewrite_json_command(
+    command: list[str], write_authorization: WriteAuthorization | None = None
+) -> str:
     try:
-        completed = _self._run_rewrite_subprocess(command)
+        write_scope = (
+            write_authorizations([write_authorization])
+            if write_authorization is not None
+            else nullcontext()
+        )
+        with write_scope:
+            completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
         _log_tool_exception("rewrite_subprocess", exc)
         return _rewrite_error(
@@ -1204,10 +1213,7 @@ def execute_rewrite_apply_json(
             test_cmd=None if loaded_policy is not None else test_cmd,
             native_binary=native_tg,
         )
-        # Keep the authorization bound for Python writers reached during execution; it cannot
-        # constrain the separate Rust process that writes the manifest.
-        with write_authorizations([manifest_auth] if manifest_auth is not None else []):
-            rewrite_json = _execute_rewrite_json_command(command)
+        rewrite_json = _execute_rewrite_json_command(command, write_authorization=manifest_auth)
     rewrite_payload = json.loads(rewrite_json)
     if checkpoint_payload is not None:
         rewrite_payload["checkpoint"] = checkpoint_payload
