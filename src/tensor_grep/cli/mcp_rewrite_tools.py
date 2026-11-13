@@ -789,7 +789,9 @@ def _normalize_apply_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
             if isinstance(total, int) and not isinstance(total, bool):
                 payload["applied_edits"] = total
             else:
-                payload["applied_edits"] = 0
+                plan = payload.get("plan")
+                plan_edits = plan.get("edits") if isinstance(plan, dict) else None
+                payload["applied_edits"] = len(plan_edits) if isinstance(plan_edits, list) else 0
 
     # M12 part 2: normalize checkpoint created_at to ISO-8601 and checkpoint_id
     # from ckpt-{epoch}-{hex} to ckpt-{datetime}-{hex}.
