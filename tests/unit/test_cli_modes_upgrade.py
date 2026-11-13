@@ -27,9 +27,20 @@ from tests.unit.test_cli_modes_shared import *  # noqa: F403
 
 
 @pytest.fixture(autouse=True)
-def _upgrade_test_uses_external_python_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def _upgrade_test_uses_external_python_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from tensor_grep.cli import runtime_paths
+
     monkeypatch.setattr(
         cli_main._native_frontdoor, "managed_windows_install_root", lambda _path: None
+    )
+    trusted_uv = str(tmp_path / "trusted-tools" / "uv.exe")
+    real_which = runtime_paths.resolve_executable_path
+    monkeypatch.setattr(
+        runtime_paths,
+        "resolve_executable_path",
+        lambda name: trusted_uv if name == "uv" else real_which(name),
     )
 
 
@@ -927,11 +938,10 @@ def test_cli_keeps_non_ascii_replacement_tokens_literal(monkeypatch):
 def test_upgrade_uses_uv_when_available(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, text=True, encoding=None, errors=None, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute()
             assert text is True and encoding == "utf-8" and errors == "replace"
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if cmd[:2] == ["python", "-c"]:
@@ -954,7 +964,8 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
+    assert Path(calls[0][0]).is_absolute()
+    assert Path(calls[0][0]).name == "uv.exe"
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
 
 
@@ -976,11 +987,10 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
     ])
     restarted: list[str] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if cmd[:2] == ["python", "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
@@ -1009,7 +1019,8 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
+    assert Path(calls[0][0]).is_absolute()
+    assert Path(calls[0][0]).name == "uv.exe"
     assert restarted == [r"C:\example\project"]
     assert "Session daemon restarted after upgrade" in result.stdout
 
@@ -1017,11 +1028,10 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
 def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if cmd[:2] == ["python", "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
@@ -1050,18 +1060,18 @@ def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
+    assert Path(calls[0][0]).is_absolute()
+    assert Path(calls[0][0]).name == "uv.exe"
     assert "Session daemon restarted after upgrade" not in result.stdout
 
 
 def test_upgrade_pins_exact_latest_pypi_version_when_local_metadata_is_stale(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if cmd[:2] == ["python", "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -1080,7 +1090,8 @@ def test_upgrade_pins_exact_latest_pypi_version_when_local_metadata_is_stale(mon
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
+    assert Path(calls[0][0]).is_absolute()
+    assert Path(calls[0][0]).name == "uv.exe"
     assert any("tensor-grep==0.33.0" in cmd for cmd in calls)
     assert calls[0][-1] == "tensor-grep==0.33.0"
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
@@ -1125,11 +1136,10 @@ def test_upgrade_latest_version_candidates_include_pip_index_output():
 def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_latest(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if cmd[:2] == ["python", "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
@@ -1148,7 +1158,8 @@ def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_lates
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
+    assert Path(calls[0][0]).is_absolute()
+    assert Path(calls[0][0]).name == "uv.exe"
     assert any("tensor-grep==0.32.0" in cmd for cmd in calls)
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
 
@@ -1221,10 +1232,12 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -1305,10 +1318,12 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -1384,10 +1399,12 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -1455,10 +1472,12 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -1566,10 +1585,12 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute()
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")

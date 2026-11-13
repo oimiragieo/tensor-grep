@@ -16,11 +16,24 @@ from tests.unit.test_cli_modes_shared import *  # noqa: F403
 
 # ruff: noqa: F405  -- names come from the shared wildcard import above (W4-d split)
 
+_TEST_PYTHON = str(Path(Path(__file__).resolve().anchor) / "external-python" / "python.exe")
+
 
 @pytest.fixture(autouse=True)
-def _upgrade_test_uses_external_python_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def _upgrade_test_uses_external_python_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from tensor_grep.cli import runtime_paths
+
     monkeypatch.setattr(
         cli_main._native_frontdoor, "managed_windows_install_root", lambda _path: None
+    )
+    trusted_uv = str(tmp_path / "trusted-tools" / "uv.exe")
+    real_resolve = runtime_paths.resolve_executable_path
+    monkeypatch.setattr(
+        runtime_paths,
+        "resolve_executable_path",
+        lambda name: trusted_uv if name == "uv" else real_resolve(name),
     )
 
 
@@ -555,10 +568,12 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -748,10 +763,12 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -820,10 +837,12 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -894,10 +913,12 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
         if command[:2] == [str(python_executable), "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
@@ -929,6 +950,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
             stdin=None,
             close_fds=None,
             creationflags=0,
+            cwd=None,
         ):
             popen_calls.append([str(part) for part in cmd])
 
@@ -1007,29 +1029,29 @@ def test_managed_native_frontdoor_path_uses_unix_native_binary_when_env_is_absen
 
 
 def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
+    monkeypatch.setattr(cli_main, "_refresh_managed_native_frontdoor", lambda _version: None)
     calls: list[list[str]] = []
     pip_attempts = {"count": 0}
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute() and cmd[1] == "--no-config"
             raise FileNotFoundError("uv not found")
-        if cmd[:3] == ["python", "-m", "ensurepip"]:
+        if cmd[:3] == [_TEST_PYTHON, "-m", "ensurepip"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="ensurepip ok", stderr="")
-        if cmd[:3] == ["python", "-m", "pip"]:
+        if cmd[:3] == [_TEST_PYTHON, "-m", "pip"]:
             pip_attempts["count"] += 1
             if pip_attempts["count"] == 1:
                 raise subprocess.CalledProcessError(
                     returncode=1, cmd=cmd, stderr="No module named pip"
                 )
             return subprocess.CompletedProcess(cmd, 0, stdout="Successfully installed", stderr="")
-        if cmd[:2] == ["python", "-c"]:
+        if cmd[:2] == [_TEST_PYTHON, "-c"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="0.32.0\n", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
 
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     versions = iter(["0.31.0", "0.32.0"])
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
@@ -1043,8 +1065,8 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(app, ["upgrade"])
 
-    assert result.exit_code == 0
-    assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
+    assert result.exit_code == 0, result.output
+    assert any(cmd[:3] == [_TEST_PYTHON, "-m", "ensurepip"] for cmd in calls)
     assert pip_attempts["count"] == 2
     assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout
 
@@ -1052,13 +1074,12 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
 def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute() and cmd[1] == "--no-config"
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
-        if cmd[:2] == ["python", "-c"]:
+        if cmd[:2] == [_TEST_PYTHON, "-c"]:
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=cmd,
@@ -1066,7 +1087,7 @@ def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkey
             )
         raise AssertionError(f"unexpected command: {cmd}")
 
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr(
@@ -1088,13 +1109,12 @@ def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkey
 def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         calls.append(list(cmd))
-        if cmd[0] == "uv":
+        if Path(cmd[0]).stem == "uv":
+            assert Path(cmd[0]).is_absolute() and cmd[1] == "--no-config"
             raise FileNotFoundError("uv not found")
-        if cmd[:3] == ["python", "-m", "pip"]:
+        if cmd[:3] == [_TEST_PYTHON, "-m", "pip"]:
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=cmd,
@@ -1102,7 +1122,7 @@ def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatc
             )
         raise AssertionError(f"unexpected command: {cmd}")
 
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr(
         "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
@@ -1114,8 +1134,9 @@ def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatc
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 1
-    assert calls[0][0] == "uv"
-    assert any(cmd[:3] == ["python", "-m", "pip"] for cmd in calls)
+    assert Path(calls[0][0]).is_absolute() and Path(calls[0][0]).stem == "uv"
+    assert calls[0][1] == "--no-config"
+    assert any(cmd[:3] == [_TEST_PYTHON, "-m", "pip"] for cmd in calls)
     assert "Error occurred while upgrading tensor-grep." in result.output
     assert "uv:" in result.output
     assert "pip:" in result.output
@@ -1132,14 +1153,13 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
         "(os error 32)"
     )
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         command = list(cmd)
         calls.append(command)
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
-        if command[:3] == ["python", "-m", "pip"]:
+        if command[:3] == [_TEST_PYTHON, "-m", "pip"]:
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
         raise AssertionError(f"unexpected command: {command}")
 
@@ -1152,12 +1172,13 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
             stdin=None,
             close_fds=None,
             creationflags=0,
+            cwd=None,
         ):
             popen_calls.append(list(cmd))
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
@@ -1173,10 +1194,11 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
-    assert any(cmd[:3] == ["python", "-m", "pip"] for cmd in calls)
+    assert Path(calls[0][0]).is_absolute() and Path(calls[0][0]).stem == "uv"
+    assert calls[0][1] == "--no-config"
+    assert any(cmd[:3] == [_TEST_PYTHON, "-m", "pip"] for cmd in calls)
     assert popen_calls
-    assert popen_calls[0][0] == "python"
+    assert popen_calls[0][0] == _TEST_PYTHON
     assert popen_calls[0][1] == "-c"
     helper_code = popen_calls[0][2]
     assert "def _verify_installed_version" in helper_code
@@ -1200,13 +1222,12 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
         "(os error 32)"
     )
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         command = list(cmd)
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
-        if command[:3] == ["python", "-m", "pip"]:
+        if command[:3] == [_TEST_PYTHON, "-m", "pip"]:
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
         raise AssertionError(f"unexpected command: {command}")
 
@@ -1219,12 +1240,13 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
             stdin=None,
             close_fds=None,
             creationflags=0,
+            cwd=None,
         ):
             popen_calls.append([str(part) for part in cmd])
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
@@ -1282,10 +1304,12 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
         env=None,
         encoding=None,
         errors=None,
+        cwd=None,
         stdin=None,
     ):
         command = [str(part) for part in cmd]
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
         if command[:3] == [str(python_executable), "-m", "pip"]:
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
@@ -1306,6 +1330,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
             stdin=None,
             close_fds=None,
             creationflags=0,
+            cwd=None,
         ):
             popen_calls.append([str(part) for part in cmd])
 
@@ -1427,7 +1452,9 @@ def test_schedule_windows_self_upgrade_helper_verifies_checksum(monkeypatch, tmp
 
     def _fake_run(cmd, **kwargs):
         command = [str(p) for p in cmd]
-        if command[0] in ("uv", str(python_executable)) or command[:2] == [
+        if (Path(command[0]).stem == "uv" or command[0] == str(python_executable)) or command[
+            :2
+        ] == [
             str(python_executable),
             "-m",
         ]:
@@ -1525,7 +1552,7 @@ def test_upgrade_schedules_windows_self_upgrade_fails_closed_when_checksums_unav
 
     def _fake_run(cmd, **kwargs):
         command = [str(p) for p in cmd]
-        if command[0] in ("uv",) or command[:3] == [str(python_executable), "-m", "pip"]:
+        if Path(command[0]).stem == "uv" or command[:3] == [str(python_executable), "-m", "pip"]:
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
         raise AssertionError(f"unexpected command: {command}")
 
@@ -1630,24 +1657,23 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
         "Check the permissions."
     )
 
-    def _fake_run(
-        cmd, capture_output=True, text=True, check=True, env=None, encoding=None, errors=None
-    ):
+    def _fake_run(cmd, **_kwargs):
         command = list(cmd)
         calls.append(command)
-        if command[0] == "uv":
+        if Path(command[0]).stem == "uv":
+            assert Path(command[0]).is_absolute() and command[1] == "--no-config"
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=command,
                 stderr=uv_locked_error,
             )
-        if command[:3] == ["python", "-m", "pip"]:
+        if command[:3] == [_TEST_PYTHON, "-m", "pip"]:
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=command,
                 stderr=pip_missing_error,
             )
-        if command[:3] == ["python", "-m", "ensurepip"]:
+        if command[:3] == [_TEST_PYTHON, "-m", "ensurepip"]:
             raise subprocess.CalledProcessError(
                 returncode=1,
                 cmd=command,
@@ -1664,12 +1690,13 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
             stdin=None,
             close_fds=None,
             creationflags=0,
+            cwd=None,
         ):
             popen_calls.append(list(cmd))
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
-    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("sys.executable", _TEST_PYTHON)
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.31.0")
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
@@ -1685,9 +1712,10 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
     result = runner.invoke(app, ["upgrade"])
 
     assert result.exit_code == 0
-    assert calls[0][0] == "uv"
-    assert any(cmd[:3] == ["python", "-m", "pip"] for cmd in calls)
-    assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
+    assert Path(calls[0][0]).is_absolute() and Path(calls[0][0]).stem == "uv"
+    assert calls[0][1] == "--no-config"
+    assert any(cmd[:3] == [_TEST_PYTHON, "-m", "pip"] for cmd in calls)
+    assert any(cmd[:3] == [_TEST_PYTHON, "-m", "ensurepip"] for cmd in calls)
     assert popen_calls
     assert "Windows is still using tg.exe" in result.output
     assert "Wait a few seconds, then run `tg --version` again." in result.output

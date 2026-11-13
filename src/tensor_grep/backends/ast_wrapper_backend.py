@@ -111,7 +111,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         return self._get_binary_name() != "ast-grep"
 
     def _get_binary_name(self) -> str:
-        import shutil
+        from tensor_grep.io.executable_paths import resolve_executable_path
 
         if self._resolved_binary_name is not None:
             return self._resolved_binary_name
@@ -123,19 +123,19 @@ class AstGrepWrapperBackend(ComputeBackend):
         # on the first two branches with no probe -- making is_available() (and
         # therefore `tg doctor`) report available:true for a binary that cannot
         # actually run. Gate all four branches on the same probe used below.
-        if ast_grep_path := shutil.which("ast-grep"):
+        if ast_grep_path := resolve_executable_path("ast-grep"):
             if _is_ast_grep_sg_binary(ast_grep_path):
                 self._resolved_binary_name = ast_grep_path
                 return self._resolved_binary_name
-        if ast_grep_exe_path := shutil.which("ast-grep.exe"):
+        if ast_grep_exe_path := resolve_executable_path("ast-grep.exe"):
             if _is_ast_grep_sg_binary(ast_grep_exe_path):
                 self._resolved_binary_name = ast_grep_exe_path
                 return self._resolved_binary_name
-        if sg_exe_path := shutil.which("sg.exe"):
+        if sg_exe_path := resolve_executable_path("sg.exe"):
             if _is_ast_grep_sg_binary(sg_exe_path):
                 self._resolved_binary_name = sg_exe_path
                 return self._resolved_binary_name
-        if sg_path := shutil.which("sg"):
+        if sg_path := resolve_executable_path("sg"):
             if _is_ast_grep_sg_binary(sg_path):
                 self._resolved_binary_name = sg_path
                 return self._resolved_binary_name

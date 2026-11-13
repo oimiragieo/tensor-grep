@@ -14,6 +14,8 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
+from tensor_grep.io.executable_paths import resolve_executable_path as resolve_executable_path
+
 NATIVE_FRONTDOOR_METADATA_FILENAME = "tg-native-metadata.json"
 
 
@@ -601,8 +603,6 @@ def gpu_probe_timeout_s(
 
 @lru_cache(maxsize=1)
 def resolve_ripgrep_binary() -> Path | None:
-    import shutil
-
     binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
 
     # Priority 1: Explicit override
@@ -614,7 +614,7 @@ def resolve_ripgrep_binary() -> Path | None:
     # Priority 2: PATH. For explicit rg-compatible passthrough, prefer the same rg that
     # caller gets from the shell so JSON event ordering and version-specific behavior
     # match the user's baseline. Bundled rg remains the fallback when PATH has none.
-    if which_rg := shutil.which(binary_name):
+    if which_rg := resolve_executable_path(binary_name):
         return Path(which_rg).resolve()
 
     # Priority 3: In-tree bundled binary

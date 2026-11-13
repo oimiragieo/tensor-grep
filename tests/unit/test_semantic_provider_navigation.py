@@ -605,6 +605,7 @@ def test_external_lsp_workspace_symbol_default_budget_is_agent_loop_sized(
             return _SlowClient()
 
     monkeypatch.delenv("TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS", raising=False)
+    monkeypatch.setattr(repo_map.time, "monotonic", lambda: 100.0)  # Exact deadline arithmetic.
     monkeypatch.setattr(repo_map, "_EXTERNAL_LSP_PROVIDER_MANAGER", _FakeManager())
 
     repo_map._external_workspace_symbols(

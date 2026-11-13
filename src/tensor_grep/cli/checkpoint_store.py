@@ -1171,6 +1171,12 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
     metadata_path = _existing_metadata_path(root, checkpoint_id)
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    recorded_mode = metadata.get("mode")
+    if recorded_mode is not None and recorded_mode != mode:
+        raise CheckpointCorruptError(
+            f"checkpoint was created in {recorded_mode!r} mode but this tree detects "
+            f"{mode!r}; no files were modified"
+        )
     entries: dict[str, bool] = metadata["entries"]
     scoped_paths: list[str] | None = metadata.get("scoped_paths")
     snapshot_dir = _snapshot_path(root, checkpoint_id)

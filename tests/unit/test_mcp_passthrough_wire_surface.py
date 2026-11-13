@@ -59,7 +59,7 @@ _DECLARED_SCAN_LIMIT_KEYS = {
 # The version in force when the key set above was last reviewed. This is not a "bump me every
 # release" pin -- it moves when the response contract changes, which is exactly when a reviewer
 # should be looking.
-_CONTRACT_AT_LAST_WIRE_REVIEW = "1.21.0"
+_CONTRACT_AT_LAST_WIRE_REVIEW = "1.22.0"
 
 
 @pytest.fixture

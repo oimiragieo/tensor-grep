@@ -10648,6 +10648,10 @@ def _is_uv_tool_managed_python(executable: str) -> bool:
 
 
 def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
+    from tensor_grep.cli import runtime_paths
+
+    uv = runtime_paths.resolve_executable_path("uv")
+    uv_prefix = [uv, "--no-config"] if uv else []
     pip_cmd = [
         sys.executable,
         "-m",
@@ -10657,77 +10661,34 @@ def _upgrade_attempts(package_spec: str) -> list[tuple[str, list[str]]]:
         "--no-cache-dir",
         package_spec,
     ]
-    attempts: list[tuple[str, list[str]]] = [
-        (
-            "uv",
-            [
+    attempts: list[tuple[str, list[str]]] = [("pip", pip_cmd)]
+    if uv:
+        attempts.insert(
+            0,
+            (
                 "uv",
-                "pip",
-                "install",
-                "--python",
-                sys.executable,
-                "--upgrade",
-                "--refresh-package",
-                "tensor-grep",
-                package_spec,
-            ],
-        ),
-        ("pip", pip_cmd),
-    ]
-    # Route its isolated venv through the uv-tool front door.
-    if _is_uv_tool_managed_python(sys.executable):
-        attempts.insert(0, ("uv-tool", ["uv", "tool", "install", "--force", package_spec]))
+                [
+                    *uv_prefix,
+                    "pip",
+                    "install",
+                    "--python",
+                    sys.executable,
+                    "--upgrade",
+                    "--refresh-package",
+                    "tensor-grep",
+                    package_spec,
+                ],
+            ),
+        )
+    if uv and _is_uv_tool_managed_python(sys.executable):
+        attempts.insert(0, ("uv-tool", [*uv_prefix, "tool", "install", "--force", package_spec]))
     return attempts
 
 
 def _run_upgrade(
     attempts: list[tuple[str, list[str]]],
 ) -> tuple[subprocess.CompletedProcess[str], str]:
-    errors: list[str] = []
-    for label, cmd in attempts:
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=True,
-            )
-            return result, label
-        except FileNotFoundError as exc:
-            errors.append(f"{label}: {exc}")
-        except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or "").strip()
-            stdout = (exc.stdout or "").strip()
-            combined = stderr or stdout or str(exc)
-            errors.append(f"{label}: {combined}")
-            if label == "pip" and "No module named pip" in combined:
-                try:
-                    subprocess.run(
-                        [sys.executable, "-m", "ensurepip", "--upgrade"],
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        check=True,
-                    )
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        check=True,
-                    )
-                    return result, "pip+ensurepip"
-                except FileNotFoundError as ensurepip_error:
-                    errors.append(f"ensurepip: {ensurepip_error}")
-                except subprocess.CalledProcessError as ensurepip_error:
-                    stderr = (ensurepip_error.stderr or "").strip()
-                    stdout = (ensurepip_error.stdout or "").strip()
-                    errors.append(f"ensurepip: {stderr or stdout or str(ensurepip_error)}")
-    raise RuntimeError("; ".join(errors))
+    return _managed_runtime_upgrade.run_upgrade(attempts)
 
 
 @app.command()
@@ -11325,6 +11286,7 @@ def upgrade() -> None:
                 bridge_payload,
                 daemon_root or "",
             ],
+            cwd=str(Path(sys.executable).parent),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
@@ -11371,7 +11333,7 @@ def upgrade() -> None:
                 "post-upgrade verification failed: expected tensor-grep "
                 f"{latest_version} from PyPI but target Python reports {current_version}"
             )
-        native_refresh_message = _refresh_managed_native_frontdoor(current_version)
+        native_refresh_message = _self._refresh_managed_native_frontdoor(current_version)
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
@@ -11422,7 +11384,7 @@ def upgrade() -> None:
                 expected_version = latest_version
             else:
                 package_spec = "tensor-grep"
-            native_path = _managed_native_frontdoor_path()
+            native_path = _self._managed_native_frontdoor_path()
             path_order_message = (
                 _self._ensure_windows_managed_native_first_on_path(native_path)
                 if native_path is not None

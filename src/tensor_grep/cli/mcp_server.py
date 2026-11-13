@@ -69,6 +69,9 @@ from tensor_grep.cli.main import (
 )
 from tensor_grep.cli.mcp_batch_tools import tg_batch as tg_batch
 from tensor_grep.cli.mcp_path_errors import PathConfinementError as PathConfinementError
+from tensor_grep.cli.mcp_session_paths import (
+    confine_mcp_session_path as _confine_mcp_session_path,
+)
 from tensor_grep.cli.orient_capsule import (
     build_orient_capsule_json as build_orient_capsule_json,
 )
@@ -175,7 +178,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.21.0"  # checkpoint and tg_batch response changes
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.22.0"  # session-root and rewrite-manifest safety
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -2182,10 +2185,9 @@ def tg_session_edit_plan(
     try:
         from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2286,10 +2288,9 @@ def tg_session_context_render(
     try:
         from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2379,10 +2380,9 @@ def tg_session_blast_radius(
     try:
         from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2476,7 +2476,7 @@ def tg_session_file_importers(
         # confinement below to cwd) is deliberate: it keeps a legitimate relative `file` working
         # when session_root != cwd -- see the comment on the file confinement immediately below.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2592,10 +2592,9 @@ def tg_session_blast_radius_render(
             session_blast_radius_render,
         )
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -2706,10 +2705,9 @@ def tg_session_blast_radius_plan(
     try:
         from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
 
-        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        # Confine the effective session state root before store access.
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -3333,7 +3331,7 @@ def tg_search(
                     "truncated": truncated,
                     "omitted_matches": omitted_matches,
                     "omitted_files": omitted_files,
-                    # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
+                    # Partial results (rg exit 2 soft error) â€” top-level so an agent caller can't
                     # read a truncated result as complete (suppression != absence).
                     "result_incomplete": all_results.result_incomplete,
                     "incomplete_reason": all_results.incomplete_reason,
@@ -3970,7 +3968,7 @@ def tg_session_open(
     # returned verbatim by tg_session_show/tg_session_context/etc.).
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path))
         except PathConfinementError as exc:
             return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
@@ -4025,7 +4023,7 @@ def tg_session_list(path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path))
         except PathConfinementError as exc:
             return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
@@ -4066,7 +4064,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_exception_payload(
                 session_id=session_id,
@@ -4106,7 +4104,7 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_exception_payload(
                 session_id=session_id,
@@ -4156,7 +4154,7 @@ def tg_session_context(
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path, session_id))
         except PathConfinementError as exc:
             return _session_error_payload(
                 session_id=session_id,
@@ -5048,7 +5046,7 @@ def tg_session(
     """
     try:
         try:
-            path = str(_confine_mcp_path(path, label="path"))
+            path = str(_confine_mcp_session_path(path))
             if file is not None:
                 file = str(_confine_mcp_path(file, label="file"))
         except PathConfinementError as exc:

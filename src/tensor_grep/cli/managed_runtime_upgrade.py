@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from contextlib import ExitStack
 from pathlib import Path
@@ -16,6 +17,67 @@ from tensor_grep.cli._main_binding import _self as _self
 
 class ManagedWindowsUpgradeError(RuntimeError):
     """A verified managed-runtime update failed and must not fall back in place."""
+
+
+def run_upgrade(
+    attempts: list[tuple[str, list[str]]],
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    from tensor_grep.cli.runtime_paths import resolve_executable_path
+
+    errors: list[str] = []
+    cwd = str(Path(sys.executable).parent)
+    for label, cmd in attempts:
+        try:
+            if not Path(cmd[0]).is_absolute():
+                executable = resolve_executable_path(cmd[0])
+                if executable is None:
+                    raise FileNotFoundError(cmd[0])
+                cmd = [executable, *cmd[1:]]
+            result = _self.subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+                cwd=cwd,
+            )
+            return result, label
+        except FileNotFoundError as exc:
+            errors.append(f"{label}: {exc}")
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            combined = stderr or stdout or str(exc)
+            errors.append(f"{label}: {combined}")
+            if label == "pip" and "No module named pip" in combined:
+                try:
+                    _self.subprocess.run(
+                        [sys.executable, "-m", "ensurepip", "--upgrade"],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=True,
+                        cwd=cwd,
+                    )
+                    result = _self.subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=True,
+                        cwd=cwd,
+                    )
+                    return result, "pip+ensurepip"
+                except FileNotFoundError as ensurepip_error:
+                    errors.append(f"ensurepip: {ensurepip_error}")
+                except subprocess.CalledProcessError as ensurepip_error:
+                    stderr = (ensurepip_error.stderr or "").strip()
+                    stdout = (ensurepip_error.stdout or "").strip()
+                    errors.append(f"ensurepip: {stderr or stdout or str(ensurepip_error)}")
+    raise RuntimeError("; ".join(errors))
 
 
 def try_managed_windows_upgrade(
