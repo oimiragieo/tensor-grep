@@ -84,6 +84,7 @@ from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
+from tensor_grep.io.file_types import BUILTIN_TYPE_LIST as _BUILTIN_TYPE_LIST
 
 # perf (+10% campaign #6 / F2.4): import the 5 broad-scan-guard constants from the
 # zero-dependency `tensor_grep.io.scan_limits` module directly, NOT from
@@ -401,29 +402,6 @@ _GUARDED_BROAD_ROOT_RG_GLOBS = (
     "!build/**",
     "!**/build/**",
 )
-_BUILTIN_TYPE_LIST = (
-    "asm: *.asm, *.s, *.S",
-    "c: *.c, *.h",
-    "cpp: *.cc, *.cpp, *.cxx, *.hpp, *.hh, *.hxx",
-    "csharp: *.cs",
-    "css: *.css",
-    "go: *.go",
-    "html: *.htm, *.html",
-    "java: *.java",
-    "javascript: *.js, *.jsx, *.mjs, *.cjs",
-    "json: *.json, *.jsonl",
-    "kotlin: *.kt, *.kts",
-    "lua: *.lua",
-    "markdown: *.md, *.markdown",
-    "php: *.php",
-    "python: *.py, *.pyi",
-    "rust: *.rs",
-    "swift: *.swift",
-    "toml: *.toml",
-    "typescript: *.ts, *.tsx",
-    "yaml: *.yml, *.yaml",
-)
-
 app = create_root_app()
 checkpoint_app = typer.Typer(
     help="Create, list, and undo edit checkpoints.",
@@ -953,8 +931,7 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "InvalidRegexError"
 
 
-# Split to cli/backend_fallback.py (main.py was at its file-size ratchet ceiling). The alias
-# keeps mcp_server.py's existing import and any monkeypatch target working unchanged.
+# Split out at the old main.py size ceiling; keep the alias for mcp_server.py and monkeypatches.
 _search_with_cpu_fallback = _backend_fallback.search_with_cpu_fallback
 
 
@@ -3829,13 +3806,18 @@ def search_command(
         except ValueError as exc:
             _exit_search_error("invalid_ltl_query", str(exc), json_mode=json)
 
+    from tensor_grep.core.pipeline import ConfigurationError
+
     scanner = DirectoryScanner(config)
-    candidate_files_ordered, candidate_files_set = _collect_candidate_files(
-        scanner, paths_to_search
-    )
+    try:
+        candidate_files_ordered, candidate_files_set = _collect_candidate_files(
+            scanner, paths_to_search
+        )
+    except ConfigurationError as exc:
+        _exit_search_error("configuration_error", str(exc), json_mode=json)
     config.input_total_bytes = _sum_total_bytes(candidate_files_ordered)
 
-    from tensor_grep.core.pipeline import ConfigurationError, Pipeline
+    from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
     try:
@@ -4008,7 +3990,6 @@ def search_command(
                 _record_matched_file(match.file)
             _merge_runtime_routing(result)
     else:
-        # Native scans check the shared deadline per file and mark partial results on expiry.
         from tensor_grep.backends.cpu_backend import (
             compute_native_walk_deadline,
             native_walk_deadline_exceeded,
@@ -4044,10 +4025,12 @@ def search_command(
                 except PassthroughExecutionError as exc:
                     _self._exit_search_error("backend_error", str(exc), json_mode=json)
                 except BackendExecutionError as exc:
-                    # A native backend failed at runtime; retry once on the always-
-                    # available CPU backend so the search returns correct results instead
-                    # of a false no-match or a crash (audit B2/I1).
-                    result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    try:
+                        result = _self._search_with_cpu_fallback(
+                            current_file, pattern, config, exc, backend
+                        )
+                    except BackendExecutionError as fallback_exc:
+                        _self._exit_search_error("backend_error", str(fallback_exc), json_mode=json)
                     _backend_fallback.record_fallback_on_aggregate(all_results, result)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):

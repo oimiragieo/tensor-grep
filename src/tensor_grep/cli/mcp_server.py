@@ -3087,7 +3087,7 @@ def tg_search(
                         # backend so the search returns correct partial results instead of
                         # silently discarding everything collected so far (audit B2/I1, ported).
                         result = _search_with_cpu_fallback(
-                            current_file, search_pattern, config, exc
+                            current_file, search_pattern, config, exc, backend
                         )
                     files_scanned += 1
                     all_results.matches.extend(result.matches)

@@ -19,6 +19,7 @@ from typing import Any
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.cli.incompleteness import incomplete_class_fragment
+from tensor_grep.core.pipeline import ConfigurationError
 
 # council wave-2b r21: rg permits Unicode letters/numbers in type names
 # (ignore/src/types.rs TypesBuilder::add); reject only option-shaped or separator-bearing input.
@@ -56,6 +57,7 @@ def investigation_options_refusal(grounding: str, rerank: str) -> str | None:
 # Everything tg_search's backend arm maps through ``search_error_message`` (ValueError covers
 # InvalidRegexError and other parser rejections).
 SEARCH_ERRORS = (
+    ConfigurationError,
     BackendExecutionError,
     re.error,
     ArithmeticError,
@@ -64,7 +66,9 @@ SEARCH_ERRORS = (
     ValueError,
 )
 REGEX_INVALID_MESSAGE = "pattern is not a valid regular expression."
-FILE_TYPE_UNKNOWN_MESSAGE = "type_filter is not a file type rg knows (see `rg --type-list`)."
+FILE_TYPE_UNKNOWN_MESSAGE = (
+    "type_filter is not supported by the selected search route (see supported file types)."
+)
 
 
 def search_error_message(exc: BaseException) -> str | None:
@@ -81,6 +85,13 @@ def search_error_message(exc: BaseException) -> str | None:
         # Parser blow-ups on a hostile pattern ("(" * 100000, "a{99999999999999999999}"):
         # a structured refusal on BOTH the zero-file and the per-file path.
         return REGEX_INVALID_MESSAGE
+    if isinstance(exc, ConfigurationError):
+        return (
+            FILE_TYPE_UNKNOWN_MESSAGE
+            if "type " in str(exc).lower()
+            and "not supported by the python scanner" in str(exc).lower()
+            else None
+        )
     text = str(exc).lower()
     if "regex parse error" in text or "error parsing regex" in text or "invalid regex" in text:
         return REGEX_INVALID_MESSAGE
@@ -165,7 +176,7 @@ def probe_backend(backend: Any, pattern: str, config: Any) -> bool:
     try:
         backend.search(probe, pattern, config=config)
     except BackendExecutionError as exc:
-        search_with_cpu_fallback(probe, pattern, config, exc)
+        search_with_cpu_fallback(probe, pattern, config, exc, backend)
     finally:
         with contextlib.suppress(OSError):
             os.remove(probe)

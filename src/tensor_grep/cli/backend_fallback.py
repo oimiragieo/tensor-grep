@@ -38,6 +38,7 @@ def search_with_cpu_fallback(
     pattern: str,
     config: SearchConfig,
     exc: Exception,
+    backend: Any = None,
 ) -> SearchResult:
     """Retry a failed native-backend search on the always-available CPU backend.
 
@@ -47,10 +48,14 @@ def search_with_cpu_fallback(
     it may have emitted partial output and used semantics the CPU cannot preserve.
     """
     from tensor_grep.backends.base import PassthroughExecutionError
-
-    if isinstance(exc, PassthroughExecutionError):
-        raise exc
     from tensor_grep.backends.cpu_backend import CPUBackend
+
+    if (
+        isinstance(exc, PassthroughExecutionError)
+        or getattr(config, "ast", False)
+        or isinstance(backend, CPUBackend)
+    ):
+        raise exc
 
     sys.stderr.write(
         f"tensor-grep: search backend failed on {current_file} ({exc}); "
