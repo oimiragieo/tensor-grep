@@ -404,43 +404,62 @@ fn failed_rg_spawn_exits_two_in_search_and_root_plain_forms() {
 fn unsupported_structured_pcre_request_refuses_with_envelope() {
     let root = tempdir().unwrap();
     fs::write(root.path().join("a.txt"), "needle\n").unwrap();
+    fs::write(root.path().join("rg"), "--format\n--format=rg\n").unwrap();
     let bad = root.path().join("not-executable.txt");
     fs::write(&bad, "owned ordinary nonexecutable\n").unwrap();
     // Aggregate PCRE requests require an explicit unsupported-semantics refusal before execution.
-    for prefix in [&["search"][..], &[][..]] {
+    for (prefix, early) in [
+        (&["search"][..], false),
+        (&["search"][..], true),
+        (&[][..], false),
+        (&[][..], true),
+    ] {
         for format in ["--json", "--ndjson"] {
-            let mut args = prefix.to_vec();
-            args.extend_from_slice(&[format, "-P", "needle", "."]);
-            let mut cmd = command(root.path(), &args);
-            cmd.env("TG_RG_PATH", &bad);
-            let output = bounded(cmd);
-            assert_eq!(
-                output.status.code(),
-                Some(2),
-                "stdout={}; stderr={}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let value = payload(&output);
-            assert_eq!(value["version"], 1);
-            if format == "--json" {
-                assert_eq!(value["ok"], false);
-            } else {
-                assert_eq!(value["type"], "error");
+            for query in [
+                &["needle", "."][..],
+                &["-e", "--format", "rg"][..],
+                &["--regexp", "--format", "rg"][..],
+                &["--regexp=--format", "rg"][..],
+                &["-e", "--format=rg", "rg"][..],
+                &["--regexp=--format=rg", "rg"][..],
+                &["--", "--format", "rg"][..],
+            ] {
+                let mut args = prefix.to_vec();
+                args.extend_from_slice(&[format, "-P"]);
+                args.extend_from_slice(query);
+                let mut cmd = command(root.path(), &args);
+                cmd.env("TG_RUST_EARLY_RG", if early { "1" } else { "0" })
+                    .env("TG_RUST_EARLY_POSITIONAL_RG", if early { "1" } else { "0" });
+                cmd.env("TG_RG_PATH", &bad);
+                let output = bounded(cmd);
+                assert_eq!(
+                    output.status.code(),
+                    Some(2),
+                    "stdout={}; stderr={}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let value = payload(&output);
+                assert_eq!(value["version"], 1);
+                if format == "--json" {
+                    assert_eq!(value["ok"], false);
+                } else {
+                    assert_eq!(value["type"], "error");
+                }
+                let code = value["error"].as_str().expect("structured refusal code");
+                assert!(code.starts_with("unsupported"));
+                assert_ne!(
+                    code, "backend_error",
+                    "this is a policy refusal, not spawn proof"
+                );
+                let detail = value["detail"].as_str().unwrap().to_ascii_lowercase();
+                assert!(
+                    detail.contains("refus")
+                        || detail.contains("unsupported")
+                        || detail.contains("not support")
+                );
+                assert!(detail.contains("pcre") || detail.contains("-p"));
             }
-            let code = value["error"].as_str().expect("structured refusal code");
-            assert!(code.starts_with("unsupported"));
-            assert_ne!(
-                code, "backend_error",
-                "this is a policy refusal, not spawn proof"
-            );
-            let detail = value["detail"].as_str().unwrap().to_ascii_lowercase();
-            assert!(
-                detail.contains("refus")
-                    || detail.contains("unsupported")
-                    || detail.contains("not support")
-            );
-            assert!(detail.contains("pcre") || detail.contains("-p"));
         }
     }
 }

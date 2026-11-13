@@ -29,7 +29,7 @@ use crate::routing::gpu_proof_fields;
 mod binary_summary;
 use binary_summary::emit_ndjson_binary_summary;
 mod binary;
-pub(super) use binary::emit_binary_match_warning;
+use binary::emit_binary_match_warning;
 pub use binary::emit_index_binary_match_warning;
 pub(crate) use binary::{
     binary_file_matches_pattern, first_binary_nul_offset, index_binary_matcher,

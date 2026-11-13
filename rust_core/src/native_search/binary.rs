@@ -3,6 +3,7 @@ use super::{
     BINARY_DETECTION_PREFIX_BYTES,
 };
 use anyhow::{Context, Result};
+use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
 use std::fs::File;
 use std::io::Write;

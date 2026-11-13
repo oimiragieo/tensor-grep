@@ -1731,29 +1731,21 @@ fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<O
 }
 
 fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
-    let normalized =
-        normalize_top_level_format_search_args(raw_args).unwrap_or_else(|| raw_args.to_vec());
-    let tokens = normalized
-        .iter()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    let mut index = 0usize;
-    while index < tokens.len() {
-        let token = &tokens[index];
-        if token == "--" {
-            break;
-        }
-        if token == "--format" {
-            index += 1;
-            return tokens.get(index).map(String::as_str) == Some("rg");
-        }
-        if token.starts_with("--format=") {
-            return token.split_once('=').map(|(_, value)| value) == Some("rg");
-        }
-        index += 1;
+    if !raw_args.iter().skip(1).any(|arg| {
+        arg.to_str()
+            .is_some_and(|token| token == "--format" || token.starts_with("--format="))
+    }) {
+        return false;
     }
-    false
+    let Some(normalized) = normalize_top_level_format_search_args(raw_args) else {
+        return false;
+    };
+    matches!(
+        CommandCli::try_parse_from(normalized),
+        Ok(CommandCli {
+            command: Commands::Search(SearchArgs { format: Some(ref format), .. })
+        }) if format == "rg"
+    )
 }
 
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
