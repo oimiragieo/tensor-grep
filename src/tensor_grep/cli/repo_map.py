@@ -14724,12 +14724,8 @@ def build_symbol_blast_radius_plan_from_map(
         max_symbols=normalized_max_symbols,
         max_depth=max_depth,
         blast_radius_payload=payload,
-        # task #203: this call dropped deadline_monotonic entirely even though it is already in
-        # scope as this function's own parameter -- the identical #642 gate nit-1 gap already fixed
-        # on build_context_edit_plan_from_map's matching call (repo_map.py:12617-12622), unfixed
-        # here. Without this, the edit-plan-seed's validation-test discovery inside
-        # _attach_edit_plan_metadata ran unbounded even when a caller supplied a deadline that DID
-        # bound the build_symbol_blast_radius_from_map call above.
+        # Task #203: this scan can exceed the caller's budget even when the repo-map and graph
+        # stages honor it, so pass the same deadline into edit-plan test discovery.
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
         # #212 (broader B9/#661 flag-lie): `tg blast-radius-plan` has NO downstream compaction step
@@ -14785,7 +14781,10 @@ def build_symbol_blast_radius_render(
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     repo_map = _self.build_repo_map(
-        path, max_repo_files=max_repo_files, _profiling_collector=collector
+        path,
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        _profiling_collector=collector,
     )
     return build_symbol_blast_radius_render_from_map(
         repo_map,
@@ -14846,11 +14845,8 @@ def build_symbol_blast_radius_render_from_map(
     # sources are examined first and we degrade gracefully to fewer rendered blocks.
     max_source_candidates = max(max_sources * 8, 24)
     examined_candidates = 0
-    # task #203: bound this per-candidate source-lookup loop with the SAME deadline_monotonic
-    # pattern callers/refs/file_importers already use (checked first, unconditionally, before any
-    # per-candidate filtering) -- the TG-4 comment above already documents this loop running
-    # "~3.5 min on a large repo" with only the COUNT-based max_source_candidates cap and no
-    # wall-clock bound at all.
+    # The shared deadline bounds build, graph, and source lookup; check before filtering because a
+    # candidate-count cap alone does not bound elapsed time.
     source_loop_deadline_hit = False
     for current_symbol in ranked_symbols:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
