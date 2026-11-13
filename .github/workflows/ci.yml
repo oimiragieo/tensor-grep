@@ -797,17 +797,6 @@ jobs:
           fi
         shell: bash
           
-      - name: Compiler provenance
-        env:
-          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
-        shell: bash
-        working-directory: rust_core
-        run: |
-          set -euo pipefail
-          rustc -Vv
-          cargo --version
-          rustup show active-toolchain
-
       - name: Ensure PCRE2 ripgrep is available
         shell: bash
         timeout-minutes: 6
@@ -853,11 +842,28 @@ jobs:
           rg --pcre2-version
 
       - name: Cargo test Wave 3 audit
+        shell: bash
         env:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
         working-directory: rust_core
         timeout-minutes: 10
-        run: cargo test --verbose --locked --no-default-features --test test_wave3_audit
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo --version
+          rustup show active-toolchain
+          cargo test --verbose --locked --no-default-features --test test_wave3_audit
+
+      - name: Compiler provenance
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
+        shell: bash
+        working-directory: rust_core
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo --version
+          rustup show active-toolchain
 
       - name: Cargo Test
         env:

@@ -1,4 +1,4 @@
-//! DRAFT_UNCOMPILED: audit #3/#11/#12; one integration target so CI observes each finding.
+//! Native index completeness, binary policy, ignore semantics, and search-error regressions.
 use std::collections::HashSet;
 use std::fs::{self, File, FileTimes};
 use std::io::{BufWriter, Write};
@@ -305,11 +305,21 @@ fn native_binary_policy_matches_cold_explicit_and_warm_json() {
                 "NativeCpuBackend"
             } else {
                 "TrigramIndex"
-            }
+            },
+            "step={step} flags={flags:?} payload={value:?}"
         );
-        assert_eq!(value["binary_match_files"], 1);
-        assert_eq!(value["total_matches"], 0);
-        assert!(value["matches"].as_array().unwrap().is_empty());
+        assert_eq!(
+            value["binary_match_files"], 1,
+            "step={step} flags={flags:?} payload={value:?}"
+        );
+        assert_eq!(
+            value["total_matches"], 0,
+            "step={step} flags={flags:?} payload={value:?}"
+        );
+        assert!(
+            value["matches"].as_array().unwrap().is_empty(),
+            "step={step} flags={flags:?} payload={value:?}"
+        );
     }
     assert_eq!(
         json_search(root.path(), &["--index"], "ordinarypositive")["total_matches"],
@@ -378,7 +388,13 @@ fn failed_rg_spawn_exits_two_in_search_and_root_plain_forms() {
         let mut cmd = command(root.path(), &args);
         cmd.env("TG_RG_PATH", &bad);
         let output = bounded(cmd);
-        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "stdout={}; stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(output.stdout.is_empty());
         assert!(!output.stderr.is_empty());
     }
@@ -390,7 +406,7 @@ fn unsupported_structured_pcre_request_refuses_with_envelope() {
     fs::write(root.path().join("a.txt"), "needle\n").unwrap();
     let bad = root.path().join("not-executable.txt");
     fs::write(&bad, "owned ordinary nonexecutable\n").unwrap();
-    // tt-policy-v1: aggregate PCRE requests refuse before execution, not as spawn errors.
+    // Aggregate PCRE requests require an explicit unsupported-semantics refusal before execution.
     for prefix in [&["search"][..], &[][..]] {
         for format in ["--json", "--ndjson"] {
             let mut args = prefix.to_vec();
@@ -398,10 +414,20 @@ fn unsupported_structured_pcre_request_refuses_with_envelope() {
             let mut cmd = command(root.path(), &args);
             cmd.env("TG_RG_PATH", &bad);
             let output = bounded(cmd);
-            assert_eq!(output.status.code(), Some(2));
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "stdout={}; stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             let value = payload(&output);
             assert_eq!(value["version"], 1);
-            assert_eq!(value["ok"], false);
+            if format == "--json" {
+                assert_eq!(value["ok"], false);
+            } else {
+                assert_eq!(value["type"], "error");
+            }
             let code = value["error"].as_str().expect("structured refusal code");
             assert!(code.starts_with("unsupported"));
             assert_ne!(
@@ -441,7 +467,11 @@ fn generic_index_build_failure_has_backend_error_envelope() {
         assert_eq!(output.status.code(), Some(2));
         let value = payload(&output);
         assert_eq!(value["version"], 1);
-        assert_eq!(value["ok"], false);
+        if format == "--json" {
+            assert_eq!(value["ok"], false);
+        } else {
+            assert_eq!(value["type"], "error");
+        }
         assert_eq!(value["error"], "backend_error");
         assert!(value["detail"].as_str().is_some_and(|s| !s.is_empty()));
     }
@@ -504,7 +534,11 @@ fn supported_output_and_no_match_and_missing_path_controls() {
         assert_eq!(output.status.code(), Some(2));
         let value = payload(&output);
         assert_eq!(value["version"], 1);
-        assert_eq!(value["ok"], false);
+        if format == "--json" {
+            assert_eq!(value["ok"], false);
+        } else {
+            assert_eq!(value["type"], "error");
+        }
         assert_eq!(value["error"], "path_not_found");
     }
 }
@@ -613,15 +647,22 @@ fn binary_detection_is_not_a_query_match_cold_explicit_and_warm() {
                 "NativeCpuBackend"
             } else {
                 "TrigramIndex"
-            }
+            },
+            "step={step} flags={flags:?} payload={matched:?}"
         );
         assert_eq!(
             binary_count(&matched),
             1,
-            "nonmatching binary was counted as a hit"
+            "nonmatching binary was counted as a hit; step={step} flags={flags:?} payload={matched:?}"
         );
-        assert_eq!(matched["total_matches"], 0);
-        assert!(matched["matches"].as_array().unwrap().is_empty());
+        assert_eq!(
+            matched["total_matches"], 0,
+            "step={step} flags={flags:?} payload={matched:?}"
+        );
+        assert!(
+            matched["matches"].as_array().unwrap().is_empty(),
+            "step={step} flags={flags:?} payload={matched:?}"
+        );
         let mut args = vec!["search", "--json", "-F"];
         args.extend_from_slice(flags);
         args.extend_from_slice(&["genuinelyabsentneedle", "."]);
@@ -629,9 +670,19 @@ fn binary_detection_is_not_a_query_match_cold_explicit_and_warm() {
         // Preserve existing cold no-match exit1 versus indexed aggregate empty exit0.
         assert_eq!(absent.status.code(), Some(if step == 0 { 1 } else { 0 }));
         let empty = payload(&absent);
-        assert_eq!(binary_count(&empty), 0);
-        assert_eq!(empty["total_matches"], 0);
-        assert!(empty["matches"].as_array().unwrap().is_empty());
+        assert_eq!(
+            binary_count(&empty),
+            0,
+            "step={step} flags={flags:?} payload={empty:?}"
+        );
+        assert_eq!(
+            empty["total_matches"], 0,
+            "step={step} flags={flags:?} payload={empty:?}"
+        );
+        assert!(
+            empty["matches"].as_array().unwrap().is_empty(),
+            "step={step} flags={flags:?} payload={empty:?}"
+        );
         let mut plain = vec!["search", "-F"];
         plain.extend_from_slice(flags);
         plain.extend_from_slice(&["genuinelyabsentneedle", "."]);
@@ -640,8 +691,15 @@ fn binary_detection_is_not_a_query_match_cold_explicit_and_warm() {
         assert!(plain.stdout.is_empty());
         assert!(plain.stderr.is_empty());
         let ordinary = json_search(text.path(), flags, "ordinarypositive");
-        assert_eq!(ordinary["total_matches"], 1);
-        assert_eq!(binary_count(&ordinary), 0);
+        assert_eq!(
+            ordinary["total_matches"], 1,
+            "step={step} flags={flags:?} payload={ordinary:?}"
+        );
+        assert_eq!(
+            binary_count(&ordinary),
+            0,
+            "step={step} flags={flags:?} payload={ordinary:?}"
+        );
     }
 }
 
@@ -676,11 +734,22 @@ fn oversized_binary_uses_bounded_probe_not_unbounded_tail_match() {
                 "NativeCpuBackend"
             } else {
                 "TrigramIndex"
-            }
+            },
+            "step={step} flags={flags:?} payload={hit:?}"
         );
-        assert_eq!(binary_count(&hit), 1);
-        assert_eq!(hit["total_matches"], 0);
-        assert!(hit["matches"].as_array().unwrap().is_empty());
+        assert_eq!(
+            binary_count(&hit),
+            1,
+            "step={step} flags={flags:?} payload={hit:?}"
+        );
+        assert_eq!(
+            hit["total_matches"], 0,
+            "step={step} flags={flags:?} payload={hit:?}"
+        );
+        assert!(
+            hit["matches"].as_array().unwrap().is_empty(),
+            "step={step} flags={flags:?} payload={hit:?}"
+        );
         let mut args = vec!["search", "--json", "-F"];
         args.extend_from_slice(flags);
         args.extend_from_slice(&["beyondcapneedle", "."]);
@@ -690,10 +759,16 @@ fn oversized_binary_uses_bounded_probe_not_unbounded_tail_match() {
         assert_eq!(
             binary_count(&value),
             0,
-            "binary match probe crossed its 64MiB cap"
+            "binary match probe crossed its 64MiB cap; step={step} flags={flags:?} payload={value:?}"
         );
-        assert_eq!(value["total_matches"], 0);
-        assert!(value["matches"].as_array().unwrap().is_empty());
+        assert_eq!(
+            value["total_matches"], 0,
+            "step={step} flags={flags:?} payload={value:?}"
+        );
+        assert!(
+            value["matches"].as_array().unwrap().is_empty(),
+            "step={step} flags={flags:?} payload={value:?}"
+        );
     }
 }
 
@@ -833,7 +908,13 @@ fn plain_pcre_positive_discriminates_owned_bad_executable_refusal() {
         let mut cmd = command(root.path(), &args);
         cmd.env("TG_RG_PATH", &bad);
         let negative = bounded(cmd);
-        assert_eq!(negative.status.code(), Some(2));
+        assert_eq!(
+            negative.status.code(),
+            Some(2),
+            "stdout={}; stderr={}",
+            String::from_utf8_lossy(&negative.stdout),
+            String::from_utf8_lossy(&negative.stderr)
+        );
         assert!(negative.stdout.is_empty());
         assert!(String::from_utf8_lossy(&negative.stderr)
             .to_ascii_lowercase()
@@ -861,15 +942,17 @@ fn structured_ndjson_closed_consumer_remains_quiet() {
         .lines()
         .next()
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(first).unwrap()["type"],
-        "match"
-    );
+    let first = serde_json::from_str::<Value>(first).unwrap();
+    assert_eq!(first["line"], 1);
+    assert_eq!(first["text"], "needle repeated line");
+    assert_eq!(first["routing_backend"], "NativeCpuBackend");
+    assert_eq!(first["sidecar_used"], false);
     let (first, closed) = early_close(command(root.path(), &args));
-    assert_eq!(
-        serde_json::from_slice::<Value>(&first).unwrap()["type"],
-        "match"
-    );
+    let first = serde_json::from_slice::<Value>(&first).unwrap();
+    assert_eq!(first["line"], 1);
+    assert_eq!(first["text"], "needle repeated line");
+    assert_eq!(first["routing_backend"], "NativeCpuBackend");
+    assert_eq!(first["sidecar_used"], false);
     assert_eq!(closed.status.code(), Some(1));
     assert!(
         closed.stderr.is_empty(),
