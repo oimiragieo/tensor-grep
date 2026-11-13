@@ -146,7 +146,8 @@ Agent automation contracts:
   `--type-not`, including the `py`, `js`, and `ts` aliases. Unsupported type names and
   `--iglob`, `--type-add`, or `--type-clear` are refused with exit code `2` on the Python
   route; use a ripgrep-backed route for those options. This check also applies to empty
-  directories and single-file requests. Negation-only globs include other files.
+  directories and single-file requests. Negation-only globs include other files. On the Python
+  directory walk, the last matching explicit glob wins; file-type filters still apply.
 - Structural search refusals are not retried as plain text, and a failed CPU search is
   not retried through a new CPU backend. Supported native/GPU-to-CPU retries keep their
   routing and fallback disclosure.
