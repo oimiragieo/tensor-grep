@@ -1037,3 +1037,94 @@ fn structured_ndjson_closed_consumer_remains_quiet() {
         "broken pipe must not emit a structured backend error or retry"
     );
 }
+
+#[test]
+fn late_binary_detection_matches_cold_public_index_and_warm_routes() {
+    for (name, earlier, suffix, expected) in [
+        ("late", false, &b"needle\0payload\n"[..], None),
+        ("earlier", true, &b"needle\0payload\n"[..], None),
+        (
+            "plain",
+            false,
+            &b"needle plaincontrol\n"[..],
+            Some("needle plaincontrol"),
+        ),
+        (
+            "other",
+            false,
+            &b"needle normal\nother\0payload\n"[..],
+            Some("needle normal"),
+        ),
+    ] {
+        let root = tempdir().unwrap();
+        let path = root.path().join("sample.txt");
+        let mut bytes = if earlier {
+            b"needle earlier\n".to_vec()
+        } else {
+            Vec::new()
+        };
+        bytes.extend(("x".repeat(1023) + "\n").repeat(80).bytes());
+        bytes.extend_from_slice(suffix);
+        assert!(
+            !bytes[..65536].contains(&0),
+            "{name}: guaranteed prefix must be clean"
+        );
+        fs::write(&path, bytes).unwrap();
+        let cold = json_search(root.path(), &[], "needle");
+        assert_eq!(cold["routing_backend"], "NativeCpuBackend", "{name}");
+        let expected = if name == "other" && cold["binary_match_files"] == 1 {
+            None
+        } else {
+            expected
+        };
+        let index = TrigramIndex::build(root.path()).unwrap();
+        // Every literal is shorter than a trigram, so the regex arm must full-scan.
+        for (pattern, fixed) in [("needle", true), ("n.e.le", false)] {
+            let rows: Vec<IndexQueryResult> = index.search(pattern, false, fixed).unwrap();
+            assert_eq!(
+                rows.len(),
+                usize::from(expected.is_some()),
+                "{name}: {pattern}"
+            );
+            if let Some(text) = expected {
+                assert_eq!(rows[0].file.file_name().unwrap(), "sample.txt");
+                assert_eq!(rows[0].line, 81);
+                assert_eq!(rows[0].text, text);
+            }
+        }
+        for (step, value) in [
+            cold,
+            json_search(root.path(), &["--index"], "needle"),
+            json_search(root.path(), &[], "needle"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                value["routing_backend"],
+                if step == 0 {
+                    "NativeCpuBackend"
+                } else {
+                    "TrigramIndex"
+                },
+                "{name}: step={step}"
+            );
+            assert_eq!(
+                value["total_matches"],
+                usize::from(expected.is_some()),
+                "{name}: step={step}"
+            );
+            assert_eq!(
+                value["matches"].as_array().unwrap().len(),
+                usize::from(expected.is_some())
+            );
+            if let Some(text) = expected {
+                assert_eq!(value["matches"][0]["line"], 81);
+                assert_eq!(value["matches"][0]["text"], text);
+                assert!(value.get("binary_match_files").is_none());
+            } else {
+                assert_eq!(value["binary_match_files"], 1);
+            }
+        }
+    }
+}

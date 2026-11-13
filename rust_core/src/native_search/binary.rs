@@ -5,6 +5,7 @@ use super::{
 use anyhow::{Context, Result};
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
+use grep_searcher::sinks::Bytes;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -37,6 +38,21 @@ pub(crate) fn first_binary_nul_offset(path: &Path) -> Result<Option<u64>> {
         &NativeSearchConfig::default(),
         &prefix,
     ))
+}
+
+pub(crate) fn native_binary_nul_offset(matcher: &RegexMatcher, path: &Path) -> Result<Option<u64>> {
+    let config = NativeSearchConfig::default();
+    let mut searcher = super::build_searcher(&config, true);
+    let mut sink = super::BinaryAwareSink::new(Bytes(|_, _| Ok(true)));
+    searcher
+        .search_path(matcher, path, &mut sink)
+        .with_context(|| {
+            format!(
+                "native binary detection search failed for {}",
+                path.display()
+            )
+        })?;
+    Ok(sink.binary_byte_offset())
 }
 
 pub(crate) fn binary_file_matches_pattern(

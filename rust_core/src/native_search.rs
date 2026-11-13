@@ -28,7 +28,7 @@ use crate::routing::gpu_proof_fields;
 #[path = "native_search_binary_summary.rs"]
 mod binary_summary;
 use binary_summary::emit_ndjson_binary_summary;
-mod binary;
+pub(crate) mod binary;
 use binary::emit_binary_match_warning;
 pub use binary::emit_index_binary_match_warning;
 pub(crate) use binary::{

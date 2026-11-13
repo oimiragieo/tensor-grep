@@ -7,6 +7,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod tests;
+
 enum SearchMatcher {
     Fixed {
         needle: String,
@@ -157,6 +160,7 @@ fn collect_matches(
     let mut bytes = Vec::new();
     let mut line_number = 0usize;
     let mut results = Vec::new();
+    let mut saw_late_nul = false;
     loop {
         bytes.clear();
         let read = reader
@@ -165,6 +169,7 @@ fn collect_matches(
         if read == 0 {
             break;
         }
+        saw_late_nul |= bytes.contains(&0);
         line_number += 1;
         let terminated = bytes.last() == Some(&b'\n');
         if terminated {
@@ -186,6 +191,20 @@ fn collect_matches(
                 line: line_number,
                 text: line.into_owned(),
             });
+        }
+    }
+    if saw_late_nul {
+        if let Ok(binary_matcher) = binary_matcher.as_ref() {
+            if let Some(offset) =
+                crate::native_search::binary::native_binary_nul_offset(binary_matcher, file)?
+            {
+                let matches = crate::native_search::binary::binary_file_matches_pattern(
+                    binary_matcher,
+                    file,
+                    true,
+                )?;
+                return Ok((Vec::new(), matches.then(|| (file.to_path_buf(), offset))));
+            }
         }
     }
     Ok((results, None))
