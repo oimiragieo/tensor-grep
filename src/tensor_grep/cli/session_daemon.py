@@ -760,8 +760,8 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
 
     acquired_lock = _try_acquire_daemon_start_lock(root)
     if not acquired_lock:
-        deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
-        while time.time() < deadline:
+        deadline = monotonic() + _DAEMON_START_TIMEOUT_SECONDS
+        while monotonic() < deadline:
             metadata = _probe_daemon(root)
             if metadata is not None:
                 return {
@@ -791,8 +791,8 @@ def start_session_daemon(path: str = ".") -> dict[str, Any]:
     try:
         capture_fd, capture_path = _spawn_daemon_subprocess(root)
 
-        deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
-        while time.time() < deadline:
+        deadline = monotonic() + _DAEMON_START_TIMEOUT_SECONDS
+        while monotonic() < deadline:
             metadata = _probe_daemon(root)
             if metadata is not None:
                 return {
@@ -938,8 +938,8 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         return delivered
 
     still_up = False
-    deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
-    while time.time() < deadline:
+    deadline = monotonic() + _DAEMON_START_TIMEOUT_SECONDS
+    while monotonic() < deadline:
         if _probe_daemon(root) is None:
             if stop_method == "none":
                 if _kill():
