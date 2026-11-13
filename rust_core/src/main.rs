@@ -9350,12 +9350,9 @@ fn broad_scan_refusal_json_envelope(path: &str, message: &str) -> serde_json::Va
     })
 }
 
-/// Task #17: the stdout half of the fix below. A no-op unless BOTH `json` is set AND `err` is
-/// specifically the shared implicit-walk-ceiling refusal (`is_unbounded_implicit_search_walk_
-/// refusal`) -- every other native-search error keeps its pre-existing `--json` behavior
-/// untouched (handled by `exit_json_search_runtime_error_if_needed`'s own code-recognition, which
-/// deliberately does not recognize this refusal's text). Never prints to stderr itself; the
-/// caller's own `eprintln!` is unconditional and unchanged so text-mode output cannot drift.
+/// Task #17: emits the specific broad-scan envelope before the generic JSON runtime-error handler
+/// can classify the same refusal as `backend_error`. Never prints to stderr; the caller preserves
+/// the existing refusal line.
 fn emit_broad_scan_refusal_json_if_needed(json: bool, path: &str, err: &anyhow::Error) {
     if !json {
         return;
@@ -9569,6 +9566,11 @@ fn run_native_search_with_optional_rg_fallback(
             if error_chain_has_broken_pipe(&err) {
                 std::process::exit(BROKEN_PIPE_EXIT_CODE);
             }
+            let err = if json && !ndjson {
+                exit_on_native_multi_pattern_ceiling_refusal(err, json, &refusal_path)
+            } else {
+                err
+            };
             exit_json_search_runtime_error_if_needed(json, ndjson, &err);
             if let Some(rg_args) = rg_fallback {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");
@@ -9583,13 +9585,6 @@ fn run_native_search_with_optional_rg_fallback(
             }
 
             eprintln!("{err}");
-            // Task #17: this is the dominant real-world path for the shared implicit-walk-ceiling
-            // refusal -- a bare `tg search PAT --json` (or the positional `tg PAT --json`) on a
-            // large implicit root always has `rg_fallback = None` under `--json` (every
-            // structured-output `RoutingDecision` sets `allow_rg_fallback = false`), so it falls
-            // straight through to this catch-all. A no-op for every other error kind and for text
-            // mode; see `emit_broad_scan_refusal_json_if_needed`'s doc comment.
-            emit_broad_scan_refusal_json_if_needed(json, &refusal_path, &err);
             std::process::exit(2);
         }
     }
