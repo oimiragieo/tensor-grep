@@ -7,6 +7,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+type IndexQueryOutput = (Vec<IndexQueryResult>, Vec<(PathBuf, u64)>);
+type FileQueryMatches = (Vec<IndexQueryResult>, Option<(PathBuf, u64)>);
+
 #[cfg(test)]
 mod tests;
 
@@ -71,7 +74,7 @@ impl TrigramIndex {
         pattern: &str,
         ignore_case: bool,
         fixed_strings: bool,
-    ) -> Result<(Vec<IndexQueryResult>, Vec<(PathBuf, u64)>)> {
+    ) -> Result<IndexQueryOutput> {
         self.ensure_searchable()?;
         let selection = if fixed_strings {
             self.fixed_string_candidate_selection(pattern, ignore_case)?
@@ -118,7 +121,7 @@ impl TrigramIndex {
             crate::native_search::index_binary_matcher(pattern, ignore_case, fixed_strings);
         let mut files: Vec<_> = work.into_iter().collect();
         files.sort_by(|left, right| left.0.cmp(&right.0));
-        let scanned: Vec<Result<(Vec<IndexQueryResult>, Option<(PathBuf, u64)>)>> = files
+        let scanned: Vec<Result<FileQueryMatches>> = files
             .par_iter()
             .map(|(path, lines)| collect_matches(path, lines.as_deref(), &matcher, &binary_matcher))
             .collect();
@@ -142,7 +145,7 @@ fn collect_matches(
     candidate_lines: Option<&[usize]>,
     matcher: &SearchMatcher,
     binary_matcher: &Result<RegexMatcher>,
-) -> Result<(Vec<IndexQueryResult>, Option<(PathBuf, u64)>)> {
+) -> Result<FileQueryMatches> {
     if let Some(offset) = crate::native_search::first_binary_nul_offset(file)? {
         let binary_matcher = binary_matcher
             .as_ref()

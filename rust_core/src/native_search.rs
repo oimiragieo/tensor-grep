@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, MatchKind};
 use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use grep_matcher::{LineTerminator, Matcher};
+use grep_matcher::LineTerminator;
 use grep_printer::StandardBuilder;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::Bytes;

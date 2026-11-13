@@ -1422,20 +1422,8 @@ fn test_tg_search_explicit_index_refuses_flags_outside_the_original_six() {
     // rg-passthrough branch before route_search ever runs -- see index_flag_violations's doc
     // comment for the same reachability shape as the pre-existing H1e smart-case tests above.)
     //
-    // Deliberately EXCLUDES require_git, passthru, null_data, multiline(+dotall), and the
-    // no_ignore_dot/exclude/files/global/parent family: these are all separately intercepted
-    // even earlier, by `search_format_python_passthrough_args`'s SEARCH_PYTHON_PASSTHROUGH_FLAGS
-    // allowlist (require_git, unconditionally) or its `--json`-gated third/fourth checks
-    // (passthru/no_ignore_dot/.../no_config; -U/multiline/multiline-dotall/null-data) -- BEFORE
-    // `--index` is even parsed by clap. In an environment with a working Python sidecar on PATH,
-    // that pre-existing, unrelated dispatcher forwards the raw args to Python, which has no
-    // `--index` concept at all and errors out ("No such option '--index'") rather than reaching
-    // this binary's own routing. That is a real, separate gap in
-    // `search_format_python_passthrough_args` (main.rs) worth its own audit item; it is NOT
-    // something `index_flag_violations` can address (it never runs). These 9 flags' Refuse
-    // classification is still covered by the direct-call unit tests in main.rs's `mod tests`
-    // (`index_flag_violations_catches_flags_outside_the_original_six`), which call the function
-    // directly and are unaffected by CLI/Python dispatch.
+    // Explicit --index bypasses the Python front door; --require-git has a dedicated sentinel
+    // test below. Direct-call unit tests cover the remaining Refuse-classified flags.
     let cases: &[(&[&str], &str)] = &[
         (&["--hidden"], "hidden"),
         (&["--max-depth", "2"], "max-depth"),
@@ -1466,15 +1454,19 @@ fn test_tg_search_explicit_index_refuses_flags_outside_the_original_six() {
         }
         let output = cmd.arg("hello").arg(dir.path()).output().unwrap();
         assert!(
-            !output.status.success(),
+            output.status.code() == Some(2),
             "expected --index {extra:?} to fail closed; stdout={} stderr={}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+        let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["version"], 1);
+        assert_eq!(payload["ok"], false);
+        assert_eq!(payload["error"], "backend_error");
+        let detail = payload["detail"].as_str().unwrap().to_lowercase();
         assert!(
-            stderr.contains(needle),
-            "error for {extra:?} should name the incompatible flag (expected {needle:?}): stderr={stderr}"
+            detail.contains(needle),
+            "error for {extra:?} should name the incompatible flag (expected {needle:?}): detail={detail}"
         );
     }
 }
@@ -1668,13 +1660,18 @@ fn test_tg_search_explicit_index_short_circuits_python_frontdoor_and_reaches_val
          --require-git riding along; stdout={stdout} stderr={stderr}"
     );
     assert!(
-        !output.status.success(),
+        output.status.code() == Some(2),
         "--index --require-git must fail closed via index_flag_violations, not silently \
          succeed; stdout={stdout} stderr={stderr}"
     );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "backend_error");
+    let detail = payload["detail"].as_str().unwrap();
     assert!(
-        stderr.to_lowercase().contains("require-git"),
-        "the refusal must name the unsupported flag; stderr={stderr}"
+        detail.to_lowercase().contains("require-git"),
+        "the refusal must name the unsupported flag; detail={detail}"
     );
 }
 
