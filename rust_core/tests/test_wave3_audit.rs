@@ -870,7 +870,11 @@ fn no_ignore_covers_owned_git_info_exclude() {
 #[test]
 fn no_ignore_covers_owned_global_git_excludes_without_user_config() {
     let fixture = tempdir().unwrap();
-    let home = tempdir().unwrap();
+    // The ignore dependency expands any tilde in excludesFile, including Windows short paths.
+    // Keep this owned HOME beneath the manifest directory to exercise the ignore override.
+    let home = tempfile::Builder::new()
+        .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+        .unwrap();
     isolated_home(home.path());
     fs::create_dir(fixture.path().join(".git")).unwrap();
     let excludes = home.path().join("owned-ignore");
