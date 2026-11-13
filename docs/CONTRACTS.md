@@ -59,6 +59,9 @@ The schema of the `.tg_cache/ast/project_data_v6.json` cache is versioned within
 - Backward compatibility is NOT guaranteed across major/minor versions.
 - If the schema changes (for example to `v7`), `tensor-grep` will automatically invalidate older cache files and rebuild them transparently.
 
+`AstBackend.search` validates and canonicalizes the selected language before accessing persistent
+result and node-index caches. Aliases such as `js` share their canonical language's cache namespace.
+
 ## 3. Text-search compatibility
 The stable text-search compatibility contract is the validated compatibility set covered by the parity suite and contract benchmark runner. `tg search --help` may expose more rg-style flags, but only the rows below and explicitly named deterministic edges are part of the public rg-compatibility claim.
 
