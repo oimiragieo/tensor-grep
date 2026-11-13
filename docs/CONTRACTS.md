@@ -51,6 +51,9 @@ Three obligations follow, in priority order:
 - **P3 -- surface agreement.** The CLI, the `--json` envelope, the exit code and the MCP tools must
   tell the same story about the same run. A renderer must never change the answer.
 
+For `tg find`, reaching `--max-repo-files` exactly does not by itself mark the scan incomplete.
+Only a larger corpus is file-limited; ranking still uses at most the requested number of files.
+
 ## 1. Configuration (`sgconfig.yml`)
 The root-level keys and structure of `sgconfig.yml` are guaranteed to be stable within a major version. Unrecognized keys will be ignored rather than causing fatal errors to allow progressive rollout of new configurations.
 
