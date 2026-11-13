@@ -110,10 +110,12 @@ def test_native_binary_routes_ltl_query_to_python_sidecar(tmp_path: Path) -> Non
         # on the CPU regex path is a ReDoS surface, so refusing is correct). A clap rejection
         # could never produce this message -- that is precisely what discriminates the two,
         # and why this arm is evidence of routing rather than a hole in the test.
-        assert result.returncode != 0, "a fail-closed refusal must not report success"
-        assert "search backend failed" in result.stderr, (
-            f"expected the honest fail-closed refusal, got\nstderr={result.stderr!r}"
-        )
+        assert result.returncode == 2, "a fail-closed refusal must be an execution error"
+        assert result.stdout == "", "a refused query must not emit search results"
+        assert "cannot safely evaluate this --ltl query through CPUBackend" in result.stderr
+        assert "without the linear-time Rust engine" in result.stderr
+        assert "Traceback" not in result.stderr
+        assert "retried on the CPU backend" not in result.stderr
 
 
 def test_native_binary_gives_clean_error_for_invalid_ltl_query(tmp_path: Path) -> None:
