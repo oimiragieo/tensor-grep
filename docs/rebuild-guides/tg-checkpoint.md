@@ -78,6 +78,9 @@ checkpoint_store.undo_checkpoint(checkpoint_id, path)
         +-- best-effort empty-directory cleanup, discovery-cache refresh
 ```
 
+Creation's retention pass keeps the checkpoint being published even when another writer has a
+later timestamp. Subsequent creations may remove its index entry under the configured cap.
+
 The three-phase undo (pre-flight -> staging -> commit) is the mechanism that makes "crash-safe"
 true: everything that can fail because of a *missing or unreadable* file happens in phases that
 have not touched the working tree yet. Only the commit phase mutates real files, and it captures

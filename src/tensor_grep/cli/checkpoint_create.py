@@ -126,7 +126,9 @@ def create_checkpoint_with_owner(
                     label=normalized_label,
                 ),
             )
-            records, dropped_dirs = store._select_retained_checkpoints(root, records)
+            records, dropped_dirs = store._select_retained_checkpoints(
+                root, records, preserve_id=checkpoint_id
+            )
             store._write_index(root, records, owner=owner)
     except BaseException as exc:
         if owner.created_paths:

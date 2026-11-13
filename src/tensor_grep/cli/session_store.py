@@ -335,24 +335,23 @@ def _prune_session_records(
     records: list[SessionRecord],
     *,
     max_records: int | None = None,
+    preserve_id: str | None = None,
 ) -> list[SessionRecord]:
-    """Bound on-disk session retention (audit I2).
-
-    Keep at most ``max_records`` newest records. Each dropped record's payload file is
-    unlinked before the trimmed list is returned so disk usage stays bounded and the index
-    never references a removed payload.
-
-    M8: ``created_at`` is stamped BEFORE the caller acquires ``index_lock``, so under
-    concurrent writers the insert (lock-arrival) order does not reliably match creation
-    order -- trusting list position for the ``[:limit]`` cut can prune a genuinely newer
-    session and keep an older one. Re-sort by ``created_at`` (newest first) immediately
-    before slicing, mirroring ``list_sessions_with_discovery``.
-    """
+    """Bound on-disk retention, prioritizing an optional current writer before newest records."""
     limit = _configured_session_max() if max_records is None else max(1, int(max_records))
     if len(records) <= limit:
         return records
-    ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            preserve_id is not None and record.session_id == preserve_id,
+            record.created_at,
+        ),
+        reverse=True,
+    )
     retained = ordered[:limit]
+    if preserve_id is not None:
+        retained.sort(key=lambda record: record.created_at, reverse=True)
     for dropped in ordered[limit:]:
         try:
             _session_payload_path(root, dropped.session_id).unlink(missing_ok=True)
@@ -707,7 +706,7 @@ def open_session(
         # audit I2: bound retention so disk and index size do not grow without limit; unlink
         # the payload files for any records dropped past the configured cap before rewriting
         # the index.
-        records = _prune_session_records(root, records)
+        records = _prune_session_records(root, records, preserve_id=session_id)
         _write_index(root, records)
     return SessionOpenResult(
         session_id=session_id,
