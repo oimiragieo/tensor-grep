@@ -414,7 +414,12 @@ fn unsupported_structured_pcre_request_refuses_with_envelope() {
         (&[][..], false),
         (&[][..], true),
     ] {
-        for format in ["--json", "--ndjson"] {
+        for (format, explicit_format) in [
+            ("--json", &[][..]),
+            ("--ndjson", &[][..]),
+            ("--ndjson", &["--format", "rg"][..]),
+            ("--ndjson", &["--format=rg"][..]),
+        ] {
             for query in [
                 &["needle", "."][..],
                 &["-e", "--format", "rg"][..],
@@ -426,6 +431,7 @@ fn unsupported_structured_pcre_request_refuses_with_envelope() {
             ] {
                 let mut args = prefix.to_vec();
                 args.extend_from_slice(&[format, "-P"]);
+                args.extend_from_slice(explicit_format);
                 args.extend_from_slice(query);
                 let mut cmd = command(root.path(), &args);
                 cmd.env("TG_RUST_EARLY_RG", if early { "1" } else { "0" })
@@ -593,23 +599,72 @@ fn explicit_rg_json_keeps_raw_protocol_with_pcre() {
         "BLOCKED_SETUP: installed rg must support PCRE2 for raw-protocol control"
     );
     fs::write(root.path().join("a.txt"), "needle\n").unwrap();
-    let output = run(
-        root.path(),
-        &[
-            "search", "--format", "rg", "--json", "-P", "needle", "a.txt",
-        ],
+    let marker = root.path().join("sidecar.marker");
+    let sentinel = root.path().join(if cfg!(windows) {
+        "sidecar.cmd"
+    } else {
+        "sidecar.sh"
+    });
+    let body = if cfg!(windows) {
+        "@echo off\r\necho called>\"%TG_TEST_SIDECAR_MARKER%\"\r\nexit /b 73\r\n"
+    } else {
+        "#!/bin/sh\nprintf called > \"$TG_TEST_SIDECAR_MARKER\"\nexit 73\n"
+    };
+    fs::write(&sentinel, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&sentinel, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut calibration = command(root.path(), &["ast-info"]);
+    calibration
+        .env("TG_SIDECAR_PYTHON", &sentinel)
+        .env("TG_TEST_SIDECAR_MARKER", &marker);
+    assert_eq!(bounded(calibration).status.code(), Some(73));
+    assert!(
+        marker.exists(),
+        "SETUP: sidecar sentinel must run before route discrimination"
     );
-    assert_eq!(output.status.code(), Some(0));
-    let records: Vec<Value> = std::str::from_utf8(&output.stdout)
-        .unwrap()
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
-    assert!(records.iter().any(|value| value["type"] == "match"));
-    for value in records {
-        assert!(value["type"].is_string());
-        assert!(value.get("routing_backend").is_none());
-        assert!(value.get("ok").is_none());
+    fs::remove_file(&marker).unwrap();
+    for (prefix, early) in [
+        (&["search"][..], false),
+        (&["search"][..], true),
+        (&[][..], false),
+        (&[][..], true),
+    ] {
+        for format in [&["--format", "rg"][..], &["--format=rg"][..]] {
+            for options in [&["-P"][..], &["-P", "--no-mmap"][..], &["--no-mmap"][..]] {
+                let mut args = prefix.to_vec();
+                args.extend_from_slice(format);
+                args.push("--json");
+                args.extend_from_slice(options);
+                args.extend_from_slice(&["needle", "a.txt"]);
+                let mut cmd = command(root.path(), &args);
+                cmd.env("TG_RUST_EARLY_RG", if early { "1" } else { "0" })
+                    .env("TG_RUST_EARLY_POSITIONAL_RG", if early { "1" } else { "0" });
+                if options == ["--no-mmap"] {
+                    cmd.env("TG_SIDECAR_PYTHON", &sentinel)
+                        .env("TG_TEST_SIDECAR_MARKER", &marker);
+                }
+                let output = bounded(cmd);
+                assert_eq!(output.status.code(), Some(0));
+                assert!(
+                    !marker.exists(),
+                    "raw route unexpectedly invoked the sidecar"
+                );
+                let records: Vec<Value> = std::str::from_utf8(&output.stdout)
+                    .unwrap()
+                    .lines()
+                    .map(|line| serde_json::from_str(line).unwrap())
+                    .collect();
+                assert!(records.iter().any(|value| value["type"] == "match"));
+                for value in records {
+                    assert!(value["type"].is_string());
+                    assert!(value.get("routing_backend").is_none());
+                    assert!(value.get("ok").is_none());
+                }
+            }
+        }
     }
 }
 

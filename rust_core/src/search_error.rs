@@ -46,7 +46,7 @@ pub fn exit_structured_search_error_if_needed(
 }
 
 pub fn refuse_structured_pcre2(pcre2: bool, json: bool, ndjson: bool, explicit_rg_format: bool) {
-    if pcre2 && (json || ndjson) && !explicit_rg_format {
+    if pcre2 && (ndjson || (json && !explicit_rg_format)) {
         exit_structured_search_error_if_needed(
             json,
             ndjson,

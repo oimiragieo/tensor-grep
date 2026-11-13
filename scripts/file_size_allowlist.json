@@ -13,7 +13,7 @@
     "rust_core/src/backend_cpu.rs": 1817,
     "rust_core/src/gpu_native.rs": 4952,
     "rust_core/src/index.rs": 1583,
-    "rust_core/src/main.rs": 14686,
+    "rust_core/src/main.rs": 14680,
     "rust_core/src/native_search.rs": 2625,
     "rust_core/tests/test_ast_rewrite.rs": 2509,
     "rust_core/tests/test_index.rs": 2356,

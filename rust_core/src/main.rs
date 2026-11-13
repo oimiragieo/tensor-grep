@@ -1469,14 +1469,13 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         return Ok(None);
     }
 
-    let rg_args = match parse_early_ripgrep_args(raw_args) {
-        Some(args) => args,
+    let (rg_args, explicit_rg_format) = match parse_early_ripgrep_args_with_metadata(raw_args) {
+        Some(parsed) => parsed,
         None => return Ok(None),
     };
     if !should_use_early_ripgrep_fast_path(&rg_args) {
         return Ok(None);
     }
-    let explicit_rg_format = requests_explicit_rg_format(raw_args);
     refuse_structured_pcre2(rg_args.pcre2, rg_args.json, false, explicit_rg_format);
     if ripgrep_args_need_broad_generated_guard(&rg_args) {
         let generated_dirs = generated_scan_dir_names(&rg_args.paths, rg_args.files);
@@ -1500,11 +1499,11 @@ fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Re
     if !ripgrep_is_available() {
         return Ok(None);
     }
-    let rg_args = match parse_default_search_frontdoor_args(raw_args) {
-        Some(args) => args,
-        None => return Ok(None),
-    };
-    let explicit_rg_format = requests_explicit_rg_format(raw_args);
+    let (rg_args, explicit_rg_format) =
+        match parse_default_search_frontdoor_args_with_metadata(raw_args) {
+            Some(parsed) => parsed,
+            None => return Ok(None),
+        };
     refuse_structured_pcre2(rg_args.pcre2, rg_args.json, false, explicit_rg_format);
 
     let exit_code = match execute_ripgrep_search(&rg_args) {
@@ -1724,28 +1723,6 @@ fn normalize_top_level_search_args(raw_args: &[OsString]) -> Option<Vec<OsString
     search_args.push(OsString::from("search"));
     search_args.extend(raw_args.iter().skip(1).cloned());
     Some(search_args)
-}
-
-fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
-    normalize_top_level_search_args(raw_args)
-}
-
-fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
-    if !raw_args.iter().skip(1).any(|arg| {
-        arg.to_str()
-            .is_some_and(|token| token == "--format" || token.starts_with("--format="))
-    }) {
-        return false;
-    }
-    let Some(normalized) = normalize_top_level_format_search_args(raw_args) else {
-        return false;
-    };
-    matches!(
-        CommandCli::try_parse_from(normalized),
-        Ok(CommandCli {
-            command: Commands::Search(SearchArgs { format: Some(ref format), .. })
-        }) if format == "rg"
-    )
 }
 
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
@@ -2459,7 +2436,9 @@ For intentional broad scans:\n\
 // file's existing tests re-import the moved items via `use tensor_grep_rs::rg_passthrough::{...}`
 // inside `mod tests` below.
 
-fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+fn parse_early_ripgrep_args_with_metadata(
+    raw_args: &[OsString],
+) -> Option<(RipgrepSearchArgs, bool)> {
     let mut args = RipgrepSearchArgs {
         files: false,
         json: false,
@@ -2558,6 +2537,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
     };
 
     let mut positionals: Vec<String> = Vec::new();
+    let mut explicit_rg_format = false;
     let tokens = raw_args
         .iter()
         .skip(2)
@@ -2723,11 +2703,13 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 if tokens.get(index)? != "rg" {
                     return None;
                 }
+                explicit_rg_format = true;
             }
             _ if token.starts_with("--format=") => {
                 if token.split_once('=').map(|(_, value)| value) != Some("rg") {
                     return None;
                 }
+                explicit_rg_format = true;
             }
             "--sort" => {
                 index += 1;
@@ -2808,13 +2790,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             args.paths.push(".".to_string());
         }
     }
-    Some(args)
+    Some((args, explicit_rg_format))
 }
 
-fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
-    let search_args = normalize_top_level_format_search_args(raw_args)?;
-    let explicit_rg_format = requests_explicit_rg_format(&search_args);
-    let args = parse_early_ripgrep_args(&search_args)?;
+fn parse_default_search_frontdoor_args_with_metadata(
+    raw_args: &[OsString],
+) -> Option<(RipgrepSearchArgs, bool)> {
+    let search_args = normalize_top_level_search_args(raw_args)?;
+    let (args, explicit_rg_format) = parse_early_ripgrep_args_with_metadata(&search_args)?;
     if args.json && !explicit_rg_format {
         return None;
     }
@@ -2832,7 +2815,18 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
     if !explicit_rg_format && frontdoor_search_is_native_plain_text_eligible(&search_args) {
         return None;
     }
-    (explicit_rg_format || should_use_early_ripgrep_fast_path(&args)).then_some(args)
+    (explicit_rg_format || should_use_early_ripgrep_fast_path(&args))
+        .then_some((args, explicit_rg_format))
+}
+
+#[cfg(test)]
+fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    parse_early_ripgrep_args_with_metadata(raw_args).map(|(args, _)| args)
+}
+
+#[cfg(test)]
+fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    parse_default_search_frontdoor_args_with_metadata(raw_args).map(|(args, _)| args)
 }
 
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
