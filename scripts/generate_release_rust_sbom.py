@@ -49,9 +49,15 @@ def generate_rust_sbom(
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     root_fd = os.open(resolved_root, directory_flags)
     try:
-        rust_fd = os.open("rust_core", directory_flags, dir_fd=root_fd)
         try:
-            artifacts_fd = os.open("artifacts", directory_flags, dir_fd=root_fd)
+            rust_fd = os.open("rust_core", directory_flags, dir_fd=root_fd)
+        except OSError as exc:
+            raise ValueError("Rust SBOM manifest directory must be confined") from exc
+        try:
+            try:
+                artifacts_fd = os.open("artifacts", directory_flags, dir_fd=root_fd)
+            except OSError as exc:
+                raise ValueError("Rust SBOM output directory must be confined") from exc
             try:
                 if _exists_at("sbom-rust.json", rust_fd) or _exists_at(
                     "sbom-rust.json", artifacts_fd
@@ -99,6 +105,10 @@ def generate_rust_sbom(
                             os.fdopen(output_fd, "wb", closefd=False) as destination,
                         ):
                             shutil.copyfileobj(source, destination)
+                        if not _matches_open_at(
+                            source_fd, "sbom-rust.json", rust_fd
+                        ) or not _matches_open_at(output_fd, "sbom-rust.json", artifacts_fd):
+                            raise ValueError("Rust SBOM leaf identity changed during publication")
                         complete = True
                     finally:
                         os.close(output_fd)
@@ -117,6 +127,10 @@ def generate_rust_sbom(
                                 pass
                 finally:
                     os.close(source_fd)
+                if not os.path.samestat(
+                    os.fstat(rust_fd), os.stat(rust_dir, follow_symlinks=False)
+                ):
+                    raise ValueError("Rust SBOM parent identity changed before cleanup")
                 os.unlink("sbom-rust.json", dir_fd=rust_fd)
             finally:
                 os.close(artifacts_fd)
