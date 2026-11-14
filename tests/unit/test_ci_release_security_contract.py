@@ -252,3 +252,40 @@ def test_release_security_contract_rejects_non_mapping_jobs() -> None:
     assert validate_ci_release_security_contract(ci_workflow="jobs: []") == [
         "CI release security contract requires a jobs mapping"
     ]
+
+
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        ("job-gate", "semantic-release tag"),
+        ("needs", "tag-matched Python wheel"),
+        ("order", "before `Generate SLSA provenance`"),
+        ("attest-subject", "native/SBOM/checksum subjects"),
+        ("upload-tag", "semantic-release tag"),
+        ("upload-unmatched", "fail on unmatched files"),
+    ],
+)
+def test_release_security_contract_rejects_control_plane_drift(fault: str, expected: str) -> None:
+    workflow = _workflow()
+    publisher = workflow["jobs"]["publisher"]  # type: ignore[index]
+    steps = publisher["steps"]
+    if fault == "job-gate":
+        publisher["if"] = "always()"
+    elif fault == "needs":
+        publisher["needs"].remove("build-wheels-pypi")
+    elif fault == "order":
+        steps[5], steps[6] = steps[6], steps[5]
+    else:
+        step_name = (
+            "Generate SLSA provenance"
+            if fault == "attest-subject"
+            else "Upload GitHub release assets"
+        )
+        step = next(item for item in steps if item["name"] == step_name)
+        key = {
+            "attest-subject": "subject-path",
+            "upload-tag": "tag_name",
+            "upload-unmatched": "fail_on_unmatched_files",
+        }[fault]
+        step["with"][key] = "wrong"
+    assert any(expected in error for error in _errors(workflow))
