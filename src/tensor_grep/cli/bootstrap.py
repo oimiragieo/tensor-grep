@@ -1252,17 +1252,14 @@ def _scan_requires_full_cli(scan_args: list[str]) -> bool:
     index = 0
     while index < len(scan_args):
         arg = scan_args[index]
-        if arg in {"--config", "-c"}:
-            if index + 1 >= len(scan_args):
-                return True
-            index += 2
-            continue
         if arg.startswith("--config="):
             if not arg.partition("=")[2]:
                 return True
             index += 1
-            continue
-        return True
+        elif arg in {"--config", "-c"} and index + 1 < len(scan_args):
+            index += 2
+        else:
+            return True
     return False
 
 
