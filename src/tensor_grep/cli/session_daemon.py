@@ -20,12 +20,23 @@ from time import monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
+from tensor_grep.cli import session_daemon_implicit as _implicit_sessions
+from tensor_grep.cli._index_lock import (  # noqa: F401 (re-exported for tests/helpers)
+    IndexLockTimeoutError,
+    index_lock,
+    replace_with_retry,
+)
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_deadlines import (
     _HandlerAdmissionThreads,
     _load_payload_with_status_retry,
     _read_bounded_request_line,
+)
+from tensor_grep.cli.session_daemon_metrics_sanitize import (
+    _empty_metrics_day_bucket as _empty_metrics_day_bucket,
+)
+from tensor_grep.cli.session_daemon_metrics_sanitize import (
+    _sanitize_metrics_days as _sanitize_metrics_days,
 )
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_start_capture import (
@@ -82,17 +93,17 @@ from tensor_grep.cli.session_store import (
     _SESSION_VERSION,
     WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
     _ensure_session_not_stale,
-    _index_path,
-    _load_index,
+    _index_path,  # noqa: F401 (late-bound helper seam)
+    _load_index,  # noqa: F401 (late-bound helper seam)
     _resolve_request_session_target,
     _resolve_root,
     _session_health_payload,
-    _session_payload_path,
+    _session_payload_path,  # noqa: F401 (late-bound helper seam)
     _sessions_dir,
     _SessionServeCache,
-    _write_index,
+    _write_index,  # noqa: F401 (late-bound helper seam)
     _write_json_atomic,
-    open_session,
+    open_session,  # noqa: F401 (late-bound helper seam)
     refresh_session,
     serve_session_request,
 )
@@ -1265,24 +1276,12 @@ def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> i
     return None
 
 
-def _remove_implicit_session_payload(path: str, session_id: str) -> None:
-    root = _resolve_root(Path(path))
-    try:
-        # Round-6/7 r3: serialize the index read-modify-write under the SAME cross-process lock
-        # open_session / refresh_session use (session_store.py:617/694). Without it, this unlocked
-        # load->filter->write races a concurrent locked insert: this process reads the index, the
-        # other inserts a new session record, this process writes back the filtered set WITHOUT
-        # that record -> a silently lost session entry (orphaned payload, never retention-pruned).
-        with index_lock(_index_path(root)):
-            _session_payload_path(root, session_id).unlink(missing_ok=True)
-            records = [record for record in _load_index(root) if record.session_id != session_id]
-            _write_index(root, records)
-    except (OSError, ValueError, IndexLockTimeoutError):
-        # ValueError: a traversal-shaped session_id is refused by _session_payload_path.
-        # IndexLockTimeoutError: this implicit cleanup is best-effort -- under sustained lock
-        # contention, skip it (retention prunes the record later) rather than crash the eviction
-        # path; we never WROTE, so no insert is lost by skipping.
-        pass
+def _remove_implicit_session_payload(
+    path: str, session_id: str, *, deadline_monotonic: float | None = None
+) -> None:
+    _implicit_sessions.remove_payload(
+        sys.modules[__name__], path, session_id, deadline_monotonic=deadline_monotonic
+    )
 
 
 def _implicit_session_id_for_request(
@@ -1293,27 +1292,48 @@ def _implicit_session_id_for_request(
     path: str,
     request: dict[str, Any],
     deadline_monotonic: float | None = None,
+    pin_receipt: list[Any] | None = None,
 ) -> str:
-    if session_id or command not in _IMPLICIT_SESSION_COMMANDS:
-        return session_id
+    return _implicit_sessions.resolve(
+        sys.modules[__name__],
+        server,
+        command=command,
+        session_id=session_id,
+        path=path,
+        request=request,
+        deadline_monotonic=deadline_monotonic,
+        pin_receipt=pin_receipt,
+    )
 
-    max_repo_files = _implicit_session_max_repo_files(command, request)
-    key = (_path_cache_key(path), str(max_repo_files or ""))
-    with server._implicit_session_lock:
-        existing = server.implicit_session_ids.pop(key, None)
-        if existing:
-            server.implicit_session_ids[key] = existing
-            return str(existing)
-        opened = open_session(
-            path,
-            max_repo_files=max_repo_files,
-            deadline_monotonic=deadline_monotonic,
-        )
-        server.implicit_session_ids[key] = opened.session_id
-        while len(server.implicit_session_ids) > _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES:
-            evicted_key, evicted_session_id = server.implicit_session_ids.popitem(last=False)
-            _remove_implicit_session_payload(evicted_key[0], evicted_session_id)
-        return opened.session_id
+
+def _release_implicit_session_pin(
+    server: Any, pin_receipt: list[Any] | None, *, deadline_monotonic: float | None = None
+) -> None:
+    _implicit_sessions.release(
+        sys.modules[__name__], server, pin_receipt, deadline_monotonic=deadline_monotonic
+    )
+
+
+def _reacquire_missing_implicit_session(
+    server: Any,
+    *,
+    path: str,
+    request: dict[str, Any],
+    session_id: str,
+    pin_receipt: list[Any],
+    deadline_monotonic: float | None,
+    exc: BaseException,
+) -> str | None:
+    return _implicit_sessions.reacquire_missing(
+        sys.modules[__name__],
+        server,
+        path=path,
+        request=request,
+        session_id=session_id,
+        pin_receipt=pin_receipt,
+        deadline_monotonic=deadline_monotonic,
+        exc=exc,
+    )
 
 
 def _serve_daemon_response_with_cache(
@@ -1624,7 +1644,7 @@ def _read_demand_metrics_days(root: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     days = data.get("days") if isinstance(data, dict) else None
     return days if isinstance(days, dict) else {}

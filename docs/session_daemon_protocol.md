@@ -26,6 +26,12 @@ The daemon is a local IPC mechanism, not a service. Binding to loopback is a har
 requirement: it is the outer boundary that keeps the token from being the *only* thing
 between an attacker and the index.
 
+### Implicit sessions
+
+Implicit sessions are keyed by project root, resolved requested scan scope, and file
+budget. Opening one scope does not hold the cache lock while another scope opens;
+requests for the same key share creation work within each request's original deadline.
+
 ---
 
 ## 2. Authentication
