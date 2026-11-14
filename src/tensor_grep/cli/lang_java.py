@@ -128,8 +128,7 @@ def _is_clean_symbol_name(name: str) -> bool:
     return lang_registry.is_clean_symbol_name(name)
 
 
-def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
-    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+_tree_sitter_node_text = lang_registry._tree_sitter_node_text
 
 
 # ---------------------------------------------------------------------------
