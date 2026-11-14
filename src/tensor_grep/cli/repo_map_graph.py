@@ -295,3 +295,246 @@ def test_import_evidence(
             if unknown:
                 uncertain[target] = candidate_modules
     return confirmed, uncertain
+
+
+def scored_test_imports(
+    owner: ModuleType,
+    importer: str,
+    targets: list[str],
+    repo_root: Path,
+    cached_imports: list[str],
+    source_tokens: set[str],
+    file_distances: dict[str, int],
+    candidate_statuses: dict[str, dict[str, Any]],
+    *,
+    deadline_monotonic: float | None,
+    deadline_hit: Any,
+) -> tuple[int, list[str], dict[str, list[str]]]:
+    confirmed, uncertain = test_import_evidence(
+        owner,
+        importer,
+        targets,
+        repo_root,
+        cached_imports,
+        candidate_statuses=candidate_statuses,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
+    confirmed_targets = list(confirmed)
+    confirmed_modules = list(
+        dict.fromkeys(module for values in confirmed.values() for module in values)
+    )
+    uncertain_modules = list(
+        dict.fromkeys(module for values in uncertain.values() for module in values)
+    )
+    confirmed_imports = {importer: confirmed_modules} if confirmed_modules else {}
+    confirmed_distances = {
+        target: depth for target, depth in file_distances.items() if target in confirmed
+    }
+    bonus = owner._test_import_bonus(
+        importer, source_tokens, confirmed_imports, confirmed_distances
+    )
+    if confirmed_targets:
+        bonus = max(1, bonus)
+    elif not bonus and candidate_statuses.get(importer, {}).get("status") == "uncertain":
+        bonus = owner._test_import_bonus(importer, source_tokens, {importer: cached_imports}, {})
+    if not bonus and uncertain_modules:
+        bonus = owner._test_import_bonus(importer, source_tokens, {importer: uncertain_modules}, {})
+        if not bonus:
+            bonus = 1
+    return bonus, confirmed_targets, confirmed_imports
+
+
+def reverse_import_distances(
+    owner: ModuleType,
+    seed_files: list[str],
+    all_files: list[str],
+    imports_by_file: dict[str, list[str]],
+    *,
+    repo_root: Path | str | None = None,
+    trusted_seed_files: set[str] | None = None,
+    uncertain_candidates: dict[str, dict[str, Any]] | None = None,
+    candidate_statuses: dict[str, dict[str, Any]] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+    _profiling_collector: Any = None,
+) -> dict[str, int]:
+    with owner._profiling_phase(_profiling_collector, "graph_bfs"):
+        distances: dict[str, int] = {}
+        root = (
+            Path(repo_root)
+            if repo_root is not None
+            else owner._infer_project_root(Path(seed_files[0]) if seed_files else Path.cwd())
+        )
+        root = root.expanduser().resolve()
+        reverse = owner._reverse_importers(
+            all_files,
+            imports_by_file,
+            include_directory_index_aliases=True,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+            _profiling_collector=_profiling_collector,
+        )
+        evidence_cache: dict[str, dict[str, Any]] = {}
+        edge_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        uncertain: dict[str, dict[str, Any]] = {}
+        statuses: dict[str, dict[str, Any]] = {}
+        trusted_seeds = set(seed_files) if trusted_seed_files is None else trusted_seed_files
+        trusted_frontier: list[str] = []
+        weak_frontier: list[str] = []
+        trusted_seen: set[str] = set()
+        weak_seen: set[str] = set()
+        for seed in seed_files:
+            status = "origin" if seed in trusted_seeds else "uncertain"
+            if imports_by_file.get(seed):
+                if _expired(owner, deadline_monotonic, deadline_hit):
+                    break
+                evidence = _candidate_evidence(
+                    owner,
+                    seed,
+                    root,
+                    imports_by_file,
+                    deadline_monotonic=deadline_monotonic,
+                    deadline_hit=deadline_hit,
+                )
+                evidence_cache[seed] = evidence
+                if evidence["status"] == "uncertain" or status == "uncertain":
+                    uncertain[seed] = {
+                        "depth": 0,
+                        "reason": evidence["reason"] or "unconfirmed-query-origin",
+                        "confidence": 0.2,
+                    }
+            elif status == "uncertain":
+                uncertain[seed] = {
+                    "depth": 0,
+                    "reason": "unconfirmed-query-origin",
+                    "confidence": 0.2,
+                }
+            statuses[seed] = {"status": status, **uncertain.get(seed, {})}
+            if status == "origin":
+                trusted_frontier.append(seed)
+                trusted_seen.add(seed)
+            else:
+                weak_frontier.append(seed)
+                weak_seen.add(seed)
+
+        for depth in range(1, 4):
+            if _expired(owner, deadline_monotonic, deadline_hit):
+                break
+            possible_trusted: set[str] = set()
+            possible_weak: set[str] = set()
+            for target in trusted_frontier:
+                possible_trusted.update(reverse.get(target, set()))
+            for target in weak_frontier:
+                possible_weak.update(reverse.get(target, set()))
+            possible = possible_trusted | possible_weak
+            next_trusted: list[str] = []
+            next_weak: list[str] = []
+            for candidate in all_files:
+                if candidate in trusted_seen or candidate not in possible:
+                    continue
+                if candidate in weak_seen and candidate not in possible_trusted:
+                    continue
+                if _expired(owner, deadline_monotonic, deadline_hit):
+                    break
+                cached_evidence = evidence_cache.get(candidate)
+                if cached_evidence is None:
+                    evidence = _candidate_evidence(
+                        owner,
+                        candidate,
+                        root,
+                        imports_by_file,
+                        deadline_monotonic=deadline_monotonic,
+                        deadline_hit=deadline_hit,
+                    )
+                    evidence_cache[candidate] = evidence
+                else:
+                    evidence = cached_evidence
+                if _expired(owner, deadline_monotonic, deadline_hit):
+                    break
+                if evidence["reason"] == "deadline":
+                    break
+
+                full_trusted = False
+                full_weak = False
+                partial_match = False
+                if evidence["status"] != "uncertain" or evidence["raw"]:
+                    for target in trusted_frontier + weak_frontier:
+                        if candidate not in reverse.get(target, set()):
+                            continue
+                        pair = (candidate, target)
+                        edges = edge_cache.get(pair)
+                        if edges is None:
+                            edges = owner._confirm_import_edges(
+                                Path(candidate),
+                                target,
+                                root,
+                                raw_entries=evidence["raw"],
+                                deadline_monotonic=deadline_monotonic,
+                                deadline_hit=deadline_hit,
+                            )
+                            edge_cache[pair] = edges
+                        for edge in edges:
+                            confidence = float(edge.get("resolution_confidence", 0.0))
+                            full = confidence > 0.2 and "partial-resolution" not in str(
+                                edge.get("path_provenance", "")
+                            )
+                            if full and target in trusted_frontier:
+                                full_trusted = True
+                            elif full:
+                                full_weak = True
+                            else:
+                                partial_match = True
+                        if _expired(owner, deadline_monotonic, deadline_hit):
+                            break
+
+                if full_trusted:
+                    distances[candidate] = depth
+                    statuses[candidate] = {"status": "confirmed", "depth": depth}
+                    if evidence["status"] == "uncertain":
+                        uncertain[candidate] = {
+                            "depth": depth,
+                            "reason": evidence["reason"] or "unresolved-import",
+                            "confidence": 0.2,
+                        }
+                    else:
+                        uncertain.pop(candidate, None)
+                    trusted_seen.add(candidate)
+                    next_trusted.append(candidate)
+                elif full_weak or partial_match or evidence["status"] == "uncertain":
+                    reason = (
+                        "partial-resolution"
+                        if partial_match
+                        else evidence["reason"]
+                        if evidence["status"] == "uncertain"
+                        else "unconfirmed-query-origin"
+                    )
+                    uncertain.setdefault(
+                        candidate,
+                        {
+                            "depth": depth,
+                            "reason": reason or "unresolved-import",
+                            "confidence": 0.2,
+                        },
+                    )
+                    statuses[candidate] = {
+                        "status": "uncertain",
+                        **uncertain[candidate],
+                    }
+                    if candidate not in weak_seen:
+                        weak_seen.add(candidate)
+                        next_weak.append(candidate)
+                else:
+                    statuses.setdefault(candidate, {"status": "nonedge", "depth": depth})
+            if _expired(owner, deadline_monotonic, deadline_hit) or not (next_trusted or next_weak):
+                break
+            trusted_frontier = next_trusted
+            weak_frontier = next_weak
+
+        if uncertain_candidates is not None:
+            uncertain_candidates.clear()
+            uncertain_candidates.update(uncertain)
+        if candidate_statuses is not None:
+            candidate_statuses.clear()
+            candidate_statuses.update(statuses)
+        return distances
