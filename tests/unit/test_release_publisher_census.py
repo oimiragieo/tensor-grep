@@ -9,19 +9,20 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
+release_assets = importlib.import_module("validate_release_assets")
 validate_release_publisher_census = importlib.import_module(
     "_release_assets_checks.release_security"
 ).validate_release_publisher_census
 
 
-def _workflow(step: dict[str, str]) -> str:
+def _workflow(step: dict[str, object]) -> str:
     return yaml.safe_dump({"jobs": {"publish": {"steps": [step]}}})
 
 
 def test_publisher_census_accepts_only_authoritative_ci() -> None:
     workflows = {
         ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
-        ".github/workflows/proof.yml": _workflow({"uses": "actions/upload-artifact@sha"}),
+        ".github/workflows/proof.yml": _workflow({"run": 'echo "Use gh release upload manually"'}),
     }
     assert validate_release_publisher_census(workflows=workflows) == []
 
@@ -33,9 +34,17 @@ def test_publisher_census_accepts_only_authoritative_ci() -> None:
         {"run": "gh release upload v1 artifacts/tg --clobber"},
         {"run": "npm publish --access public"},
         {"run": "maturin upload dist/*"},
+        {"run": "uv publish dist/*"},
+        {"run": "gh api --method POST repos/o/r/releases"},
+        {"run": "gh release \\\n+ upload v1 artifacts/tg"},
+        {"run": 'gh release "$operation" v1'},
+        {
+            "uses": "actions/github-script@sha",
+            "with": {"script": "github.rest.repos.createRelease({owner, repo})"},
+        },
     ],
 )
-def test_publisher_census_rejects_second_publisher(step: dict[str, str]) -> None:
+def test_publisher_census_rejects_second_publisher(step: dict[str, object]) -> None:
     workflows = {
         ".github/workflows/ci.yml": _workflow({
             "uses": "python-semantic-release/python-semantic-release@sha"
@@ -67,9 +76,38 @@ def test_publisher_census_reports_malformed_steps() -> None:
     assert any("ci.yml:publish steps to be a list" in error for error in errors)
 
 
-def test_repository_release_publisher_census_is_clean() -> None:
+@pytest.mark.parametrize(
+    "job",
+    [
+        {"uses": "owner/repo/.github/workflows/publish.yml@sha", "secrets": "inherit"},
+        {"steps": [{"uses": "./.github/actions/publish"}]},
+    ],
+)
+def test_publisher_census_rejects_opaque_publish_boundaries(job: dict[str, object]) -> None:
     workflows = {
-        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
-        for path in sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+        ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
+        ".github/workflows/backfill.yml": yaml.safe_dump({"jobs": {"publish": job}}),
     }
+    errors = validate_release_publisher_census(workflows=workflows)
+    assert any("forbids opaque" in error for error in errors)
+
+
+def test_workflow_sources_discovers_yaml_publishers(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "ci.yml").write_text(
+        _workflow({"uses": "softprops/action-gh-release@sha"}), encoding="utf-8"
+    )
+    (workflow_dir / "backfill.yaml").write_text(
+        _workflow({"run": "uv publish dist/*"}), encoding="utf-8"
+    )
+    workflows = release_assets._workflow_sources(workflow_dir, root=tmp_path)
+    assert any(
+        "backfill.yaml:publish" in error
+        for error in validate_release_publisher_census(workflows=workflows)
+    )
+
+
+def test_repository_release_publisher_census_is_clean() -> None:
+    workflows = release_assets._workflow_sources(ROOT / ".github" / "workflows", root=ROOT)
     assert validate_release_publisher_census(workflows=workflows) == []

@@ -89,6 +89,13 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _workflow_sources(workflow_dir: Path, *, root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): _read(path)
+        for path in sorted(workflow_dir.glob("*.y*ml"))
+    }
+
+
 def _version_from_pyproject() -> str:
     data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     return str(data["project"]["version"])
@@ -232,12 +239,7 @@ def validate_all() -> list[str]:
     errors.extend(validate_ci_release_security_contract(ci_workflow=ci_workflow))
     workflow_dir = ROOT / ".github" / "workflows"
     errors.extend(
-        validate_release_publisher_census(
-            workflows={
-                path.relative_to(ROOT).as_posix(): _read(path)
-                for path in sorted(workflow_dir.glob("*.yml"))
-            }
-        )
+        validate_release_publisher_census(workflows=_workflow_sources(workflow_dir, root=ROOT))
     )
 
     public_gpu_proof_workflow = _read(ROOT / ".github" / "workflows" / "public-gpu-proof.yml")

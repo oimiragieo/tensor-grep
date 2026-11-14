@@ -15,10 +15,7 @@ _PUBLISH_ACTIONS = (
     "pypa/gh-action-pypi-publish",
     "python-semantic-release/python-semantic-release",
 )
-_PUBLISH_COMMAND = re.compile(
-    r"(?m)(?:\bgh\s+release\s+(?:create|upload)\b|\bnpm\s+publish\b|"
-    r"(?:twine|maturin)\s+(?:upload|publish)\b)"
-)
+_SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -30,7 +27,7 @@ def _shell_commands(script: str) -> list[str]:
         if not line or line.startswith("#"):
             continue
         pending = f"{pending} {line}".strip()
-        if pending.endswith("\\"):
+        if pending.endswith(("\\", "`")):
             pending = pending[:-1].rstrip()
             continue
         commands.append(pending)
@@ -45,6 +42,50 @@ def _shell_words(command: str) -> list[str]:
         return shlex.split(command, comments=True, posix=True)
     except ValueError:
         return []
+
+
+def _shell_segments(command: str) -> list[list[str]]:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.commenters = "#"
+        lexer.whitespace_split = True
+        words = list(lexer)
+    except ValueError:
+        return []
+    segments: list[list[str]] = [[]]
+    for word in words:
+        if word and set(word) <= {";", "&", "|"}:
+            segments.append([])
+        else:
+            segments[-1].append(word)
+    return [segment for segment in segments if segment]
+
+
+def _publishes_command(command: str) -> bool:
+    for words in _shell_segments(command):
+        while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0]):
+            words = words[1:]
+        if words[:1] == ["env"]:
+            words = words[1:]
+            while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0]):
+                words = words[1:]
+        while words and words[0] in {"then", "do", "command", "exec", "sudo"}:
+            words = words[1:]
+        executable = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+        arguments = [word.lower() for word in words[1:]]
+        if executable == "gh" and arguments[:1] in (["release"], ["api"]):
+            return True
+        if executable in {"uv", "npm"} and arguments[:1] == ["publish"]:
+            return True
+        if executable in {"twine", "maturin"} and arguments[:1] in (["upload"], ["publish"]):
+            return True
+        if (
+            executable in {"python", "python3"}
+            and arguments[:2] == ["-m", "twine"]
+            and arguments[2:3] in (["upload"], ["publish"])
+        ):
+            return True
+    return False
 
 
 def _shell_argv(command: str) -> list[str]:
@@ -84,11 +125,9 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             if str(step.get("uses", "")).startswith("softprops/action-gh-release@"):
                 job_release_steps.append(step)
                 release_actions.append((str(name), step))
-            commands = (
-                " ".join(_shell_words(command))
-                for command in _shell_commands(str(step.get("run", "")))
-            )
-            if any(_PUBLISH_COMMAND.search(command) for command in commands):
+            if any(
+                _publishes_command(command) for command in _shell_commands(str(step.get("run", "")))
+            ):
                 direct_publishers.append(str(name))
         if job_release_steps:
             publishers.append((str(name), job, steps))
@@ -521,6 +560,11 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue
+            if "uses" in job:
+                errors.append(
+                    f"Workflow publisher census forbids opaque reusable job {filename}:{job_name}"
+                )
+                continue
             steps = job.get("steps", [])
             if not isinstance(steps, list):
                 errors.append(
@@ -531,13 +575,19 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
                 if not isinstance(step, dict):
                     continue
                 action = str(step.get("uses", ""))
-                run = "\n".join(
-                    line
-                    for line in str(step.get("run", "")).splitlines()
-                    if not line.lstrip().startswith("#")
-                )
-                if any(action.startswith(prefix + "@") for prefix in _PUBLISH_ACTIONS) or (
-                    _PUBLISH_COMMAND.search(run)
+                if action.startswith("./"):
+                    errors.append(
+                        f"Workflow publisher census forbids opaque local action "
+                        f"{filename}:{job_name}:{action}"
+                    )
+                    continue
+                with_block = step.get("with", {})
+                script = str(with_block.get("script", "")) if isinstance(with_block, dict) else ""
+                commands = _shell_commands(str(step.get("run", "")))
+                if (
+                    any(action.startswith(prefix + "@") for prefix in _PUBLISH_ACTIONS)
+                    or any(_publishes_command(command) for command in commands)
+                    or _SCRIPT_PUBLISH.search(script)
                 ):
                     publishers.setdefault(filename, set()).add(str(job_name))
 
