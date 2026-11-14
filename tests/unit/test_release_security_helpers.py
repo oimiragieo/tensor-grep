@@ -17,6 +17,10 @@ from verify_release_subject_attestations import (  # noqa: E402
 )
 
 NATIVE = ("tg-linux-amd64-cpu", "tg-macos-amd64-cpu", "tg-windows-amd64-cpu.exe")
+requires_dir_fd = pytest.mark.skipif(
+    not {os.open, os.stat, os.unlink}.issubset(os.supports_dir_fd),
+    reason="release helper requires POSIX directory descriptors",
+)
 
 
 @pytest.fixture
@@ -41,6 +45,7 @@ def artifacts(tmp_path: Path) -> Path:
     ("profile", "features"),
     [("native-frontdoor", []), ("native-frontdoor-gpu", ["--features", "cuda"])],
 )
+@requires_dir_fd
 def test_generate_rust_sbom_binds_profile_features(
     tmp_path: Path, profile: str, features: list[str]
 ) -> None:
@@ -77,6 +82,7 @@ def test_generate_rust_sbom_binds_profile_features(
     assert output.read_text(encoding="utf-8") == "{}"
 
 
+@requires_dir_fd
 def test_generate_rust_sbom_refuses_existing_output(tmp_path: Path) -> None:
     (tmp_path / "rust_core").mkdir()
     output = tmp_path / "artifacts" / "sbom-rust.json"
@@ -86,6 +92,7 @@ def test_generate_rust_sbom_refuses_existing_output(tmp_path: Path) -> None:
         generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
 
 
+@requires_dir_fd
 def test_generate_rust_sbom_does_not_clobber_raced_output(tmp_path: Path) -> None:
     manifest = tmp_path / "rust_core" / "Cargo.toml"
     manifest.parent.mkdir()
@@ -104,6 +111,7 @@ def test_generate_rust_sbom_does_not_clobber_raced_output(tmp_path: Path) -> Non
     assert output.read_text(encoding="utf-8") == "keep"
 
 
+@requires_dir_fd
 def test_generate_rust_sbom_rejects_symlinked_output_directory(tmp_path: Path) -> None:
     (tmp_path / "rust_core").mkdir()
     outside = tmp_path / "outside"
@@ -116,6 +124,7 @@ def test_generate_rust_sbom_rejects_symlinked_output_directory(tmp_path: Path) -
         generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
 
 
+@requires_dir_fd
 def test_generate_rust_sbom_rejects_symlinked_manifest_directory(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -128,6 +137,7 @@ def test_generate_rust_sbom_rejects_symlinked_manifest_directory(tmp_path: Path)
         generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
 
 
+@requires_dir_fd
 def test_generate_rust_sbom_rejects_symlinked_output_leaf(tmp_path: Path) -> None:
     (tmp_path / "rust_core").mkdir()
     artifacts = tmp_path / "artifacts"
@@ -141,6 +151,28 @@ def test_generate_rust_sbom_rejects_symlinked_output_leaf(tmp_path: Path) -> Non
     with pytest.raises(ValueError, match="overwrite"):
         generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
     assert outside.read_text(encoding="utf-8") == "keep"
+
+
+@requires_dir_fd
+def test_generate_rust_sbom_rejects_subprocess_parent_swap(tmp_path: Path) -> None:
+    rust_dir = tmp_path / "rust_core"
+    rust_dir.mkdir()
+    (rust_dir / "Cargo.toml").write_text("[package]", encoding="utf-8")
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    def run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[object]:
+        assert check is True
+        (rust_dir / "sbom-rust.json").write_text("generated", encoding="utf-8")
+        artifacts.rename(tmp_path / "original-artifacts")
+        os.symlink(outside, artifacts, target_is_directory=True)
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(ValueError, match="parent identity changed"):
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path, run=run)
+    assert not (outside / "sbom-rust.json").exists()
 
 
 def test_verify_release_subject_attestations_covers_exact_subject_set(artifacts: Path) -> None:
