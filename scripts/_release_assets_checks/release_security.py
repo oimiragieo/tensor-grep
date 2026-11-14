@@ -21,6 +21,34 @@ _PUBLISH_COMMAND = re.compile(
 )
 
 
+def _shell_commands(script: str) -> list[str]:
+    """Return non-comment shell commands with line continuations joined."""
+    commands: list[str] = []
+    pending = ""
+    for raw_line in script.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        pending = f"{pending} {line}".strip()
+        if pending.endswith("\\"):
+            pending = pending[:-1].rstrip()
+            continue
+        commands.append(pending)
+        pending = ""
+    if pending:
+        commands.append(pending)
+    return commands
+
+
+def _command_with(script: str, prefix: str, required: tuple[str, ...]) -> bool:
+    return any(
+        (command == prefix or command.startswith(prefix + " "))
+        and all(token in command for token in required)
+        and "|| true" not in command
+        for command in _shell_commands(script)
+    )
+
+
 def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     """Require the authoritative publisher's provenance and signing spine."""
     try:
@@ -32,21 +60,34 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         return ["CI release security contract requires a jobs mapping"]
 
     publishers = []
+    release_actions: list[tuple[str, dict[object, object]]] = []
+    direct_publishers: list[str] = []
     for name, job in jobs.items():
         if not isinstance(job, dict):
             continue
         steps = job.get("steps", [])
-        if isinstance(steps, list) and any(
-            isinstance(step, dict)
-            and str(step.get("uses", "")).startswith("softprops/action-gh-release@")
-            for step in steps
-        ):
+        if not isinstance(steps, list):
+            continue
+        job_release_steps = []
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("uses", "")).startswith("softprops/action-gh-release@"):
+                job_release_steps.append(step)
+                release_actions.append((str(name), step))
+            if _PUBLISH_COMMAND.search(str(step.get("run", ""))):
+                direct_publishers.append(str(name))
+        if job_release_steps:
             publishers.append((str(name), job, steps))
     if len(publishers) != 1:
         return ["CI release security contract requires exactly one GitHub release publisher job"]
 
     job_name, publisher, steps = publishers[0]
     errors: list[str] = []
+    if len(release_actions) != 1:
+        errors.append("CI release security contract requires exactly one GitHub release action")
+    if direct_publishers:
+        errors.append("CI release publisher must not contain direct release publication commands")
     permissions = publisher.get("permissions", {})
     if not isinstance(permissions, dict):
         permissions = {}
@@ -62,9 +103,8 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             "CI release publisher must depend on semantic release, native assets, and the tag-matched Python wheel"
         )
 
-    named = {
-        str(step.get("name")): step for step in steps if isinstance(step, dict) and step.get("name")
-    }
+    named_steps = [step for step in steps if isinstance(step, dict) and step.get("name")]
+    named = {str(step.get("name")): step for step in named_steps}
     required = (
         "Install cargo-cyclonedx",
         "Generate Rust SBOM",
@@ -81,6 +121,10 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     for name in required:
         if name not in named:
             errors.append(f"CI release publisher is missing `{name}`")
+        elif sum(str(step.get("name")) == name for step in named_steps) != 1:
+            errors.append(f"CI release publisher must define `{name}` exactly once")
+        elif "if" in named[name] or named[name].get("continue-on-error") in (True, "true"):
+            errors.append(f"CI release publisher must not bypass `{name}`")
     if errors:
         return errors
 
@@ -90,106 +134,82 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(f"CI release publisher must run `{earlier}` before `{later}`")
 
     runs = {name: str(step.get("run", "")) for name, step in named.items()}
-    if (
-        "cargo install --locked cargo-cyclonedx --version 0.5.10"
-        not in runs["Install cargo-cyclonedx"]
-    ):
-        errors.append("CI release publisher must install the locked cargo-cyclonedx 0.5.10 tool")
-    rust_sbom = runs["Generate Rust SBOM"]
-    for expected in (
-        "cargo cyclonedx",
-        "--format json",
-        "--target all",
-        "--override-filename",
-        "--no-default-features",
-        "--features cuda",
-    ):
-        if expected not in rust_sbom:
-            errors.append(f"CI release Rust SBOM generation must include `{expected}`")
-    if not re.search(r"(?m)^\s*--override-filename\s+sbom-rust(?:\s|$)", rust_sbom):
-        errors.append(
-            "CI release Rust SBOM generation must set `--override-filename sbom-rust` as the exact stem"
-        )
-
+    commands = {
+        "Install cargo-cyclonedx": (
+            "cargo install",
+            ("--locked", "cargo-cyclonedx", "--version 0.5.10"),
+        ),
+        "Generate Rust SBOM": (
+            "cargo cyclonedx",
+            (
+                "--format json",
+                "--target all",
+                "--override-filename sbom-rust",
+                "--features cuda",
+            ),
+        ),
+        "Validate release SBOM identity": (
+            "uv run",
+            (
+                "python scripts/validate_release_sbom_identity.py",
+                "--rust-sbom artifacts/sbom-rust.json",
+                "--python-sbom artifacts/sbom-python.json",
+                '--expected-version "$RELEASE_VERSION"',
+            ),
+        ),
+        "Validate release asset matrix and generate checksums": (
+            "uv run",
+            (
+                "python scripts/validate_release_binary_artifacts.py",
+                "--artifacts-dir artifacts",
+                "--checksums-out artifacts/CHECKSUMS.txt",
+                "--additional-checksum-asset artifacts/sbom-rust.json",
+                "--additional-checksum-asset artifacts/sbom-python.json",
+                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+            ),
+        ),
+        "Prepare release asset path list": (
+            "uv run",
+            (
+                "python scripts/prepare_release_asset_paths.py",
+                "--artifacts-dir artifacts",
+                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+                "--github-output",
+            ),
+        ),
+        "Verify SLSA provenance": (
+            "gh attestation verify",
+            (
+                '--repo "$GITHUB_REPOSITORY"',
+                '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"',
+                "--source-ref refs/heads/main",
+            ),
+        ),
+        "Verify GitHub release asset coverage": (
+            "uv run",
+            (
+                "python scripts/verify_github_release_assets.py",
+                "--local-artifacts-dir artifacts",
+                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+                "--wait-seconds",
+                "--poll-interval-seconds",
+            ),
+        ),
+    }
+    for name, (prefix, tokens) in commands.items():
+        if not _command_with(runs[name], prefix, tokens):
+            errors.append(f"CI release publisher `{name}` must run `{prefix}` with {tokens}")
     python_sbom = runs["Prepare clean Python SBOM environments"]
-    for expected in (
-        "uv export --locked --no-dev --no-emit-project",
-        "uv pip sync",
-        "--require-hashes",
-        "scripts/release-sbom-tools.txt",
-        "cyclonedx-py environment",
-        "-E",
-        "--output-file artifacts/sbom-python.json",
+    for prefix, tokens in (
+        ("uv export", ("--locked", "--no-dev", "--no-emit-project")),
+        ("uv pip sync", ("--require-hashes", "scripts/release-sbom-tools.txt")),
+        (
+            "cyclonedx-py environment",
+            ("-E", "--output-file artifacts/sbom-python.json"),
+        ),
     ):
-        if expected not in python_sbom:
-            errors.append(f"CI release Python SBOM environment must include `{expected}`")
-
-    identity_step = named["Validate release SBOM identity"]
-    identity_env = identity_step.get("env", {})
-    identity = runs["Validate release SBOM identity"] + str(
-        identity_env.get("RELEASE_VERSION", "") if isinstance(identity_env, dict) else ""
-    )
-    for expected in (
-        "sbom-rust.json",
-        "sbom-python.json",
-        "release_version",
-        'component.get("name")',
-        'component.get("version")',
-        "Cargo.toml",
-        "pyproject.toml",
-    ):
-        if expected not in identity:
-            errors.append(f"CI release SBOM identity validation must include `{expected}`")
-
-    checksum = runs["Validate release asset matrix and generate checksums"]
-    for expected in (
-        "scripts/validate_release_binary_artifacts.py",
-        "--artifacts-dir artifacts",
-        "--checksums-out artifacts/CHECKSUMS.txt",
-        "--additional-checksum-asset artifacts/sbom-rust.json",
-        "--additional-checksum-asset artifacts/sbom-python.json",
-        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
-    ):
-        if expected not in checksum:
-            errors.append(f"CI release checksum generation must include `{expected}`")
-
-    path_run = runs["Prepare release asset path list"]
-    for expected in (
-        "tg-linux-amd64-cpu",
-        "tg-macos-amd64-cpu",
-        "tg-windows-amd64-cpu.exe",
-        "tg-linux-amd64-nvidia",
-        "tg-windows-amd64-nvidia.exe",
-        "sbom-rust.json",
-        "sbom-python.json",
-        "CHECKSUMS.txt",
-        "upload_files",
-        "subject_paths",
-    ):
-        if expected not in path_run:
-            errors.append(f"CI release asset path preparation must include `{expected}`")
-
-    verify_attest = runs["Verify SLSA provenance"]
-    for expected in (
-        "gh attestation verify",
-        '--repo "$GITHUB_REPOSITORY"',
-        '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"',
-        "--source-ref refs/heads/main",
-    ):
-        if expected not in verify_attest:
-            errors.append(f"CI release provenance verification must include `{expected}`")
-
-    verify_upload = runs["Verify GitHub release asset coverage"]
-    for expected in (
-        "uv run --no-project",
-        "scripts/verify_github_release_assets.py",
-        "--local-artifacts-dir artifacts",
-        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
-        "--wait-seconds",
-        "--poll-interval-seconds",
-    ):
-        if expected not in verify_upload:
-            errors.append(f"CI release upload verification must include `{expected}`")
+        if not _command_with(python_sbom, prefix, tokens):
+            errors.append(f"CI release Python SBOM step must run `{prefix}` with {tokens}")
 
     attest = named["Generate SLSA provenance"]
     if attest.get("uses") != "actions/attest-build-provenance@v4":
@@ -232,16 +252,20 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         errors.append("CI release upload must use the semantic-release tag")
     if upload_with.get("fail_on_unmatched_files") is not True:
         errors.append("CI release upload must fail on unmatched files")
-    upload_files = str(upload_with.get("files", ""))
-    for expected in (
+    expected_uploads = {
         "${{ steps.release_paths.outputs.upload_files }}",
         "artifacts/native/**/tg-*.sigstore.json",
         "artifacts/sbom-rust.json.sigstore.json",
         "artifacts/sbom-python.json.sigstore.json",
         "artifacts/CHECKSUMS.txt.sigstore.json",
-    ):
-        if expected not in upload_files:
-            errors.append(f"CI release upload must explicitly cover `{expected}`")
+    }
+    upload_files = {
+        line.strip() for line in str(upload_with.get("files", "")).splitlines() if line.strip()
+    }
+    if upload_files != expected_uploads:
+        errors.append(
+            "CI release upload must contain exactly the managed assets and signing bundles"
+        )
     return errors
 
 

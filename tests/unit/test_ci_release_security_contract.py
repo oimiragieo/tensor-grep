@@ -35,27 +35,25 @@ def _workflow() -> dict[str, object]:
         "Generate Rust SBOM": """cargo cyclonedx --format json --target all \\
           --override-filename sbom-rust --no-default-features --features cuda""",
         "Prepare clean Python SBOM environments": """uv export --locked --no-dev --no-emit-project
-uv pip sync --require-hashes
-uv pip sync scripts/release-sbom-tools.txt
+uv pip sync --require-hashes scripts/release-sbom-tools.txt
 cyclonedx-py environment -E --output-file artifacts/sbom-python.json""",
-        "Validate release SBOM identity": """release_version
-sbom-rust.json sbom-python.json
-component.get(\"name\") component.get(\"version\")
-Cargo.toml pyproject.toml""",
-        "Validate release asset matrix and generate checksums": """scripts/validate_release_binary_artifacts.py
---artifacts-dir artifacts --checksums-out artifacts/CHECKSUMS.txt
---additional-checksum-asset artifacts/sbom-rust.json
---additional-checksum-asset artifacts/sbom-python.json
+        "Validate release SBOM identity": """uv run --no-project --python 3.12 -- python scripts/validate_release_sbom_identity.py \\
+--rust-sbom artifacts/sbom-rust.json --python-sbom artifacts/sbom-python.json \\
+--expected-version \"$RELEASE_VERSION\"""",
+        "Validate release asset matrix and generate checksums": """uv run --no-project --python 3.12 -- python scripts/validate_release_binary_artifacts.py \\
+--artifacts-dir artifacts --checksums-out artifacts/CHECKSUMS.txt \\
+--additional-checksum-asset artifacts/sbom-rust.json \\
+--additional-checksum-asset artifacts/sbom-python.json \\
 --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\"""",
-        "Prepare release asset path list": """tg-linux-amd64-cpu tg-macos-amd64-cpu
-tg-windows-amd64-cpu.exe tg-linux-amd64-nvidia tg-windows-amd64-nvidia.exe
-sbom-rust.json sbom-python.json CHECKSUMS.txt upload_files subject_paths""",
-        "Verify SLSA provenance": """gh attestation verify subject
---repo \"$GITHUB_REPOSITORY\"
---signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/ci.yml\"
+        "Prepare release asset path list": """uv run --no-project --python 3.12 -- python scripts/prepare_release_asset_paths.py \\
+--artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
+--github-output \"$GITHUB_OUTPUT\"""",
+        "Verify SLSA provenance": """gh attestation verify subject \\
+--repo \"$GITHUB_REPOSITORY\" \\
+--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/ci.yml\" \\
 --source-ref refs/heads/main""",
-        "Verify GitHub release asset coverage": """uv run --no-project scripts/verify_github_release_assets.py
---local-artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\"
+        "Verify GitHub release asset coverage": """uv run --no-project --python 3.12 -- python scripts/verify_github_release_assets.py \\
+--local-artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
 --wait-seconds 120 --poll-interval-seconds 5""",
     }
     for step in steps:
@@ -118,6 +116,14 @@ def _errors(workflow: dict[str, object]) -> list[str]:
     )
 
 
+def _step(workflow: dict[str, object], name: str) -> dict[str, object]:
+    return next(  # type: ignore[return-value,union-attr]
+        step
+        for step in workflow["jobs"]["publisher"]["steps"]
+        if step["name"] == name  # type: ignore[index]
+    )
+
+
 def test_release_security_contract_accepts_complete_security_spine() -> None:
     assert _errors(_workflow()) == []
 
@@ -148,24 +154,16 @@ def test_release_security_contract_requires_each_capability(step_name: str, expe
 
 def test_release_security_contract_rejects_signing_identity_drift() -> None:
     workflow = deepcopy(_workflow())
-    signing = next(  # type: ignore[union-attr]
-        step
-        for step in workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
-        if step["name"] == "Sign release subjects with Sigstore"
-    )
+    signing = _step(workflow, "Sign release subjects with Sigstore")
     signing["with"]["verify-cert-identity"] = "https://example.invalid/workflow"  # type: ignore[index]
     assert any("verify-cert-identity" in error for error in _errors(workflow))
 
 
 def test_release_security_contract_rejects_unuploaded_bundle() -> None:
     workflow = _workflow()
-    upload = next(  # type: ignore[union-attr]
-        step
-        for step in workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
-        if step["name"] == "Upload GitHub release assets"
-    )
+    upload = _step(workflow, "Upload GitHub release assets")
     upload["with"]["files"] = "${{ steps.release_paths.outputs.upload_files }}"  # type: ignore[index]
-    assert any("sigstore.json" in error for error in _errors(workflow))
+    assert any("exactly the managed assets" in error for error in _errors(workflow))
 
 
 def test_release_security_contract_rejects_second_publisher() -> None:
@@ -177,26 +175,80 @@ def test_release_security_contract_rejects_second_publisher() -> None:
 
 
 @pytest.mark.parametrize(
-    ("step_name", "expected"),
+    ("step_name", "removed", "expected"),
     [
-        ("Install cargo-cyclonedx", "cargo-cyclonedx 0.5.10"),
-        ("Generate Rust SBOM", "cargo cyclonedx"),
-        ("Prepare clean Python SBOM environments", "uv export"),
-        ("Validate release SBOM identity", "sbom-rust.json"),
-        ("Validate release asset matrix and generate checksums", "CHECKSUMS.txt"),
-        ("Prepare release asset path list", "tg-linux-amd64-cpu"),
-        ("Verify SLSA provenance", "gh attestation verify"),
-        ("Verify GitHub release asset coverage", "verify_github_release_assets.py"),
+        ("Install cargo-cyclonedx", "--locked", "cargo install"),
+        ("Generate Rust SBOM", "--target all", "cargo cyclonedx"),
+        ("Prepare clean Python SBOM environments", "--require-hashes", "uv pip sync"),
+        ("Validate release SBOM identity", "--rust-sbom", "validate_release_sbom_identity.py"),
+        (
+            "Validate release asset matrix and generate checksums",
+            "--checksums-out",
+            "validate_release_binary",
+        ),
+        ("Prepare release asset path list", "--github-output", "prepare_release_asset_paths.py"),
+        ("Verify SLSA provenance", "--signer-workflow", "gh attestation verify"),
+        (
+            "Verify GitHub release asset coverage",
+            "--local-artifacts-dir",
+            "verify_github_release_assets.py",
+        ),
     ],
 )
 def test_release_security_contract_rejects_missing_command_contract(
-    step_name: str, expected: str
+    step_name: str, removed: str, expected: str
 ) -> None:
     workflow = _workflow()
-    step = next(  # type: ignore[union-attr]
-        item
-        for item in workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
-        if item["name"] == step_name
-    )
-    step["run"] = "true"
+    step = _step(workflow, step_name)
+    step["run"] = str(step["run"]).replace(removed, "")
     assert any(expected in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize("bypass", [{"if": "false"}, {"continue-on-error": True}])
+def test_release_security_contract_rejects_bypassed_security_step(
+    bypass: dict[str, object],
+) -> None:
+    workflow = _workflow()
+    step = _step(workflow, "Verify SLSA provenance")
+    step.update(bypass)
+    assert any("must not bypass `Verify SLSA provenance`" in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize("prefix", ["# ", "echo "])
+def test_release_security_contract_rejects_nonexecuted_command_text(prefix: str) -> None:
+    workflow = _workflow()
+    step = _step(workflow, "Verify SLSA provenance")
+    step["run"] = prefix + str(step["run"])
+    assert any("gh attestation verify" in error for error in _errors(workflow))
+
+
+def test_release_security_contract_rejects_second_action_in_same_job() -> None:
+    workflow = _workflow()
+    steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
+    steps.insert(0, {"name": "Alternate upload", "uses": "softprops/action-gh-release@v3"})
+    assert any("exactly one GitHub release action" in error for error in _errors(workflow))
+
+
+def test_release_security_contract_rejects_direct_release_command() -> None:
+    workflow = _workflow()
+    steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
+    steps.insert(0, {"name": "Alternate upload", "run": "gh release upload v1 artifact"})
+    assert any("direct release publication" in error for error in _errors(workflow))
+
+
+def test_release_security_contract_rejects_extra_upload_glob() -> None:
+    workflow = _workflow()
+    upload = _step(workflow, "Upload GitHub release assets")
+    upload["with"]["files"] += "\nartifacts/**"  # type: ignore[index,operator]
+    assert any("exactly the managed assets" in error for error in _errors(workflow))
+
+
+def test_release_security_contract_rejects_malformed_workflow() -> None:
+    errors = validate_ci_release_security_contract(ci_workflow="jobs: [")
+    assert any("cannot parse workflow YAML" in error for error in errors)
+
+
+def test_release_security_contract_rejects_non_mapping_jobs() -> None:
+    assert validate_ci_release_security_contract(ci_workflow="jobs: []") == [
+        "CI release security contract requires a jobs mapping"
+    ]
