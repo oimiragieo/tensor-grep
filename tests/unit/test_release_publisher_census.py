@@ -143,6 +143,9 @@ def test_publisher_census_rejects_release_write_authority(
         "${{ format('{0}', secrets.RELEASE_PAT) }}",
         "${{ secrets ['RELEASE_PAT'] }}",
         "${{ format('{1}', '}}', secrets.RELEASE_PAT) }}",
+        "${{ toJSON(secrets) }}",
+        "${{ fromJSON(toJSON(secrets)).RELEASE_PAT }}",
+        "${{ secrets.GITHUB_TOKEN }}:${{ toJSON(secrets) }}",
     ],
 )
 def test_publisher_census_rejects_non_github_secret(expression: str) -> None:

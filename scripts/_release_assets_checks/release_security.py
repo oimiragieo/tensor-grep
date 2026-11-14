@@ -23,7 +23,7 @@ _PUBLISH_ACTIONS = (
     "python-semantic-release/python-semantic-release",
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
-_SECRET_DEREFERENCE = re.compile(r"\bsecrets\s*(?:\.|\[)")
+_SECRET_CONTEXT = re.compile(r"\bsecrets\b")
 _GITHUB_TOKEN_EXPRESSION = re.compile(r"\${{\s*secrets\s*\.\s*GITHUB_TOKEN\s*}}")
 
 
@@ -116,7 +116,7 @@ def _workflow_fingerprint(parsed: object) -> str:
 
 def _has_unapproved_secret(value: object) -> bool:
     if isinstance(value, str):
-        return bool(_SECRET_DEREFERENCE.search(_GITHUB_TOKEN_EXPRESSION.sub("", value)))
+        return bool(_SECRET_CONTEXT.search(_GITHUB_TOKEN_EXPRESSION.sub("", value)))
     if isinstance(value, dict):
         return any(_has_unapproved_secret(item) for item in value.values())
     if isinstance(value, list):
