@@ -247,6 +247,8 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
     jobs = parsed.get("jobs")
     if not isinstance(jobs, dict):
         return [*errors, "Dependabot automation workflow must define jobs"]
+    if set(jobs) != {"dependabot-triage"}:
+        errors.append("Dependabot automation workflow must define only `dependabot-triage` job")
     triage = jobs.get("dependabot-triage")
     if not isinstance(triage, dict):
         return [

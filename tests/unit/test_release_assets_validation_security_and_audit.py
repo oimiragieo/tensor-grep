@@ -294,12 +294,22 @@ def test_should_reject_dependabot_actor_without_dependabot_pr_author():
     spec.loader.exec_module(module)
 
     workflow_path = root / ".github" / "workflows" / "dependabot-automation.yml"
-    workflow = workflow_path.read_text(encoding="utf-8").replace(
+    safe_workflow = workflow_path.read_text(encoding="utf-8")
+    workflow = safe_workflow.replace(
         "github.event.pull_request.user.login == 'dependabot[bot]'",
         "github.actor == 'dependabot[bot]'",
     )
     errors = module.validate_dependabot_automation_workflow_content(workflow_content=workflow)
     assert any("must only run for dependabot[bot]" in error for error in errors)
+
+    workflow = safe_workflow.replace(
+        "  dependabot-triage:\n",
+        "  unguarded:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo unsafe\n"
+        "  dependabot-triage:\n",
+        1,
+    )
+    errors = module.validate_dependabot_automation_workflow_content(workflow_content=workflow)
+    assert any("must define only `dependabot-triage` job" in error for error in errors)
 
 
 def test_should_require_dependabot_automation_explicit_repo_targeting():
