@@ -1249,10 +1249,21 @@ def _run_ast_workflow_cli(argv: list[str]) -> None:
 
 
 def _scan_requires_full_cli(scan_args: list[str]) -> bool:
-    return any(
-        arg in _SCAN_FULL_CLI_FLAGS or arg.startswith(_SCAN_FULL_CLI_FLAG_PREFIXES)
-        for arg in scan_args
-    )
+    index = 0
+    while index < len(scan_args):
+        arg = scan_args[index]
+        if arg in {"--config", "-c"}:
+            if index + 1 >= len(scan_args):
+                return True
+            index += 2
+            continue
+        if arg.startswith("--config="):
+            if not arg.partition("=")[2]:
+                return True
+            index += 1
+            continue
+        return True
+    return False
 
 
 # ast-grep semantic options that the native `run` handler cannot serve itself and

@@ -2662,6 +2662,20 @@ def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     assert seen == {"argv": ["scan", "--config", "sgconfig.yml"]}
 
 
+def test_main_entry_should_route_scan_path_to_full_cli(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "scan", "src/sub"])
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail(f"fast path received {argv}")
+    )
+
+    bootstrap.main_entry()
+
+    assert seen == {"full_cli": True}
+
+
 def test_main_entry_should_route_run_to_full_cli(monkeypatch):
     seen: dict[str, object] = {}
 
