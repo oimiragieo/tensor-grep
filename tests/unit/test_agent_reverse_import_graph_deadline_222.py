@@ -138,15 +138,21 @@ def test_reverse_import_distances_returns_partial_not_discarded(
     deadline = real_monotonic() + 3600.0
     past_deadline = deadline + 1.0
 
-    call_count = 0
+    confirmed_count = 0
+    real_details = _repo_map._python_module_match_details
+
+    def details(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal confirmed_count
+        result = real_details(*args, **kwargs)
+        if result["matched"]:
+            confirmed_count += 1
+        return result
 
     def clock() -> float:
-        nonlocal call_count
-        call_count += 1
-        # First 5 inner-loop checks read "before deadline"; the 6th onward reads "already past"
-        # -- lets a few leaves accumulate into `distances` before the trip.
-        return past_deadline if call_count > 5 else real_monotonic()
+        # Expire after real confirmation progress, independent of added deadline checks.
+        return past_deadline if confirmed_count >= 2 else real_monotonic()
 
+    monkeypatch.setattr(_repo_map, "_python_module_match_details", details)
     monkeypatch.setattr(_repo_map.time, "monotonic", clock)
     flag = _repo_map._DeadlineBreakFlag()
     result = _repo_map._reverse_import_distances(

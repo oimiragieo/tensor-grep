@@ -31,6 +31,7 @@ from tensor_grep.cli import (
     lang_registry,
     lang_suffixes,
 )
+from tensor_grep.cli import repo_map_graph as _repo_map_graph
 from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
@@ -5190,15 +5191,7 @@ def _file_summaries(symbols: list[dict[str, Any]], ranked_files: list[str]) -> l
 
 
 def _source_tokens(source_files: list[str]) -> set[str]:
-    tokens: set[str] = set()
-    for current in source_files:
-        path = Path(current)
-        stem = path.stem.lower()
-        tokens.add(stem)
-        for part in re.split(r"[^A-Za-z0-9_]+", stem):
-            if part:
-                tokens.add(part)
-    return tokens
+    return _repo_map_graph.source_tokens(source_files)
 
 
 # Directory-index reverse-importers fix (tg importers correctness gap, express@4.21.1 dogfood):
@@ -5310,73 +5303,27 @@ def _reverse_import_distances(
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
     *,
+    repo_root: Path | str | None = None,
+    trusted_seed_files: set[str] | None = None,
+    uncertain_candidates: dict[str, dict[str, Any]] | None = None,
+    candidate_statuses: dict[str, dict[str, Any]] | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, int]:
-    """#222 residual fix (cold-path assembly-tail SLA, real-workspace-scale continuation of
-    #669/#671): this BFS's inner loop re-scans ALL of ``all_files`` at EACH of up to 3 depth
-    levels, and for every candidate does O(``len(frontier)``) work inside ``_import_graph_bonus``
-    -- so cost is O(depth x len(all_files) x len(frontier)), and ``frontier`` itself grows with
-    each wave once the import graph has any real fan-in (a popular shared module -- exactly the
-    common case). Pre-fix, this function itself had NO deadline check anywhere, even though every
-    sibling stage of its DOMINANT caller, ``_build_context_pack_from_map`` (the symbol-scoring
-    loop, ``_personalized_reverse_import_pagerank``, both ``_detect_vendored_subtrees`` calls),
-    already honored the shared budget -- by far the most expensive post-deadline tail consumer on
-    the `tg agent` path. A SECOND, independently-reachable call site had the identical gap:
-    ``_relevant_tests_for_symbol``'s ``if caller_files:`` block already declared ``deadline_
-    monotonic``/``deadline_hit`` in its own signature (used by its direct_definition_tests loop)
-    but never forwarded them here -- and ``build_symbol_callers_from_map`` reaches that block with
-    BOTH a non-None ``caller_files`` and a real ``deadline_monotonic``, so ``tg callers --deadline
-    SYMBOL`` on a high-fan-in symbol (and the agent capsule's caller-evidence path, which calls
-    into the same builder) could still run this whole-repo BFS unbounded (#691 gate NIT-1). Both
-    call sites are now gated identically.
-
-    Measured (direct, non-subprocess probe, a hub-fan-in-shaped synthetic tree, 5-seed BFS):
-    0.99s at 2,000 files -> 13.6s at 6,000 (13.8x for 3x files) -> 60.3s at 12,000 (61x for 6x
-    files, ~4.4x for the last 2x step alone) -- a ~n^2.2 curve, clearly super-linear, and the
-    dominant cost of ``_build_context_pack_from_map`` at scale (60.3s of that call's 71.5s total
-    at 12,000 files = 84%).
-
-    Fix shape mirrors every other sibling stage in this module (``_personalized_reverse_import_
-    pagerank``, the symbol-scoring loop above, ``_precomputed_validation_files_for_root``,
-    ``_detect_vendored_subtrees``): a per-ITEM check inside the expensive inner loop, not just a
-    per-depth (outer-loop) check -- the outer loop only ever runs 3 times regardless of repo size,
-    so an outer-only check would not bound anything (the #669/#671 lesson: bound the loop whose
-    OWN per-iteration cost is what scales). On expiry this returns the PARTIAL ``distances``
-    already accumulated -- never discarded -- exactly like every caller already treats a missing
-    entry (``file_distances.get(x)`` / ``current_path in file_distances``) as "no graph-distance
-    signal for this file," the same honest degrade ``_personalized_reverse_import_pagerank``'s own
-    docstring documents for its ``{}`` abandon. Optional, default ``None`` -- every pre-existing
-    call site (this function has 4) is a byte-identical no-op.
-    """
-    with _profiling_phase(_profiling_collector, "graph_bfs"):
-        distances: dict[str, int] = {}
-        frontier = list(seed_files)
-        seen = set(seed_files)
-
-        for depth in range(1, 4):
-            dependency_aliases = {
-                current: _module_aliases_for_path(current) for current in frontier
-            }
-            next_frontier: list[str] = []
-            for current in all_files:
-                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-                    if deadline_hit is not None:
-                        deadline_hit.hit = True
-                    return distances
-                if current in seen:
-                    continue
-                bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
-                if bonus <= 0:
-                    continue
-                distances[current] = depth
-                seen.add(current)
-                next_frontier.append(current)
-            if not next_frontier:
-                break
-            frontier = next_frontier
-        return distances
+    return _repo_map_graph.reverse_import_distances(
+        _self,
+        seed_files,
+        all_files,
+        imports_by_file,
+        repo_root=repo_root,
+        trusted_seed_files=trusted_seed_files,
+        uncertain_candidates=uncertain_candidates,
+        candidate_statuses=candidate_statuses,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+        _profiling_collector=_profiling_collector,
+    )
 
 
 def _reverse_importers(
@@ -5514,17 +5461,9 @@ def _test_import_bonus(
     imports_by_file: dict[str, list[str]],
     file_distances: dict[str, int],
 ) -> int:
-    bonus = 0
-    for import_name in imports_by_file.get(test_path, []):
-        lowered = import_name.lower()
-        if any(token and token in lowered for token in source_tokens):
-            bonus += 3
-        for file_path, depth in file_distances.items():
-            aliases = _module_aliases_for_path(file_path)
-            if any(alias and alias in lowered for alias in aliases):
-                bonus += max(1, 4 - depth)
-                break
-    return bonus
+    return _repo_map_graph.test_import_bonus(
+        _self, test_path, source_tokens, imports_by_file, file_distances
+    )
 
 
 def _test_graph_score(
@@ -5534,21 +5473,9 @@ def _test_graph_score(
     graph_scores: dict[str, float],
     file_scores: dict[str, int],
 ) -> float:
-    aliases_by_file = {current: _module_aliases_for_path(current) for current in source_files}
-    score = 0.0
-    matched_files: set[str] = set()
-    max_file_score = max(file_scores.values(), default=0)
-    for import_name in imports_by_file.get(test_path, []):
-        lowered = import_name.lower()
-        for current, aliases in aliases_by_file.items():
-            if current in matched_files:
-                continue
-            if any(alias and alias in lowered for alias in aliases):
-                matched_files.add(current)
-                score += graph_scores.get(current, 0.0)
-                if max_file_score > 0:
-                    score += file_scores.get(current, 0) / max_file_score
-    return score
+    return _repo_map_graph.test_graph_score(
+        _self, test_path, source_files, imports_by_file, graph_scores, file_scores
+    )
 
 
 # opt10 #3 (deep-dive): on the callers/impact/refs paths, _build_context_pack_from_map's
@@ -13144,86 +13071,20 @@ def _confirm_import_edges(
     candidate_importer: Path,
     target_file: str,
     repo_root: Path | str | None,
+    *,
+    raw_entries: list[dict[str, Any]] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
-    """Re-parse ONE prefiltered candidate file and confirm which (if any) of its raw imports
-    actually resolve to ``target_file``.
-
-    Precision step for `tg importers`: the alias-substring prefilter (`_reverse_importers`)
-    deliberately over-counts (it is the same mechanism behind the Case-4 false-edge bug) --
-    this is what turns "maybe imports it" into "confirmed imports it, on this exact line".
-    """
-    spec = lang_registry.spec_for_path(candidate_importer)
-    language_id = spec.language_id if spec is not None else None
-    if language_id not in ("javascript", "typescript", "rust", "python"):
-        return []
-
-    edges: list[dict[str, Any]] = []
-    seen_lines: set[int] = set()
-    for raw_entry in _imports_with_lines_for_path(candidate_importer):
-        module = str(raw_entry.get("module", ""))
-        line = int(raw_entry.get("line", 0) or 0)
-        dynamic = bool(raw_entry.get("dynamic", False))
-        dynamic_unresolved = bool(raw_entry.get("dynamic_unresolved", False))
-        if dynamic_unresolved:
-            # #93 SUB-1: no literal module name to compare against target_file -- never assert
-            # a confirmed edge for an import whose target we can't actually read (precision
-            # matters more than recall past this point).
-            continue
-        python_provenance: list[str] = []
-        if language_id in ("javascript", "typescript"):
-            matched = _js_ts_module_matches_definition(
-                candidate_importer, module, target_file, repo_root
-            )
-        elif language_id == "rust":
-            matched = _rust_module_matches_definition(
-                candidate_importer, module, target_file, repo_root
-            )
-        else:
-            # Python: resolve-then-compare via the SAME precise resolver the forward
-            # `tg imports` uses, symmetric with the JS/TS/Rust branches above (#74 review
-            # fix). `level` (0 for absolute, >=1 for `from .`/`from ..`) is carried on the raw
-            # entry by `_python_imports_with_lines` -- threading it through here is what lets
-            # `_python_module_candidates` resolve a relative import correctly instead of
-            # falling back to a bare path-suffix match that ignores directory context.
-            level = int(raw_entry.get("level", 0) or 0)
-            matched, python_provenance = _python_module_matches_definition(
-                candidate_importer, module, target_file, repo_root, level=level
-            )
-        if not matched or line in seen_lines:
-            continue
-        seen_lines.add(line)
-        provenance = "parser-backed" if language_id == "python" else "heuristic"
-        edge: dict[str, Any] = {
-            "file": str(candidate_importer),
-            "line": line,
-            "text": _source_line_text(candidate_importer, line),
-            "kind": "import-consumer",
-            "edge_kind": "reverse-import",
-            "module": module,
-            "provenance": provenance,
-            "resolution_confidence": _import_graph_resolution_confidence(provenance),
-        }
-        if python_provenance == ["sys-path-insert"]:
-            # #155 fix: report the sys.path-hack tag honestly on the reverse edge too, mirroring
-            # the forward `tg imports` path (`_resolve_raw_import_entry`). A SEPARATE field, not
-            # an overwrite of `provenance` above -- that string drives
-            # `_import_graph_resolution_confidence`'s enum ("parser-backed"/"heuristic"/
-            # "regex-heuristic", pinned by test_import_span_targeting.py) and this edge is still
-            # exactly as parser-confirmed (exact AST-parsed, exact resolved-path match) as any
-            # other Python edge, just resolved via a sys.path-hacked root instead of a standard
-            # one.
-            edge["path_provenance"] = "sys-path-insert"
-        if dynamic:
-            # Payload-bloat fix (#93 SUB-1 follow-up, same rationale as
-            # _resolve_raw_import_entry): preserve the dynamic markers on an edge that IS
-            # dynamic -- a `tg importers` consumer needs to know this edge came from a dynamic
-            # call, not a static import statement -- but a static edge (the majority) gains
-            # nothing from two always-False keys, and that bloat tipped the importers payload
-            # past the <10%-of-map guard.
-            edge["dynamic"] = dynamic
-            edge["dynamic_unresolved"] = dynamic_unresolved
-        edges.append(edge)
-    return edges
+    return _repo_map_graph.confirm_edges(
+        _self,
+        candidate_importer,
+        target_file,
+        repo_root,
+        raw_entries=raw_entries,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
 
 
 _REVERSE_IMPORTER_TIER_SAME_ANCESTRY = 0
