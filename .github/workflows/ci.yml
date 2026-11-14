@@ -796,6 +796,16 @@ jobs:
             echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
           fi
         shell: bash
+
+      - name: Install Python runtime dependencies for native routing tests
+        shell: bash
+        run: |
+          python - <<'PYEOF' > "$RUNNER_TEMP/tg-runtime-deps.txt"
+          import tomllib
+          for dep in tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]:
+              print(dep)
+          PYEOF
+          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/tg-runtime-deps.txt"
           
       - name: Ensure PCRE2 ripgrep is available
         shell: bash
