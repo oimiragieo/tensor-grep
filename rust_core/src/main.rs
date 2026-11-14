@@ -74,6 +74,7 @@ use tensor_grep_rs::search_error::{
 };
 mod ast_run_remediation;
 mod main_env;
+mod scan_routing;
 mod search_citations_routing;
 mod search_flag_registry;
 mod top_level_help;
@@ -1182,6 +1183,9 @@ fn main() -> anyhow::Result<()> {
 
 fn main_inner() -> anyhow::Result<()> {
     let (raw_args, _managed_runtime) = main_env::collect_main_args()?;
+    if let Some(args) = scan_routing::scan_args_with_separator(&raw_args) {
+        return handle_python_passthrough("scan", args);
+    }
 
     if raw_args.len() <= 1 {
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
@@ -7401,18 +7405,11 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Classify(args) => handle_classify_command(args),
         Commands::Run(args) => handle_ast_run(args).or_else(exit_with_run_error),
         Commands::Scan { args } => {
-            if ast_scan_requires_python_passthrough(&args) {
+            let Some(config_path) = scan_routing::config_only_path(&args) else {
                 return handle_python_passthrough("scan", args);
-            }
+            };
 
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_scan, SessionRequest};
-            let config_path =
-                if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
-                {
-                    Some(args[1].clone())
-                } else {
-                    None
-                };
 
             if let Some(exit_code) = try_resident_execution(SessionRequest::Scan {
                 config_path: config_path.clone(),
@@ -7422,18 +7419,11 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
             handle_ast_scan(config_path.as_deref())
         }
         Commands::Test { args } => {
-            if ast_test_requires_python_passthrough(&args) {
+            let Some(config_path) = scan_routing::config_only_path(&args) else {
                 return handle_python_passthrough("test", args);
-            }
+            };
 
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_test, SessionRequest};
-            let config_path =
-                if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
-                {
-                    Some(args[1].clone())
-                } else {
-                    None
-                };
 
             if let Some(exit_code) = try_resident_execution(SessionRequest::Test {
                 config_path: config_path.clone(),
@@ -7599,33 +7589,9 @@ fn try_resident_execution(
     }
 }
 
-fn ast_scan_requires_python_passthrough(args: &[String]) -> bool {
-    let mut index = 0usize;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--config" | "-c" => index += 2,
-            arg if arg.starts_with("--config=") => index += 1,
-            _ => return true,
-        }
-    }
-    false
-}
-
 fn ast_new_requires_python_passthrough(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--config" || arg == "-c" || arg.starts_with("--config="))
-}
-
-fn ast_test_requires_python_passthrough(args: &[String]) -> bool {
-    let mut index = 0usize;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--config" | "-c" => index += 2,
-            arg if arg.starts_with("--config=") => index += 1,
-            _ => return true,
-        }
-    }
-    false
 }
 
 fn handle_calibrate_command(args: CalibrateArgs) -> anyhow::Result<()> {
