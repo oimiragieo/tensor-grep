@@ -51,8 +51,9 @@ use tensor_grep_rs::gpu_native::{
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
-    defaulted_scope_fields, native_json_text_fields, native_search_pattern_compiles,
-    run_native_search, smart_case_pattern_is_case_insensitive, NativeSearchConfig, SearchStats,
+    defaulted_scope_fields, emit_index_binary_match_warning, native_json_text_fields,
+    native_search_pattern_compiles, run_native_search, smart_case_pattern_is_case_insensitive,
+    NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_python_passthrough_command_captured,
@@ -66,6 +67,10 @@ use tensor_grep_rs::routing::{
     gpu_proof_fields, native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
     plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
+};
+use tensor_grep_rs::search_error::{
+    exit_json_search_runtime_error_if_needed, exit_structured_search_error_if_needed,
+    handle_search_runtime_error, refuse_structured_pcre2,
 };
 mod ast_run_remediation;
 mod main_env;
@@ -1343,7 +1348,11 @@ fn main_inner() -> anyhow::Result<()> {
     }
 
     if should_use_positional_cli(&raw_args) {
-        return run_positional_cli(PositionalCli::parse_from(raw_args));
+        let cli = PositionalCli::parse_from(raw_args);
+        let json = cli.json;
+        let ndjson = cli.ndjson;
+        return run_positional_cli(cli)
+            .or_else(|err| handle_search_runtime_error(json, ndjson, false, err));
     }
 
     let cli = CommandCli::parse_from(raw_args);
@@ -1460,13 +1469,14 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         return Ok(None);
     }
 
-    let rg_args = match parse_early_ripgrep_args(raw_args) {
-        Some(args) => args,
+    let (rg_args, explicit_rg_format) = match parse_early_ripgrep_args_with_metadata(raw_args) {
+        Some(parsed) => parsed,
         None => return Ok(None),
     };
     if !should_use_early_ripgrep_fast_path(&rg_args) {
         return Ok(None);
     }
+    refuse_structured_pcre2(rg_args.pcre2, rg_args.json, false, explicit_rg_format);
     if ripgrep_args_need_broad_generated_guard(&rg_args) {
         let generated_dirs = generated_scan_dir_names(&rg_args.paths, rg_args.files);
         if !generated_dirs.is_empty() {
@@ -1475,7 +1485,13 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         }
     }
 
-    let exit_code = execute_ripgrep_search(&rg_args)?;
+    let exit_code = match execute_ripgrep_search(&rg_args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            handle_search_runtime_error(rg_args.json, false, explicit_rg_format, err)?;
+            return Ok(None);
+        }
+    };
     Ok(Some(exit_code))
 }
 
@@ -1483,12 +1499,20 @@ fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Re
     if !ripgrep_is_available() {
         return Ok(None);
     }
-    let rg_args = match parse_default_search_frontdoor_args(raw_args) {
-        Some(args) => args,
-        None => return Ok(None),
-    };
+    let (rg_args, explicit_rg_format) =
+        match parse_default_search_frontdoor_args_with_metadata(raw_args) {
+            Some(parsed) => parsed,
+            None => return Ok(None),
+        };
+    refuse_structured_pcre2(rg_args.pcre2, rg_args.json, false, explicit_rg_format);
 
-    let exit_code = execute_ripgrep_search(&rg_args)?;
+    let exit_code = match execute_ripgrep_search(&rg_args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            handle_search_runtime_error(rg_args.json, false, explicit_rg_format, err)?;
+            return Ok(None);
+        }
+    };
     Ok(Some(exit_code))
 }
 
@@ -1508,8 +1532,18 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
         Some(args) => args,
         None => return Ok(None),
     };
+    let positional = PositionalCli::try_parse_from(raw_args).ok();
+    let json = positional.as_ref().is_some_and(|cli| cli.json);
+    let ndjson = positional.as_ref().is_some_and(|cli| cli.ndjson);
+    refuse_structured_pcre2(rg_args.pcre2, json, ndjson, false);
 
-    let exit_code = execute_ripgrep_search(&rg_args)?;
+    let exit_code = match execute_ripgrep_search(&rg_args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            handle_search_runtime_error(json, ndjson, false, err)?;
+            return Ok(None);
+        }
+    };
     Ok(Some(exit_code))
 }
 
@@ -1689,31 +1723,6 @@ fn normalize_top_level_search_args(raw_args: &[OsString]) -> Option<Vec<OsString
     search_args.push(OsString::from("search"));
     search_args.extend(raw_args.iter().skip(1).cloned());
     Some(search_args)
-}
-
-fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
-    normalize_top_level_search_args(raw_args)
-}
-
-fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
-    let tokens = raw_args
-        .iter()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    let mut index = 0usize;
-    while index < tokens.len() {
-        let token = &tokens[index];
-        if token == "--format" {
-            index += 1;
-            return tokens.get(index).map(String::as_str) == Some("rg");
-        }
-        if token.starts_with("--format=") {
-            return token.split_once('=').map(|(_, value)| value) == Some("rg");
-        }
-        index += 1;
-    }
-    false
 }
 
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
@@ -2427,7 +2436,9 @@ For intentional broad scans:\n\
 // file's existing tests re-import the moved items via `use tensor_grep_rs::rg_passthrough::{...}`
 // inside `mod tests` below.
 
-fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+fn parse_early_ripgrep_args_with_metadata(
+    raw_args: &[OsString],
+) -> Option<(RipgrepSearchArgs, bool)> {
     let mut args = RipgrepSearchArgs {
         files: false,
         json: false,
@@ -2526,6 +2537,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
     };
 
     let mut positionals: Vec<String> = Vec::new();
+    let mut explicit_rg_format = false;
     let tokens = raw_args
         .iter()
         .skip(2)
@@ -2691,11 +2703,13 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 if tokens.get(index)? != "rg" {
                     return None;
                 }
+                explicit_rg_format = true;
             }
             _ if token.starts_with("--format=") => {
                 if token.split_once('=').map(|(_, value)| value) != Some("rg") {
                     return None;
                 }
+                explicit_rg_format = true;
             }
             "--sort" => {
                 index += 1;
@@ -2776,13 +2790,14 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             args.paths.push(".".to_string());
         }
     }
-    Some(args)
+    Some((args, explicit_rg_format))
 }
 
-fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
-    let search_args = normalize_top_level_format_search_args(raw_args)?;
-    let explicit_rg_format = requests_explicit_rg_format(&search_args);
-    let args = parse_early_ripgrep_args(&search_args)?;
+fn parse_default_search_frontdoor_args_with_metadata(
+    raw_args: &[OsString],
+) -> Option<(RipgrepSearchArgs, bool)> {
+    let search_args = normalize_top_level_search_args(raw_args)?;
+    let (args, explicit_rg_format) = parse_early_ripgrep_args_with_metadata(&search_args)?;
     if args.json && !explicit_rg_format {
         return None;
     }
@@ -2800,7 +2815,18 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
     if !explicit_rg_format && frontdoor_search_is_native_plain_text_eligible(&search_args) {
         return None;
     }
-    (explicit_rg_format || should_use_early_ripgrep_fast_path(&args)).then_some(args)
+    (explicit_rg_format || should_use_early_ripgrep_fast_path(&args))
+        .then_some((args, explicit_rg_format))
+}
+
+#[cfg(test)]
+fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    parse_early_ripgrep_args_with_metadata(raw_args).map(|(args, _)| args)
+}
+
+#[cfg(test)]
+fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    parse_default_search_frontdoor_args_with_metadata(raw_args).map(|(args, _)| args)
 }
 
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
@@ -7359,7 +7385,13 @@ mod tests {
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Search(args) => handle_ripgrep_search(args),
+        Commands::Search(args) => {
+            let json = args.json;
+            let ndjson = args.ndjson;
+            let explicit_rg_format = args.format.as_deref() == Some("rg");
+            handle_ripgrep_search(args)
+                .or_else(|err| handle_search_runtime_error(json, ndjson, explicit_rg_format, err))
+        }
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::Update => handle_python_passthrough("upgrade", vec![]),
@@ -7668,6 +7700,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     );
     let primary_path = paths.first().map(String::as_str).unwrap_or(".");
 
+    refuse_structured_pcre2(cli.pcre2, cli.json, cli.ndjson, false);
     let rg_available = ripgrep_is_available();
     if cli.pcre2 {
         require_ripgrep_or_exit(rg_available, "--pcre2");
@@ -8080,49 +8113,6 @@ fn implicit_search_paths(
     }
 }
 
-fn emit_search_error_json(error: &str, detail: &str) {
-    println!(
-        "{}",
-        serde_json::json!({
-            "version": JSON_OUTPUT_VERSION,
-            "ok": false,
-            "error": error,
-            "detail": detail,
-        })
-    );
-}
-
-fn exit_search_error_json(error: &str, detail: impl Into<String>) -> ! {
-    emit_search_error_json(error, &detail.into());
-    std::process::exit(2);
-}
-
-fn exit_structured_search_error_if_needed(
-    json: bool,
-    ndjson: bool,
-    error: &str,
-    detail: impl Into<String>,
-) -> ! {
-    let detail = detail.into();
-    if json && !ndjson {
-        exit_search_error_json(error, detail);
-    }
-    if ndjson {
-        println!(
-            "{}",
-            serde_json::json!({
-                "version": JSON_OUTPUT_VERSION,
-                "type": "error",
-                "error": error,
-                "detail": detail,
-            })
-        );
-        std::process::exit(2);
-    }
-    eprintln!("{detail}");
-    std::process::exit(2);
-}
-
 fn first_missing_search_path(paths: &[String]) -> Option<String> {
     paths
         .iter()
@@ -8153,46 +8143,6 @@ fn exit_json_search_input_error_if_needed(
             ndjson,
             "path_not_found",
             format!("search path does not exist: {missing_path}"),
-        );
-    }
-}
-
-fn search_error_code_for_message(message: &str) -> Option<&'static str> {
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("non-empty pattern") || lower.contains("pattern must not be empty") {
-        Some("empty_pattern")
-    } else if lower.contains("path does not exist") {
-        Some("path_not_found")
-    } else if lower.contains("failed to compile native search pattern")
-        || lower.contains("regex parse error")
-        || lower.contains("error parsing regex")
-        || lower.contains("invalid regex")
-    {
-        Some("invalid_regex")
-    } else {
-        None
-    }
-}
-
-fn normalize_search_error_detail(error: &str, detail: &str) -> String {
-    if error == "invalid_regex" && !detail.to_ascii_lowercase().contains("invalid regex") {
-        format!("invalid regex pattern: {detail}")
-    } else {
-        detail.to_string()
-    }
-}
-
-fn exit_json_search_runtime_error_if_needed(json: bool, ndjson: bool, err: &anyhow::Error) {
-    if !json && !ndjson {
-        return;
-    }
-    let detail = err.to_string();
-    if let Some(code) = search_error_code_for_message(&detail) {
-        exit_structured_search_error_if_needed(
-            json,
-            ndjson,
-            code,
-            normalize_search_error_detail(code, &detail),
         );
     }
 }
@@ -9400,12 +9350,9 @@ fn broad_scan_refusal_json_envelope(path: &str, message: &str) -> serde_json::Va
     })
 }
 
-/// Task #17: the stdout half of the fix below. A no-op unless BOTH `json` is set AND `err` is
-/// specifically the shared implicit-walk-ceiling refusal (`is_unbounded_implicit_search_walk_
-/// refusal`) -- every other native-search error keeps its pre-existing `--json` behavior
-/// untouched (handled by `exit_json_search_runtime_error_if_needed`'s own code-recognition, which
-/// deliberately does not recognize this refusal's text). Never prints to stderr itself; the
-/// caller's own `eprintln!` is unconditional and unchanged so text-mode output cannot drift.
+/// Task #17: emits the specific broad-scan envelope before the generic JSON runtime-error handler
+/// can classify the same refusal as `backend_error`. Never prints to stderr; the caller preserves
+/// the existing refusal line.
 fn emit_broad_scan_refusal_json_if_needed(json: bool, path: &str, err: &anyhow::Error) {
     if !json {
         return;
@@ -9619,6 +9566,11 @@ fn run_native_search_with_optional_rg_fallback(
             if error_chain_has_broken_pipe(&err) {
                 std::process::exit(BROKEN_PIPE_EXIT_CODE);
             }
+            let err = if json && !ndjson {
+                exit_on_native_multi_pattern_ceiling_refusal(err, json, &refusal_path)
+            } else {
+                err
+            };
             exit_json_search_runtime_error_if_needed(json, ndjson, &err);
             if let Some(rg_args) = rg_fallback {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");
@@ -9633,13 +9585,6 @@ fn run_native_search_with_optional_rg_fallback(
             }
 
             eprintln!("{err}");
-            // Task #17: this is the dominant real-world path for the shared implicit-walk-ceiling
-            // refusal -- a bare `tg search PAT --json` (or the positional `tg PAT --json`) on a
-            // large implicit root always has `rg_fallback = None` under `--json` (every
-            // structured-output `RoutingDecision` sets `allow_rg_fallback = false`), so it falls
-            // straight through to this catch-all. A no-op for every other error kind and for text
-            // mode; see `emit_broad_scan_refusal_json_if_needed`'s doc comment.
-            emit_broad_scan_refusal_json_if_needed(json, &refusal_path, &err);
             std::process::exit(2);
         }
     }
@@ -9673,6 +9618,12 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         args.ndjson,
         &request.patterns,
         &request.paths,
+    );
+    refuse_structured_pcre2(
+        args.pcre2,
+        args.json,
+        args.ndjson,
+        args.format.as_deref() == Some("rg"),
     );
     let query = request.query_display();
     let path_display = request.path_display();
@@ -9858,7 +9809,6 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         BackendSelection::TrigramIndex => {
             // Step 3b (I.4): an indexed-search ERROR is exit 2, never exit 1 (= "no match").
             handle_index_search(&args, &request, &query, warm_loaded_index)
-                .or_else(exit_with_run_error)
         }
         BackendSelection::NativeGpu => {
             let gpu_device_ids = if args.gpu_device_ids.is_empty() {
@@ -10219,6 +10169,7 @@ fn run_index_query(
 
     let include_pattern_metadata = request.patterns.len() > 1;
     let mut matches = Vec::new();
+    let mut binary_matches = BTreeMap::<PathBuf, (String, u64)>::new();
     for (pattern_id, pattern) in request.patterns.iter().enumerate() {
         // H1e (audit): resolve smart-case (-S) per pattern before querying the index.
         // -S is NOT diverted to ripgrep in JSON/ndjson mode (search_requires_ripgrep_
@@ -10231,7 +10182,15 @@ fn run_index_query(
         // --index and warm auto-routing (both reach run_index_query).
         let ignore_case = args.ignore_case
             || (args.smart_case && smart_case_pattern_is_case_insensitive(pattern));
-        let results = index.search(pattern, ignore_case, args.fixed_strings)?;
+        let (results, binary) =
+            index.search_with_binary_matches(pattern, ignore_case, args.fixed_strings)?;
+        for (path, offset) in binary {
+            let display = index
+                .display_path(Path::new(request.primary_path()), &path)
+                .to_string_lossy()
+                .into_owned();
+            binary_matches.entry(path).or_insert((display, offset));
+        }
         // EXEMPT from the raw-bytes/base64-fallback treatment (task #266): `TrigramIndex`
         // persists and returns plain `String`s, so `result.text` is already guaranteed valid
         // UTF-8 by construction -- there is no raw byte source here to preserve losslessly, and
@@ -10261,6 +10220,8 @@ fn run_index_query(
         }));
     }
 
+    let binary_match_files = (!binary_matches.is_empty()).then_some(binary_matches.len());
+
     if args.json {
         return emit_json_search_results(
             RoutingDecision::warm_index(),
@@ -10272,7 +10233,7 @@ fn run_index_query(
             // count. `None` means "cannot report", NEVER "complete".
             None,
             request.path_was_implicit,
-            None,
+            binary_match_files,
         );
     }
 
@@ -10287,8 +10248,20 @@ fn run_index_query(
             // count. `None` means "cannot report", NEVER "complete".
             None,
             request.path_was_implicit,
-            None,
+            binary_match_files,
         );
+    }
+
+    let with_filename = Path::new(request.primary_path()).is_dir()
+        || matches
+            .iter()
+            .map(|matched| matched.file.as_str())
+            .chain(binary_matches.values().map(|(path, _)| path.as_str()))
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1;
+    for (path, offset) in binary_matches.values() {
+        emit_index_binary_match_warning(Path::new(path), *offset, with_filename)?;
     }
 
     if args.count {
@@ -10304,14 +10277,16 @@ fn run_index_query(
         // prevent. emit_count_search_matches omits zero-count files, byte-matching `rg -c` (the
         // rg-compat target); the native CPU engine's separate grep-style zero-count emission is its
         // own pre-existing divergence, deliberately not replicated on the index fast path.
-        emit_count_search_matches(request.primary_path(), &matches)?;
+        if !matches.is_empty() || binary_matches.is_empty() {
+            emit_count_search_matches(request.primary_path(), &matches)?;
+        }
         // fold-in (a): rg exit-parity. `rg -c` (and the native CPU / multi-pattern engines) exit 1
         // on zero matches; run_index_query never did, so `--index --count` on a no-match query
         // exited 0 -- indistinguishable from a successful search. `matches.is_empty()` is
         // equivalent to the old `unique_count == 0` (unique_line_matches never empties a non-empty
         // set), and emit_count_search_matches prints nothing for an empty set on a dir target,
         // matching `rg -c`'s empty-stdout-plus-exit-1 no-match contract.
-        if matches.is_empty() {
+        if matches.is_empty() && binary_matches.is_empty() {
             std::process::exit(1);
         }
         return Ok(());
@@ -10328,7 +10303,7 @@ fn run_index_query(
     )?;
 
     // fold-in (a): see the --count arm above for why this matches native/GPU exit-parity.
-    if matches.is_empty() {
+    if matches.is_empty() && binary_matches.is_empty() {
         std::process::exit(1);
     }
 

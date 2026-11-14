@@ -193,12 +193,10 @@ fn an_unrelated_native_error_is_not_reported_as_broad_scan_refused() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
-    // Pre-existing (out-of-scope for #17) behavior for an UNRECOGNIZED native error under
-    // `--json` is 0 stdout bytes -- `emit_broad_scan_refusal_json_if_needed` must not change
-    // that by over-firing on an error it does not recognize.
-    assert!(
-        output.stdout.is_empty(),
-        "an unrelated error must not gain the broad_scan_refused envelope: stdout={}",
-        String::from_utf8_lossy(&output.stdout)
-    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "backend_error");
+    assert!(payload.get("result_incomplete").is_none());
+    assert!(payload.get("incomplete_reason_class").is_none());
 }

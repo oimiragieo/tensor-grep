@@ -797,6 +797,63 @@ jobs:
           fi
         shell: bash
           
+      - name: Ensure PCRE2 ripgrep is available
+        shell: bash
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          rg_has_pcre2() {
+            command -v rg >/dev/null 2>&1 && rg --version && rg --pcre2-version
+          }
+          if rg_has_pcre2; then
+            exit 0
+          fi
+          case "$RUNNER_OS" in
+            macOS) brew install ripgrep || true ;;
+            Linux)
+              for attempt in 1 2 3; do
+                if sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; then
+                  break
+                fi
+                echo "apt attempt $attempt failed; retrying in 10s" >&2
+                sleep 10
+              done
+              ;;
+          esac
+          if ! rg_has_pcre2; then
+            cargo_root="$RUNNER_TEMP/cargo-rg"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cargo_root="$(cygpath -u "$cargo_root")"
+            fi
+            cargo install ripgrep --version 14.1.1 --locked --features pcre2 --root "$cargo_root"
+            cargo_bin="$cargo_root/bin"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              cygpath -m "$cargo_bin" >> "$GITHUB_PATH"
+            else
+              printf '%s\n' "$cargo_bin" >> "$GITHUB_PATH"
+            fi
+            export PATH="$cargo_bin:$PATH"
+          fi
+          if ! command -v rg >/dev/null 2>&1; then
+            echo "ripgrep unavailable after installation; refusing to skip Wave 3 audit tests" >&2
+            exit 1
+          fi
+          rg --version
+          rg --pcre2-version
+
+      - name: Cargo test Wave 3 audit
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}
+        working-directory: rust_core
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          rustc -Vv
+          cargo --version
+          rustup show active-toolchain
+          cargo test --verbose --locked --no-default-features --test test_wave3_audit
+
       - name: Compiler provenance
         env:
           RUSTUP_TOOLCHAIN: ${{ matrix.rust_channel }}

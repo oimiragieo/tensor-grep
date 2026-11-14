@@ -10,6 +10,7 @@ use regex_syntax::{
 };
 use serde::{Deserialize, Serialize};
 mod bounded_json;
+mod query;
 use bounded_json::DecodeBudget;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -89,49 +90,6 @@ impl RegexLiteralPlan {
 enum RegexCandidateSelection {
     Indexed(Vec<(PathBuf, usize)>),
     FullScan,
-}
-
-enum SearchMatcher {
-    Fixed {
-        needle: String,
-        lower_needle: Option<String>,
-    },
-    Regex(regex::Regex),
-}
-
-impl SearchMatcher {
-    fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Result<Self> {
-        if fixed_strings {
-            return Ok(Self::Fixed {
-                needle: pattern.to_string(),
-                lower_needle: ignore_case.then(|| pattern.to_lowercase()),
-            });
-        }
-
-        regex::RegexBuilder::new(pattern)
-            .case_insensitive(ignore_case)
-            .build()
-            .context(format!(
-                "failed to compile index search pattern '{pattern}'"
-            ))
-            .map(Self::Regex)
-    }
-
-    fn is_match(&self, line: &str) -> bool {
-        match self {
-            Self::Fixed {
-                needle,
-                lower_needle,
-            } => {
-                if let Some(lower_needle) = lower_needle {
-                    line.to_lowercase().contains(lower_needle)
-                } else {
-                    line.contains(needle)
-                }
-            }
-            Self::Regex(re) => re.is_match(line),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -582,7 +540,14 @@ fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
 fn index_walker(root: &Path, no_ignore: bool) -> ignore::WalkBuilder {
     let mut builder = ignore::WalkBuilder::new(root);
     builder.hidden(true).git_ignore(!no_ignore);
-    if !no_ignore {
+    if no_ignore {
+        builder
+            .ignore(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .parents(false);
+    } else {
         for name in [".ignore", ".gitignore", ".rgignore"] {
             let path = root.join(name);
             if path.is_file() {
@@ -1001,55 +966,6 @@ impl TrigramIndex {
             .collect()
     }
 
-    pub fn search(
-        &self,
-        pattern: &str,
-        ignore_case: bool,
-        fixed_strings: bool,
-    ) -> Result<Vec<IndexQueryResult>> {
-        self.ensure_searchable()?;
-        let candidate_selection = if fixed_strings {
-            self.fixed_string_candidate_selection(pattern, ignore_case)?
-        } else {
-            self.regex_candidate_selection(pattern, ignore_case)?
-        };
-
-        let mut all_results = match candidate_selection {
-            RegexCandidateSelection::Indexed(candidates) => {
-                if candidates.is_empty() {
-                    return Ok(Vec::new());
-                }
-
-                let matcher = SearchMatcher::new(pattern, ignore_case, fixed_strings)?;
-
-                let mut by_file: HashMap<&Path, Vec<usize>> = HashMap::new();
-                for (file, line) in &candidates {
-                    by_file.entry(file.as_path()).or_default().push(*line);
-                }
-
-                let file_entries: Vec<(&Path, Vec<usize>)> = by_file.into_iter().collect();
-                let results: Vec<Result<Vec<IndexQueryResult>>> = file_entries
-                    .par_iter()
-                    .map(|(file, candidate_lines)| {
-                        collect_matches(file, Some(candidate_lines), &matcher)
-                    })
-                    .collect();
-
-                let mut matches = Vec::new();
-                for result in results {
-                    matches.extend(result?);
-                }
-                matches
-            }
-            RegexCandidateSelection::FullScan => {
-                self.search_all_files(pattern, ignore_case, fixed_strings)?
-            }
-        };
-
-        all_results.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-        Ok(all_results)
-    }
-
     /// Candidate selection for `--fixed-strings` queries. Falls back to a full scan
     /// (never a silently-empty `Indexed([])`) in the two cases the trigram prefilter
     /// cannot answer correctly:
@@ -1103,29 +1019,6 @@ impl TrigramIndex {
         candidates.sort();
         candidates.dedup();
         Ok(RegexCandidateSelection::Indexed(candidates))
-    }
-
-    fn search_all_files(
-        &self,
-        pattern: &str,
-        ignore_case: bool,
-        fixed_strings: bool,
-    ) -> Result<Vec<IndexQueryResult>> {
-        let matcher = SearchMatcher::new(pattern, ignore_case, fixed_strings)?;
-
-        let results: Vec<Result<Vec<IndexQueryResult>>> = self
-            .files
-            .par_iter()
-            .filter(|entry| !entry.deleted)
-            // M17 F2: reads go through the verified canonical root, never a stored spelling.
-            .map(|entry| collect_matches(&self.deref_path(&entry.path), None, &matcher))
-            .collect();
-
-        let mut matches = Vec::new();
-        for result in results {
-            matches.extend(result?);
-        }
-        Ok(matches)
     }
 
     pub fn is_stale(&self, no_ignore: bool) -> bool {
@@ -1683,49 +1576,6 @@ fn extract_trigrams(pattern: &[u8]) -> Vec<[u8; 3]> {
         }
     }
     trigrams
-}
-
-fn collect_matches(
-    file: &Path,
-    candidate_lines: Option<&[usize]>,
-    matcher: &SearchMatcher,
-) -> Result<Vec<IndexQueryResult>> {
-    let bytes = fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
-    let content = String::from_utf8_lossy(&bytes);
-
-    let lines: Vec<&str> = content.lines().collect();
-    let mut results = Vec::new();
-
-    match candidate_lines {
-        Some(candidate_lines) => {
-            for &line_num in candidate_lines {
-                if line_num == 0 || line_num > lines.len() {
-                    continue;
-                }
-                let line = lines[line_num - 1];
-                if matcher.is_match(line) {
-                    results.push(IndexQueryResult {
-                        file: file.to_path_buf(),
-                        line: line_num,
-                        text: line.to_string(),
-                    });
-                }
-            }
-        }
-        None => {
-            for (line_index, line) in lines.iter().enumerate() {
-                if matcher.is_match(line) {
-                    results.push(IndexQueryResult {
-                        file: file.to_path_buf(),
-                        line: line_index + 1,
-                        text: (*line).to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    Ok(results)
 }
 
 #[cfg(test)]

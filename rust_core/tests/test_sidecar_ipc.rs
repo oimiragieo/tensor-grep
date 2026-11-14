@@ -1150,10 +1150,15 @@ fn test_gpu_search_schema_invalid_json_reports_clear_error() {
 
     let output = run_with_timeout(tg, Duration::from_secs(5));
 
-    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "backend_error");
+    let detail = payload["detail"].as_str().unwrap();
+    assert!(detail.contains("malformed"), "detail={detail}");
+    assert!(detail.contains("matches"), "detail={detail}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("malformed"), "stderr={stderr}");
-    assert!(stderr.contains("matches"), "stderr={stderr}");
     assert!(!stderr.contains("panic"), "stderr={stderr}");
 }
 
@@ -1199,9 +1204,14 @@ fn test_gpu_search_recovers_after_previous_malformed_sidecar_payload() {
         sidecar_test_timeout(),
     );
 
-    assert!(!first_output.status.success());
-    let first_stderr = String::from_utf8_lossy(&first_output.stderr);
-    assert!(first_stderr.contains("malformed"), "stderr={first_stderr}");
+    assert_eq!(first_output.status.code(), Some(2));
+    let payload: serde_json::Value = serde_json::from_slice(&first_output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"], "backend_error");
+    let detail = payload["detail"].as_str().unwrap();
+    assert!(detail.contains("malformed"), "detail={detail}");
+    assert!(detail.contains("matches"), "detail={detail}");
 
     let second_output = run_with_timeout(
         {

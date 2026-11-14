@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, MatchKind};
 use anyhow::{anyhow, Context, Result};
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use grep_matcher::{LineTerminator, Matcher};
+use grep_matcher::LineTerminator;
 use grep_printer::StandardBuilder;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::Bytes;
@@ -28,6 +28,12 @@ use crate::routing::gpu_proof_fields;
 #[path = "native_search_binary_summary.rs"]
 mod binary_summary;
 use binary_summary::emit_ndjson_binary_summary;
+pub(crate) mod binary;
+use binary::emit_binary_match_warning;
+pub use binary::emit_index_binary_match_warning;
+pub(crate) use binary::{
+    binary_file_matches_pattern, first_binary_nul_offset, index_binary_matcher,
+};
 
 const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
@@ -2380,73 +2386,6 @@ fn search_file_ndjson_with_searcher(
         binary_match_detected,
         binary_byte_offset,
     })
-}
-
-fn binary_file_matches_pattern(
-    matcher: &RegexMatcher,
-    path: &Path,
-    binary_detected: bool,
-) -> Result<bool> {
-    if !binary_detected {
-        return Ok(false);
-    }
-
-    use std::io::Read;
-
-    const MAX_BINARY_PROBE_BYTES: u64 = 64 * 1024 * 1024;
-
-    let file = fs::File::open(path)
-        .with_context(|| format!("failed to open binary candidate {}", path.display()))?;
-    let max_read = file
-        .metadata()
-        .with_context(|| format!("failed to stat binary candidate {}", path.display()))?
-        .len()
-        .min(MAX_BINARY_PROBE_BYTES);
-    let mut contents = Vec::new();
-    file.take(max_read)
-        .read_to_end(&mut contents)
-        .with_context(|| format!("failed to read binary candidate {}", path.display()))?;
-    matcher
-        .is_match(&contents)
-        .with_context(|| format!("failed to match binary candidate {}", path.display()))
-}
-
-/// `with_filename` mirrors the SAME rule real `rg` uses for every other match line (and that
-/// `NativeSearchConfig.with_filename`/`should_print_with_filename` already compute): shown
-/// whenever more than one file is in play (a directory walk or multiple explicit paths) or
-/// explicitly requested, omitted for a single explicit file. Verified against `rg.exe` 15.1.0:
-/// `rg needle bin.dat` prints a bare notice, `rg needle bin.dat bin2.dat` prefixes each with
-/// `"<path>: "`. Without this, multiple binary files hit during one walk previously produced
-/// identical, unattributed notices with no way to tell which file each one was about (task
-/// #263's first defect -- `path` used to be accepted and silently ignored, `_path`-prefixed).
-fn emit_binary_match_warning(
-    output_target: &NativeOutputTarget,
-    path: &Path,
-    binary_byte_offset: Option<u64>,
-    structured_output: bool,
-    with_filename: bool,
-) -> Result<()> {
-    if structured_output {
-        return Ok(());
-    }
-
-    let mut bytes = Vec::new();
-    if with_filename {
-        write!(bytes, "{}: ", path.display())?;
-    }
-    match binary_byte_offset {
-        // `\\0` (not `/0`, task #263's second defect): real `rg` spells the NUL escape
-        // `"\0"`, verified via hexdump against `rg.exe` 15.1.0 -- `rg needle bin.dat` prints
-        // `binary file matches (found "\0" byte around offset 5)`. The previous `"/0"` spelling
-        // was pinned by 4 stale sites (a golden e2e snapshot, `rust_backend.py`'s Python-side
-        // twin, and 2 test assertions), all corrected alongside this fix.
-        Some(offset) => writeln!(
-            bytes,
-            "binary file matches (found \"\\0\" byte around offset {offset})"
-        )?,
-        None => writeln!(bytes, "binary file matches")?,
-    }
-    output_target.write_all(&bytes)
 }
 
 fn search_file_count_with_searcher(
