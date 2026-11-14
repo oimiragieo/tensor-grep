@@ -111,10 +111,6 @@ completed assertion-bearing calls, not final test passes; fixture teardown can s
 afterward. These wall-clock diagnostics do not identify CPU time, compilation,
 removable work, savings or billed runner use.
 
-### `release.yml`
-
-Manual/backfill release artifact pipeline, dispatched via `workflow_dispatch` TARGETING a published tag ref (`gh workflow run release.yml --ref vX.Y.Z`; `GITHUB_REF` then resolves to that tag). It is NOT triggered by a tag push, so a manually-pushed `v*` tag can no longer bypass semantic-release to auto-publish npm/assets. Do not rely on it for the normal semantic-release path. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
-
 ### `benchmark.yml` (Benchmarks)
 
 Runs the standalone benchmark workflow on a schedule and via manual dispatch.

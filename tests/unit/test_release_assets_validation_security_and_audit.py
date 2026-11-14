@@ -192,7 +192,6 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
     gpu_workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(
         encoding="utf-8"
     )
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     dockerfile = (root / "scripts" / "ci-local" / "Dockerfile").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     audit_workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
@@ -211,9 +210,6 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
         "pip install --disable-pip-version-check pytest"
     )
     assert fixed_pip in gpu_workflow
-    assert release_workflow.index(fixed_pip) < release_workflow.index(
-        "run: pip install mkdocs-material"
-    )
     assert dockerfile.index(
         "python3.12 -m pip install --break-system-packages --no-deps"
     ) < dockerfile.index("python3.12 -m pip install --break-system-packages uv==0.13.4")

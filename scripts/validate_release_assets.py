@@ -41,7 +41,6 @@ from _release_assets_checks.docs_and_manifest_checks import (  # noqa: E402
 from _release_assets_checks.release_security import (  # noqa: E402
     validate_ci_release_security_contract,
 )
-from _release_assets_checks.release_workflow import validate_release_workflow_content  # noqa: E402
 from _release_assets_checks.workflow_checks import (  # noqa: E402
     validate_actions_sha_pinned,
     validate_audit_workflow_content,
@@ -74,7 +73,6 @@ __all__ = [
     "validate_public_gpu_proof_workflow_content",
     "validate_readme_contract",
     "validate_release_docs_current_prose",
-    "validate_release_workflow_content",
     "validate_semantic_release_config",
     "validate_uv_security_constraints",
     "validate_winget_manifest",
@@ -226,9 +224,6 @@ def validate_all() -> list[str]:
         errors.append("Homebrew formula Linux URL does not match expected release artifact URL")
     if "PLACEHOLDER" in brew:
         errors.append("Homebrew formula contains unresolved PLACEHOLDER text")
-
-    release_workflow = _read(ROOT / ".github" / "workflows" / "release.yml")
-    errors.extend(validate_release_workflow_content(release_workflow=release_workflow))
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))

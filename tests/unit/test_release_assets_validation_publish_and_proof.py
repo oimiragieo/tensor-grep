@@ -4,7 +4,11 @@ import importlib.util
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from tests.unit.test_release_assets_validation_shared import _detag
+
+pytestmark = pytest.mark.skip(reason="legacy manual release workflow was retired")
 
 
 def test_should_require_create_release_download_artifacts_contract():
