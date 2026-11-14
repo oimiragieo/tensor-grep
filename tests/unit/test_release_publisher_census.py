@@ -54,3 +54,14 @@ def test_publisher_census_requires_authoritative_publisher() -> None:
     assert validate_release_publisher_census(workflows=workflows) == [
         "Workflow publisher census did not find the authoritative CI publisher"
     ]
+
+
+def test_publisher_census_reports_invalid_yaml() -> None:
+    errors = validate_release_publisher_census(workflows={".github/workflows/ci.yml": "jobs: ["})
+    assert any("cannot parse .github/workflows/ci.yml" in error for error in errors)
+
+
+def test_publisher_census_reports_malformed_steps() -> None:
+    content = yaml.safe_dump({"jobs": {"publish": {"steps": None}}})
+    errors = validate_release_publisher_census(workflows={".github/workflows/ci.yml": content})
+    assert any("ci.yml:publish steps to be a list" in error for error in errors)

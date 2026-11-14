@@ -36,7 +36,13 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue
-            for step in job.get("steps", []):
+            steps = job.get("steps", [])
+            if not isinstance(steps, list):
+                errors.append(
+                    f"Workflow publisher census requires {filename}:{job_name} steps to be a list"
+                )
+                continue
+            for step in steps:
                 if not isinstance(step, dict):
                     continue
                 action = str(step.get("uses", ""))
