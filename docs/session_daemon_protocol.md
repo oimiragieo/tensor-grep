@@ -41,6 +41,9 @@ Only an exact initial missing-payload failure can trigger one implicit reopen wi
 original deadline; explicit session IDs, root mismatches, permission failures, and
 corrupt payloads do not use that retry.
 
+Persisted demand metrics are fail-open startup data: malformed files or counters are
+ignored or normalized without preventing the daemon from serving requests.
+
 ---
 
 ## 2. Authentication

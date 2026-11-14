@@ -1474,58 +1474,6 @@ def _normalize_client_pid(client_pid: object) -> int | None:
     return pid if pid > 0 else None
 
 
-def _empty_metrics_day_bucket() -> dict[str, Any]:
-    return {
-        "requests": 0,
-        "expensive_requests": 0,
-        "distinct_client_pids": 0,
-        "max_concurrent_distinct_clients": 0,
-        "overlap_events": 0,
-        "dup_requests": 0,
-        "dup_targets": {},
-        "by_command": {},
-    }
-
-
-def _sanitize_metrics_days(raw: object) -> dict[str, dict[str, Any]]:
-    """Defensively normalize a loaded (possibly hand-edited or stale-schema) days dict."""
-    sanitized: dict[str, dict[str, Any]] = {}
-    if not isinstance(raw, dict):
-        return sanitized
-    for day, bucket in raw.items():
-        if not isinstance(day, str) or not isinstance(bucket, dict):
-            continue
-        dup_targets_raw = bucket.get("dup_targets")
-        dup_targets = (
-            {str(key): int(cast(Any, value)) for key, value in dup_targets_raw.items()}
-            if isinstance(dup_targets_raw, dict)
-            else {}
-        )
-        by_command_raw = bucket.get("by_command")
-        by_command = (
-            {str(key): int(cast(Any, value)) for key, value in by_command_raw.items()}
-            if isinstance(by_command_raw, dict)
-            else {}
-        )
-        clean = _empty_metrics_day_bucket()
-        for field in (
-            "requests",
-            "expensive_requests",
-            "distinct_client_pids",
-            "max_concurrent_distinct_clients",
-            "overlap_events",
-            "dup_requests",
-        ):
-            try:
-                clean[field] = int(cast(Any, bucket.get(field, 0)) or 0)
-            except (TypeError, ValueError):
-                clean[field] = 0
-        clean["dup_targets"] = dup_targets
-        clean["by_command"] = by_command
-        sanitized[day] = clean
-    return sanitized
-
-
 class _DemandMetrics:
     """In-memory, fail-open, PII-free demand counters for the tg-ledger step-0 gate.
 

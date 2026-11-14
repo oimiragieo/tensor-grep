@@ -121,3 +121,36 @@ def test_warm_key_completes_while_other_key_cold_build_waits(tmp_path, monkeypat
     assert not errors, repr(errors)
     assert completed_before_release, "warm cached key blocked behind unrelated cold open"
     assert answers == {"cold": "cold", "warm": "warm"}
+
+
+@pytest.mark.parametrize(
+    "bad_bucket",
+    [
+        {"dup_targets": {"a": None}},
+        {"dup_targets": {"a": float("inf")}},
+        {"by_command": {"context_render": None}},
+        {"by_command": {"context_render": float("inf")}},
+        {"requests": float("inf")},
+    ],
+)
+def test_startup_metrics_load_preserves_valid_day_with_bad_counters(
+    tmp_path, monkeypatch, bad_bucket
+):
+    # Exact startup read->load seam; no real server, socket, or per-user secret.
+    data = {"days": {"2026-11-11": {"requests": 2}, "2026-11-12": bad_bucket}}
+    path = tmp_path / "daemon_metrics.json"
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(sd, "_metrics_file_path", lambda root: path)
+    metrics = sd._DemandMetrics()
+    metrics.load(sd._read_demand_metrics_days(tmp_path))
+    assert metrics._days["2026-11-11"]["requests"] == 2
+
+
+def test_startup_metrics_positive_control(tmp_path, monkeypatch):
+    path = tmp_path / "daemon_metrics.json"
+    path.write_text('{"days":{"2026-11-12":{"requests":2,"by_command":{"defs":2}}}}')
+    monkeypatch.setattr(sd, "_metrics_file_path", lambda root: path)
+    metrics = sd._DemandMetrics()
+    metrics.load(sd._read_demand_metrics_days(tmp_path))
+    assert metrics._days["2026-11-12"]["requests"] == 2
+    assert metrics._days["2026-11-12"]["by_command"] == {"defs": 2}
