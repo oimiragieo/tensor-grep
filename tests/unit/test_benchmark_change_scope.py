@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import subprocess
@@ -5,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 CI = ROOT / ".github/workflows/ci.yml"
@@ -98,3 +100,90 @@ def test_uncertain_events_and_git_failures_run(repo):
     missing = root / "not-a-repo"
     missing.mkdir()
     assert decision(missing, base)
+
+
+@pytest.mark.parametrize(
+    "change",
+    "unrelated eligibility workguard upload runner command env uses with global malformed both-malformed deep-malformed no-parser".split(),
+)
+def test_ci_semantics_ignore_only_nonmeasurement_changes(repo, change):
+    root, base = repo
+    path = root / ".github/workflows/ci.yml"
+    doc = yaml.safe_load(path.read_text())
+    job = doc["jobs"]["benchmark-regression"]
+    if change in ("unrelated", "no-parser"):
+        doc["jobs"]["smoke"]["name"] = "Unrelated"
+    elif change == "eligibility":
+        job["if"] = "needs.changes.outputs.benchmark == 'true'"
+    elif change == "workguard":
+        step = next(s for s in job["steps"] if s.get("name") == "Run core benchmark suite")
+        step["if"] = (
+            "needs.changes.outputs.benchmark == 'true' && (github.event_name != 'schedule')"
+        )
+        base_doc = yaml.safe_load(path.read_text())
+        next(
+            s
+            for s in base_doc["jobs"]["benchmark-regression"]["steps"]
+            if s.get("name") == "Run core benchmark suite"
+        )["if"] = "github.event_name != 'schedule'"
+        path.write_text(yaml.safe_dump(base_doc))
+        base = commit(root)
+    elif change == "upload":
+        next(s for s in job["steps"] if s.get("name") == "Upload benchmark artifacts")["if"] = (
+            "always()"
+        )
+    elif change == "both-malformed":
+        path.write_text("{invalid-before")
+        base = commit(root)
+    elif change == "runner":
+        job["runs-on"] = "windows-latest"
+    elif change == "command":
+        next(s for s in job["steps"] if "run" in s)["run"] += "\necho changed"
+    elif change in ("env", "global"):
+        (doc if change == "global" else job)["env"] = {"MEASURE": "changed"}
+    elif change == "uses":
+        job["steps"][0]["uses"] = "actions/checkout@changed"
+    elif change == "with":
+        job["steps"][0]["with"]["fetch-depth"] = 1
+    text = "{" if change in ("malformed", "both-malformed") else yaml.safe_dump(doc)
+    path.write_text("[" * 1024 + "]" * 1024 if change == "deep-malformed" else text)
+    commit(root)
+    assert decision(root, base, flags=("-S",) if change == "no-parser" else ()) is (
+        change not in ("unrelated", "eligibility", "workguard", "upload")
+    )
+
+
+@pytest.mark.parametrize("event", ["push", "pull_request"])
+@pytest.mark.parametrize(
+    "code,benchmark", [(False, False), (True, False), (False, True), (True, True)]
+)
+def test_actual_workflow_gate(event, code, benchmark):
+    job = yaml.safe_load(CI.read_text())["jobs"]["benchmark-regression"]
+    work = next(s for s in job["steps"] if s.get("name") == "Run core benchmark suite")
+    job_runs = evaluate_gate(job.get("if", "True"), event, code, benchmark)
+    if event == "push":
+        assert job_runs, "main job must succeed so release.needs can proceed"
+    assert (job_runs and evaluate_gate(work.get("if", "True"), event, code, benchmark)) is benchmark
+
+
+def evaluate_gate(expression, event, code, benchmark):
+    for name in ("code", "benchmark"):
+        expression = expression.replace(f"needs.changes.outputs.{name}", name)
+    expression = expression.replace("github.event_name", "event").strip("${} ")
+    expression = expression.replace("||", " or ").replace("&&", " and ")
+    tree = ast.parse(expression, mode="eval")
+    allowed = "Expression BoolOp Or And Compare Eq NotEq Name Load Constant".split()
+    assert all(type(n).__name__ in allowed for n in ast.walk(tree))
+    values = {"event": event, "code": str(code).lower(), "benchmark": str(benchmark).lower()}
+    assert all(n.id in values for n in ast.walk(tree) if isinstance(n, ast.Name))
+    return eval(compile(tree, "<workflow-gate>", "eval"), {"__builtins__": {}}, values)
+
+
+def test_dedicated_scope_is_produced():
+    assert "benchmark" in yaml.safe_load(CI.read_text())["jobs"]["changes"]["outputs"]
+
+
+def test_artifacts_survive_a_failed_benchmark():
+    steps = yaml.safe_load(CI.read_text())["jobs"]["benchmark-regression"]["steps"]
+    upload = next(s for s in steps if s.get("name") == "Upload benchmark artifacts")
+    assert upload.get("if") == "always()"
