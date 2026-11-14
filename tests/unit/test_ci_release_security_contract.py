@@ -17,11 +17,19 @@ validate_ci_release_security_contract = importlib.import_module(
 
 def _workflow() -> dict[str, object]:
     step_names = [
+        "Checkout publisher source",
+        "Install uv",
+        "Setup Python",
+        "Download native release front doors",
+        "Download tag-matched Python wheel",
         "Install cargo-cyclonedx",
         "Generate Rust SBOM",
         "Prepare clean Python SBOM environments",
         "Validate release SBOM identity",
         "Validate release asset matrix and generate checksums",
+        "Build package-manager publish bundle",
+        "Verify package-manager bundle checksums",
+        "Smoke-test package-manager bundle contracts",
         "Prepare release asset path list",
         "Generate SLSA provenance",
         "Verify SLSA provenance",
@@ -31,13 +39,17 @@ def _workflow() -> dict[str, object]:
     ]
     steps: list[dict[str, object]] = [{"name": name, "run": "true"} for name in step_names]
     runs = {
+        "Setup Python": "uv python install 3.12",
         "Install cargo-cyclonedx": "cargo install --locked cargo-cyclonedx --version 0.5.10",
-        "Generate Rust SBOM": """cargo cyclonedx --format json --target all \\
-          --override-filename sbom-rust --no-default-features
-cargo cyclonedx --format json --target all \\
-          --override-filename sbom-rust --no-default-features --features cuda""",
+        "Generate Rust SBOM": """uv run --no-project --python 3.12 -- python scripts/generate_release_rust_sbom.py \\
+--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" --output artifacts/sbom-rust.json""",
         "Prepare clean Python SBOM environments": """uv export --locked --no-dev --no-emit-project \\
 --format requirements.txt --output-file "$RUNNER_TEMP/tg-core-requirements.txt"
+uv venv --python 3.12 .sbom-python-core
+uv pip sync --python .sbom-python-core/bin/python --require-hashes \\
+"$RUNNER_TEMP/tg-core-requirements.txt"
+uv pip install --python .sbom-python-core/bin/python --no-deps artifacts/wheel/*.whl
+uv venv --python 3.12 .sbom-python-tools
 uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
 --only-binary :all: scripts/release-sbom-tools.txt
 .sbom-python-tools/bin/cyclonedx-py environment -E .sbom-python-core/bin/python \\
@@ -50,13 +62,18 @@ uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
 --additional-checksum-asset artifacts/sbom-rust.json \\
 --additional-checksum-asset artifacts/sbom-python.json \\
 --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\"""",
+        "Build package-manager publish bundle": """uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/prepare_package_manager_release.py \\
+--output-dir artifacts/package-manager-bundle --release-checksums artifacts/CHECKSUMS.txt""",
+        "Verify package-manager bundle checksums": """uv run --no-project --python 3.12 -- python scripts/verify_package_manager_bundle_checksums.py \\
+--bundle-dir artifacts/package-manager-bundle""",
+        "Smoke-test package-manager bundle contracts": """uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/smoke_test_package_manager_bundle.py \\
+--bundle-dir artifacts/package-manager-bundle --expected-version \"$RELEASE_VERSION\"""",
         "Prepare release asset path list": """uv run --no-project --python 3.12 -- python scripts/prepare_release_asset_paths.py \\
 --artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
 --github-output \"$GITHUB_OUTPUT\"""",
-        "Verify SLSA provenance": """gh attestation verify "$subject" \\
---repo \"$GITHUB_REPOSITORY\" \\
---signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/ci.yml\" \\
---source-ref refs/heads/main --deny-self-hosted-runners""",
+        "Verify SLSA provenance": """uv run --no-project --python 3.12 -- python scripts/verify_release_subject_attestations.py \\
+--artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
+--repository \"$GITHUB_REPOSITORY\"""",
         "Verify GitHub release asset coverage": """uv run --no-project --python 3.12 -- python scripts/verify_github_release_assets.py \\
 --repo "$GITHUB_REPOSITORY" --tag "v${{ needs.release.outputs.release_version }}" \\
 --token "${{ secrets.GITHUB_TOKEN }}" \\
@@ -66,6 +83,23 @@ uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
     for step in steps:
         if step["name"] in runs:
             step["run"] = runs[str(step["name"])]
+    setup_actions = {
+        "Checkout publisher source": {
+            "uses": "actions/checkout@v6",
+            "with": {"ref": "v${{ needs.release.outputs.release_version }}"},
+        },
+        "Install uv": {"uses": "astral-sh/setup-uv@v8.0.0"},
+        "Download native release front doors": {
+            "uses": "actions/download-artifact@v8",
+            "with": {"pattern": "release-native-*", "path": "artifacts/native"},
+        },
+        "Download tag-matched Python wheel": {
+            "uses": "actions/download-artifact@v8",
+            "with": {"name": "pypi-wheels-ubuntu-latest", "path": "artifacts/wheel"},
+        },
+    }
+    for name, values in setup_actions.items():
+        steps[step_names.index(name)] = {"name": name, **values}
     next(step for step in steps if step["name"] == "Prepare release asset path list")["id"] = (
         "release_paths"
     )
@@ -111,9 +145,16 @@ uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
     return {
         "jobs": {
             "publisher": {
+                "name": "publish-github-release-assets",
                 "if": "needs.release.outputs.released == 'true'",
                 "needs": ["release", "build-release-native-assets", "build-wheels-pypi"],
+                "runs-on": "ubuntu-latest",
                 "permissions": {"contents": "write", "id-token": "write", "attestations": "write"},
+                "env": {
+                    "RELEASE_NATIVE_ASSET_PROFILE": "${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}",
+                    "RELEASE_VERSION": "${{ needs.release.outputs.release_version }}",
+                    "GITHUB_REPOSITORY": "${{ github.repository }}",
+                },
                 "steps": steps,
             }
         }
@@ -188,7 +229,7 @@ def test_release_security_contract_rejects_second_publisher() -> None:
     ("step_name", "removed", "expected"),
     [
         ("Install cargo-cyclonedx", "--locked", "cargo install"),
-        ("Generate Rust SBOM", "--target all", "cargo cyclonedx"),
+        ("Generate Rust SBOM", "--expected-profile", "generate_release_rust_sbom.py"),
         ("Prepare clean Python SBOM environments", "--require-hashes", "uv pip sync"),
         ("Validate release SBOM identity", "--rust-sbom", "validate_release_sbom_identity.py"),
         (
@@ -197,7 +238,7 @@ def test_release_security_contract_rejects_second_publisher() -> None:
             "validate_release_binary",
         ),
         ("Prepare release asset path list", "--github-output", "prepare_release_asset_paths.py"),
-        ("Verify SLSA provenance", "--signer-workflow", "gh attestation verify"),
+        ("Verify SLSA provenance", "--repository", "verify_release_subject_attestations.py"),
         (
             "Verify GitHub release asset coverage",
             "--local-artifacts-dir",
@@ -232,7 +273,7 @@ def test_release_security_contract_rejects_nonexecuted_command_text(prefix: str)
     workflow = _workflow()
     step = _step(workflow, "Verify SLSA provenance")
     step["run"] = prefix + str(step["run"])
-    assert any("gh attestation verify" in error for error in _errors(workflow))
+    assert any("verify_release_subject_attestations.py" in error for error in _errors(workflow))
 
 
 @pytest.mark.parametrize(
@@ -255,7 +296,7 @@ def test_release_security_contract_rejects_duplicate_security_option() -> None:
     workflow = _workflow()
     step = _step(workflow, "Verify SLSA provenance")
     step["run"] = str(step["run"]) + " --repo attacker/example"
-    assert any("gh attestation verify" in error for error in _errors(workflow))
+    assert any("verify_release_subject_attestations.py" in error for error in _errors(workflow))
 
 
 @pytest.mark.parametrize("extra", ["--help", "-R attacker/example", "--repo=attacker/example"])
@@ -263,7 +304,7 @@ def test_release_security_contract_rejects_extra_security_argv(extra: str) -> No
     workflow = _workflow()
     step = _step(workflow, "Verify SLSA provenance")
     step["run"] = str(step["run"]) + f" {extra}"
-    assert any("gh attestation verify" in error for error in _errors(workflow))
+    assert any("verify_release_subject_attestations.py" in error for error in _errors(workflow))
 
 
 @pytest.mark.parametrize(
@@ -277,14 +318,21 @@ def test_release_security_contract_rejects_extra_security_command(extra: str) ->
     assert any("only its exact commands" in error for error in _errors(workflow))
 
 
-def test_release_security_contract_rejects_interleaved_step() -> None:
+@pytest.mark.parametrize("position", [0, 5])
+def test_release_security_contract_rejects_unsealed_step(position: int) -> None:
     workflow = _workflow()
     steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
-    steps.insert(5, {"name": "Mutate artifacts", "run": "true"})
-    assert any("security steps must be contiguous" in error for error in _errors(workflow))
+    steps.insert(position, {"name": "Mutate artifacts", "run": "true"})
+    assert any("steps must equal the sealed sequence" in error for error in _errors(workflow))
 
 
-@pytest.mark.parametrize("fault", ["id", "output", "rust-feature"])
+def test_release_security_contract_rejects_step_environment_injection() -> None:
+    workflow = _workflow()
+    _step(workflow, "Verify SLSA provenance")["env"] = {"PATH": "/tmp/shims"}
+    assert any("sealed fields" in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize("fault", ["id", "output", "rust-profile"])
 def test_release_security_contract_binds_outputs_and_rust_features(fault: str) -> None:
     workflow = _workflow()
     if fault == "id":
@@ -294,7 +342,7 @@ def test_release_security_contract_binds_outputs_and_rust_features(fault: str) -
         step["run"] = str(step["run"]).replace("$GITHUB_OUTPUT", "$RUNNER_TEMP/out")
     else:
         step = _step(workflow, "Generate Rust SBOM")
-        step["run"] = str(step["run"]).replace("--no-default-features", "")
+        step["run"] = str(step["run"]).replace("--expected-profile", "")
     assert _errors(workflow)
 
 
@@ -339,7 +387,7 @@ def test_release_security_contract_rejects_non_mapping_jobs() -> None:
     [
         ("job-gate", "semantic-release tag"),
         ("needs", "tag-matched Python wheel"),
-        ("order", "before `Generate SLSA provenance`"),
+        ("order", "steps must equal the sealed sequence"),
         ("attest-subject", "native/SBOM/checksum subjects"),
         ("upload-tag", "semantic-release tag"),
         ("upload-unmatched", "fail on unmatched files"),

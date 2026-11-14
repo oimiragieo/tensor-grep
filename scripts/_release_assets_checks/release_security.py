@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import shlex
-from itertools import pairwise
 
 import yaml
 
@@ -105,14 +104,30 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     permissions = publisher.get("permissions", {})
     if not isinstance(permissions, dict):
         permissions = {}
-    for permission in ("contents", "id-token", "attestations"):
-        if permissions.get(permission) != "write":
+    expected_permissions = {"contents": "write", "id-token": "write", "attestations": "write"}
+    for permission, value in expected_permissions.items():
+        if permissions.get(permission) != value:
             errors.append(f"CI release publisher `{job_name}` must request `{permission}: write`")
+    if permissions != expected_permissions:
+        errors.append("CI release publisher must request only its sealed permissions")
     if publisher.get("if") != "needs.release.outputs.released == 'true'":
         errors.append("CI release publisher must run only for a semantic-release tag")
+    if publisher.get("name") != "publish-github-release-assets":
+        errors.append("CI release publisher must keep its authoritative job name")
+    expected_job_keys = {"name", "needs", "if", "runs-on", "permissions", "env", "steps"}
+    if set(publisher) != expected_job_keys:
+        errors.append("CI release publisher job must use only its sealed configuration")
+    if publisher.get("runs-on") != "ubuntu-latest":
+        errors.append("CI release publisher must run on ubuntu-latest")
+    if publisher.get("env") != {
+        "RELEASE_NATIVE_ASSET_PROFILE": "${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}",
+        "RELEASE_VERSION": "${{ needs.release.outputs.release_version }}",
+        "GITHUB_REPOSITORY": "${{ github.repository }}",
+    }:
+        errors.append("CI release publisher must bind its release environment exactly")
     needs = publisher.get("needs", [])
     needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
-    if not {"release", "build-release-native-assets", "build-wheels-pypi"}.issubset(set(needs)):
+    if needs != ["release", "build-release-native-assets", "build-wheels-pypi"]:
         errors.append(
             "CI release publisher must depend on semantic release, native assets, and the tag-matched Python wheel"
         )
@@ -120,11 +135,19 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     named_steps = [step for step in steps if isinstance(step, dict) and step.get("name")]
     named = {str(step.get("name")): step for step in named_steps}
     required = (
+        "Checkout publisher source",
+        "Install uv",
+        "Setup Python",
+        "Download native release front doors",
+        "Download tag-matched Python wheel",
         "Install cargo-cyclonedx",
         "Generate Rust SBOM",
         "Prepare clean Python SBOM environments",
         "Validate release SBOM identity",
         "Validate release asset matrix and generate checksums",
+        "Build package-manager publish bundle",
+        "Verify package-manager bundle checksums",
+        "Smoke-test package-manager bundle contracts",
         "Prepare release asset path list",
         "Generate SLSA provenance",
         "Verify SLSA provenance",
@@ -139,21 +162,39 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(f"CI release publisher must define `{name}` exactly once")
         elif "if" in named[name] or "continue-on-error" in named[name]:
             errors.append(f"CI release publisher must not bypass `{name}`")
+    observed_names = tuple(
+        str(step.get("name", "")) if isinstance(step, dict) else "" for step in steps
+    )
+    if observed_names != required:
+        errors.append("CI release publisher steps must equal the sealed sequence")
     if errors:
         return errors
 
-    positions = {str(step.get("name")): index for index, step in enumerate(steps)}
-    required_positions = [positions[name] for name in required]
-    if required_positions != list(
-        range(required_positions[0], required_positions[0] + len(required))
-    ):
-        errors.append("CI release publisher security steps must be contiguous")
-    for earlier, later in pairwise(required):
-        if positions[earlier] >= positions[later]:
-            errors.append(f"CI release publisher must run `{earlier}` before `{later}`")
-
     runs = {name: str(step.get("run", "")) for name, step in named.items()}
+    setup_actions = {
+        "Checkout publisher source": (
+            "actions/checkout@v6",
+            {"ref": "v${{ needs.release.outputs.release_version }}"},
+        ),
+        "Install uv": ("astral-sh/setup-uv@v8.0.0", None),
+        "Download native release front doors": (
+            "actions/download-artifact@v8",
+            {"pattern": "release-native-*", "path": "artifacts/native"},
+        ),
+        "Download tag-matched Python wheel": (
+            "actions/download-artifact@v8",
+            {"name": "pypi-wheels-ubuntu-latest", "path": "artifacts/wheel"},
+        ),
+    }
+    for name, (uses, with_block) in setup_actions.items():
+        expected_step = {"name": name, "uses": uses}
+        if with_block is not None:
+            expected_step["with"] = with_block
+        if named[name] != expected_step:
+            errors.append(f"CI release publisher `{name}` must use its exact pinned action")
+
     commands = {
+        "Setup Python": (("uv", "python", "install", "3.12"),),
         "Install cargo-cyclonedx": (
             (
                 "cargo",
@@ -166,28 +207,18 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         ),
         "Generate Rust SBOM": (
             (
-                "cargo",
-                "cyclonedx",
-                "--format",
-                "json",
-                "--target",
-                "all",
-                "--override-filename",
-                "sbom-rust",
-                "--no-default-features",
-            ),
-            (
-                "cargo",
-                "cyclonedx",
-                "--format",
-                "json",
-                "--target",
-                "all",
-                "--override-filename",
-                "sbom-rust",
-                "--no-default-features",
-                "--features",
-                "cuda",
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/generate_release_rust_sbom.py",
+                "--expected-profile",
+                "$RELEASE_NATIVE_ASSET_PROFILE",
+                "--output",
+                "artifacts/sbom-rust.json",
             ),
         ),
         "Prepare clean Python SBOM environments": (
@@ -202,6 +233,26 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--output-file",
                 "$RUNNER_TEMP/tg-core-requirements.txt",
             ),
+            ("uv", "venv", "--python", "3.12", ".sbom-python-core"),
+            (
+                "uv",
+                "pip",
+                "sync",
+                "--python",
+                ".sbom-python-core/bin/python",
+                "--require-hashes",
+                "$RUNNER_TEMP/tg-core-requirements.txt",
+            ),
+            (
+                "uv",
+                "pip",
+                "install",
+                "--python",
+                ".sbom-python-core/bin/python",
+                "--no-deps",
+                "artifacts/wheel/*.whl",
+            ),
+            ("uv", "venv", "--python", "3.12", ".sbom-python-tools"),
             (
                 "uv",
                 "pip",
@@ -264,6 +315,56 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "$RELEASE_NATIVE_ASSET_PROFILE",
             ),
         ),
+        "Build package-manager publish bundle": (
+            (
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--with",
+                "pyyaml==6.0.3",
+                "--",
+                "python",
+                "scripts/prepare_package_manager_release.py",
+                "--output-dir",
+                "artifacts/package-manager-bundle",
+                "--release-checksums",
+                "artifacts/CHECKSUMS.txt",
+            ),
+        ),
+        "Verify package-manager bundle checksums": (
+            (
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/verify_package_manager_bundle_checksums.py",
+                "--bundle-dir",
+                "artifacts/package-manager-bundle",
+            ),
+        ),
+        "Smoke-test package-manager bundle contracts": (
+            (
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--with",
+                "pyyaml==6.0.3",
+                "--",
+                "python",
+                "scripts/smoke_test_package_manager_bundle.py",
+                "--bundle-dir",
+                "artifacts/package-manager-bundle",
+                "--expected-version",
+                "$RELEASE_VERSION",
+            ),
+        ),
         "Prepare release asset path list": (
             (
                 "uv",
@@ -284,17 +385,20 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         ),
         "Verify SLSA provenance": (
             (
-                "gh",
-                "attestation",
-                "verify",
-                "$subject",
-                "--repo",
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/verify_release_subject_attestations.py",
+                "--artifacts-dir",
+                "artifacts",
+                "--expected-profile",
+                "$RELEASE_NATIVE_ASSET_PROFILE",
+                "--repository",
                 "$GITHUB_REPOSITORY",
-                "--signer-workflow",
-                "$GITHUB_REPOSITORY/.github/workflows/ci.yml",
-                "--source-ref",
-                "refs/heads/main",
-                "--deny-self-hosted-runners",
             ),
         ),
         "Verify GitHub release asset coverage": (
@@ -330,18 +434,25 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(
                 f"CI release publisher `{name}` must run only its exact commands: {expected_text}"
             )
+        expected_keys = (
+            {"name", "run", "id"} if name == "Prepare release asset path list" else {"name", "run"}
+        )
+        if set(named[name]) != expected_keys:
+            errors.append(f"CI release publisher `{name}` must use only its sealed fields")
     if named["Prepare release asset path list"].get("id") != "release_paths":
         errors.append("CI release asset path preparation must use `id: release_paths`")
     attest = named["Generate SLSA provenance"]
+    if set(attest) != {"name", "uses", "with"}:
+        errors.append("CI release provenance step must use only its sealed fields")
     if attest.get("uses") != "actions/attest-build-provenance@v4":
         errors.append("CI release publisher must use the pinned build-provenance action")
     attest_with = attest.get("with", {})
-    if not isinstance(attest_with, dict) or attest_with.get("subject-path") != (
-        "${{ steps.release_paths.outputs.subject_paths }}"
-    ):
+    if attest_with != {"subject-path": "${{ steps.release_paths.outputs.subject_paths }}"}:
         errors.append("CI release provenance must attest only the native/SBOM/checksum subjects")
 
     signing = named["Sign release subjects with Sigstore"]
+    if set(signing) != {"name", "uses", "with"}:
+        errors.append("CI release Sigstore step must use only its sealed fields")
     if signing.get("uses") != "sigstore/gh-action-sigstore-python@v3.0.0":
         errors.append("CI release publisher must use the pinned Sigstore signing action")
     signing_with = signing.get("with", {})
@@ -362,8 +473,12 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     for key, value in expected_signing.items():
         if signing_with.get(key) != value:
             errors.append(f"CI release Sigstore step must set `{key}` to `{value}`")
+    if set(signing_with) != set(expected_signing):
+        errors.append("CI release Sigstore step must use only its sealed configuration")
 
     upload = named["Upload GitHub release assets"]
+    if set(upload) != {"name", "uses", "with"}:
+        errors.append("CI release upload step must use only its sealed fields")
     if upload.get("uses") != "softprops/action-gh-release@v3":
         errors.append("CI release publisher must use the pinned GitHub release action")
     upload_with = upload.get("with", {})
@@ -387,6 +502,8 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         errors.append(
             "CI release upload must contain exactly the managed assets and signing bundles"
         )
+    if set(upload_with) != {"tag_name", "fail_on_unmatched_files", "files"}:
+        errors.append("CI release upload must use only its sealed configuration")
     return errors
 
 
