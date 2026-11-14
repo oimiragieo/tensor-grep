@@ -112,6 +112,9 @@ def test_confirmer_unsupported_language_retains_only_heuristic_consumer(tmp_path
     assert "heuristic-import" in row["reasons"]
     assert "heuristic" in row["provenance"]
     assert payload["coverage_summary"]["graph_completeness"] == "partial"
+    gaps = [gap for gap in payload["resolution_gaps"] if gap["language"] == language]
+    assert len(gaps) == 1
+    assert gaps[0]["reason"].startswith("partial or unresolved import resolution")
 
 
 def test_complete_supported_parsed_nonmatch_does_not_get_heuristic_fallback(tmp_path):

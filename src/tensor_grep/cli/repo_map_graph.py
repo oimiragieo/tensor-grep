@@ -551,8 +551,6 @@ def uncertainty_gaps(
     for raw_path in paths:
         path = Path(raw_path)
         spec = owner.lang_registry.spec_for_path(path)
-        if spec is not None and spec.import_update_target is None:
-            continue
         language = (
             spec.language_id if spec is not None else path.suffix.lstrip(".").lower() or "unknown"
         )
@@ -609,9 +607,17 @@ def add_uncertainty(
 ) -> None:
     if not paths:
         return
-    payload["resolution_gaps"] = merge_uncertainty_gaps(
-        list(payload.get("resolution_gaps", [])), uncertainty_gaps(owner, paths, root)
-    )
+    existing = list(payload.get("resolution_gaps", []))
+    new = [
+        gap
+        for gap in uncertainty_gaps(owner, paths, root)
+        if not any(
+            current.get("language") == gap.get("language")
+            and "no reverse-import resolver" in str(current.get("reason", ""))
+            for current in existing
+        )
+    ]
+    payload["resolution_gaps"] = merge_uncertainty_gaps(existing, new)
     payload.setdefault("coverage_summary", {})["graph_completeness"] = "partial"
 
 
