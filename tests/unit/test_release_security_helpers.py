@@ -48,6 +48,7 @@ def test_generate_rust_sbom_binds_profile_features(
     manifest.parent.mkdir()
     manifest.write_text("[package]", encoding="utf-8")
     output = tmp_path / "artifacts" / "sbom-rust.json"
+    output.parent.mkdir()
     calls: list[list[str]] = []
 
     def run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[object]:
@@ -56,19 +57,90 @@ def test_generate_rust_sbom_binds_profile_features(
         (manifest.parent / "sbom-rust.json").write_text("{}", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0)
 
-    generate_rust_sbom(expected_profile=profile, output=output, manifest=manifest, run=run)
-    if features:
-        assert calls[0][-len(features) :] == features
-    else:
-        assert "--features" not in calls[0]
+    generate_rust_sbom(expected_profile=profile, root=tmp_path, run=run)
+    assert calls == [
+        [
+            "cargo",
+            "cyclonedx",
+            "--manifest-path",
+            str(manifest),
+            "--format",
+            "json",
+            "--target",
+            "all",
+            "--override-filename",
+            "sbom-rust",
+            "--no-default-features",
+            *features,
+        ]
+    ]
     assert output.read_text(encoding="utf-8") == "{}"
 
 
 def test_generate_rust_sbom_refuses_existing_output(tmp_path: Path) -> None:
-    output = tmp_path / "sbom-rust.json"
+    (tmp_path / "rust_core").mkdir()
+    output = tmp_path / "artifacts" / "sbom-rust.json"
+    output.parent.mkdir()
     output.write_text("keep", encoding="utf-8")
     with pytest.raises(ValueError, match="overwrite"):
-        generate_rust_sbom(expected_profile="native-frontdoor", output=output)
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
+
+
+def test_generate_rust_sbom_does_not_clobber_raced_output(tmp_path: Path) -> None:
+    manifest = tmp_path / "rust_core" / "Cargo.toml"
+    manifest.parent.mkdir()
+    manifest.write_text("[package]", encoding="utf-8")
+    output = tmp_path / "artifacts" / "sbom-rust.json"
+    output.parent.mkdir()
+
+    def run(command: list[str], *, check: bool) -> subprocess.CompletedProcess[object]:
+        assert check is True
+        (manifest.parent / "sbom-rust.json").write_text("generated", encoding="utf-8")
+        output.write_text("keep", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(FileExistsError):
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path, run=run)
+    assert output.read_text(encoding="utf-8") == "keep"
+
+
+def test_generate_rust_sbom_rejects_symlinked_output_directory(tmp_path: Path) -> None:
+    (tmp_path / "rust_core").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    try:
+        os.symlink(outside, tmp_path / "artifacts", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    with pytest.raises(ValueError, match="confined"):
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
+
+
+def test_generate_rust_sbom_rejects_symlinked_manifest_directory(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "Cargo.toml").write_text("[package]", encoding="utf-8")
+    try:
+        os.symlink(outside, tmp_path / "rust_core", target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    with pytest.raises(ValueError, match="confined"):
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
+
+
+def test_generate_rust_sbom_rejects_symlinked_output_leaf(tmp_path: Path) -> None:
+    (tmp_path / "rust_core").mkdir()
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep", encoding="utf-8")
+    try:
+        os.symlink(outside, artifacts / "sbom-rust.json")
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    with pytest.raises(ValueError, match="overwrite"):
+        generate_rust_sbom(expected_profile="native-frontdoor", root=tmp_path)
+    assert outside.read_text(encoding="utf-8") == "keep"
 
 
 def test_verify_release_subject_attestations_covers_exact_subject_set(artifacts: Path) -> None:
@@ -85,8 +157,24 @@ def test_verify_release_subject_attestations_covers_exact_subject_set(artifacts:
         repository="oimiragieo/tensor-grep",
         run=run,
     )
-    assert {Path(command[3]).name for command in calls} == {*NATIVE, *MANAGED_ASSETS}
-    assert all("--deny-self-hosted-runners" in command for command in calls)
+    subjects = [*(artifacts / "native" / name / name for name in sorted(NATIVE))]
+    subjects.extend(artifacts / name for name in MANAGED_ASSETS)
+    assert calls == [
+        [
+            "gh",
+            "attestation",
+            "verify",
+            str(subject),
+            "--repo",
+            "oimiragieo/tensor-grep",
+            "--signer-workflow",
+            "oimiragieo/tensor-grep/.github/workflows/ci.yml",
+            "--source-ref",
+            "refs/heads/main",
+            "--deny-self-hosted-runners",
+        ]
+        for subject in subjects
+    ]
 
 
 def test_verify_release_subject_attestations_rejects_symlink(

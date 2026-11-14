@@ -217,8 +217,6 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "scripts/generate_release_rust_sbom.py",
                 "--expected-profile",
                 "$RELEASE_NATIVE_ASSET_PROFILE",
-                "--output",
-                "artifacts/sbom-rust.json",
             ),
         ),
         "Prepare clean Python SBOM environments": (

@@ -42,7 +42,7 @@ def _workflow() -> dict[str, object]:
         "Setup Python": "uv python install 3.12",
         "Install cargo-cyclonedx": "cargo install --locked cargo-cyclonedx --version 0.5.10",
         "Generate Rust SBOM": """uv run --no-project --python 3.12 -- python scripts/generate_release_rust_sbom.py \\
---expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" --output artifacts/sbom-rust.json""",
+--expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\"""",
         "Prepare clean Python SBOM environments": """uv export --locked --no-dev --no-emit-project \\
 --format requirements.txt --output-file "$RUNNER_TEMP/tg-core-requirements.txt"
 uv venv --python 3.12 .sbom-python-core
