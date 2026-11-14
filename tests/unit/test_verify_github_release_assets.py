@@ -5,6 +5,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 
 def _load_module():
     root = Path(__file__).resolve().parents[2]
@@ -22,6 +24,11 @@ def _asset_metadata(name: str, content: bytes) -> dict[str, object]:
         "size": len(content),
         "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
     }
+
+
+def _set_manifest_metadata(release_data, name: str, content: str) -> None:
+    asset = next(asset for asset in release_data["assets"] if asset["name"] == name)
+    asset.update(_asset_metadata(name, content.encode("utf-8")))
 
 
 def test_validate_local_release_assets_binds_api_metadata(tmp_path: Path):
@@ -52,6 +59,22 @@ def test_validate_local_release_assets_rejects_wrong_uploaded_metadata(tmp_path:
     )
     assert any("size differs" in error for error in errors)
     assert any("digest differs" in error for error in errors)
+
+
+@pytest.mark.parametrize("bad_size", [True, 1.0, None])
+def test_validate_local_release_assets_rejects_noninteger_size(tmp_path: Path, bad_size: object):
+    module = _load_module()
+    content = b"x"
+    (tmp_path / "asset.bin").write_bytes(content)
+    metadata = _asset_metadata("asset.bin", content)
+    metadata["size"] = bad_size
+
+    errors = module._validate_local_release_assets(
+        release_data={"assets": [metadata]},
+        expected_assets=["asset.bin"],
+        artifacts_dir=tmp_path,
+    )
+    assert any("invalid size metadata" in error for error in errors)
 
 
 def test_validate_local_release_assets_rejects_missing_duplicate_and_symlink(
@@ -192,6 +215,7 @@ def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix()
         f"{'d' * 64}  tg-windows-amd64-cpu.exe",
         f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
     ])
+    _set_manifest_metadata(release_data, "CHECKSUMS.txt", checksums_content)
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -222,6 +246,7 @@ def test_validate_release_assets_payload_should_pass_for_native_frontdoor_asset_
         f"{'b' * 64}  tg-macos-amd64-cpu",
         f"{'c' * 64}  tg-windows-amd64-cpu.exe",
     ])
+    _set_manifest_metadata(release_data, "CHECKSUMS.txt", checksums_content)
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -284,6 +309,7 @@ def test_validate_release_assets_payload_should_fail_on_missing_asset_or_checksu
         ]
     }
     checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    _set_manifest_metadata(release_data, "CHECKSUMS.txt", checksums_content)
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -501,6 +527,7 @@ def test_validate_release_assets_payload_should_allow_expected_non_checksum_asse
         ]
     }
     checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    _set_manifest_metadata(release_data, "CHECKSUMS.txt", checksums_content)
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -588,9 +615,12 @@ def test_validate_release_assets_payload_should_map_nested_bundle_paths_to_flat_
         ),
         f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
     ])
+    checksums_content = "\n"
+    _set_manifest_metadata(release_data, "CHECKSUMS.txt", checksums_content)
+    _set_manifest_metadata(release_data, "BUNDLE_CHECKSUMS.txt", bundle_checksums_content)
     errors = module.validate_release_assets_payload(
         release_data=release_data,
-        checksums_content="",
+        checksums_content=checksums_content,
         bundle_checksums_content=bundle_checksums_content,
         expected_assets=[
             "tensor-grep.rb",
@@ -615,6 +645,19 @@ def test_validate_release_assets_payload_should_map_nested_bundle_paths_to_flat_
         },
     )
     assert errors == []
+
+
+def test_validate_release_assets_payload_rejects_invalid_metadata_only_asset():
+    module = _load_module()
+    release_data = {"assets": [{"name": "asset.sigstore.json", "size": 0, "digest": "sha512:bad"}]}
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content="",
+        expected_assets=["asset.sigstore.json"],
+        checksum_required_assets=[],
+    )
+    assert any("invalid size metadata" in error for error in errors)
+    assert any("invalid digest metadata" in error for error in errors)
 
 
 def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksum_entry():

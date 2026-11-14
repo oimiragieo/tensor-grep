@@ -74,7 +74,7 @@ def _validate_manifest_against_assets(
         if not isinstance(asset, dict):
             continue
         size = asset.get("size")
-        if not isinstance(size, int) or size <= 0:
+        if type(size) is not int or size <= 0:
             errors.append(f"Release asset {name} has invalid size metadata")
 
         raw_asset_digest = asset.get("digest")
@@ -140,6 +140,17 @@ def validate_release_assets_payload(
     unexpected_assets = sorted(names - expected_set)
     for name in unexpected_assets:
         errors.append(f"Unexpected release asset: {name}")
+
+    metadata_only = expected_set - checksum_required_set - bundle_checksum_required_set
+    metadata_only.update({"CHECKSUMS.txt", "BUNDLE_CHECKSUMS.txt"} & expected_set)
+    for name in sorted(metadata_only & names):
+        asset = named_assets[name]
+        size = asset.get("size")
+        if type(size) is not int or size <= 0:
+            errors.append(f"Release asset {name} has invalid size metadata")
+        digest = asset.get("digest")
+        if not isinstance(digest, str) or _normalize_digest(digest) is None:
+            errors.append(f"Release asset {name} has invalid digest metadata: {digest}")
 
     expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
     errors.extend(
@@ -330,7 +341,10 @@ def _validate_local_release_assets(
         size = path.stat().st_size
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
-        if api_asset.get("size") != size:
+        api_size = api_asset.get("size")
+        if type(api_size) is not int:
+            errors.append(f"Uploaded release asset {name} has invalid size metadata")
+        elif api_size != size:
             errors.append(f"Uploaded release asset {name} size differs from publisher-local bytes")
         if _normalize_digest(str(api_asset.get("digest", ""))) != digest:
             errors.append(
