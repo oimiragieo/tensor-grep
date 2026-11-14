@@ -3349,7 +3349,7 @@ def _python_references_and_calls(
 
     try:
         source = lang_registry.read_source_text(path)
-        tree = _cached_ast_parse(source)
+        tree = _self._cached_ast_parse(source)
     except (OSError, SyntaxError):
         return [], []
 
@@ -4600,7 +4600,7 @@ def _thin_cli_dispatcher_call_targets(
         return None
     try:
         source = _self._read_source_text_cached(file_path)
-        tree = _cached_ast_parse(source)
+        tree = _self._cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError):
         return None
 

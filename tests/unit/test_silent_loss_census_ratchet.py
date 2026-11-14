@@ -88,7 +88,7 @@ _BROAD_EXCEPTIONS = frozenset({"BARE", "OSError", "Exception", "EnvironmentError
 KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # FALLBACK-ASSIGN: uncertainty_gaps retains the original POSIX display path when resolve
     # fails, then appends/counts that same input. No entry is dropped. Live/error controls:
-    # test_graph_and_session_failure_boundaries::test_uncertainty_display_resolve_failure_preserves_count_and_sample.
+    # test_graph_failure_boundaries::test_uncertainty_display_resolve_failure_preserves_count_and_sample.
     "repo_map_graph.py": 1,
     # 18 -> 15 by TWO INDEPENDENT fixes that landed in parallel; this file has been burned once
     # already by a hand count, so the arithmetic is spelled out:
