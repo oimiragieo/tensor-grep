@@ -83,6 +83,9 @@ uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
     for step in steps:
         if step["name"] in runs:
             step["run"] = runs[str(step["name"])]
+    next(step for step in steps if step["name"] == "Verify SLSA provenance")["env"] = {
+        "GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"
+    }
     setup_actions = {
         "Checkout publisher source": {
             "uses": "actions/checkout@v6",
@@ -326,10 +329,16 @@ def test_release_security_contract_rejects_unsealed_step(position: int) -> None:
     assert any("steps must equal the sealed sequence" in error for error in _errors(workflow))
 
 
-def test_release_security_contract_rejects_step_environment_injection() -> None:
+@pytest.mark.parametrize(
+    "environment",
+    [{}, {"GH_TOKEN": "${{ secrets.OTHER_TOKEN }}"}, {"PATH": "/tmp/shims"}],
+)
+def test_release_security_contract_rejects_step_environment_injection(
+    environment: dict[str, str],
+) -> None:
     workflow = _workflow()
-    _step(workflow, "Verify SLSA provenance")["env"] = {"PATH": "/tmp/shims"}
-    assert any("sealed fields" in error for error in _errors(workflow))
+    _step(workflow, "Verify SLSA provenance")["env"] = environment
+    assert any("bind only the GitHub token" in error for error in _errors(workflow))
 
 
 @pytest.mark.parametrize("fault", ["id", "output", "rust-profile"])

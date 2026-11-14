@@ -513,11 +513,16 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(
                 f"CI release publisher `{name}` must run only its exact commands: {expected_text}"
             )
-        expected_keys = (
-            {"name", "run", "id"} if name == "Prepare release asset path list" else {"name", "run"}
-        )
+        if name == "Prepare release asset path list":
+            expected_keys = {"name", "run", "id"}
+        elif name == "Verify SLSA provenance":
+            expected_keys = {"name", "run", "env"}
+        else:
+            expected_keys = {"name", "run"}
         if set(named[name]) != expected_keys:
             errors.append(f"CI release publisher `{name}` must use only its sealed fields")
+    if named["Verify SLSA provenance"].get("env") != {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}:
+        errors.append("CI release provenance verification must bind only the GitHub token")
     if named["Prepare release asset path list"].get("id") != "release_paths":
         errors.append("CI release asset path preparation must use `id: release_paths`")
     attest = named["Generate SLSA provenance"]
