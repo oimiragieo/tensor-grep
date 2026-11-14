@@ -14562,8 +14562,8 @@ def build_symbol_blast_radius_from_map(
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
     payload["resolution_gaps"] = list(callers_payload.get("resolution_gaps", []))
-    payload["resolution_gaps"].extend(
-        _repo_map_graph.uncertainty_gaps(_self, list(blast_uncertain), _repo_map_root_dir(repo_map))
+    _repo_map_graph.add_uncertainty(
+        _self, payload, list(blast_uncertain), _repo_map_root_dir(repo_map)
     )
     payload["graph_trust_summary"] = _downgrade_graph_trust_summary_for_coverage_gaps(
         _graph_trust_summary(caller_tree, calls=direct_callers),
