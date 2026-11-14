@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from itertools import pairwise
 
 import yaml
@@ -16,7 +17,7 @@ _PUBLISH_ACTIONS = (
     "python-semantic-release/python-semantic-release",
 )
 _PUBLISH_COMMAND = re.compile(
-    r"(?m)^\s*(?:gh\s+release\s+(?:create|upload)\b|npm\s+publish\b|"
+    r"(?m)(?:\bgh\s+release\s+(?:create|upload)\b|\bnpm\s+publish\b|"
     r"(?:twine|maturin)\s+(?:upload|publish)\b)"
 )
 
@@ -40,13 +41,25 @@ def _shell_commands(script: str) -> list[str]:
     return commands
 
 
-def _command_with(script: str, prefix: str, required: tuple[str, ...]) -> bool:
-    return any(
-        (command == prefix or command.startswith(prefix + " "))
-        and all(token in command for token in required)
-        and "|| true" not in command
-        for command in _shell_commands(script)
-    )
+def _shell_words(command: str) -> list[str]:
+    try:
+        return shlex.split(command, comments=True, posix=True)
+    except ValueError:
+        return []
+
+
+def _shell_argv(command: str) -> list[str]:
+    if re.search(r"(?:\|\||&&|[;`]|\$\()", command):
+        return []
+    return _shell_words(command)
+
+
+def _command_with(script: str, prefix: tuple[str, ...], required: tuple[str, ...]) -> bool:
+    for command in _shell_commands(script):
+        argv = _shell_argv(command)
+        if tuple(argv[: len(prefix)]) == prefix and all(token in argv for token in required):
+            return True
+    return False
 
 
 def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
@@ -75,7 +88,11 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             if str(step.get("uses", "")).startswith("softprops/action-gh-release@"):
                 job_release_steps.append(step)
                 release_actions.append((str(name), step))
-            if _PUBLISH_COMMAND.search(str(step.get("run", ""))):
+            commands = (
+                " ".join(_shell_words(command))
+                for command in _shell_commands(str(step.get("run", "")))
+            )
+            if any(_PUBLISH_COMMAND.search(command) for command in commands):
                 direct_publishers.append(str(name))
         if job_release_steps:
             publishers.append((str(name), job, steps))
@@ -123,7 +140,7 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(f"CI release publisher is missing `{name}`")
         elif sum(str(step.get("name")) == name for step in named_steps) != 1:
             errors.append(f"CI release publisher must define `{name}` exactly once")
-        elif "if" in named[name] or named[name].get("continue-on-error") in (True, "true"):
+        elif "if" in named[name] or "continue-on-error" in named[name]:
             errors.append(f"CI release publisher must not bypass `{name}`")
     if errors:
         return errors
@@ -136,61 +153,110 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     runs = {name: str(step.get("run", "")) for name, step in named.items()}
     commands = {
         "Install cargo-cyclonedx": (
-            "cargo install",
-            ("--locked", "cargo-cyclonedx", "--version 0.5.10"),
+            ("cargo", "install"),
+            ("--locked", "cargo-cyclonedx", "--version", "0.5.10"),
         ),
         "Generate Rust SBOM": (
-            "cargo cyclonedx",
+            ("cargo", "cyclonedx"),
             (
-                "--format json",
-                "--target all",
-                "--override-filename sbom-rust",
-                "--features cuda",
+                "--format",
+                "json",
+                "--target",
+                "all",
+                "--override-filename",
+                "sbom-rust",
+                "--features",
+                "cuda",
             ),
         ),
         "Validate release SBOM identity": (
-            "uv run",
             (
-                "python scripts/validate_release_sbom_identity.py",
-                "--rust-sbom artifacts/sbom-rust.json",
-                "--python-sbom artifacts/sbom-python.json",
-                '--expected-version "$RELEASE_VERSION"',
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/validate_release_sbom_identity.py",
+            ),
+            (
+                "--rust-sbom",
+                "artifacts/sbom-rust.json",
+                "--python-sbom",
+                "artifacts/sbom-python.json",
+                "--expected-version",
+                "$RELEASE_VERSION",
             ),
         ),
         "Validate release asset matrix and generate checksums": (
-            "uv run",
             (
-                "python scripts/validate_release_binary_artifacts.py",
-                "--artifacts-dir artifacts",
-                "--checksums-out artifacts/CHECKSUMS.txt",
-                "--additional-checksum-asset artifacts/sbom-rust.json",
-                "--additional-checksum-asset artifacts/sbom-python.json",
-                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/validate_release_binary_artifacts.py",
+            ),
+            (
+                "--artifacts-dir",
+                "artifacts",
+                "--checksums-out",
+                "artifacts/CHECKSUMS.txt",
+                "artifacts/sbom-rust.json",
+                "artifacts/sbom-python.json",
+                "--expected-profile",
+                "$RELEASE_NATIVE_ASSET_PROFILE",
             ),
         ),
         "Prepare release asset path list": (
-            "uv run",
             (
-                "python scripts/prepare_release_asset_paths.py",
-                "--artifacts-dir artifacts",
-                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/prepare_release_asset_paths.py",
+            ),
+            (
+                "--artifacts-dir",
+                "artifacts",
+                "--expected-profile",
+                "$RELEASE_NATIVE_ASSET_PROFILE",
                 "--github-output",
             ),
         ),
         "Verify SLSA provenance": (
-            "gh attestation verify",
+            ("gh", "attestation", "verify"),
             (
-                '--repo "$GITHUB_REPOSITORY"',
-                '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"',
-                "--source-ref refs/heads/main",
+                "--repo",
+                "$GITHUB_REPOSITORY",
+                "--signer-workflow",
+                "$GITHUB_REPOSITORY/.github/workflows/ci.yml",
+                "--source-ref",
+                "refs/heads/main",
             ),
         ),
         "Verify GitHub release asset coverage": (
-            "uv run",
             (
-                "python scripts/verify_github_release_assets.py",
-                "--local-artifacts-dir artifacts",
-                '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+                "uv",
+                "run",
+                "--no-project",
+                "--python",
+                "3.12",
+                "--",
+                "python",
+                "scripts/verify_github_release_assets.py",
+            ),
+            (
+                "--local-artifacts-dir",
+                "artifacts",
+                "--expected-profile",
+                "$RELEASE_NATIVE_ASSET_PROFILE",
                 "--wait-seconds",
                 "--poll-interval-seconds",
             ),
@@ -198,18 +264,22 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     }
     for name, (prefix, tokens) in commands.items():
         if not _command_with(runs[name], prefix, tokens):
-            errors.append(f"CI release publisher `{name}` must run `{prefix}` with {tokens}")
+            errors.append(
+                f"CI release publisher `{name}` must run `{' '.join(prefix)}` with {tokens}"
+            )
     python_sbom = runs["Prepare clean Python SBOM environments"]
     for prefix, tokens in (
-        ("uv export", ("--locked", "--no-dev", "--no-emit-project")),
-        ("uv pip sync", ("--require-hashes", "scripts/release-sbom-tools.txt")),
+        (("uv", "export"), ("--locked", "--no-dev", "--no-emit-project")),
+        (("uv", "pip", "sync"), ("--require-hashes", "scripts/release-sbom-tools.txt")),
         (
-            "cyclonedx-py environment",
-            ("-E", "--output-file artifacts/sbom-python.json"),
+            ("cyclonedx-py", "environment"),
+            ("-E", "--output-file", "artifacts/sbom-python.json"),
         ),
     ):
         if not _command_with(python_sbom, prefix, tokens):
-            errors.append(f"CI release Python SBOM step must run `{prefix}` with {tokens}")
+            errors.append(
+                f"CI release Python SBOM step must run `{' '.join(prefix)}` with {tokens}"
+            )
 
     attest = named["Generate SLSA provenance"]
     if attest.get("uses") != "actions/attest-build-provenance@v4":

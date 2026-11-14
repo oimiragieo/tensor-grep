@@ -204,7 +204,10 @@ def test_release_security_contract_rejects_missing_command_contract(
     assert any(expected in error for error in _errors(workflow))
 
 
-@pytest.mark.parametrize("bypass", [{"if": "false"}, {"continue-on-error": True}])
+@pytest.mark.parametrize(
+    "bypass",
+    [{"if": "false"}, {"continue-on-error": True}, {"continue-on-error": "${{ true }}"}],
+)
 def test_release_security_contract_rejects_bypassed_security_step(
     bypass: dict[str, object],
 ) -> None:
@@ -222,6 +225,21 @@ def test_release_security_contract_rejects_nonexecuted_command_text(prefix: str)
     assert any("gh attestation verify" in error for error in _errors(workflow))
 
 
+@pytest.mark.parametrize(
+    "run",
+    [
+        'gh attestation verify --help # --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-ref refs/heads/main',
+        'uv run echo python scripts/validate_release_sbom_identity.py --rust-sbom artifacts/sbom-rust.json --python-sbom artifacts/sbom-python.json --expected-version "$RELEASE_VERSION"',
+        'gh attestation verify subject --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-ref refs/heads/main ||:',
+    ],
+)
+def test_release_security_contract_rejects_executable_noop(run: str) -> None:
+    workflow = _workflow()
+    name = "Verify SLSA provenance" if run.startswith("gh ") else "Validate release SBOM identity"
+    _step(workflow, name)["run"] = run
+    assert _errors(workflow)
+
+
 def test_release_security_contract_rejects_second_action_in_same_job() -> None:
     workflow = _workflow()
     steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
@@ -229,10 +247,14 @@ def test_release_security_contract_rejects_second_action_in_same_job() -> None:
     assert any("exactly one GitHub release action" in error for error in _errors(workflow))
 
 
-def test_release_security_contract_rejects_direct_release_command() -> None:
+@pytest.mark.parametrize(
+    "command",
+    ["gh release upload v1 artifact", "if true; then command gh release upload v1 artifact; fi"],
+)
+def test_release_security_contract_rejects_direct_release_command(command: str) -> None:
     workflow = _workflow()
     steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
-    steps.insert(0, {"name": "Alternate upload", "run": "gh release upload v1 artifact"})
+    steps.insert(0, {"name": "Alternate upload", "run": command})
     assert any("direct release publication" in error for error in _errors(workflow))
 
 
