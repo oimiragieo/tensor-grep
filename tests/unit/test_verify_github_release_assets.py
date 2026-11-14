@@ -1,4 +1,6 @@
+import hashlib
 import importlib.util
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +14,110 @@ def _load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _asset_metadata(name: str, content: bytes) -> dict[str, object]:
+    return {
+        "name": name,
+        "size": len(content),
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+    }
+
+
+def test_validate_local_release_assets_binds_api_metadata(tmp_path: Path):
+    module = _load_module()
+    content = b"signed bytes"
+    (tmp_path / "tg-linux-amd64-cpu").write_bytes(content)
+    release_data = {"assets": [_asset_metadata("tg-linux-amd64-cpu", content)]}
+
+    assert (
+        module._validate_local_release_assets(
+            release_data=release_data,
+            expected_assets=["tg-linux-amd64-cpu"],
+            artifacts_dir=tmp_path,
+        )
+        == []
+    )
+
+
+def test_validate_local_release_assets_rejects_wrong_uploaded_metadata(tmp_path: Path):
+    module = _load_module()
+    (tmp_path / "tg-linux-amd64-cpu").write_bytes(b"local bytes")
+    release_data = {"assets": [_asset_metadata("tg-linux-amd64-cpu", b"different")]}
+
+    errors = module._validate_local_release_assets(
+        release_data=release_data,
+        expected_assets=["tg-linux-amd64-cpu"],
+        artifacts_dir=tmp_path,
+    )
+    assert any("size differs" in error for error in errors)
+    assert any("digest differs" in error for error in errors)
+
+
+def test_validate_local_release_assets_rejects_missing_duplicate_and_symlink(
+    tmp_path: Path,
+):
+    module = _load_module()
+    content = b"bytes"
+    release_data = {"assets": [_asset_metadata("asset.bin", content)]}
+
+    missing = module._validate_local_release_assets(
+        release_data=release_data,
+        expected_assets=["asset.bin"],
+        artifacts_dir=tmp_path,
+    )
+    assert any("found 0" in error for error in missing)
+
+    (tmp_path / "one").mkdir()
+    (tmp_path / "two").mkdir()
+    (tmp_path / "one" / "asset.bin").write_bytes(content)
+    (tmp_path / "two" / "asset.bin").write_bytes(content)
+    duplicate = module._validate_local_release_assets(
+        release_data=release_data,
+        expected_assets=["asset.bin"],
+        artifacts_dir=tmp_path,
+    )
+    assert any("found 2" in error for error in duplicate)
+
+    (tmp_path / "one" / "asset.bin").unlink()
+    (tmp_path / "two" / "asset.bin").unlink()
+    outside = tmp_path.parent / "outside-asset.bin"
+    outside.write_bytes(content)
+    try:
+        (tmp_path / "asset.bin").symlink_to(outside)
+    except OSError:
+        return
+    symlink = module._validate_local_release_assets(
+        release_data=release_data,
+        expected_assets=["asset.bin"],
+        artifacts_dir=tmp_path,
+    )
+    assert any("found 0" in error for error in symlink)
+
+
+def test_main_forwards_local_artifacts_dir(tmp_path: Path, monkeypatch):
+    module = _load_module()
+    received = {}
+
+    def fake_verify(**kwargs):
+        received.update(kwargs)
+        return []
+
+    monkeypatch.setattr(module, "verify_release_assets_with_retries", fake_verify)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_github_release_assets.py",
+            "--tag",
+            "v1.2.3",
+            "--local-artifacts-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert module.main() == 0
+    assert received["local_artifacts_dir"] == tmp_path
 
 
 def test_release_requests_do_not_forward_token_to_other_origins():
