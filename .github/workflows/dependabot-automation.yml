@@ -12,7 +12,7 @@ permissions:
 jobs:
   dependabot-triage:
     name: dependabot-triage
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     env:
       GH_REPO: ${{ github.repository }}

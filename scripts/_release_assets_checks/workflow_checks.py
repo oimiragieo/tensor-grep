@@ -216,7 +216,7 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
     for expected in (
         "name: Dependabot Automation",
         "pull_request_target:",
-        "github.actor == 'dependabot[bot]'",
+        "github.event.pull_request.user.login == 'dependabot[bot]'",
         "dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7",
         "gh label create dependencies",
         'gh pr edit "$PR_URL"',
@@ -254,7 +254,7 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
             "Dependabot automation workflow must define `dependabot-triage` job",
         ]
 
-    if triage.get("if") != "github.actor == 'dependabot[bot]'":
+    if triage.get("if") != "github.event.pull_request.user.login == 'dependabot[bot]'":
         errors.append(
             "Dependabot automation workflow `dependabot-triage` job must only run for dependabot[bot]"
         )

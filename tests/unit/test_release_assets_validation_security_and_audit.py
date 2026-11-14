@@ -267,7 +267,7 @@ def test_should_require_dependabot_automation_automerge_contract():
       issues: write
     jobs:
       dependabot-triage:
-        if: github.actor == 'dependabot[bot]'
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
         runs-on: ubuntu-latest
         steps:
           - name: Fetch Dependabot metadata
@@ -282,6 +282,24 @@ def test_should_require_dependabot_automation_automerge_contract():
     assert "Ensure dependency labels exist" in joined_errors
     assert "Approve safe updates" in joined_errors
     assert "gh pr merge" in joined_errors
+
+
+def test_should_reject_dependabot_actor_without_dependabot_pr_author():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow_path = root / ".github" / "workflows" / "dependabot-automation.yml"
+    workflow = workflow_path.read_text(encoding="utf-8").replace(
+        "github.event.pull_request.user.login == 'dependabot[bot]'",
+        "github.actor == 'dependabot[bot]'",
+    )
+    errors = module.validate_dependabot_automation_workflow_content(workflow_content=workflow)
+    assert any("must only run for dependabot[bot]" in error for error in errors)
 
 
 def test_should_require_dependabot_automation_explicit_repo_targeting():
@@ -304,7 +322,7 @@ def test_should_require_dependabot_automation_explicit_repo_targeting():
       issues: write
     jobs:
       dependabot-triage:
-        if: github.actor == 'dependabot[bot]'
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
         runs-on: ubuntu-latest
         steps:
           - name: Fetch Dependabot metadata
