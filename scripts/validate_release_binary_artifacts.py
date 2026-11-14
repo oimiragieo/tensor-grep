@@ -74,7 +74,7 @@ def write_checksums(
     *,
     additional_assets: list[Path] | None = None,
 ) -> None:
-    matrix = build_hash_matrix(artifacts_dir)
+    protected_assets = _iter_release_binaries(artifacts_dir)
     if additional_assets:
         allowed = {"sbom-rust.json", "sbom-python.json"}
         names = [asset.name for asset in additional_assets]
@@ -83,8 +83,29 @@ def write_checksums(
         for asset in additional_assets:
             if not asset.is_file():
                 raise ValueError(f"Missing additional release checksum asset: {asset}")
-            if asset.name in matrix:
+            if any(asset.name == binary.name for binary in protected_assets):
                 raise ValueError(f"Duplicate release checksum asset name: {asset.name}")
+        protected_assets.extend(additional_assets)
+
+    try:
+        output_identity = output_path.resolve()
+        collision = next(
+            (
+                asset
+                for asset in protected_assets
+                if asset.resolve() == output_identity
+                or (output_path.exists() and output_path.samefile(asset))
+            ),
+            None,
+        )
+    except OSError as exc:
+        raise ValueError(f"Unable to verify checksum output identity: {output_path}") from exc
+    if collision is not None:
+        raise ValueError(f"Checksum output must not overwrite release asset: {collision}")
+
+    matrix = build_hash_matrix(artifacts_dir)
+    if additional_assets:
+        for asset in additional_assets:
             matrix[asset.name] = hashlib.sha256(asset.read_bytes()).hexdigest()
     lines = [f"{digest}  {name}" for name, digest in sorted(matrix.items())]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,11 +152,15 @@ def main() -> int:
             print(f"ERROR: {err}")
         return 1
 
-    write_checksums(
-        args.artifacts_dir,
-        args.checksums_out,
-        additional_assets=args.additional_checksum_asset,
-    )
+    try:
+        write_checksums(
+            args.artifacts_dir,
+            args.checksums_out,
+            additional_assets=args.additional_checksum_asset,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        return 1
     print(f"Release binary artifact validation passed. Checksums written to {args.checksums_out}")
     return 0
 

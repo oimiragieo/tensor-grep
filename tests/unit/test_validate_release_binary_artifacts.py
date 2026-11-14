@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -133,6 +134,75 @@ def test_should_reject_missing_managed_checksum_asset(tmp_path: Path) -> None:
             tmp_path / "CHECKSUMS.txt",
             additional_assets=[rust_sbom, tmp_path / "sbom-python.json"],
         )
+
+
+@pytest.mark.parametrize("alias_kind", ["direct", "hardlink", "symlink"])
+def test_should_reject_checksum_output_aliasing_sbom(tmp_path: Path, alias_kind: str) -> None:
+    module = _load_module()
+    rust_sbom = tmp_path / "sbom-rust.json"
+    python_sbom = tmp_path / "sbom-python.json"
+    rust_sbom.write_text("rust", encoding="utf-8")
+    python_sbom.write_text("python", encoding="utf-8")
+    output = rust_sbom
+    if alias_kind != "direct":
+        output = tmp_path / f"CHECKSUMS-{alias_kind}.txt"
+        try:
+            if alias_kind == "hardlink":
+                os.link(rust_sbom, output)
+            else:
+                output.symlink_to(rust_sbom)
+        except OSError as exc:
+            pytest.skip(f"{alias_kind} creation unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="must not overwrite release asset"):
+        module.write_checksums(
+            tmp_path,
+            output,
+            additional_assets=[rust_sbom, python_sbom],
+        )
+    assert rust_sbom.read_text(encoding="utf-8") == "rust"
+
+
+def test_should_reject_checksum_output_aliasing_native_binary(tmp_path: Path) -> None:
+    module = _load_module()
+    binary = tmp_path / "tg-linux-amd64-cpu"
+    _touch(binary)
+
+    with pytest.raises(ValueError, match="must not overwrite release asset"):
+        module.write_checksums(tmp_path, binary)
+    assert binary.read_bytes() == b"binary"
+
+
+def test_main_refuses_checksum_output_aliasing_sbom(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    for name in module.NATIVE_FRONTDOOR_EXPECTED_BINARIES:
+        _touch(tmp_path / name)
+    rust_sbom = tmp_path / "sbom-rust.json"
+    python_sbom = tmp_path / "sbom-python.json"
+    rust_sbom.write_text("rust", encoding="utf-8")
+    python_sbom.write_text("python", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_release_binary_artifacts.py",
+            "--artifacts-dir",
+            str(tmp_path),
+            "--checksums-out",
+            str(rust_sbom),
+            "--expected-profile",
+            "native-frontdoor",
+            "--additional-checksum-asset",
+            str(rust_sbom),
+            "--additional-checksum-asset",
+            str(python_sbom),
+        ],
+    )
+
+    assert module.main() == 1
+    assert rust_sbom.read_text(encoding="utf-8") == "rust"
 
 
 def test_main_wires_managed_sboms_into_checksum_manifest(
