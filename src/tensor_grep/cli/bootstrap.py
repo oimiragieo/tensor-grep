@@ -788,15 +788,9 @@ def _search_args_paths_defaulted(search_args: list[str]) -> bool:
 
 
 def _path_has_project_marker(path: Path) -> bool:
-    from tensor_grep.io.scan_limits import BROAD_WORKSPACE_PROJECT_MARKERS
+    from tensor_grep.io.project_markers import path_has_project_marker
 
-    for marker in BROAD_WORKSPACE_PROJECT_MARKERS:
-        try:
-            if (path / marker).exists():
-                return True
-        except OSError:
-            continue
-    return False
+    return path_has_project_marker(path)
 
 
 def _search_paths_include_generated_root(paths: list[str]) -> bool:

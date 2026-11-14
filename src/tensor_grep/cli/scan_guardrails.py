@@ -10,10 +10,10 @@ from pathlib import Path
 # (itself lazily imported, but unconditionally for every `tg scan`/`tg test`/`tg ast-info`/`tg run`
 # invocation that reaches it), and only ever needs these 3 plain constants -- never SearchConfig or
 # DirectoryScanner -- so there is no reason to pay for the heavier module here.
+from tensor_grep.io.project_markers import path_has_project_marker as _path_has_project_marker
 from tensor_grep.io.scan_limits import (
     BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
     BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD,
-    BROAD_WORKSPACE_PROJECT_MARKERS,
 )
 
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
@@ -51,7 +51,6 @@ _BROAD_SYSTEM_SCAN_DIR_NAMES = {
 
 _BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD
 _BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD
-_BROAD_WORKSPACE_PROJECT_MARKERS = BROAD_WORKSPACE_PROJECT_MARKERS
 
 
 @dataclass(frozen=True)
@@ -79,16 +78,6 @@ def _safe_resolve(path: Path) -> Path:
 
 def _same_path(left: Path, right: Path) -> bool:
     return _normalized_path(_safe_resolve(left)) == _normalized_path(_safe_resolve(right))
-
-
-def _path_has_project_marker(path: Path) -> bool:
-    for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
-        try:
-            if (path / marker).exists():
-                return True
-        except OSError:
-            continue
-    return False
 
 
 def _direct_temp_paths() -> list[Path]:
