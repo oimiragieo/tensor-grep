@@ -683,6 +683,64 @@ def test_validate_release_assets_payload_rejects_invalid_metadata_only_asset():
     assert any("invalid digest metadata" in error for error in errors)
 
 
+def test_release_asset_sets_include_exact_profile_signatures():
+    module = _load_module()
+    expected, checksummed = module._release_asset_sets("native-frontdoor")
+    subjects = [
+        "tg-linux-amd64-cpu",
+        "tg-macos-amd64-cpu",
+        "tg-windows-amd64-cpu.exe",
+        "sbom-rust.json",
+        "sbom-python.json",
+        "CHECKSUMS.txt",
+    ]
+    assert checksummed == subjects
+    assert expected == [
+        *subjects,
+        *module.PACKAGE_MANAGER_ASSETS,
+        *(f"{name}.sigstore.json" for name in subjects),
+    ]
+
+
+def test_release_signature_asset_requires_valid_metadata():
+    module = _load_module()
+    signature = "sbom-rust.json.sigstore.json"
+    release_data = {"assets": [{"name": signature, "size": 10, "digest": f"sha256:{'a' * 64}"}]}
+    assert (
+        module.validate_release_assets_payload(
+            release_data=release_data,
+            checksums_content="",
+            expected_assets=[signature],
+            checksum_required_assets=[],
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("fault", ["missing", "extra"])
+def test_release_signature_set_rejects_missing_or_extra_bundle(fault: str):
+    module = _load_module()
+    expected, _ = module._release_asset_sets("native-frontdoor")
+    assets = [{"name": name, "size": 10, "digest": f"sha256:{'a' * 64}"} for name in expected]
+    signature = "sbom-rust.json.sigstore.json"
+    if fault == "missing":
+        assets = [asset for asset in assets if asset["name"] != signature]
+    else:
+        assets.append({"name": "extra.sigstore.json", "size": 10, "digest": f"sha256:{'b' * 64}"})
+    errors = module.validate_release_assets_payload(
+        release_data={"assets": assets},
+        checksums_content="",
+        expected_assets=expected,
+        checksum_required_assets=[],
+    )
+    expected_error = (
+        f"Missing release asset: {signature}"
+        if fault == "missing"
+        else "Unexpected release asset: extra.sigstore.json"
+    )
+    assert expected_error in errors
+
+
 def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksum_entry():
     module = _load_module()
     release_data = {

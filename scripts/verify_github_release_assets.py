@@ -227,11 +227,19 @@ PACKAGE_MANAGER_ASSETS = [
     "BUNDLE_CHECKSUMS.txt",
 ]
 
+SBOM_ASSETS = ["sbom-rust.json", "sbom-python.json"]
+
 BINARY_ASSET_PROFILES = {
     "full": FULL_BINARY_ASSETS,
     "native-frontdoor": NATIVE_FRONTDOOR_BINARY_ASSETS,
     "native-frontdoor-gpu": GPU_READY_NATIVE_FRONTDOOR_BINARY_ASSETS,
 }
+
+
+def _release_asset_sets(expected_profile: str) -> tuple[list[str], list[str]]:
+    checksum_required = [*BINARY_ASSET_PROFILES[expected_profile], *SBOM_ASSETS, "CHECKSUMS.txt"]
+    signatures = [f"{name}.sigstore.json" for name in checksum_required]
+    return [*checksum_required, *PACKAGE_MANAGER_ASSETS, *signatures], checksum_required
 
 
 def verify_release_assets(
@@ -269,7 +277,6 @@ def verify_release_assets(
 
     checksums_content = _download_text(checksums_url, token=token)
     bundle_checksums_content = _download_text(bundle_checksums_url, token=token)
-    binary_assets = BINARY_ASSET_PROFILES[expected_profile]
     version = tag.removeprefix("v")
     bundle_checksum_asset_paths = {
         "tensor-grep.rb": "homebrew-tap/Formula/tensor-grep.rb",
@@ -278,8 +285,7 @@ def verify_release_assets(
         ),
         "PUBLISH_INSTRUCTIONS.md": "PUBLISH_INSTRUCTIONS.md",
     }
-    expected_assets = [*binary_assets, *PACKAGE_MANAGER_ASSETS, "CHECKSUMS.txt"]
-    checksum_required_assets = [*binary_assets, "CHECKSUMS.txt"]
+    expected_assets, checksum_required_assets = _release_asset_sets(expected_profile)
     bundle_checksum_required_assets = PACKAGE_MANAGER_ASSETS
     errors = validate_release_assets_payload(
         release_data=release_data,
