@@ -959,12 +959,12 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             "`Download native release front doors` step must download `release-native-*` artifacts"
                         )
                 validate_native_run = github_run_by_name.get(
-                    "Validate native release asset matrix and generate checksums"
+                    "Validate release asset matrix and generate checksums"
                 )
                 if validate_native_run is None:
                     errors.append(
                         "CI workflow publish-github-release-assets job must include "
-                        "step `Validate native release asset matrix and generate checksums`"
+                        "step `Validate release asset matrix and generate checksums`"
                     )
                 else:
                     if (
@@ -983,19 +983,19 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         if required not in validate_native_run:
                             errors.append(
                                 "CI workflow publish-github-release-assets "
-                                "`Validate native release asset matrix and generate checksums` "
+                                "`Validate release asset matrix and generate checksums` "
                                 f"step must include `{required}`"
                             )
-                upload_step = github_step_by_name.get("Upload GitHub release native assets")
+                upload_step = github_step_by_name.get("Upload GitHub release assets")
                 if upload_step is None:
                     errors.append(
                         "CI workflow publish-github-release-assets job must include "
-                        "step `Upload GitHub release native assets`"
+                        "step `Upload GitHub release assets`"
                     )
                 elif upload_step.get("uses") != "softprops/action-gh-release@v3":
                     errors.append(
                         "CI workflow publish-github-release-assets "
-                        "`Upload GitHub release native assets` step must use `softprops/action-gh-release@v3`"
+                        "`Upload GitHub release assets` step must use `softprops/action-gh-release@v3`"
                     )
                 else:
                     with_block = upload_step.get("with", {})
@@ -1007,28 +1007,28 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     ):
                         errors.append(
                             "CI workflow publish-github-release-assets "
-                            "`Upload GitHub release native assets` step must upload to "
+                            "`Upload GitHub release assets` step must upload to "
                             "`v${{ needs.release.outputs.release_version }}`"
                         )
                     files = str(with_block.get("files", ""))
                     for required_file in (
-                        "artifacts/native/**/tg-*",
-                        "artifacts/CHECKSUMS.txt",
-                        "artifacts/package-manager-bundle/homebrew-tap/Formula/tensor-grep.rb",
-                        "artifacts/package-manager-bundle/PUBLISH_INSTRUCTIONS.md",
-                        "artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt",
+                        "${{ steps.release_paths.outputs.upload_files }}",
+                        "artifacts/native/**/tg-*.sigstore.json",
+                        "artifacts/sbom-rust.json.sigstore.json",
+                        "artifacts/sbom-python.json.sigstore.json",
+                        "artifacts/CHECKSUMS.txt.sigstore.json",
                     ):
                         if required_file not in files:
                             errors.append(
                                 "CI workflow publish-github-release-assets "
-                                "`Upload GitHub release native assets` step must upload "
+                                "`Upload GitHub release assets` step must upload "
                                 f"`{required_file}`"
                             )
-                verify_run = github_run_by_name.get("Verify GitHub release native asset coverage")
+                verify_run = github_run_by_name.get("Verify GitHub release asset coverage")
                 if verify_run is None:
                     errors.append(
                         "CI workflow publish-github-release-assets job must include "
-                        "step `Verify GitHub release native asset coverage`"
+                        "step `Verify GitHub release asset coverage`"
                     )
                 else:
                     if '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"' not in verify_run:
@@ -1045,7 +1045,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         if required not in verify_run:
                             errors.append(
                                 "CI workflow publish-github-release-assets "
-                                "`Verify GitHub release native asset coverage` "
+                                "`Verify GitHub release asset coverage` "
                                 f"step must include `{required}`"
                             )
 

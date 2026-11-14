@@ -38,6 +38,9 @@ from _release_assets_checks.docs_and_manifest_checks import (  # noqa: E402
     validate_uv_security_constraints,
     validate_winget_manifest,
 )
+from _release_assets_checks.release_security import (  # noqa: E402
+    validate_ci_release_security_contract,
+)
 from _release_assets_checks.release_workflow import validate_release_workflow_content  # noqa: E402
 from _release_assets_checks.workflow_checks import (  # noqa: E402
     validate_actions_sha_pinned,
@@ -57,6 +60,7 @@ __all__ = [
     "validate_audit_workflow_content",
     "validate_benchmarks_docs",
     "validate_ci_pipeline_doc_contract",
+    "validate_ci_release_security_contract",
     "validate_ci_workflow_content",
     "validate_dependabot_automation_workflow_content",
     "validate_dependabot_config",
@@ -228,6 +232,7 @@ def validate_all() -> list[str]:
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+    errors.extend(validate_ci_release_security_contract(ci_workflow=ci_workflow))
 
     public_gpu_proof_workflow = _read(ROOT / ".github" / "workflows" / "public-gpu-proof.yml")
     errors.extend(
