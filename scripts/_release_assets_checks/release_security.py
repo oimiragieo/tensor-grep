@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from itertools import pairwise
 
 import yaml
 
@@ -18,6 +19,126 @@ _PUBLISH_COMMAND = re.compile(
     r"(?m)^\s*(?:gh\s+release\s+(?:create|upload)\b|npm\s+publish\b|"
     r"(?:twine|maturin)\s+(?:upload|publish)\b)"
 )
+
+
+def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
+    """Require the authoritative publisher's provenance and signing spine."""
+    try:
+        parsed = yaml.safe_load(_normalize_pinned_actions(ci_workflow)) or {}
+    except yaml.YAMLError as exc:
+        return [f"CI release security contract cannot parse workflow YAML: {exc}"]
+    jobs = parsed.get("jobs", {}) if isinstance(parsed, dict) else {}
+    if not isinstance(jobs, dict):
+        return ["CI release security contract requires a jobs mapping"]
+
+    publishers = []
+    for name, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        steps = job.get("steps", [])
+        if isinstance(steps, list) and any(
+            isinstance(step, dict)
+            and str(step.get("uses", "")).startswith("softprops/action-gh-release@")
+            for step in steps
+        ):
+            publishers.append((str(name), job, steps))
+    if len(publishers) != 1:
+        return ["CI release security contract requires exactly one GitHub release publisher job"]
+
+    job_name, publisher, steps = publishers[0]
+    errors: list[str] = []
+    permissions = publisher.get("permissions", {})
+    if not isinstance(permissions, dict):
+        permissions = {}
+    for permission in ("contents", "id-token", "attestations"):
+        if permissions.get(permission) != "write":
+            errors.append(f"CI release publisher `{job_name}` must request `{permission}: write`")
+    if publisher.get("if") != "needs.release.outputs.released == 'true'":
+        errors.append("CI release publisher must run only for a semantic-release tag")
+    needs = publisher.get("needs", [])
+    needs = [needs] if isinstance(needs, str) else needs if isinstance(needs, list) else []
+    if not {"release", "build-release-native-assets", "build-wheels-pypi"}.issubset(set(needs)):
+        errors.append(
+            "CI release publisher must depend on semantic release, native assets, and the tag-matched Python wheel"
+        )
+
+    named = {
+        str(step.get("name")): step for step in steps if isinstance(step, dict) and step.get("name")
+    }
+    required = (
+        "Generate Rust SBOM",
+        "Prepare clean Python SBOM environments",
+        "Validate release asset matrix and generate checksums",
+        "Prepare release asset path list",
+        "Generate SLSA provenance",
+        "Verify SLSA provenance",
+        "Sign release subjects with Sigstore",
+        "Upload GitHub release assets",
+        "Verify GitHub release asset coverage",
+    )
+    for name in required:
+        if name not in named:
+            errors.append(f"CI release publisher is missing `{name}`")
+    if errors:
+        return errors
+
+    positions = {str(step.get("name")): index for index, step in enumerate(steps)}
+    for earlier, later in pairwise(required):
+        if positions[earlier] >= positions[later]:
+            errors.append(f"CI release publisher must run `{earlier}` before `{later}`")
+
+    attest = named["Generate SLSA provenance"]
+    if attest.get("uses") != "actions/attest-build-provenance@v4":
+        errors.append("CI release publisher must use the pinned build-provenance action")
+    attest_with = attest.get("with", {})
+    if not isinstance(attest_with, dict) or attest_with.get("subject-path") != (
+        "${{ steps.release_paths.outputs.subject_paths }}"
+    ):
+        errors.append("CI release provenance must attest only the native/SBOM/checksum subjects")
+
+    signing = named["Sign release subjects with Sigstore"]
+    if signing.get("uses") != "sigstore/gh-action-sigstore-python@v3.0.0":
+        errors.append("CI release publisher must use the pinned Sigstore signing action")
+    signing_with = signing.get("with", {})
+    if not isinstance(signing_with, dict):
+        signing_with = {}
+    expected_signing = {
+        "inputs": (
+            "artifacts/native/**/tg-* artifacts/CHECKSUMS.txt "
+            "artifacts/sbom-rust.json artifacts/sbom-python.json"
+        ),
+        "release-signing-artifacts": False,
+        "verify": True,
+        "verify-cert-identity": (
+            "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/main"
+        ),
+        "verify-oidc-issuer": "https://token.actions.githubusercontent.com",
+    }
+    for key, value in expected_signing.items():
+        if signing_with.get(key) != value:
+            errors.append(f"CI release Sigstore step must set `{key}` to `{value}`")
+
+    upload = named["Upload GitHub release assets"]
+    if upload.get("uses") != "softprops/action-gh-release@v3":
+        errors.append("CI release publisher must use the pinned GitHub release action")
+    upload_with = upload.get("with", {})
+    if not isinstance(upload_with, dict):
+        upload_with = {}
+    if upload_with.get("tag_name") != "v${{ needs.release.outputs.release_version }}":
+        errors.append("CI release upload must use the semantic-release tag")
+    if upload_with.get("fail_on_unmatched_files") is not True:
+        errors.append("CI release upload must fail on unmatched files")
+    upload_files = str(upload_with.get("files", ""))
+    for expected in (
+        "${{ steps.release_paths.outputs.upload_files }}",
+        "artifacts/native/**/tg-*.sigstore.json",
+        "artifacts/sbom-rust.json.sigstore.json",
+        "artifacts/sbom-python.json.sigstore.json",
+        "artifacts/CHECKSUMS.txt.sigstore.json",
+    ):
+        if expected not in upload_files:
+            errors.append(f"CI release upload must explicitly cover `{expected}`")
+    return errors
 
 
 def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]:
