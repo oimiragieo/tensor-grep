@@ -36,7 +36,7 @@ def test_publisher_census_accepts_only_authoritative_ci() -> None:
         {"run": "maturin upload dist/*"},
         {"run": "uv publish dist/*"},
         {"run": "gh api --method POST repos/o/r/releases"},
-        {"run": "gh release \\\n+ upload v1 artifacts/tg"},
+        {"run": "gh release \\\n upload v1 artifacts/tg"},
         {"run": 'gh release "$operation" v1'},
         {
             "uses": "actions/github-script@sha",
@@ -90,6 +90,54 @@ def test_publisher_census_rejects_opaque_publish_boundaries(job: dict[str, objec
     }
     errors = validate_release_publisher_census(workflows=workflows)
     assert any("forbids opaque" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("permissions", "step"),
+    [
+        ({"contents": "write"}, {"run": "curl -X POST https://api.github.com/repos/o/r/releases"}),
+        ({"packages": "write"}, {"uses": "owner/alternate-release-action@sha"}),
+        ({"id-token": "write"}, {"run": "bash -lc 'gh release create v1 artifact'"}),
+        ({"contents": "write"}, {"run": 'gh --repo "$GITHUB_REPOSITORY" release create v1'}),
+        ({"contents": "write"}, {"run": "gh.exe release upload v1 artifact"}),
+        ("write-all", {"run": "echo opaque publisher"}),
+    ],
+)
+def test_publisher_census_rejects_release_write_authority(
+    permissions: object, step: dict[str, object]
+) -> None:
+    backfill = yaml.safe_dump({"permissions": permissions, "jobs": {"publish": {"steps": [step]}}})
+    workflows = {
+        ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
+        ".github/workflows/backfill.yml": backfill,
+    }
+    errors = validate_release_publisher_census(workflows=workflows)
+    assert any("Release write authority is only allowed" in error for error in errors)
+
+
+def test_publisher_census_rejects_non_github_secret() -> None:
+    workflows = {
+        ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
+        ".github/workflows/backfill.yml": _workflow({
+            "run": "echo opaque publisher",
+            "env": {"TOKEN": "${{ secrets.NPM_TOKEN }}"},
+        }),
+    }
+    errors = validate_release_publisher_census(workflows=workflows)
+    assert any("Release-capable secrets are only allowed" in error for error in errors)
+
+
+def test_dependabot_write_authority_exception_is_content_bound() -> None:
+    content = (ROOT / ".github" / "workflows" / "dependabot-automation.yml").read_text(
+        encoding="utf-8"
+    )
+    altered = content.replace("name: Dependabot Automation", "name: Altered Dependabot Automation")
+    workflows = {
+        ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
+        ".github/workflows/dependabot-automation.yml": altered,
+    }
+    errors = validate_release_publisher_census(workflows=workflows)
+    assert any("Release write authority is only allowed" in error for error in errors)
 
 
 def test_workflow_sources_discovers_yaml_publishers(tmp_path: Path) -> None:

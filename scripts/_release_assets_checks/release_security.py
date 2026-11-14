@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shlex
 
@@ -10,12 +11,19 @@ import yaml
 from .helpers import _normalize_pinned_actions
 
 _AUTHORITATIVE_PUBLISHER = ".github/workflows/ci.yml"
+_RELEASE_WRITE_PERMISSIONS = {"contents", "packages", "id-token"}
+_WRITE_AUTHORITY_EXCEPTIONS = {
+    ".github/workflows/dependabot-automation.yml": (
+        "8214e4c71c9767daf80d282aca42ad90f95839850fdc8930edce7fb8be01d480"
+    )
+}
 _PUBLISH_ACTIONS = (
     "softprops/action-gh-release",
     "pypa/gh-action-pypi-publish",
     "python-semantic-release/python-semantic-release",
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
+_NON_GITHUB_SECRET = re.compile(r"\${{\s*secrets(?:\.|\[)")
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -86,6 +94,23 @@ def _publishes_command(command: str) -> bool:
         ):
             return True
     return False
+
+
+def _release_write_permissions(permissions: object) -> set[str]:
+    if permissions == "write-all":
+        return {"write-all"}
+    if not isinstance(permissions, dict):
+        return set()
+    return {
+        str(name)
+        for name, value in permissions.items()
+        if name in _RELEASE_WRITE_PERMISSIONS and value == "write"
+    }
+
+
+def _workflow_fingerprint(parsed: object) -> str:
+    canonical = yaml.safe_dump(parsed, sort_keys=True).encode()
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def _shell_argv(command: str) -> list[str]:
@@ -557,6 +582,24 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
         jobs = parsed.get("jobs", {}) if isinstance(parsed, dict) else {}
         if not isinstance(jobs, dict):
             continue
+        if filename != _AUTHORITATIVE_PUBLISHER:
+            write_permissions = _release_write_permissions(parsed.get("permissions"))
+            for job in jobs.values():
+                if isinstance(job, dict):
+                    write_permissions.update(_release_write_permissions(job.get("permissions")))
+            expected_fingerprint = _WRITE_AUTHORITY_EXCEPTIONS.get(filename)
+            if write_permissions and _workflow_fingerprint(parsed) != expected_fingerprint:
+                names = ", ".join(sorted(write_permissions))
+                errors.append(
+                    f"Release write authority is only allowed in {_AUTHORITATIVE_PUBLISHER}; "
+                    f"found {filename}: {names}"
+                )
+            content_without_github_token = re.sub(r"\${{\s*secrets\.GITHUB_TOKEN\s*}}", "", content)
+            if _NON_GITHUB_SECRET.search(content_without_github_token):
+                errors.append(
+                    f"Release-capable secrets are only allowed in {_AUTHORITATIVE_PUBLISHER}; "
+                    f"found {filename}"
+                )
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue
