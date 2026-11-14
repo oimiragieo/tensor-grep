@@ -261,6 +261,7 @@ def test_import_evidence(
         candidate_entries = [
             entry for entry in raw_entries if str(entry.get("module", "")) in candidate_modules
         ]
+        raw_modules = {str(entry.get("module", "")) for entry in candidate_entries}
         if candidate_entries:
             edges = owner._confirm_import_edges(
                 Path(importer),
@@ -285,6 +286,9 @@ def test_import_evidence(
                 if module not in destination[target]:
                     destination[target].append(module)
         if target not in confirmed and target not in uncertain:
+            cached_only_modules = [
+                module for module in candidate_modules if module not in raw_modules
+            ]
             unknown = (
                 candidate_statuses.get(target, {}).get("status") == "uncertain"
                 or evidence["status"] == "uncertain"
@@ -292,8 +296,8 @@ def test_import_evidence(
                 or not raw_entries
                 or any(bool(entry.get("dynamic_unresolved")) for entry in raw_entries)
             )
-            if unknown:
-                uncertain[target] = candidate_modules
+            if unknown or cached_only_modules:
+                uncertain[target] = cached_only_modules or candidate_modules
     return confirmed, uncertain
 
 
@@ -547,6 +551,8 @@ def uncertainty_gaps(
     for raw_path in paths:
         path = Path(raw_path)
         spec = owner.lang_registry.spec_for_path(path)
+        if spec is not None and spec.import_update_target is None:
+            continue
         language = (
             spec.language_id if spec is not None else path.suffix.lstrip(".").lower() or "unknown"
         )

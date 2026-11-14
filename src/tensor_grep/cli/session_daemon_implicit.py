@@ -8,8 +8,6 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-_MAX_ENTRIES = 16
-
 
 def _identity(root: str, session_id: str) -> tuple[str, str]:
     return root, session_id
@@ -133,7 +131,7 @@ def resolve(
                 server.implicit_session_ids[key] = opened_id
                 if pin_receipt is not None:
                     _pin(server, key, root, opened_id, receipt)
-                while len(server.implicit_session_ids) > _MAX_ENTRIES:
+                while len(server.implicit_session_ids) > owner._DAEMON_IMPLICIT_SESSION_MAX_ENTRIES:
                     evicted_key, evicted_id = server.implicit_session_ids.popitem(last=False)
                     evicted_root = evicted_key[0]
                     if _mark_for_cleanup(server, evicted_root, evicted_id):
