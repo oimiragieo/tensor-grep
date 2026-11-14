@@ -5797,10 +5797,17 @@ def _build_context_pack_from_map(
         # `deadline_hit` flag this function already threads into pagerank keeps `context_pack_
         # assembly` in the caller's `assembly_stages_skipped` list honestly attributed to "some
         # stage in this pack build," not a new, over-precise label this signal alone can't support.
+        graph_uncertainty: dict[str, dict[str, Any]] = {}
+        graph_candidate_statuses: dict[str, dict[str, Any]] = {}
+        trusted_seed_files = {str(current["file"]) for current in scored_symbols}
         file_distances = _self._reverse_import_distances(
             dependency_seed_files,
             all_files,
             imports_by_file,
+            repo_root=_repo_map_root_dir(payload),
+            trusted_seed_files=trusted_seed_files,
+            uncertain_candidates=graph_uncertainty,
+            candidate_statuses=graph_candidate_statuses,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
@@ -5812,14 +5819,19 @@ def _build_context_pack_from_map(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        for target, importers in reverse_importers.items():
+            reverse_importers[target] = {
+                importer
+                for importer in importers
+                if graph_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+            }
         for current in payload["files"]:
             # #222 residual fix (found via OLD-vs-NEW re-profile of the fix above): a THIRD
             # unconditional whole-repo loop calling `_import_graph_bonus` directly -- cost is
             # O(len(payload["files"]) x len(dependency_aliases)), and `dependency_aliases` is NOT
             # always small: a query term that fuzzy-matches many files' import strings (e.g. a
             # short/common token) can pull hundreds-to-thousands of files into `dependency_seed_
-            # files`. Measured dominating a post-fix (deadline-honoring `_reverse_import_
-            # distances`/`_reverse_importers`) re-profile at 12,000 files: 93s of a 102s total,
+            # files`. Re-profiled after earlier deadline fixes at 12,000 files: 93s of 102s,
             # 208M `_import_graph_bonus` genexpr evaluations across only 10,006 outer calls. Same
             # per-item check, same shared `deadline_hit` flag as its two siblings above.
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -5829,6 +5841,8 @@ def _build_context_pack_from_map(
             current_path = str(current)
             if current_path in dependency_seed_files:
                 continue
+            if graph_candidate_statuses.get(current_path, {}).get("status") == "nonedge":
+                continue
             import_graph_bonus = _import_graph_bonus(
                 current_path,
                 dependency_aliases,
@@ -5836,12 +5850,27 @@ def _build_context_pack_from_map(
             )
             file_scores[current_path] = file_scores.get(current_path, 0) + import_graph_bonus
             if import_graph_bonus > 0:
-                _append_reason(file_reasons, current_path, "import-graph")
+                _append_reason(
+                    file_reasons,
+                    current_path,
+                    "heuristic-import"
+                    if graph_candidate_statuses.get(current_path, {}).get("status")
+                    not in {"origin", "confirmed"}
+                    else "import-graph",
+                )
             if current_path in file_distances:
                 file_scores[current_path] = file_scores.get(current_path, 0) + max(
                     1, 5 - file_distances[current_path]
                 )
                 _append_reason(file_reasons, current_path, "import-graph")
+        for current_path in graph_uncertainty:
+            if graph_candidate_statuses.get(current_path, {}).get("status") in {
+                "origin",
+                "confirmed",
+            }:
+                continue
+            file_scores[current_path] = max(1, file_scores.get(current_path, 0))
+            _append_reason(file_reasons, current_path, "heuristic-import")
         graph_seed_files: list[str] = []
         for symbol in scored_symbols:
             current = str(symbol["file"])
@@ -5849,6 +5878,14 @@ def _build_context_pack_from_map(
                 graph_seed_files.append(current)
         if not graph_seed_files:
             graph_seed_files = list(dependency_seed_files)
+        weak_graph_targets = [
+            path
+            for path, status in graph_candidate_statuses.items()
+            if status.get("status") == "uncertain"
+        ]
+        test_graph_targets = list(
+            dict.fromkeys([*trusted_seed_files, *file_distances, *weak_graph_targets])
+        )[:_GRAPH_PAGERANK_SEED_FILE_LIMIT]
 
         # dogfood finding 1: deadline_monotonic/deadline_hit were already in scope in this
         # function (threaded into the symbol-scoring loop above) but never forwarded to pagerank
@@ -5861,7 +5898,7 @@ def _build_context_pack_from_map(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
-        for current_path in set(dependency_seed_files) | set(file_distances):
+        for current_path in trusted_seed_files | set(file_distances):
             graph_score = graph_scores.get(current_path, 0.0)
             if graph_score <= 0.0:
                 continue
@@ -5968,6 +6005,9 @@ def _build_context_pack_from_map(
             graph_scores,
             file_scores,
             raw_query=query,
+            candidate_statuses=graph_candidate_statuses,
+            test_graph_targets=test_graph_targets,
+            repo_root=_repo_map_root_dir(payload),
             # opt10 #3: thread this function's own already-in-scope deadline through to
             # _context_tests's now-gated loop -- the shared _DeadlineBreakFlag means an early break
             # here folds into the SAME partial signal the symbol-scoring loop above already sets
@@ -5997,6 +6037,10 @@ def _build_context_pack_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(file_matches, test_matches)
     payload["coverage_summary"] = _coverage_summary(payload)
+    if graph_uncertainty:
+        _repo_map_graph.add_uncertainty(
+            _self, payload, list(graph_uncertainty), _repo_map_root_dir(payload)
+        )
     # Only emit when non-empty. An empty `deweighted_trees` still costs ~20 bytes in every
     # context-pack payload, and (since compaction records dropped keys in omitted_keys) omitting it
     # saves nothing -- enough to tip the macOS llm-compact token-budget test, whose long temp paths

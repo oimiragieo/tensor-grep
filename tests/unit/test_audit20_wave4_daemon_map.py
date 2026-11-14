@@ -154,3 +154,32 @@ def test_startup_metrics_positive_control(tmp_path, monkeypatch):
     metrics.load(sd._read_demand_metrics_days(tmp_path))
     assert metrics._days["2026-11-12"]["requests"] == 2
     assert metrics._days["2026-11-12"]["by_command"] == {"defs": 2}
+
+
+def write(path, source):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source)
+    return str(path)
+
+
+def test_click_import_does_not_depend_on_cli_module(tmp_path):
+    cli = write(tmp_path / "pkg/cli.py", "def thing(): pass\n")
+    other = write(tmp_path / "tools/other.py", "import click\n")
+    assert not rm._confirm_import_edges(Path(other), cli, tmp_path)
+    distances = rm._reverse_import_distances([cli], [cli, other], {other: ["click"]})
+    assert other not in distances, "substring cli matched unrelated click import"
+
+
+@pytest.mark.parametrize("target,expected", [("pkg/a.py", True), ("other/a.py", False)])
+def test_duplicate_basename_edges_resolve_exact_module(tmp_path, target, expected):
+    write(tmp_path / "pkg/__init__.py", "")
+    a = write(tmp_path / "pkg/a.py", "x=1\n")
+    other = write(tmp_path / "other/a.py", "x=2\n")
+    consumer = write(tmp_path / "consumer.py", "import pkg.a\n")
+    selected = str(tmp_path / target)
+    confirmed = rm._confirm_import_edges(Path(consumer), selected, tmp_path)
+    assert bool(confirmed) is expected, "exact house resolver control failed"
+    distances = rm._reverse_import_distances(
+        [selected], [a, other, consumer], {consumer: ["pkg.a"]}
+    )
+    assert (consumer in distances) is expected, "coarse basename edge leaked into distance graph"
