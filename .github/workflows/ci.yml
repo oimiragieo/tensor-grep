@@ -1968,6 +1968,8 @@ jobs:
           subject-path: ${{ steps.release_paths.outputs.subject_paths }}
 
       - name: Verify SLSA provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           uv run --no-project --python 3.12 -- python scripts/verify_release_subject_attestations.py \
             --artifacts-dir artifacts \
