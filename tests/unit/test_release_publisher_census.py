@@ -136,6 +136,32 @@ def test_publisher_census_rejects_release_write_authority(
     assert any("Release write authority is only allowed" in error for error in errors)
 
 
+def test_publisher_census_rejects_unsealed_ci_write_job() -> None:
+    ci = yaml.safe_load(_workflow({"uses": "softprops/action-gh-release@sha"}))
+    ci["jobs"]["alternate"] = {
+        "permissions": {"contents": "write"},
+        "steps": [{"run": 'gh --repo "$GITHUB_REPOSITORY" release create v999 artifact'}],
+    }
+    errors = validate_release_publisher_census(
+        workflows={".github/workflows/ci.yml": yaml.safe_dump(ci)}
+    )
+    assert any(
+        "CI release write authority is not sealed for alternate" in error for error in errors
+    )
+
+
+def test_publisher_census_rejects_unapproved_ci_secret() -> None:
+    ci = yaml.safe_load(_workflow({"uses": "softprops/action-gh-release@sha"}))
+    ci["jobs"]["alternate"] = {
+        "permissions": {"contents": "read"},
+        "steps": [{"env": {"TOKEN": "${{ SeCrEtS.RELEASE_PAT }}"}, "run": "echo guarded"}],
+    }
+    errors = validate_release_publisher_census(
+        workflows={".github/workflows/ci.yml": yaml.safe_dump(ci)}
+    )
+    assert any("unapproved secret context" in error for error in errors)
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -146,6 +172,7 @@ def test_publisher_census_rejects_release_write_authority(
         "${{ toJSON(secrets) }}",
         "${{ fromJSON(toJSON(secrets)).RELEASE_PAT }}",
         "${{ secrets.GITHUB_TOKEN }}:${{ toJSON(secrets) }}",
+        "${{ SeCrEtS.NPM_TOKEN }}",
     ],
 )
 def test_publisher_census_rejects_non_github_secret(expression: str) -> None:
@@ -157,7 +184,7 @@ def test_publisher_census_rejects_non_github_secret(expression: str) -> None:
         }),
     }
     errors = validate_release_publisher_census(workflows=workflows)
-    assert any("Release-capable secrets are only allowed" in error for error in errors)
+    assert any("unapproved secret context" in error for error in errors)
 
 
 def test_dependabot_write_authority_exception_is_content_bound() -> None:

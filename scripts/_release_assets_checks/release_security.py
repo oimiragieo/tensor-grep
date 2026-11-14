@@ -12,6 +12,11 @@ from .helpers import _normalize_pinned_actions
 
 _AUTHORITATIVE_PUBLISHER = ".github/workflows/ci.yml"
 _RELEASE_WRITE_PERMISSIONS = {"contents", "packages", "id-token"}
+_CI_WRITE_AUTHORITY = {
+    "release": {"contents", "id-token"},
+    "publish-github-release-assets": {"contents", "id-token"},
+    "publish-pypi": {"id-token"},
+}
 _WRITE_AUTHORITY_EXCEPTIONS = {
     ".github/workflows/dependabot-automation.yml": (
         "8214e4c71c9767daf80d282aca42ad90f95839850fdc8930edce7fb8be01d480"
@@ -23,8 +28,8 @@ _PUBLISH_ACTIONS = (
     "python-semantic-release/python-semantic-release",
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
-_SECRET_CONTEXT = re.compile(r"\bsecrets\b")
-_GITHUB_TOKEN_EXPRESSION = re.compile(r"\${{\s*secrets\s*\.\s*GITHUB_TOKEN\s*}}")
+_SECRET_CONTEXT = re.compile(r"\bsecrets\b", re.IGNORECASE)
+_GITHUB_TOKEN_EXPRESSION = re.compile(r"\${{\s*secrets\s*\.\s*GITHUB_TOKEN\s*}}", re.IGNORECASE)
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -116,7 +121,8 @@ def _workflow_fingerprint(parsed: object) -> str:
 
 def _has_unapproved_secret(value: object) -> bool:
     if isinstance(value, str):
-        return bool(_SECRET_CONTEXT.search(_GITHUB_TOKEN_EXPRESSION.sub("", value)))
+        remaining = _GITHUB_TOKEN_EXPRESSION.sub("", value)
+        return "${{" in remaining and bool(_SECRET_CONTEXT.search(remaining))
     if isinstance(value, dict):
         return any(_has_unapproved_secret(item) for item in value.values())
     if isinstance(value, list):
@@ -593,7 +599,22 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
         jobs = parsed.get("jobs", {}) if isinstance(parsed, dict) else {}
         if not isinstance(jobs, dict):
             continue
-        if filename != _AUTHORITATIVE_PUBLISHER:
+        if filename == _AUTHORITATIVE_PUBLISHER:
+            workflow_write_permissions = _release_write_permissions(parsed.get("permissions"))
+            if workflow_write_permissions:
+                names = ", ".join(sorted(workflow_write_permissions))
+                errors.append(
+                    f"CI release write authority must be job-scoped; found workflow: {names}"
+                )
+            for name, job in jobs.items():
+                if not isinstance(job, dict):
+                    continue
+                observed = _release_write_permissions(job.get("permissions"))
+                expected = _CI_WRITE_AUTHORITY.get(str(name), set())
+                if observed != expected:
+                    names = ", ".join(sorted(observed)) or "none"
+                    errors.append(f"CI release write authority is not sealed for {name}: {names}")
+        else:
             if parsed.get("permissions") is None:
                 jobs_without_permissions = [
                     str(name)
@@ -617,11 +638,10 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
                     f"Release write authority is only allowed in {_AUTHORITATIVE_PUBLISHER}; "
                     f"found {filename}: {names}"
                 )
-            if _has_unapproved_secret(parsed):
-                errors.append(
-                    f"Release-capable secrets are only allowed in {_AUTHORITATIVE_PUBLISHER}; "
-                    f"found {filename}"
-                )
+        if _has_unapproved_secret(parsed):
+            errors.append(
+                f"Workflow publisher census found unapproved secret context in {filename}"
+            )
         for job_name, job in jobs.items():
             if not isinstance(job, dict):
                 continue
