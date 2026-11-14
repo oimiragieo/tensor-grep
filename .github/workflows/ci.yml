@@ -800,12 +800,9 @@ jobs:
       - name: Install Python runtime dependencies for native routing tests
         shell: bash
         run: |
-          python - <<'PYEOF' > "$RUNNER_TEMP/tg-runtime-deps.txt"
-          import tomllib
-          for dep in tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]:
-              print(dep)
-          PYEOF
-          python -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/tg-runtime-deps.txt"
+          python -m pip install --no-deps "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+          python -m pip install uv==0.13.4
+          uv sync --locked --no-dev --no-install-project
           
       - name: Ensure PCRE2 ripgrep is available
         shell: bash

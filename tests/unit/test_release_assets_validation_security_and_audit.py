@@ -195,6 +195,9 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
     dockerfile = (root / "scripts" / "ci-local" / "Dockerfile").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     audit_workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    rust_core_job = ci_workflow.split("  test-rust-core:", 1)[1].split("  cuda-feature-check:", 1)[
+        0
+    ]
 
     build_tokens = shlex.split(
         tomllib.loads(pyproject)["tool"]["semantic_release"]["build_command"]
@@ -204,11 +207,14 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
         "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/"
         "pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
     )
-    assert ci_workflow.count(fixed_pip) == 13
-    assert ci_workflow.replace(native_e2e, "").count(fixed_pip) == 12
+    assert ci_workflow.count(fixed_pip) == 14
+    assert ci_workflow.replace(native_e2e, "").count(fixed_pip) == 13
     assert native_e2e.index(fixed_pip) < native_e2e.index(
         "pip install --disable-pip-version-check pytest"
     )
+    assert fixed_pip in rust_core_job
+    assert "uv sync --locked --no-dev --no-install-project" in rust_core_job
+    assert "tg-runtime-deps.txt" not in rust_core_job
     assert fixed_pip in gpu_workflow
     assert dockerfile.index(
         "python3.12 -m pip install --break-system-packages --no-deps"
