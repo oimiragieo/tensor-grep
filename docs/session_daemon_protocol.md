@@ -35,6 +35,8 @@ requests for the same key share creation work within each request's original dea
 The daemon pins an implicit payload for the request lifetime and defers its own LRU
 eviction cleanup until the last active request releases it. This does not protect
 against session-store retention pruning or payload changes by other processes.
+Cleanup checks the deadline before starting a deletion transaction; admitted filesystem
+operations are synchronous.
 
 ---
 

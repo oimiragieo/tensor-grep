@@ -2033,6 +2033,9 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 "error": {"code": "invalid_request", "message": str(exc)},
             }
         finally:
+            _release_implicit_session_pin(
+                server, implicit_pin_receipt, deadline_monotonic=work_deadline
+            )
             if inflight_incremented:
                 with server._request_lock:
                     server.inflight_requests -= 1
