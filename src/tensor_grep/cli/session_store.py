@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import os
@@ -46,6 +45,15 @@ from tensor_grep.cli.session_provenance import (
     read_session_payload,
     seal_session,
     verified_session,
+)
+from tensor_grep.cli.session_response_cache import (
+    _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES as _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
+)
+from tensor_grep.cli.session_response_cache import (
+    _json_size_bytes as _json_size_bytes,
+)
+from tensor_grep.cli.session_response_cache import (
+    _SessionResponseCacheBase,
 )
 
 # Project-root resolution lives in `session_root` (split out when the file-size ratchet
@@ -99,6 +107,7 @@ from tensor_grep.cli.session_root import (
     _shared_territory_roots as _shared_territory_roots,
 )
 from tensor_grep.cli.symbols_cache import collect_content_receipts
+from tensor_grep.core.config import configured_positive_int
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +123,6 @@ _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
 _INDEX_FILE = "index.json"
 _SESSION_SERVE_CACHE_MAX_ENTRIES = 32
-_SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES = 32
-_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV = "TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES"
-_DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
 _DEFAULT_SESSION_BLAST_RADIUS_PLAN_REPO_MAP_LIMIT = DEFAULT_AGENT_REPO_MAP_LIMIT
@@ -188,29 +194,11 @@ class _SessionServeCacheEntry:
     size_bytes: int
 
 
-@dataclass
-class _SessionServeResponseCacheEntry:
-    payload: dict[str, Any]
-    size_bytes: int
-
-
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _configured_session_max() -> int:
     return _configured_positive_int(_SESSION_MAX_ENV, _DEFAULT_SESSION_MAX)
-
-
-def _json_size_bytes(payload: dict[str, Any]) -> int:
-    return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 class _SessionServeCache:
@@ -312,83 +300,8 @@ class _SessionServeCache:
             ]
 
 
-class _SessionServeResponseCache:
-    def __init__(
-        self,
-        max_entries: int = _SESSION_SERVE_RESPONSE_CACHE_MAX_ENTRIES,
-        max_size_bytes: int | None = None,
-    ) -> None:
-        self._max_entries = max(1, max_entries)
-        self._max_size_bytes = (
-            _configured_positive_int(
-                _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
-                _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
-            )
-            if max_size_bytes is None
-            else max(1, int(max_size_bytes))
-        )
-        self._entries: OrderedDict[tuple[str, ...], _SessionServeResponseCacheEntry] = OrderedDict()
-        self._size_bytes = 0
-        self._hits = 0
-        self._misses = 0
-        self._puts = 0
-        self._oversized_skips = 0
-
-    def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
-        entry = self._entries.pop(key, None)
-        if entry is None:
-            self._misses += 1
-            return None
-        self._hits += 1
-        self._entries[key] = entry
-        return copy.deepcopy(entry.payload)
-
-    def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
-        self._puts += 1
-        size_bytes = _json_size_bytes(response)
-        if size_bytes > self._max_size_bytes:
-            self._oversized_skips += 1
-            return
-        previous = self._entries.pop(key, None)
-        if previous is not None:
-            self._size_bytes -= previous.size_bytes
-        entry = _SessionServeResponseCacheEntry(
-            payload=copy.deepcopy(response),
-            size_bytes=size_bytes,
-        )
-        self._entries[key] = entry
-        self._size_bytes += entry.size_bytes
-        while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
-            _, evicted = self._entries.popitem(last=False)
-            self._size_bytes -= evicted.size_bytes
-
-    @property
-    def hits(self) -> int:
-        return self._hits
-
-    @property
-    def misses(self) -> int:
-        return self._misses
-
-    @property
-    def puts(self) -> int:
-        return self._puts
-
-    @property
-    def entry_count(self) -> int:
-        return len(self._entries)
-
-    @property
-    def size_bytes(self) -> int:
-        return self._size_bytes
-
-    @property
-    def max_size_bytes(self) -> int:
-        return self._max_size_bytes
-
-    @property
-    def oversized_skips(self) -> int:
-        return self._oversized_skips
+class _SessionServeResponseCache(_SessionResponseCacheBase):
+    pass
 
 
 def _load_index(root: Path) -> list[SessionRecord]:

@@ -85,6 +85,7 @@ from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 from tensor_grep.io.file_types import BUILTIN_TYPE_LIST as _BUILTIN_TYPE_LIST
+from tensor_grep.io.project_markers import path_has_project_marker as _path_has_project_marker
 
 # perf (+10% campaign #6 / F2.4): import the 5 broad-scan-guard constants from the
 # zero-dependency `tensor_grep.io.scan_limits` module directly, NOT from
@@ -2034,16 +2035,6 @@ def _has_walk_scope_bound(config: "SearchConfig", *, paths_defaulted: bool) -> b
     if paths_defaulted:
         return False
     return bool(config.glob or config.iglob or config.file_type or config.type_not)
-
-
-def _path_has_project_marker(path: Path) -> bool:
-    for marker in _BROAD_WORKSPACE_PROJECT_MARKERS:
-        try:
-            if (path / marker).exists():
-                return True
-        except OSError:
-            continue
-    return False
 
 
 def _workspace_project_child_names(paths: list[str]) -> list[str]:

@@ -540,31 +540,21 @@ fn wait_for_sidecar_or_kill(
     child: &mut Child,
     timeout: Duration,
 ) -> Result<SidecarWaitOutcome, SidecarError> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(SidecarWaitOutcome::Exited(status)),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    terminate_sidecar_process(child)?;
-                    return Ok(SidecarWaitOutcome::TimedOut);
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(err) => {
-                return Err(SidecarError {
-                    exit_code: 1,
-                    message: format!("Failed while waiting for Python sidecar: {err}"),
-                    stderr: String::new(),
-                });
-            }
-        }
-    }
+    wait_for_process_or_kill(child, timeout, "sidecar", terminate_sidecar_process)
 }
 
 fn wait_for_passthrough_or_kill(
     child: &mut Child,
     timeout: Duration,
+) -> Result<SidecarWaitOutcome, SidecarError> {
+    wait_for_process_or_kill(child, timeout, "passthrough", terminate_passthrough_process)
+}
+
+fn wait_for_process_or_kill(
+    child: &mut Child,
+    timeout: Duration,
+    process_name: &str,
+    terminate: fn(&mut Child) -> Result<(), SidecarError>,
 ) -> Result<SidecarWaitOutcome, SidecarError> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -572,7 +562,7 @@ fn wait_for_passthrough_or_kill(
             Ok(Some(status)) => return Ok(SidecarWaitOutcome::Exited(status)),
             Ok(None) => {
                 if Instant::now() >= deadline {
-                    terminate_passthrough_process(child)?;
+                    terminate(child)?;
                     return Ok(SidecarWaitOutcome::TimedOut);
                 }
                 thread::sleep(Duration::from_millis(10));
@@ -580,7 +570,7 @@ fn wait_for_passthrough_or_kill(
             Err(err) => {
                 return Err(SidecarError {
                     exit_code: 1,
-                    message: format!("Failed while waiting for Python passthrough: {err}"),
+                    message: format!("Failed while waiting for Python {process_name}: {err}"),
                     stderr: String::new(),
                 });
             }
@@ -593,62 +583,14 @@ fn wait_for_passthrough_or_kill(
 // terminate_passthrough_process.  The sidecar may spawn sub-processes (e.g.
 // GPU workers) that would otherwise become orphans.
 fn terminate_sidecar_process(child: &mut Child) -> Result<(), SidecarError> {
-    #[cfg(windows)]
-    {
-        let pid = child.id().to_string();
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid, "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        match status {
-            Ok(status) if status.success() => {}
-            Ok(_) | Err(_) => {
-                if let Err(err) = child.kill() {
-                    if err.kind() != io::ErrorKind::InvalidInput {
-                        return Err(SidecarError {
-                            exit_code: 1,
-                            message: format!(
-                                "Failed to terminate timed-out Python sidecar tree: {err}"
-                            ),
-                            stderr: String::new(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        let pid = child.id() as i32;
-        let kill_status = unsafe { libc::killpg(pid, libc::SIGKILL) };
-        if kill_status != 0 {
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() != Some(libc::ESRCH) && err.kind() != io::ErrorKind::InvalidInput
-            {
-                return Err(SidecarError {
-                    exit_code: 1,
-                    message: format!(
-                        "Failed to terminate timed-out Python sidecar process group: {err}"
-                    ),
-                    stderr: String::new(),
-                });
-            }
-        }
-    }
-
-    child.wait().map_err(|err| SidecarError {
-        exit_code: 1,
-        message: format!("Failed to reap timed-out Python sidecar: {err}"),
-        stderr: String::new(),
-    })?;
-
-    Ok(())
+    terminate_python_process(child, "sidecar")
 }
 
 fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> {
+    terminate_python_process(child, "passthrough")
+}
+
+fn terminate_python_process(child: &mut Child, process_name: &str) -> Result<(), SidecarError> {
     #[cfg(windows)]
     {
         let pid = child.id().to_string();
@@ -666,7 +608,7 @@ fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> 
                         return Err(SidecarError {
                             exit_code: 1,
                             message: format!(
-                                "Failed to terminate timed-out Python passthrough tree: {err}"
+                                "Failed to terminate timed-out Python {process_name} tree: {err}"
                             ),
                             stderr: String::new(),
                         });
@@ -687,7 +629,7 @@ fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> 
                 return Err(SidecarError {
                     exit_code: 1,
                     message: format!(
-                        "Failed to terminate timed-out Python passthrough process group: {err}"
+                        "Failed to terminate timed-out Python {process_name} process group: {err}"
                     ),
                     stderr: String::new(),
                 });
@@ -697,7 +639,7 @@ fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> 
 
     child.wait().map_err(|err| SidecarError {
         exit_code: 1,
-        message: format!("Failed to reap timed-out Python passthrough: {err}"),
+        message: format!("Failed to reap timed-out Python {process_name}: {err}"),
         stderr: String::new(),
     })?;
 
@@ -1028,29 +970,26 @@ fn gpu_device_ids_env_value(request: &SidecarRequest) -> Option<OsString> {
 }
 
 fn resolve_sidecar_timeout() -> Duration {
-    let timeout_ms = env::var(TG_SIDECAR_TIMEOUT_MS_ENV)
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_SIDECAR_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
+    resolve_timeout(TG_SIDECAR_TIMEOUT_MS_ENV, DEFAULT_SIDECAR_TIMEOUT_MS)
 }
 
 fn resolve_help_probe_timeout() -> Duration {
-    let timeout_ms = env::var(TG_HELP_PROBE_TIMEOUT_MS_ENV)
-        .ok()
-        .and_then(|raw| raw.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_HELP_PROBE_TIMEOUT_MS);
-    Duration::from_millis(timeout_ms)
+    resolve_timeout(TG_HELP_PROBE_TIMEOUT_MS_ENV, DEFAULT_HELP_PROBE_TIMEOUT_MS)
 }
 
 fn resolve_passthrough_timeout() -> Duration {
-    let timeout_ms = env::var(TG_PASSTHROUGH_TIMEOUT_MS_ENV)
+    resolve_timeout(
+        TG_PASSTHROUGH_TIMEOUT_MS_ENV,
+        DEFAULT_PASSTHROUGH_TIMEOUT_MS,
+    )
+}
+
+fn resolve_timeout(env_name: &str, default_ms: u64) -> Duration {
+    let timeout_ms = env::var(env_name)
         .ok()
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_PASSTHROUGH_TIMEOUT_MS);
+        .unwrap_or(default_ms);
     Duration::from_millis(timeout_ms)
 }
 
