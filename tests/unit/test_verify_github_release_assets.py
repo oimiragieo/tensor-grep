@@ -77,6 +77,29 @@ def test_validate_local_release_assets_rejects_noninteger_size(tmp_path: Path, b
     assert any("invalid size metadata" in error for error in errors)
 
 
+@pytest.mark.parametrize("bad_size", [True, 1.0, None])
+def test_validate_release_payload_rejects_noninteger_size(bad_size: object):
+    module = _load_module()
+    content = b"x"
+    metadata = _asset_metadata("asset.bin", content)
+    metadata["size"] = bad_size
+    checksum = f"{hashlib.sha256(content).hexdigest()}  asset.bin\n"
+
+    checksum_errors = module.validate_release_assets_payload(
+        release_data={"assets": [metadata]},
+        checksums_content=checksum,
+        expected_assets=["asset.bin"],
+    )
+    metadata_errors = module.validate_release_assets_payload(
+        release_data={"assets": [metadata]},
+        checksums_content="",
+        expected_assets=["asset.bin"],
+        checksum_required_assets=[],
+    )
+    assert any("invalid size metadata" in error for error in checksum_errors)
+    assert any("invalid size metadata" in error for error in metadata_errors)
+
+
 def test_validate_local_release_assets_rejects_missing_duplicate_and_symlink(
     tmp_path: Path,
 ):
