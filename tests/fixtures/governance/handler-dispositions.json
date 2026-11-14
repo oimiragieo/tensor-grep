@@ -3061,7 +3061,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 348,
+    "lineno": 364,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 480,
+    "lineno": 496,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3111,7 +3111,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 571,
+    "lineno": 587,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3121,7 +3121,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 631,
+    "lineno": 647,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 906,
+    "lineno": 922,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1617,
+    "lineno": 1585,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1694,
+    "lineno": 1662,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1831,
+    "lineno": 1800,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3171,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1924,
+    "lineno": 1918,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -3181,7 +3181,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1956,
+    "lineno": 1951,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3191,7 +3191,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 2003,
+    "lineno": 1998,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3537,6 +3537,26 @@
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "tests/unit/test_managed_runtime_candidate.py::test_ManagedCandidateProfile_WhenProbeFails_RaisesVerificationError verifies probe failures become a RuntimeError with the original error chained.",
     "reason": "The managed interpreter profile must be verified before candidate installation; a failed isolated probe refuses the update and preserves the exception as a cause for diagnosis.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/repo_map_graph.py",
+    "lineno": 191,
+    "enclosing_symbol": "_candidate_evidence",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Optional parser exceptions return status=uncertain and reason=parser-failure. Reverse-import traversal retains the candidate as heuristic instead of a confirmed edge. tests/unit/test_graph_failure_boundaries.py::test_optional_parser_failure_retains_public_heuristic_candidate exercises RuntimeError and a real-parser positive through the evidence helper, BFS, and public context builder.",
+    "reason": "An optional parser failure must remain explicit uncertainty, not a complete nonedge or a silently lost candidate. This is an evidence boundary, not a backend execution retry.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_implicit.py",
+    "lineno": 42,
+    "enclosing_symbol": "_cleanup",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Eviction cleanup is best effort; its finally block drains the exact owned root/session identity under the implicit lock. tests/unit/test_session_daemon_cleanup_failure_boundary.py::test_authenticated_result_survives_exact_owned_cleanup_failure drives successful and RuntimeError cleanup through the authenticated in-memory handler and verifies the completed result, ownership drain, and unrelated replacement payload.",
+    "reason": "Unexpected opportunistic cleanup failure must not replace an already completed request result or strand cleanup ownership. Successful deletion is not promised; session-store retention remains independent.",
     "hardened_in": null
   }
 ]

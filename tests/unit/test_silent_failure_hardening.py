@@ -210,7 +210,10 @@ _EXCLUDED_MODULES = frozenset({
 # - 2026-10-12 (tg coverage / tg_coverage, w2-coverage): 341 -> 342 (+1:
 #   cli/mcp_coverage_tool.py coverage_tool fail-closed MCP boundary, INTENTIONAL-BOUNDARY).
 # Native download guard acquisition discloses cleanup uncertainty and fails closed (ledger/test).
-TOTAL_BROAD_HANDLERS_CEILING = 355
+# Parser uncertainty and best-effort LRU cleanup add two reviewed boundaries: 354 + 2 = 356.
+# Both have ledger records and injected-failure/live controls in the graph and daemon cleanup
+# failure-boundary tests.
+TOTAL_BROAD_HANDLERS_CEILING = 356
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

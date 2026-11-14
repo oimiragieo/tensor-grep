@@ -31,6 +31,7 @@ from tensor_grep.cli import (
     lang_registry,
     lang_suffixes,
 )
+from tensor_grep.cli import repo_map_graph as _repo_map_graph
 from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
@@ -1389,17 +1390,12 @@ def _iter_repo_bucket_files(
     *,
     unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> Iterator[Path]:
-    # Nested-.gitignore support (MED-5 part B): load THIS directory's own matcher and push it onto
-    # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
-    # _load_gitignore_matcher is lru_cached per directory, so re-walks stay cheap.
+    # Load this directory's matcher so nested .gitignore rules override ancestors.
     own = _load_gitignore_matcher(str(root))
     stack = (*ancestor_stack, own) if own.has_rules else ancestor_stack
     try:
         entries = list(os.scandir(root))
     except OSError as exc:
-        # Task #276 slice 1: record before returning -- still stops descending into this
-        # subtree (unchanged behavior), but the caller can now learn it happened instead of
-        # a silently-narrower file list.
         if unreadable_hit is not None:
             unreadable_hit.record(exc)
         return
@@ -1408,14 +1404,17 @@ def _iter_repo_bucket_files(
     file_paths: list[Path] = []
     for entry in entries:
         try:
-            if entry.is_dir(follow_symlinks=False):
+            is_reparse_point = os.name == "nt" and bool(
+                getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0) & 0x400
+            )
+            if not is_reparse_point and entry.is_dir(follow_symlinks=False):
                 directory = Path(entry.path)
                 if _should_skip_repo_dir(directory):
                     continue
                 if _stack_ignored(directory, is_dir=True, stack=stack):
                     continue
                 dir_paths.append(directory)
-            elif entry.is_file(follow_symlinks=False):
+            elif not is_reparse_point and entry.is_file(follow_symlinks=False):
                 file_path = Path(entry.path)
                 if _stack_ignored(file_path, is_dir=False, stack=stack):
                     continue
@@ -1447,10 +1446,9 @@ def _iter_repo_files(
     unreadable_hit: _UnreadablePathFlag | None = None,
     exclude_files: frozenset[Path] = frozenset(),
 ) -> list[Path]:
-    """Walk with optional count/deadline bounds, excluding exact absolute paths before the cap.
+    """Walk with count/deadline bounds, excluding exact paths before the cap.
 
-    Mutable deadline and unreadable signals preserve distinct reasons for an incomplete walk.
-    Callers normalize ``exclude_files`` once; child paths are never resolved individually.
+    Mutable signals preserve incomplete reasons; paths are normalized once, never per entry.
     """
     with _profiling_phase(_profiling_collector, "file_walk"):
         if root.is_file():
@@ -1471,7 +1469,10 @@ def _iter_repo_files(
             buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
             for entry in entries:
                 try:
-                    if entry.is_dir(follow_symlinks=False):
+                    is_reparse_point = os.name == "nt" and bool(
+                        getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0) & 0x400
+                    )
+                    if not is_reparse_point and entry.is_dir(follow_symlinks=False):
                         path = Path(entry.path)
                         if _should_skip_repo_dir(path):
                             continue
@@ -1483,7 +1484,7 @@ def _iter_repo_files(
                                 path, (gitignore,), unreadable_hit=unreadable_hit
                             ),
                         ))
-                    elif entry.is_file(follow_symlinks=False):
+                    elif not is_reparse_point and entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
                         if gitignore.is_ignored(path, is_dir=False):
                             continue
@@ -3007,6 +3008,7 @@ def _relevant_tests_for_symbol(
     deadline_hit: _DeadlineBreakFlag | None = None,
     _test_scan_counts: _TestScanCounts | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    _graph_uncertainty: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     repo_root = _repo_map_root_dir(repo_map)
     tests = [str(current) for current in repo_map.get("tests", [])]
@@ -3056,14 +3058,25 @@ def _relevant_tests_for_symbol(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        graph_uncertainty: dict[str, dict[str, Any]] = {}
+        graph_candidate_statuses: dict[str, dict[str, Any]] = {}
         file_distances = _self._reverse_import_distances(
             source_files,
             all_files,
             imports_by_file,
+            repo_root=repo_root,
+            uncertain_candidates=graph_uncertainty,
+            candidate_statuses=graph_candidate_statuses,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        for target, importers in reverse_importers.items():
+            reverse_importers[target] = {
+                importer
+                for importer in importers
+                if graph_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+            }
         graph_scores = _self._personalized_reverse_import_pagerank(
             source_files,
             all_files,
@@ -3077,6 +3090,9 @@ def _relevant_tests_for_symbol(
             file_scores[current] = max(file_scores.get(current, 0), 5)
         for current, depth in file_distances.items():
             file_scores[current] = max(file_scores.get(current, 0), max(1, 5 - int(depth)))
+        test_graph_targets = list(dict.fromkeys([*source_files, *file_distances]))[
+            :_GRAPH_PAGERANK_SEED_FILE_LIMIT
+        ]
 
         test_matches = _self._context_tests(
             source_files,
@@ -3087,6 +3103,9 @@ def _relevant_tests_for_symbol(
             graph_scores,
             file_scores,
             raw_query=symbol,
+            candidate_statuses=graph_candidate_statuses,
+            test_graph_targets=test_graph_targets,
+            repo_root=repo_root,
             # opt10 #3: this call's `source_files` (caller_files + definition_files) is the fully
             # CONSUMED copy -- `test_matches` here feeds `ranked`/`ordered` in full just below, not
             # test_matches[:1] -- so only the deadline gate is threaded (already in scope as this
@@ -3101,6 +3120,8 @@ def _relevant_tests_for_symbol(
             # so it is the more expensive of the two.
             _test_scan_counts=_test_scan_counts,
         )
+        if _graph_uncertainty is not None:
+            _graph_uncertainty.update(graph_uncertainty)
         direct_definition_tests = []
         for current in tests:
             # #52 fix (loop B): this loop re-walks the FULL tests list with no deadline check --
@@ -3328,7 +3349,7 @@ def _python_references_and_calls(
 
     try:
         source = lang_registry.read_source_text(path)
-        tree = _cached_ast_parse(source)
+        tree = _self._cached_ast_parse(source)
     except (OSError, SyntaxError):
         return [], []
 
@@ -4579,7 +4600,7 @@ def _thin_cli_dispatcher_call_targets(
         return None
     try:
         source = _self._read_source_text_cached(file_path)
-        tree = _cached_ast_parse(source)
+        tree = _self._cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError):
         return None
 
@@ -5190,15 +5211,7 @@ def _file_summaries(symbols: list[dict[str, Any]], ranked_files: list[str]) -> l
 
 
 def _source_tokens(source_files: list[str]) -> set[str]:
-    tokens: set[str] = set()
-    for current in source_files:
-        path = Path(current)
-        stem = path.stem.lower()
-        tokens.add(stem)
-        for part in re.split(r"[^A-Za-z0-9_]+", stem):
-            if part:
-                tokens.add(part)
-    return tokens
+    return _repo_map_graph.source_tokens(source_files)
 
 
 # Directory-index reverse-importers fix (tg importers correctness gap, express@4.21.1 dogfood):
@@ -5310,73 +5323,27 @@ def _reverse_import_distances(
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
     *,
+    repo_root: Path | str | None = None,
+    trusted_seed_files: set[str] | None = None,
+    uncertain_candidates: dict[str, dict[str, Any]] | None = None,
+    candidate_statuses: dict[str, dict[str, Any]] | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, int]:
-    """#222 residual fix (cold-path assembly-tail SLA, real-workspace-scale continuation of
-    #669/#671): this BFS's inner loop re-scans ALL of ``all_files`` at EACH of up to 3 depth
-    levels, and for every candidate does O(``len(frontier)``) work inside ``_import_graph_bonus``
-    -- so cost is O(depth x len(all_files) x len(frontier)), and ``frontier`` itself grows with
-    each wave once the import graph has any real fan-in (a popular shared module -- exactly the
-    common case). Pre-fix, this function itself had NO deadline check anywhere, even though every
-    sibling stage of its DOMINANT caller, ``_build_context_pack_from_map`` (the symbol-scoring
-    loop, ``_personalized_reverse_import_pagerank``, both ``_detect_vendored_subtrees`` calls),
-    already honored the shared budget -- by far the most expensive post-deadline tail consumer on
-    the `tg agent` path. A SECOND, independently-reachable call site had the identical gap:
-    ``_relevant_tests_for_symbol``'s ``if caller_files:`` block already declared ``deadline_
-    monotonic``/``deadline_hit`` in its own signature (used by its direct_definition_tests loop)
-    but never forwarded them here -- and ``build_symbol_callers_from_map`` reaches that block with
-    BOTH a non-None ``caller_files`` and a real ``deadline_monotonic``, so ``tg callers --deadline
-    SYMBOL`` on a high-fan-in symbol (and the agent capsule's caller-evidence path, which calls
-    into the same builder) could still run this whole-repo BFS unbounded (#691 gate NIT-1). Both
-    call sites are now gated identically.
-
-    Measured (direct, non-subprocess probe, a hub-fan-in-shaped synthetic tree, 5-seed BFS):
-    0.99s at 2,000 files -> 13.6s at 6,000 (13.8x for 3x files) -> 60.3s at 12,000 (61x for 6x
-    files, ~4.4x for the last 2x step alone) -- a ~n^2.2 curve, clearly super-linear, and the
-    dominant cost of ``_build_context_pack_from_map`` at scale (60.3s of that call's 71.5s total
-    at 12,000 files = 84%).
-
-    Fix shape mirrors every other sibling stage in this module (``_personalized_reverse_import_
-    pagerank``, the symbol-scoring loop above, ``_precomputed_validation_files_for_root``,
-    ``_detect_vendored_subtrees``): a per-ITEM check inside the expensive inner loop, not just a
-    per-depth (outer-loop) check -- the outer loop only ever runs 3 times regardless of repo size,
-    so an outer-only check would not bound anything (the #669/#671 lesson: bound the loop whose
-    OWN per-iteration cost is what scales). On expiry this returns the PARTIAL ``distances``
-    already accumulated -- never discarded -- exactly like every caller already treats a missing
-    entry (``file_distances.get(x)`` / ``current_path in file_distances``) as "no graph-distance
-    signal for this file," the same honest degrade ``_personalized_reverse_import_pagerank``'s own
-    docstring documents for its ``{}`` abandon. Optional, default ``None`` -- every pre-existing
-    call site (this function has 4) is a byte-identical no-op.
-    """
-    with _profiling_phase(_profiling_collector, "graph_bfs"):
-        distances: dict[str, int] = {}
-        frontier = list(seed_files)
-        seen = set(seed_files)
-
-        for depth in range(1, 4):
-            dependency_aliases = {
-                current: _module_aliases_for_path(current) for current in frontier
-            }
-            next_frontier: list[str] = []
-            for current in all_files:
-                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-                    if deadline_hit is not None:
-                        deadline_hit.hit = True
-                    return distances
-                if current in seen:
-                    continue
-                bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
-                if bonus <= 0:
-                    continue
-                distances[current] = depth
-                seen.add(current)
-                next_frontier.append(current)
-            if not next_frontier:
-                break
-            frontier = next_frontier
-        return distances
+    return _repo_map_graph.reverse_import_distances(
+        _self,
+        seed_files,
+        all_files,
+        imports_by_file,
+        repo_root=repo_root,
+        trusted_seed_files=trusted_seed_files,
+        uncertain_candidates=uncertain_candidates,
+        candidate_statuses=candidate_statuses,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+        _profiling_collector=_profiling_collector,
+    )
 
 
 def _reverse_importers(
@@ -5514,17 +5481,9 @@ def _test_import_bonus(
     imports_by_file: dict[str, list[str]],
     file_distances: dict[str, int],
 ) -> int:
-    bonus = 0
-    for import_name in imports_by_file.get(test_path, []):
-        lowered = import_name.lower()
-        if any(token and token in lowered for token in source_tokens):
-            bonus += 3
-        for file_path, depth in file_distances.items():
-            aliases = _module_aliases_for_path(file_path)
-            if any(alias and alias in lowered for alias in aliases):
-                bonus += max(1, 4 - depth)
-                break
-    return bonus
+    return _repo_map_graph.test_import_bonus(
+        _self, test_path, source_tokens, imports_by_file, file_distances
+    )
 
 
 def _test_graph_score(
@@ -5534,21 +5493,9 @@ def _test_graph_score(
     graph_scores: dict[str, float],
     file_scores: dict[str, int],
 ) -> float:
-    aliases_by_file = {current: _module_aliases_for_path(current) for current in source_files}
-    score = 0.0
-    matched_files: set[str] = set()
-    max_file_score = max(file_scores.values(), default=0)
-    for import_name in imports_by_file.get(test_path, []):
-        lowered = import_name.lower()
-        for current, aliases in aliases_by_file.items():
-            if current in matched_files:
-                continue
-            if any(alias and alias in lowered for alias in aliases):
-                matched_files.add(current)
-                score += graph_scores.get(current, 0.0)
-                if max_file_score > 0:
-                    score += file_scores.get(current, 0) / max_file_score
-    return score
+    return _repo_map_graph.test_graph_score(
+        _self, test_path, source_files, imports_by_file, graph_scores, file_scores
+    )
 
 
 # opt10 #3 (deep-dive): on the callers/impact/refs paths, _build_context_pack_from_map's
@@ -5575,6 +5522,9 @@ def _context_tests(
     file_scores: dict[str, int],
     *,
     raw_query: str | None = None,
+    candidate_statuses: dict[str, dict[str, Any]] | None = None,
+    test_graph_targets: list[str] | None = None,
+    repo_root: Path | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
     _test_scan_counts: _TestScanCounts | None = None,
@@ -5619,16 +5569,31 @@ def _context_tests(
         if stem in source_stems:
             score += 2
             reasons.append("filename")
-        import_bonus = _test_import_bonus(current, source_tokens, imports_by_file, file_distances)
+        graph_targets = test_graph_targets if test_graph_targets is not None else source_files
+        root = repo_root or _self._infer_project_root(
+            Path(graph_targets[0]) if graph_targets else Path.cwd()
+        )
+        import_bonus, confirmed_targets, confirmed_imports = _repo_map_graph.scored_test_imports(
+            _self,
+            current,
+            graph_targets[:_GRAPH_PAGERANK_SEED_FILE_LIMIT],
+            root,
+            imports_by_file.get(current, []),
+            source_tokens,
+            file_distances,
+            candidate_statuses=candidate_statuses or {},
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
         score += import_bonus
         if import_bonus > 0:
-            reasons.append("test-graph")
-        graph_score = _test_graph_score(
-            current,
-            source_files,
-            imports_by_file,
-            graph_scores,
-            file_scores,
+            reasons.append("heuristic-import" if not confirmed_targets else "test-graph")
+        graph_score = (
+            _test_graph_score(
+                current, confirmed_targets, confirmed_imports, graph_scores, file_scores
+            )
+            if confirmed_targets
+            else 0.0
         )
         framework_bonus = (
             _framework_test_pattern_bonus(current, terms, raw_query=raw_query)
@@ -5642,7 +5607,9 @@ def _context_tests(
             reasons.append("graph-centrality")
             score += max(1, round(graph_score * 10))
         if score > 0:
-            if import_bonus > 0 and stem in source_stems:
+            if not confirmed_targets and import_bonus > 0:
+                edge_kind = "heuristic-import"
+            elif import_bonus > 0 and stem in source_stems:
                 edge_kind = "hybrid"
             elif import_bonus > 0:
                 edge_kind = "import-graph"
@@ -5652,7 +5619,9 @@ def _context_tests(
                 edge_kind = "filename"
             else:
                 edge_kind = "path"
-            if import_bonus > 0 or graph_score > 0.0:
+            if not confirmed_targets and import_bonus > 0:
+                confidence = "weak"
+            elif import_bonus > 0 or graph_score > 0.0:
                 confidence = "strong" if import_bonus > 0 and graph_score > 0.0 else "moderate"
             elif framework_bonus > 0:
                 confidence = "moderate" if framework_bonus >= 3 else "weak"
@@ -5828,10 +5797,17 @@ def _build_context_pack_from_map(
         # `deadline_hit` flag this function already threads into pagerank keeps `context_pack_
         # assembly` in the caller's `assembly_stages_skipped` list honestly attributed to "some
         # stage in this pack build," not a new, over-precise label this signal alone can't support.
+        graph_uncertainty: dict[str, dict[str, Any]] = {}
+        graph_candidate_statuses: dict[str, dict[str, Any]] = {}
+        trusted_seed_files = {str(current["file"]) for current in scored_symbols}
         file_distances = _self._reverse_import_distances(
             dependency_seed_files,
             all_files,
             imports_by_file,
+            repo_root=_repo_map_root_dir(payload),
+            trusted_seed_files=trusted_seed_files,
+            uncertain_candidates=graph_uncertainty,
+            candidate_statuses=graph_candidate_statuses,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
@@ -5843,14 +5819,19 @@ def _build_context_pack_from_map(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        for target, importers in reverse_importers.items():
+            reverse_importers[target] = {
+                importer
+                for importer in importers
+                if graph_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+            }
         for current in payload["files"]:
             # #222 residual fix (found via OLD-vs-NEW re-profile of the fix above): a THIRD
             # unconditional whole-repo loop calling `_import_graph_bonus` directly -- cost is
             # O(len(payload["files"]) x len(dependency_aliases)), and `dependency_aliases` is NOT
             # always small: a query term that fuzzy-matches many files' import strings (e.g. a
             # short/common token) can pull hundreds-to-thousands of files into `dependency_seed_
-            # files`. Measured dominating a post-fix (deadline-honoring `_reverse_import_
-            # distances`/`_reverse_importers`) re-profile at 12,000 files: 93s of a 102s total,
+            # files`. Re-profiled after earlier deadline fixes at 12,000 files: 93s of 102s,
             # 208M `_import_graph_bonus` genexpr evaluations across only 10,006 outer calls. Same
             # per-item check, same shared `deadline_hit` flag as its two siblings above.
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -5860,6 +5841,8 @@ def _build_context_pack_from_map(
             current_path = str(current)
             if current_path in dependency_seed_files:
                 continue
+            if graph_candidate_statuses.get(current_path, {}).get("status") == "nonedge":
+                continue
             import_graph_bonus = _import_graph_bonus(
                 current_path,
                 dependency_aliases,
@@ -5867,12 +5850,27 @@ def _build_context_pack_from_map(
             )
             file_scores[current_path] = file_scores.get(current_path, 0) + import_graph_bonus
             if import_graph_bonus > 0:
-                _append_reason(file_reasons, current_path, "import-graph")
+                _append_reason(
+                    file_reasons,
+                    current_path,
+                    "heuristic-import"
+                    if graph_candidate_statuses.get(current_path, {}).get("status")
+                    not in {"origin", "confirmed"}
+                    else "import-graph",
+                )
             if current_path in file_distances:
                 file_scores[current_path] = file_scores.get(current_path, 0) + max(
                     1, 5 - file_distances[current_path]
                 )
                 _append_reason(file_reasons, current_path, "import-graph")
+        for current_path in graph_uncertainty:
+            if graph_candidate_statuses.get(current_path, {}).get("status") in {
+                "origin",
+                "confirmed",
+            }:
+                continue
+            file_scores[current_path] = max(1, file_scores.get(current_path, 0))
+            _append_reason(file_reasons, current_path, "heuristic-import")
         graph_seed_files: list[str] = []
         for symbol in scored_symbols:
             current = str(symbol["file"])
@@ -5880,6 +5878,14 @@ def _build_context_pack_from_map(
                 graph_seed_files.append(current)
         if not graph_seed_files:
             graph_seed_files = list(dependency_seed_files)
+        weak_graph_targets = [
+            path
+            for path, status in graph_candidate_statuses.items()
+            if status.get("status") == "uncertain"
+        ]
+        test_graph_targets = list(
+            dict.fromkeys([*trusted_seed_files, *file_distances, *weak_graph_targets])
+        )[:_GRAPH_PAGERANK_SEED_FILE_LIMIT]
 
         # dogfood finding 1: deadline_monotonic/deadline_hit were already in scope in this
         # function (threaded into the symbol-scoring loop above) but never forwarded to pagerank
@@ -5892,7 +5898,7 @@ def _build_context_pack_from_map(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
-        for current_path in set(dependency_seed_files) | set(file_distances):
+        for current_path in trusted_seed_files | set(file_distances):
             graph_score = graph_scores.get(current_path, 0.0)
             if graph_score <= 0.0:
                 continue
@@ -5999,6 +6005,9 @@ def _build_context_pack_from_map(
             graph_scores,
             file_scores,
             raw_query=query,
+            candidate_statuses=graph_candidate_statuses,
+            test_graph_targets=test_graph_targets,
+            repo_root=_repo_map_root_dir(payload),
             # opt10 #3: thread this function's own already-in-scope deadline through to
             # _context_tests's now-gated loop -- the shared _DeadlineBreakFlag means an early break
             # here folds into the SAME partial signal the symbol-scoring loop above already sets
@@ -6028,6 +6037,10 @@ def _build_context_pack_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(file_matches, test_matches)
     payload["coverage_summary"] = _coverage_summary(payload)
+    if graph_uncertainty:
+        _repo_map_graph.add_uncertainty(
+            _self, payload, list(graph_uncertainty), _repo_map_root_dir(payload)
+        )
     # Only emit when non-empty. An empty `deweighted_trees` still costs ~20 bytes in every
     # context-pack payload, and (since compaction records dropped keys in omitted_keys) omitting it
     # saves nothing -- enough to tip the macOS llm-compact token-budget test, whose long temp paths
@@ -7878,6 +7891,9 @@ def _ordered_dependent_file_matches(
             continue
         if _is_test_file(Path(current_path)):
             continue
+        reasons = list(current.get("reasons", []))
+        if "heuristic-import" in reasons and not {"caller", "graph-depth"}.intersection(reasons):
+            continue
         depth = int(current.get("depth", max_depth + 1))
         if depth > max_depth:
             continue
@@ -7885,7 +7901,7 @@ def _ordered_dependent_file_matches(
             "path": current_path,
             "depth": depth,
             "score": int(current.get("score", 0)),
-            "reasons": list(current.get("reasons", [])),
+            "reasons": reasons,
             "graph_score": float(current.get("graph_score", 0.0)),
         })
 
@@ -12293,6 +12309,7 @@ def build_symbol_impact_from_map(
             impacted_files.append(current)
 
     related_tests_deadline_hit = _DeadlineBreakFlag()
+    related_graph_uncertainty: dict[str, dict[str, Any]] = {}
     related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
@@ -12302,6 +12319,7 @@ def build_symbol_impact_from_map(
         deadline_hit=related_tests_deadline_hit,
         _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
+        _graph_uncertainty=related_graph_uncertainty,
     )
     # impact's own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths/test_matches
     # derive below (both are indexed off `related_tests`), or the omitted tests leak back in via
@@ -12429,6 +12447,12 @@ def build_symbol_impact_from_map(
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
     copy_coverage_gap_state(payload, defs_payload)
+    impact_uncertain_paths = _repo_map_graph.uncertain_paths(
+        context_payload.get("file_matches", []), related_graph_uncertainty
+    )
+    _repo_map_graph.add_uncertainty(
+        _self, payload, impact_uncertain_paths, _repo_map_root_dir(repo_map)
+    )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -13144,86 +13168,20 @@ def _confirm_import_edges(
     candidate_importer: Path,
     target_file: str,
     repo_root: Path | str | None,
+    *,
+    raw_entries: list[dict[str, Any]] | None = None,
+    deadline_monotonic: float | None = None,
+    deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
-    """Re-parse ONE prefiltered candidate file and confirm which (if any) of its raw imports
-    actually resolve to ``target_file``.
-
-    Precision step for `tg importers`: the alias-substring prefilter (`_reverse_importers`)
-    deliberately over-counts (it is the same mechanism behind the Case-4 false-edge bug) --
-    this is what turns "maybe imports it" into "confirmed imports it, on this exact line".
-    """
-    spec = lang_registry.spec_for_path(candidate_importer)
-    language_id = spec.language_id if spec is not None else None
-    if language_id not in ("javascript", "typescript", "rust", "python"):
-        return []
-
-    edges: list[dict[str, Any]] = []
-    seen_lines: set[int] = set()
-    for raw_entry in _imports_with_lines_for_path(candidate_importer):
-        module = str(raw_entry.get("module", ""))
-        line = int(raw_entry.get("line", 0) or 0)
-        dynamic = bool(raw_entry.get("dynamic", False))
-        dynamic_unresolved = bool(raw_entry.get("dynamic_unresolved", False))
-        if dynamic_unresolved:
-            # #93 SUB-1: no literal module name to compare against target_file -- never assert
-            # a confirmed edge for an import whose target we can't actually read (precision
-            # matters more than recall past this point).
-            continue
-        python_provenance: list[str] = []
-        if language_id in ("javascript", "typescript"):
-            matched = _js_ts_module_matches_definition(
-                candidate_importer, module, target_file, repo_root
-            )
-        elif language_id == "rust":
-            matched = _rust_module_matches_definition(
-                candidate_importer, module, target_file, repo_root
-            )
-        else:
-            # Python: resolve-then-compare via the SAME precise resolver the forward
-            # `tg imports` uses, symmetric with the JS/TS/Rust branches above (#74 review
-            # fix). `level` (0 for absolute, >=1 for `from .`/`from ..`) is carried on the raw
-            # entry by `_python_imports_with_lines` -- threading it through here is what lets
-            # `_python_module_candidates` resolve a relative import correctly instead of
-            # falling back to a bare path-suffix match that ignores directory context.
-            level = int(raw_entry.get("level", 0) or 0)
-            matched, python_provenance = _python_module_matches_definition(
-                candidate_importer, module, target_file, repo_root, level=level
-            )
-        if not matched or line in seen_lines:
-            continue
-        seen_lines.add(line)
-        provenance = "parser-backed" if language_id == "python" else "heuristic"
-        edge: dict[str, Any] = {
-            "file": str(candidate_importer),
-            "line": line,
-            "text": _source_line_text(candidate_importer, line),
-            "kind": "import-consumer",
-            "edge_kind": "reverse-import",
-            "module": module,
-            "provenance": provenance,
-            "resolution_confidence": _import_graph_resolution_confidence(provenance),
-        }
-        if python_provenance == ["sys-path-insert"]:
-            # #155 fix: report the sys.path-hack tag honestly on the reverse edge too, mirroring
-            # the forward `tg imports` path (`_resolve_raw_import_entry`). A SEPARATE field, not
-            # an overwrite of `provenance` above -- that string drives
-            # `_import_graph_resolution_confidence`'s enum ("parser-backed"/"heuristic"/
-            # "regex-heuristic", pinned by test_import_span_targeting.py) and this edge is still
-            # exactly as parser-confirmed (exact AST-parsed, exact resolved-path match) as any
-            # other Python edge, just resolved via a sys.path-hacked root instead of a standard
-            # one.
-            edge["path_provenance"] = "sys-path-insert"
-        if dynamic:
-            # Payload-bloat fix (#93 SUB-1 follow-up, same rationale as
-            # _resolve_raw_import_entry): preserve the dynamic markers on an edge that IS
-            # dynamic -- a `tg importers` consumer needs to know this edge came from a dynamic
-            # call, not a static import statement -- but a static edge (the majority) gains
-            # nothing from two always-False keys, and that bloat tipped the importers payload
-            # past the <10%-of-map guard.
-            edge["dynamic"] = dynamic
-            edge["dynamic_unresolved"] = dynamic_unresolved
-        edges.append(edge)
-    return edges
+    return _repo_map_graph.confirm_edges(
+        _self,
+        candidate_importer,
+        target_file,
+        repo_root,
+        raw_entries=raw_entries,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
 
 
 _REVERSE_IMPORTER_TIER_SAME_ANCESTRY = 0
@@ -13933,6 +13891,7 @@ def build_symbol_callers_from_map(
     # on a high-fan-out symbol: _preferred_definition_files falls back to the FULL unfiltered
     # definition_files when all import-scores are 0, flooding this loop unbounded).
     related_tests_deadline_hit = _DeadlineBreakFlag()
+    related_graph_uncertainty: dict[str, dict[str, Any]] = {}
     related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
@@ -13943,6 +13902,7 @@ def build_symbol_callers_from_map(
         deadline_hit=related_tests_deadline_hit,
         _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
+        _graph_uncertainty=related_graph_uncertainty,
     )
     # callers' own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths derives
     # below, or the omitted tests leak back in via the second field. `payload` does not exist yet
@@ -14017,6 +13977,10 @@ def build_symbol_callers_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    callers_uncertain_paths = _repo_map_graph.uncertain_paths(
+        context_payload.get("file_matches", []), related_graph_uncertainty
+    )
+    _repo_map_graph.add_uncertainty(_self, payload, callers_uncertain_paths, repo_root)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(calls)
     if normalized_provider != "native" and lsp_proof_count == 0 and calls:
@@ -14310,6 +14274,8 @@ def build_symbol_blast_radius_from_map(
     # `preferred_definition_deadline_hit_blast`, which names a DIFFERENT stage) folded into the
     # SAME partial/deadline_limit union below.
     reverse_import_graph_deadline_hit_blast = _DeadlineBreakFlag()
+    blast_uncertain: dict[str, dict[str, Any]] = {}
+    blast_candidate_statuses: dict[str, dict[str, Any]] = {}
     reverse_importers = _self._reverse_importers(
         all_files,
         imports_by_file,
@@ -14322,10 +14288,19 @@ def build_symbol_blast_radius_from_map(
         definition_files,
         all_files,
         imports_by_file,
+        repo_root=_repo_map_root_dir(repo_map),
+        uncertain_candidates=blast_uncertain,
+        candidate_statuses=blast_candidate_statuses,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
+    for target, importers in reverse_importers.items():
+        reverse_importers[target] = {
+            importer
+            for importer in importers
+            if blast_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+        }
     reverse_graph_scores = _self._personalized_reverse_import_pagerank(
         definition_files,
         all_files,
@@ -14436,6 +14411,18 @@ def build_symbol_blast_radius_from_map(
             graph_score=graph_score if graph_score > 0.0 else None,
         )
 
+    for current, evidence in blast_uncertain.items():
+        if blast_candidate_statuses.get(current, {}).get("status") in {"origin", "confirmed"}:
+            continue
+        depth = int(evidence.get("depth", normalized_depth + 1))
+        if depth <= normalized_depth:
+            _merge_file_match(
+                current,
+                depth=depth,
+                score=1,
+                reasons=["heuristic-import"],
+            )
+
     ranked_files = sorted(
         file_matches_by_path.values(),
         key=lambda item: (
@@ -14489,6 +14476,10 @@ def build_symbol_blast_radius_from_map(
     realised_depths = sorted({
         int(item.get("depth", normalized_depth + 1))
         for item in ranked_files
+        if not (
+            "heuristic-import" in item.get("reasons", [])
+            and not {"caller", "graph-depth"}.intersection(item.get("reasons", []))
+        )
         if 0 <= int(item.get("depth", normalized_depth + 1)) <= normalized_depth
     })
     for depth in realised_depths:
@@ -14496,6 +14487,10 @@ def build_symbol_blast_radius_from_map(
             str(item["path"])
             for item in ranked_files
             if int(item.get("depth", normalized_depth + 1)) == depth
+            and not (
+                "heuristic-import" in item.get("reasons", [])
+                and not {"caller", "graph-depth"}.intersection(item.get("reasons", []))
+            )
         ]
         if not depth_files:
             continue
@@ -14567,6 +14562,9 @@ def build_symbol_blast_radius_from_map(
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
     payload["resolution_gaps"] = list(callers_payload.get("resolution_gaps", []))
+    _repo_map_graph.add_uncertainty(
+        _self, payload, list(blast_uncertain), _repo_map_root_dir(repo_map)
+    )
     payload["graph_trust_summary"] = _downgrade_graph_trust_summary_for_coverage_gaps(
         _graph_trust_summary(caller_tree, calls=direct_callers),
         payload["resolution_gaps"],
@@ -14576,6 +14574,8 @@ def build_symbol_blast_radius_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
+    if blast_uncertain:
+        payload["coverage_summary"]["graph_completeness"] = "partial"
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(
         callers_payload.get("provider_agreement", default_agreement)

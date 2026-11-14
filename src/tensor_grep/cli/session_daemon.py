@@ -20,12 +20,23 @@ from time import monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
+from tensor_grep.cli import session_daemon_implicit as _implicit_sessions
+from tensor_grep.cli._index_lock import (  # noqa: F401 (re-exported for tests/helpers)
+    IndexLockTimeoutError,
+    index_lock,
+    replace_with_retry,
+)
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_deadlines import (
     _HandlerAdmissionThreads,
     _load_payload_with_status_retry,
     _read_bounded_request_line,
+)
+from tensor_grep.cli.session_daemon_metrics_sanitize import (
+    _empty_metrics_day_bucket as _empty_metrics_day_bucket,
+)
+from tensor_grep.cli.session_daemon_metrics_sanitize import (
+    _sanitize_metrics_days as _sanitize_metrics_days,
 )
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_start_capture import (
@@ -82,17 +93,17 @@ from tensor_grep.cli.session_store import (
     _SESSION_VERSION,
     WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
     _ensure_session_not_stale,
-    _index_path,
-    _load_index,
+    _index_path,  # noqa: F401 (late-bound helper seam)
+    _load_index,  # noqa: F401 (late-bound helper seam)
     _resolve_request_session_target,
     _resolve_root,
     _session_health_payload,
-    _session_payload_path,
+    _session_payload_path,  # noqa: F401 (late-bound helper seam)
     _sessions_dir,
     _SessionServeCache,
-    _write_index,
+    _write_index,  # noqa: F401 (late-bound helper seam)
     _write_json_atomic,
-    open_session,
+    open_session,  # noqa: F401 (late-bound helper seam)
     refresh_session,
     serve_session_request,
 )
@@ -1265,24 +1276,12 @@ def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> i
     return None
 
 
-def _remove_implicit_session_payload(path: str, session_id: str) -> None:
-    root = _resolve_root(Path(path))
-    try:
-        # Round-6/7 r3: serialize the index read-modify-write under the SAME cross-process lock
-        # open_session / refresh_session use (session_store.py:617/694). Without it, this unlocked
-        # load->filter->write races a concurrent locked insert: this process reads the index, the
-        # other inserts a new session record, this process writes back the filtered set WITHOUT
-        # that record -> a silently lost session entry (orphaned payload, never retention-pruned).
-        with index_lock(_index_path(root)):
-            _session_payload_path(root, session_id).unlink(missing_ok=True)
-            records = [record for record in _load_index(root) if record.session_id != session_id]
-            _write_index(root, records)
-    except (OSError, ValueError, IndexLockTimeoutError):
-        # ValueError: a traversal-shaped session_id is refused by _session_payload_path.
-        # IndexLockTimeoutError: this implicit cleanup is best-effort -- under sustained lock
-        # contention, skip it (retention prunes the record later) rather than crash the eviction
-        # path; we never WROTE, so no insert is lost by skipping.
-        pass
+def _remove_implicit_session_payload(
+    path: str, session_id: str, *, deadline_monotonic: float | None = None
+) -> None:
+    _implicit_sessions.remove_payload(
+        sys.modules[__name__], path, session_id, deadline_monotonic=deadline_monotonic
+    )
 
 
 def _implicit_session_id_for_request(
@@ -1293,27 +1292,48 @@ def _implicit_session_id_for_request(
     path: str,
     request: dict[str, Any],
     deadline_monotonic: float | None = None,
+    pin_receipt: list[Any] | None = None,
 ) -> str:
-    if session_id or command not in _IMPLICIT_SESSION_COMMANDS:
-        return session_id
+    return _implicit_sessions.resolve(
+        sys.modules[__name__],
+        server,
+        command=command,
+        session_id=session_id,
+        path=path,
+        request=request,
+        deadline_monotonic=deadline_monotonic,
+        pin_receipt=pin_receipt,
+    )
 
-    max_repo_files = _implicit_session_max_repo_files(command, request)
-    key = (_path_cache_key(path), str(max_repo_files or ""))
-    with server._implicit_session_lock:
-        existing = server.implicit_session_ids.pop(key, None)
-        if existing:
-            server.implicit_session_ids[key] = existing
-            return str(existing)
-        opened = open_session(
-            path,
-            max_repo_files=max_repo_files,
-            deadline_monotonic=deadline_monotonic,
-        )
-        server.implicit_session_ids[key] = opened.session_id
-        while len(server.implicit_session_ids) > _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES:
-            evicted_key, evicted_session_id = server.implicit_session_ids.popitem(last=False)
-            _remove_implicit_session_payload(evicted_key[0], evicted_session_id)
-        return opened.session_id
+
+def _release_implicit_session_pin(
+    server: Any, pin_receipt: list[Any] | None, *, deadline_monotonic: float | None = None
+) -> None:
+    _implicit_sessions.release(
+        sys.modules[__name__], server, pin_receipt, deadline_monotonic=deadline_monotonic
+    )
+
+
+def _reacquire_missing_implicit_session(
+    server: Any,
+    *,
+    path: str,
+    request: dict[str, Any],
+    session_id: str,
+    pin_receipt: list[Any],
+    deadline_monotonic: float | None,
+    exc: BaseException,
+) -> str | None:
+    return _implicit_sessions.reacquire_missing(
+        sys.modules[__name__],
+        server,
+        path=path,
+        request=request,
+        session_id=session_id,
+        pin_receipt=pin_receipt,
+        deadline_monotonic=deadline_monotonic,
+        exc=exc,
+    )
 
 
 def _serve_daemon_response_with_cache(
@@ -1454,58 +1474,6 @@ def _normalize_client_pid(client_pid: object) -> int | None:
     return pid if pid > 0 else None
 
 
-def _empty_metrics_day_bucket() -> dict[str, Any]:
-    return {
-        "requests": 0,
-        "expensive_requests": 0,
-        "distinct_client_pids": 0,
-        "max_concurrent_distinct_clients": 0,
-        "overlap_events": 0,
-        "dup_requests": 0,
-        "dup_targets": {},
-        "by_command": {},
-    }
-
-
-def _sanitize_metrics_days(raw: object) -> dict[str, dict[str, Any]]:
-    """Defensively normalize a loaded (possibly hand-edited or stale-schema) days dict."""
-    sanitized: dict[str, dict[str, Any]] = {}
-    if not isinstance(raw, dict):
-        return sanitized
-    for day, bucket in raw.items():
-        if not isinstance(day, str) or not isinstance(bucket, dict):
-            continue
-        dup_targets_raw = bucket.get("dup_targets")
-        dup_targets = (
-            {str(key): int(cast(Any, value)) for key, value in dup_targets_raw.items()}
-            if isinstance(dup_targets_raw, dict)
-            else {}
-        )
-        by_command_raw = bucket.get("by_command")
-        by_command = (
-            {str(key): int(cast(Any, value)) for key, value in by_command_raw.items()}
-            if isinstance(by_command_raw, dict)
-            else {}
-        )
-        clean = _empty_metrics_day_bucket()
-        for field in (
-            "requests",
-            "expensive_requests",
-            "distinct_client_pids",
-            "max_concurrent_distinct_clients",
-            "overlap_events",
-            "dup_requests",
-        ):
-            try:
-                clean[field] = int(cast(Any, bucket.get(field, 0)) or 0)
-            except (TypeError, ValueError):
-                clean[field] = 0
-        clean["dup_targets"] = dup_targets
-        clean["by_command"] = by_command
-        sanitized[day] = clean
-    return sanitized
-
-
 class _DemandMetrics:
     """In-memory, fail-open, PII-free demand counters for the tg-ledger step-0 gate.
 
@@ -1624,7 +1592,7 @@ def _read_demand_metrics_days(root: Path) -> dict[str, Any]:
         return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     days = data.get("days") if isinstance(data, dict) else None
     return days if isinstance(days, dict) else {}
@@ -1713,7 +1681,11 @@ class _ThreadedSessionDaemon(_HandlerAdmissionThreads, socketserver.TCPServer):
         self.response_cache = _SessionResponseCache()
         # tg-ledger step-0: demand instrumentation, see docs/multi_agent_context_plane.md.
         self.demand_metrics = _DemandMetrics()
-        self.implicit_session_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self.implicit_session_ids: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+        self._implicit_inflight: dict[tuple[str, str, str], threading.Event] = {}
+        self._implicit_active_pins: dict[tuple[str, str], int] = {}
+        self._implicit_pending_evictions: set[tuple[str, str]] = set()
+        self._implicit_cleanup_owned: set[tuple[str, str]] = set()
         self.started_at = monotonic()
         self.request_count = 0
         # audit I7: track last client activity so an idle daemon can shut itself down.
@@ -1788,6 +1760,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
             server.request_count += 1
         request_session_id = ""
         request_path = str(server.root)
+        implicit_pin_receipt: list[Any] = []
         inflight_incremented = False
 
         try:
@@ -1833,6 +1806,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 path=request_path,
                 request=request,
                 deadline_monotonic=work_deadline,
+                pin_receipt=implicit_pin_receipt,
             )
             if request_session_id:
                 request["session_id"] = request_session_id
@@ -1903,12 +1877,33 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 refresh_trigger = ""
                 try:
                     load_started_at = monotonic()
-                    payload, cache_status = _load_payload_with_status_retry(
-                        server.payload_cache,
-                        request_session_id,
-                        request_path,
-                        deadline_monotonic=work_deadline,
-                    )
+                    try:
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                            deadline_monotonic=work_deadline,
+                        )
+                    except FileNotFoundError as missing:
+                        replacement = _reacquire_missing_implicit_session(
+                            server,
+                            path=request_path,
+                            request=request,
+                            session_id=request_session_id,
+                            pin_receipt=implicit_pin_receipt,
+                            deadline_monotonic=work_deadline,
+                            exc=missing,
+                        )
+                        if replacement is None:
+                            raise
+                        request_session_id = replacement
+                        request["session_id"] = replacement
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                            deadline_monotonic=work_deadline,
+                        )
                     loaded_at = monotonic()
                     response, response_cache_status = _serve_daemon_response_with_cache(
                         server=server,
@@ -2007,6 +2002,9 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 "error": {"code": "invalid_request", "message": str(exc)},
             }
         finally:
+            _release_implicit_session_pin(
+                server, implicit_pin_receipt, deadline_monotonic=work_deadline
+            )
             if inflight_incremented:
                 with server._request_lock:
                     server.inflight_requests -= 1

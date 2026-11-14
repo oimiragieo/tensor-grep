@@ -28,7 +28,11 @@ DISPOSITIONS: dict[tuple[str, str], str] = {
     ("cli/repo_map.py", "_imports_and_symbols_for_path"): "wired: universe gaps (same files)",
     ("cli/repo_map.py", "build_repo_map"): "wired: universe gaps (same files)",
     ("cli/repo_map.py", "build_file_imports"): "wired: attach_target_gaps",
-    ("cli/repo_map.py", "_confirm_import_edges"): "wired: importer universe gaps",
+    ("cli/repo_map_graph.py", "confirm_edges"): "wired: candidate evidence uncertainty gaps",
+    (
+        "cli/repo_map_graph.py",
+        "_candidate_evidence",
+    ): "wired: candidate evidence uncertainty gaps",
     ("cli/diff_impact.py", "_extract_symbols"): "wired: target_file_gaps -> unparsed_changed_files",
     ("cli/agent_capsule.py", "_collect_outbound_dependencies"): "opt-in DAR only; primary file "
     "gap is attached in agent_capsule_builder (attach_target_gaps)",

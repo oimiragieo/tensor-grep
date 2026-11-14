@@ -83,7 +83,7 @@ def _stub_dispatch(monkeypatch: Any, root: Path) -> None:
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None, pin_receipt=None: (
             session_id or "session-x"
         ),
     )
@@ -532,7 +532,7 @@ def test_client_pid_does_not_fragment_response_cache(tmp_path: Path, monkeypatch
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None, pin_receipt=None: (
             session_id or "session-x"
         ),
     )

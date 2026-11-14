@@ -332,3 +332,8 @@ def test_build_symbol_callers_flags_go_import_graph_gap_not_silent_empty(
     assert go_gaps[0]["files_affected"] >= 1
     assert "reverse-import" in go_gaps[0]["reason"]
     assert "fail-closed" not in go_gaps[0]["reason"]
+
+    blast = repo_map.build_symbol_blast_radius("Foo", project)
+    blast_go_gaps = [gap for gap in blast["resolution_gaps"] if gap["language"] == "go"]
+    assert len(blast_go_gaps) == 1
+    assert "reverse-import" in blast_go_gaps[0]["reason"]

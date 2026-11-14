@@ -26,6 +26,24 @@ The daemon is a local IPC mechanism, not a service. Binding to loopback is a har
 requirement: it is the outer boundary that keeps the token from being the *only* thing
 between an attacker and the index.
 
+### Implicit sessions
+
+Implicit sessions are keyed by project root, resolved requested scan scope, and file
+budget. Opening one scope does not hold the cache lock while another scope opens;
+requests for the same key share creation work within each request's original deadline.
+
+The daemon pins an implicit payload for the request lifetime and defers its own LRU
+eviction cleanup until the last active request releases it. This does not protect
+against session-store retention pruning or payload changes by other processes.
+Cleanup checks the deadline before starting a deletion transaction; admitted filesystem
+operations are synchronous.
+Only an exact initial missing-payload failure can trigger one implicit reopen within the
+original deadline; explicit session IDs, root mismatches, permission failures, and
+corrupt payloads do not use that retry.
+
+Persisted demand metrics are fail-open startup data: malformed files or counters are
+ignored or normalized without preventing the daemon from serving requests.
+
 ---
 
 ## 2. Authentication
