@@ -54,22 +54,9 @@ def _shell_argv(command: str) -> list[str]:
     return _shell_words(command)
 
 
-def _command_with(script: str, prefix: tuple[str, ...], required: tuple[str, ...]) -> bool:
-    for command in _shell_commands(script):
-        argv = _shell_argv(command)
-        unique_options = all(
-            argv.count(token) == required.count(token)
-            and not any(argument.startswith(token + "=") for argument in argv)
-            for token in set(required)
-            if token.startswith("--")
-        )
-        if (
-            tuple(argv[: len(prefix)]) == prefix
-            and all(token in argv for token in required)
-            and unique_options
-        ):
-            return True
-    return False
+def _exact_commands(script: str) -> tuple[tuple[str, ...], ...]:
+    commands = tuple(tuple(_shell_argv(command)) for command in _shell_commands(script))
+    return commands if all(commands) else ()
 
 
 def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
@@ -156,6 +143,11 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         return errors
 
     positions = {str(step.get("name")): index for index, step in enumerate(steps)}
+    required_positions = [positions[name] for name in required]
+    if required_positions != list(
+        range(required_positions[0], required_positions[0] + len(required))
+    ):
+        errors.append("CI release publisher security steps must be contiguous")
     for earlier, later in pairwise(required):
         if positions[earlier] >= positions[later]:
             errors.append(f"CI release publisher must run `{earlier}` before `{later}`")
@@ -163,12 +155,30 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     runs = {name: str(step.get("run", "")) for name, step in named.items()}
     commands = {
         "Install cargo-cyclonedx": (
-            ("cargo", "install"),
-            ("--locked", "cargo-cyclonedx", "--version", "0.5.10"),
+            (
+                "cargo",
+                "install",
+                "--locked",
+                "cargo-cyclonedx",
+                "--version",
+                "0.5.10",
+            ),
         ),
         "Generate Rust SBOM": (
-            ("cargo", "cyclonedx"),
             (
+                "cargo",
+                "cyclonedx",
+                "--format",
+                "json",
+                "--target",
+                "all",
+                "--override-filename",
+                "sbom-rust",
+                "--no-default-features",
+            ),
+            (
+                "cargo",
+                "cyclonedx",
                 "--format",
                 "json",
                 "--target",
@@ -178,6 +188,40 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--no-default-features",
                 "--features",
                 "cuda",
+            ),
+        ),
+        "Prepare clean Python SBOM environments": (
+            (
+                "uv",
+                "export",
+                "--locked",
+                "--no-dev",
+                "--no-emit-project",
+                "--format",
+                "requirements.txt",
+                "--output-file",
+                "$RUNNER_TEMP/tg-core-requirements.txt",
+            ),
+            (
+                "uv",
+                "pip",
+                "sync",
+                "--python",
+                ".sbom-python-tools/bin/python",
+                "--require-hashes",
+                "--only-binary",
+                ":all:",
+                "scripts/release-sbom-tools.txt",
+            ),
+            (
+                ".sbom-python-tools/bin/cyclonedx-py",
+                "environment",
+                "-E",
+                ".sbom-python-core/bin/python",
+                "--pyproject",
+                "pyproject.toml",
+                "--output-file",
+                "artifacts/sbom-python.json",
             ),
         ),
         "Validate release SBOM identity": (
@@ -190,8 +234,6 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--",
                 "python",
                 "scripts/validate_release_sbom_identity.py",
-            ),
-            (
                 "--rust-sbom",
                 "artifacts/sbom-rust.json",
                 "--python-sbom",
@@ -210,8 +252,6 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--",
                 "python",
                 "scripts/validate_release_binary_artifacts.py",
-            ),
-            (
                 "--artifacts-dir",
                 "artifacts",
                 "--checksums-out",
@@ -234,8 +274,6 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--",
                 "python",
                 "scripts/prepare_release_asset_paths.py",
-            ),
-            (
                 "--artifacts-dir",
                 "artifacts",
                 "--expected-profile",
@@ -245,14 +283,18 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             ),
         ),
         "Verify SLSA provenance": (
-            ("gh", "attestation", "verify"),
             (
+                "gh",
+                "attestation",
+                "verify",
+                "$subject",
                 "--repo",
                 "$GITHUB_REPOSITORY",
                 "--signer-workflow",
                 "$GITHUB_REPOSITORY/.github/workflows/ci.yml",
                 "--source-ref",
                 "refs/heads/main",
+                "--deny-self-hosted-runners",
             ),
         ),
         "Verify GitHub release asset coverage": (
@@ -265,38 +307,31 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--",
                 "python",
                 "scripts/verify_github_release_assets.py",
-            ),
-            (
+                "--repo",
+                "$GITHUB_REPOSITORY",
+                "--tag",
+                "v${{ needs.release.outputs.release_version }}",
+                "--token",
+                "${{ secrets.GITHUB_TOKEN }}",
                 "--local-artifacts-dir",
                 "artifacts",
                 "--expected-profile",
                 "$RELEASE_NATIVE_ASSET_PROFILE",
                 "--wait-seconds",
+                "120",
                 "--poll-interval-seconds",
+                "5",
             ),
         ),
     }
-    for name, (prefix, tokens) in commands.items():
-        if not _command_with(runs[name], prefix, tokens):
+    for name, expected_commands in commands.items():
+        if _exact_commands(runs[name]) != expected_commands:
+            expected_text = " and ".join(" ".join(command) for command in expected_commands)
             errors.append(
-                f"CI release publisher `{name}` must run `{' '.join(prefix)}` with {tokens}"
+                f"CI release publisher `{name}` must run only its exact commands: {expected_text}"
             )
     if named["Prepare release asset path list"].get("id") != "release_paths":
         errors.append("CI release asset path preparation must use `id: release_paths`")
-    python_sbom = runs["Prepare clean Python SBOM environments"]
-    for prefix, tokens in (
-        (("uv", "export"), ("--locked", "--no-dev", "--no-emit-project")),
-        (("uv", "pip", "sync"), ("--require-hashes", "scripts/release-sbom-tools.txt")),
-        (
-            ("cyclonedx-py", "environment"),
-            ("-E", "--output-file", "artifacts/sbom-python.json"),
-        ),
-    ):
-        if not _command_with(python_sbom, prefix, tokens):
-            errors.append(
-                f"CI release Python SBOM step must run `{' '.join(prefix)}` with {tokens}"
-            )
-
     attest = named["Generate SLSA provenance"]
     if attest.get("uses") != "actions/attest-build-provenance@v4":
         errors.append("CI release publisher must use the pinned build-provenance action")

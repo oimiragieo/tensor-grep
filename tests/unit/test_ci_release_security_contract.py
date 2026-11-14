@@ -33,10 +33,15 @@ def _workflow() -> dict[str, object]:
     runs = {
         "Install cargo-cyclonedx": "cargo install --locked cargo-cyclonedx --version 0.5.10",
         "Generate Rust SBOM": """cargo cyclonedx --format json --target all \\
+          --override-filename sbom-rust --no-default-features
+cargo cyclonedx --format json --target all \\
           --override-filename sbom-rust --no-default-features --features cuda""",
-        "Prepare clean Python SBOM environments": """uv export --locked --no-dev --no-emit-project
-uv pip sync --require-hashes scripts/release-sbom-tools.txt
-cyclonedx-py environment -E --output-file artifacts/sbom-python.json""",
+        "Prepare clean Python SBOM environments": """uv export --locked --no-dev --no-emit-project \\
+--format requirements.txt --output-file "$RUNNER_TEMP/tg-core-requirements.txt"
+uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
+--only-binary :all: scripts/release-sbom-tools.txt
+.sbom-python-tools/bin/cyclonedx-py environment -E .sbom-python-core/bin/python \\
+--pyproject pyproject.toml --output-file artifacts/sbom-python.json""",
         "Validate release SBOM identity": """uv run --no-project --python 3.12 -- python scripts/validate_release_sbom_identity.py \\
 --rust-sbom artifacts/sbom-rust.json --python-sbom artifacts/sbom-python.json \\
 --expected-version \"$RELEASE_VERSION\"""",
@@ -48,11 +53,13 @@ cyclonedx-py environment -E --output-file artifacts/sbom-python.json""",
         "Prepare release asset path list": """uv run --no-project --python 3.12 -- python scripts/prepare_release_asset_paths.py \\
 --artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
 --github-output \"$GITHUB_OUTPUT\"""",
-        "Verify SLSA provenance": """gh attestation verify subject \\
+        "Verify SLSA provenance": """gh attestation verify "$subject" \\
 --repo \"$GITHUB_REPOSITORY\" \\
 --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/ci.yml\" \\
---source-ref refs/heads/main""",
+--source-ref refs/heads/main --deny-self-hosted-runners""",
         "Verify GitHub release asset coverage": """uv run --no-project --python 3.12 -- python scripts/verify_github_release_assets.py \\
+--repo "$GITHUB_REPOSITORY" --tag "v${{ needs.release.outputs.release_version }}" \\
+--token "${{ secrets.GITHUB_TOKEN }}" \\
 --local-artifacts-dir artifacts --expected-profile \"$RELEASE_NATIVE_ASSET_PROFILE\" \\
 --wait-seconds 120 --poll-interval-seconds 5""",
     }
@@ -249,6 +256,32 @@ def test_release_security_contract_rejects_duplicate_security_option() -> None:
     step = _step(workflow, "Verify SLSA provenance")
     step["run"] = str(step["run"]) + " --repo attacker/example"
     assert any("gh attestation verify" in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize("extra", ["--help", "-R attacker/example", "--repo=attacker/example"])
+def test_release_security_contract_rejects_extra_security_argv(extra: str) -> None:
+    workflow = _workflow()
+    step = _step(workflow, "Verify SLSA provenance")
+    step["run"] = str(step["run"]) + f" {extra}"
+    assert any("gh attestation verify" in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    ["printf malicious > artifacts/sbom-rust.json", "gh() { echo shadowed; }"],
+)
+def test_release_security_contract_rejects_extra_security_command(extra: str) -> None:
+    workflow = _workflow()
+    step = _step(workflow, "Verify SLSA provenance")
+    step["run"] = extra + "\n" + str(step["run"])
+    assert any("only its exact commands" in error for error in _errors(workflow))
+
+
+def test_release_security_contract_rejects_interleaved_step() -> None:
+    workflow = _workflow()
+    steps = workflow["jobs"]["publisher"]["steps"]  # type: ignore[index]
+    steps.insert(5, {"name": "Mutate artifacts", "run": "true"})
+    assert any("security steps must be contiguous" in error for error in _errors(workflow))
 
 
 @pytest.mark.parametrize("fault", ["id", "output", "rust-feature"])
