@@ -68,8 +68,24 @@ def validate_artifacts(artifacts_dir: Path, *, expected_profile: str = "full") -
     return errors
 
 
-def write_checksums(artifacts_dir: Path, output_path: Path) -> None:
+def write_checksums(
+    artifacts_dir: Path,
+    output_path: Path,
+    *,
+    additional_assets: list[Path] | None = None,
+) -> None:
     matrix = build_hash_matrix(artifacts_dir)
+    if additional_assets:
+        allowed = {"sbom-rust.json", "sbom-python.json"}
+        names = [asset.name for asset in additional_assets]
+        if set(names) != allowed or len(names) != len(allowed):
+            raise ValueError("Additional release checksum assets must be both managed SBOM files")
+        for asset in additional_assets:
+            if not asset.is_file():
+                raise ValueError(f"Missing additional release checksum asset: {asset}")
+            if asset.name in matrix:
+                raise ValueError(f"Duplicate release checksum asset name: {asset.name}")
+            matrix[asset.name] = hashlib.sha256(asset.read_bytes()).hexdigest()
     lines = [f"{digest}  {name}" for name, digest in sorted(matrix.items())]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
@@ -97,6 +113,13 @@ def main() -> int:
         default="full",
         help="Expected release binary matrix profile.",
     )
+    parser.add_argument(
+        "--additional-checksum-asset",
+        type=Path,
+        action="append",
+        default=[],
+        help="Add one of the two managed SBOM assets to CHECKSUMS.txt.",
+    )
     args = parser.parse_args()
 
     errors = validate_artifacts(
@@ -108,7 +131,11 @@ def main() -> int:
             print(f"ERROR: {err}")
         return 1
 
-    write_checksums(args.artifacts_dir, args.checksums_out)
+    write_checksums(
+        args.artifacts_dir,
+        args.checksums_out,
+        additional_assets=args.additional_checksum_asset,
+    )
     print(f"Release binary artifact validation passed. Checksums written to {args.checksums_out}")
     return 0
 
