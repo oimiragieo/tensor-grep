@@ -65,3 +65,11 @@ def test_publisher_census_reports_malformed_steps() -> None:
     content = yaml.safe_dump({"jobs": {"publish": {"steps": None}}})
     errors = validate_release_publisher_census(workflows={".github/workflows/ci.yml": content})
     assert any("ci.yml:publish steps to be a list" in error for error in errors)
+
+
+def test_repository_release_publisher_census_is_clean() -> None:
+    workflows = {
+        path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    }
+    assert validate_release_publisher_census(workflows=workflows) == []

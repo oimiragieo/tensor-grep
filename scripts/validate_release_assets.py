@@ -40,6 +40,7 @@ from _release_assets_checks.docs_and_manifest_checks import (  # noqa: E402
 )
 from _release_assets_checks.release_security import (  # noqa: E402
     validate_ci_release_security_contract,
+    validate_release_publisher_census,
 )
 from _release_assets_checks.workflow_checks import (  # noqa: E402
     validate_actions_sha_pinned,
@@ -73,6 +74,7 @@ __all__ = [
     "validate_public_gpu_proof_workflow_content",
     "validate_readme_contract",
     "validate_release_docs_current_prose",
+    "validate_release_publisher_census",
     "validate_semantic_release_config",
     "validate_uv_security_constraints",
     "validate_winget_manifest",
@@ -228,6 +230,15 @@ def validate_all() -> list[str]:
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
     errors.extend(validate_ci_release_security_contract(ci_workflow=ci_workflow))
+    workflow_dir = ROOT / ".github" / "workflows"
+    errors.extend(
+        validate_release_publisher_census(
+            workflows={
+                path.relative_to(ROOT).as_posix(): _read(path)
+                for path in sorted(workflow_dir.glob("*.yml"))
+            }
+        )
+    )
 
     public_gpu_proof_workflow = _read(ROOT / ".github" / "workflows" / "public-gpu-proof.yml")
     errors.extend(
