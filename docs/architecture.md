@@ -110,8 +110,17 @@ Repository walks use `src/tensor_grep/cli/repo_map_gitignore.py`
 for private gitignore matching. Its result distinguishes an ignored path, an explicit
 re-inclusion, and no matching rule so nested rules retain their existing precedence.
 The module owns the single 64-entry matcher cache; `repo_map.py` reexports the same
-objects and clears that cache before rebuilding a repository map. Matching behavior
-and existing import paths are unchanged.
+objects and clears that cache before rebuilding a repository map. Matching uses
+`pathspec`, including character classes and escaped markers. Empty or invalid rules
+do not discard valid sibling rules. Walks skip symlinks and Windows reparse-point
+entries, including directory junctions.
+
+Reverse-import expansion distinguishes confirmed edges from uncertain candidates.
+Unresolved, unreadable, unsupported, and over-budget evidence stays heuristic and
+appears in partial graph coverage and resolution gaps. A concrete import of a weak
+query hit does not establish a strong association with that query. Valid definition
+origins retain their incoming edges even when their own outgoing imports are unresolved.
+Deadlines gate new reads and parsing; an operation already running remains synchronous.
 
 ## Contracts and implementation detail
 

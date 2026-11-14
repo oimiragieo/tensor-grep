@@ -7891,6 +7891,9 @@ def _ordered_dependent_file_matches(
             continue
         if _is_test_file(Path(current_path)):
             continue
+        reasons = list(current.get("reasons", []))
+        if "heuristic-import" in reasons and not {"caller", "graph-depth"}.intersection(reasons):
+            continue
         depth = int(current.get("depth", max_depth + 1))
         if depth > max_depth:
             continue
@@ -7898,7 +7901,7 @@ def _ordered_dependent_file_matches(
             "path": current_path,
             "depth": depth,
             "score": int(current.get("score", 0)),
-            "reasons": list(current.get("reasons", [])),
+            "reasons": reasons,
             "graph_score": float(current.get("graph_score", 0.0)),
         })
 
@@ -12306,6 +12309,7 @@ def build_symbol_impact_from_map(
             impacted_files.append(current)
 
     related_tests_deadline_hit = _DeadlineBreakFlag()
+    related_graph_uncertainty: dict[str, dict[str, Any]] = {}
     related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
@@ -12315,6 +12319,7 @@ def build_symbol_impact_from_map(
         deadline_hit=related_tests_deadline_hit,
         _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
+        _graph_uncertainty=related_graph_uncertainty,
     )
     # impact's own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths/test_matches
     # derive below (both are indexed off `related_tests`), or the omitted tests leak back in via
@@ -12442,6 +12447,12 @@ def build_symbol_impact_from_map(
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
     copy_coverage_gap_state(payload, defs_payload)
+    impact_uncertain_paths = _repo_map_graph.uncertain_paths(
+        context_payload.get("file_matches", []), related_graph_uncertainty
+    )
+    _repo_map_graph.add_uncertainty(
+        _self, payload, impact_uncertain_paths, _repo_map_root_dir(repo_map)
+    )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -13880,6 +13891,7 @@ def build_symbol_callers_from_map(
     # on a high-fan-out symbol: _preferred_definition_files falls back to the FULL unfiltered
     # definition_files when all import-scores are 0, flooding this loop unbounded).
     related_tests_deadline_hit = _DeadlineBreakFlag()
+    related_graph_uncertainty: dict[str, dict[str, Any]] = {}
     related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
@@ -13890,6 +13902,7 @@ def build_symbol_callers_from_map(
         deadline_hit=related_tests_deadline_hit,
         _test_scan_counts=context_pack_test_scan_counts,
         _profiling_collector=_profiling_collector,
+        _graph_uncertainty=related_graph_uncertainty,
     )
     # callers' own DEDICATED --max-tests (design #96 item 2): cap BEFORE related_paths derives
     # below, or the omitted tests leak back in via the second field. `payload` does not exist yet
@@ -13964,6 +13977,10 @@ def build_symbol_callers_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    callers_uncertain_paths = _repo_map_graph.uncertain_paths(
+        context_payload.get("file_matches", []), related_graph_uncertainty
+    )
+    _repo_map_graph.add_uncertainty(_self, payload, callers_uncertain_paths, repo_root)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(calls)
     if normalized_provider != "native" and lsp_proof_count == 0 and calls:
@@ -14257,6 +14274,8 @@ def build_symbol_blast_radius_from_map(
     # `preferred_definition_deadline_hit_blast`, which names a DIFFERENT stage) folded into the
     # SAME partial/deadline_limit union below.
     reverse_import_graph_deadline_hit_blast = _DeadlineBreakFlag()
+    blast_uncertain: dict[str, dict[str, Any]] = {}
+    blast_candidate_statuses: dict[str, dict[str, Any]] = {}
     reverse_importers = _self._reverse_importers(
         all_files,
         imports_by_file,
@@ -14269,10 +14288,19 @@ def build_symbol_blast_radius_from_map(
         definition_files,
         all_files,
         imports_by_file,
+        repo_root=_repo_map_root_dir(repo_map),
+        uncertain_candidates=blast_uncertain,
+        candidate_statuses=blast_candidate_statuses,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
+    for target, importers in reverse_importers.items():
+        reverse_importers[target] = {
+            importer
+            for importer in importers
+            if blast_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+        }
     reverse_graph_scores = _self._personalized_reverse_import_pagerank(
         definition_files,
         all_files,
@@ -14383,6 +14411,18 @@ def build_symbol_blast_radius_from_map(
             graph_score=graph_score if graph_score > 0.0 else None,
         )
 
+    for current, evidence in blast_uncertain.items():
+        if blast_candidate_statuses.get(current, {}).get("status") in {"origin", "confirmed"}:
+            continue
+        depth = int(evidence.get("depth", normalized_depth + 1))
+        if depth <= normalized_depth:
+            _merge_file_match(
+                current,
+                depth=depth,
+                score=1,
+                reasons=["heuristic-import"],
+            )
+
     ranked_files = sorted(
         file_matches_by_path.values(),
         key=lambda item: (
@@ -14436,6 +14476,10 @@ def build_symbol_blast_radius_from_map(
     realised_depths = sorted({
         int(item.get("depth", normalized_depth + 1))
         for item in ranked_files
+        if not (
+            "heuristic-import" in item.get("reasons", [])
+            and not {"caller", "graph-depth"}.intersection(item.get("reasons", []))
+        )
         if 0 <= int(item.get("depth", normalized_depth + 1)) <= normalized_depth
     })
     for depth in realised_depths:
@@ -14443,6 +14487,10 @@ def build_symbol_blast_radius_from_map(
             str(item["path"])
             for item in ranked_files
             if int(item.get("depth", normalized_depth + 1)) == depth
+            and not (
+                "heuristic-import" in item.get("reasons", [])
+                and not {"caller", "graph-depth"}.intersection(item.get("reasons", []))
+            )
         ]
         if not depth_files:
             continue
@@ -14514,6 +14562,9 @@ def build_symbol_blast_radius_from_map(
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
     payload["resolution_gaps"] = list(callers_payload.get("resolution_gaps", []))
+    payload["resolution_gaps"].extend(
+        _repo_map_graph.uncertainty_gaps(_self, list(blast_uncertain), _repo_map_root_dir(repo_map))
+    )
     payload["graph_trust_summary"] = _downgrade_graph_trust_summary_for_coverage_gaps(
         _graph_trust_summary(caller_tree, calls=direct_callers),
         payload["resolution_gaps"],
@@ -14523,6 +14574,8 @@ def build_symbol_blast_radius_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
+    if blast_uncertain:
+        payload["coverage_summary"]["graph_completeness"] = "partial"
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(
         callers_payload.get("provider_agreement", default_agreement)

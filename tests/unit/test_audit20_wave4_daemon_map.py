@@ -183,3 +183,32 @@ def test_duplicate_basename_edges_resolve_exact_module(tmp_path, target, expecte
         [selected], [a, other, consumer], {consumer: ["pkg.a"]}
     )
     assert (consumer in distances) is expected, "coarse basename edge leaked into distance graph"
+
+
+@pytest.fixture
+def seed_fixtures():
+    spec = importlib.util.spec_from_file_location(
+        "wave4_seed_baseline",
+        Path(__file__).resolve().parents[2] / "tests/unit/test_edit_plan_seed.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("mode", ["context", "blast"])
+def test_preserve_termui_and_edit_order_pins(tmp_path, seed_fixtures, mode):
+    p = seed_fixtures._build_python_termui_radius_project(tmp_path / "termui")
+    render = rm.build_context_render if mode == "context" else rm.build_symbol_blast_radius_render
+    seed = render("unstyle", p["project"])["edit_plan_seed"]
+    assert seed["dependent_files"] == [str(p["init"].resolve()), str(p["core"].resolve())]
+    assert str(p["decorators"].resolve()) not in seed["dependent_files"]
+    assert str(p["example"].resolve()) not in seed["dependent_files"]
+    p = seed_fixtures._build_linear_project(tmp_path / "linear")
+    render_linear = (
+        seed_fixtures._render_context if mode == "context" else seed_fixtures._render_blast_radius
+    )
+    seed = render_linear(p["project"])["edit_plan_seed"]
+    assert seed["edit_ordering"] == [
+        str(p[x].resolve()) for x in ["payments", "service", "report", "test"]
+    ]
