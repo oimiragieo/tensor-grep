@@ -94,14 +94,3 @@ def _output_limit_note(payload: dict[str, Any]) -> str | None:
         return None
     knob_text = "--max-callers/--max-files" if len(knobs) == 2 else knobs.pop()
     return f"OUTPUT LIMITED: display omitted {' and '.join(dropped)}; raise {knob_text} to see more"
-
-
-def _completeness_caveat_lines(
-    caveat: str | None, *, is_truncation: bool
-) -> tuple[str | None, str | None]:
-    """Return a leading warning for incompleteness or a trailing pagination note."""
-    if caveat is None:
-        return None, None
-    if is_truncation:
-        return f"warning: {caveat}", None
-    return None, f"note: {caveat}"

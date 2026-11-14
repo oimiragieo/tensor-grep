@@ -547,7 +547,6 @@ def prepare_directory(root: Path, directory: Path) -> None:
     relative_parts = _confined_relative_parts(root, directory, allow_root=True)
     for count in range(1, len(relative_parts) + 1):
         current = root.joinpath(*relative_parts[:count])
-        _real_components(root, current)
         parents = _real_components(root, current)
         with _pin_windows_parents(parents):
             if os.name == "nt":

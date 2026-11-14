@@ -3147,9 +3147,7 @@ def _relevant_tests_for_symbol(
         ranked = [str(current["path"]) for current in test_matches]
         ordered: list[str] = []
         for current in [*direct_definition_tests, *ranked]:
-            if current in caller_set and current not in ordered:
-                ordered.append(current)
-            elif current not in ordered:
+            if current not in ordered:
                 ordered.append(current)
         if ordered:
             return ordered
