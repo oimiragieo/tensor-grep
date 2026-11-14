@@ -66,8 +66,10 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         str(step.get("name")): step for step in steps if isinstance(step, dict) and step.get("name")
     }
     required = (
+        "Install cargo-cyclonedx",
         "Generate Rust SBOM",
         "Prepare clean Python SBOM environments",
+        "Validate release SBOM identity",
         "Validate release asset matrix and generate checksums",
         "Prepare release asset path list",
         "Generate SLSA provenance",
@@ -86,6 +88,108 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
     for earlier, later in pairwise(required):
         if positions[earlier] >= positions[later]:
             errors.append(f"CI release publisher must run `{earlier}` before `{later}`")
+
+    runs = {name: str(step.get("run", "")) for name, step in named.items()}
+    if (
+        "cargo install --locked cargo-cyclonedx --version 0.5.10"
+        not in runs["Install cargo-cyclonedx"]
+    ):
+        errors.append("CI release publisher must install the locked cargo-cyclonedx 0.5.10 tool")
+    rust_sbom = runs["Generate Rust SBOM"]
+    for expected in (
+        "cargo cyclonedx",
+        "--format json",
+        "--target all",
+        "--override-filename",
+        "--no-default-features",
+        "--features cuda",
+    ):
+        if expected not in rust_sbom:
+            errors.append(f"CI release Rust SBOM generation must include `{expected}`")
+    if not re.search(r"(?m)^\s*--override-filename\s+sbom-rust(?:\s|$)", rust_sbom):
+        errors.append(
+            "CI release Rust SBOM generation must set `--override-filename sbom-rust` as the exact stem"
+        )
+
+    python_sbom = runs["Prepare clean Python SBOM environments"]
+    for expected in (
+        "uv export --locked --no-dev --no-emit-project",
+        "uv pip sync",
+        "--require-hashes",
+        "scripts/release-sbom-tools.txt",
+        "cyclonedx-py environment",
+        "-E",
+        "--output-file artifacts/sbom-python.json",
+    ):
+        if expected not in python_sbom:
+            errors.append(f"CI release Python SBOM environment must include `{expected}`")
+
+    identity_step = named["Validate release SBOM identity"]
+    identity_env = identity_step.get("env", {})
+    identity = runs["Validate release SBOM identity"] + str(
+        identity_env.get("RELEASE_VERSION", "") if isinstance(identity_env, dict) else ""
+    )
+    for expected in (
+        "sbom-rust.json",
+        "sbom-python.json",
+        "release_version",
+        'component.get("name")',
+        'component.get("version")',
+        "Cargo.toml",
+        "pyproject.toml",
+    ):
+        if expected not in identity:
+            errors.append(f"CI release SBOM identity validation must include `{expected}`")
+
+    checksum = runs["Validate release asset matrix and generate checksums"]
+    for expected in (
+        "scripts/validate_release_binary_artifacts.py",
+        "--artifacts-dir artifacts",
+        "--checksums-out artifacts/CHECKSUMS.txt",
+        "--additional-checksum-asset artifacts/sbom-rust.json",
+        "--additional-checksum-asset artifacts/sbom-python.json",
+        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+    ):
+        if expected not in checksum:
+            errors.append(f"CI release checksum generation must include `{expected}`")
+
+    path_run = runs["Prepare release asset path list"]
+    for expected in (
+        "tg-linux-amd64-cpu",
+        "tg-macos-amd64-cpu",
+        "tg-windows-amd64-cpu.exe",
+        "tg-linux-amd64-nvidia",
+        "tg-windows-amd64-nvidia.exe",
+        "sbom-rust.json",
+        "sbom-python.json",
+        "CHECKSUMS.txt",
+        "upload_files",
+        "subject_paths",
+    ):
+        if expected not in path_run:
+            errors.append(f"CI release asset path preparation must include `{expected}`")
+
+    verify_attest = runs["Verify SLSA provenance"]
+    for expected in (
+        "gh attestation verify",
+        '--repo "$GITHUB_REPOSITORY"',
+        '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml"',
+        "--source-ref refs/heads/main",
+    ):
+        if expected not in verify_attest:
+            errors.append(f"CI release provenance verification must include `{expected}`")
+
+    verify_upload = runs["Verify GitHub release asset coverage"]
+    for expected in (
+        "uv run --no-project",
+        "scripts/verify_github_release_assets.py",
+        "--local-artifacts-dir artifacts",
+        '--expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"',
+        "--wait-seconds",
+        "--poll-interval-seconds",
+    ):
+        if expected not in verify_upload:
+            errors.append(f"CI release upload verification must include `{expected}`")
 
     attest = named["Generate SLSA provenance"]
     if attest.get("uses") != "actions/attest-build-provenance@v4":
