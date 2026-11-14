@@ -212,3 +212,28 @@ def test_preserve_termui_and_edit_order_pins(tmp_path, seed_fixtures, mode):
     assert seed["edit_ordering"] == [
         str(p[x].resolve()) for x in ["payments", "service", "report", "test"]
     ]
+
+
+@pytest.mark.parametrize(
+    "rule,path,is_dir,expected",
+    [
+        ("[Oo]bj", "obj", True, True),
+        ("[Bb]in/", "bin", True, True),
+        ("[!a]x", "bx", False, True),
+        ("[!a]x", "ax", False, None),
+        ("[]]", "]", False, True),
+        ("[abc", "[abc", False, True),
+        ("[a/b]", "a/b", False, None),
+        ("[a/b]", "a", False, None),
+        ("*.log\n!keep.log", "keep.log", False, False),
+        ("dist/", "dist/x.py", False, True),
+        ("/root.py", "sub/root.py", False, None),
+        ("a?b", "a/b", False, None),
+    ],
+)
+def test_gitignore_character_classes_and_preserved_semantics(
+    tmp_path, rule, path, is_dir, expected
+):
+    assert (
+        _GitignoreMatcher(tmp_path, rule.splitlines()).check(Path(path), is_dir=is_dir) is expected
+    )

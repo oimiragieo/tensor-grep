@@ -52,42 +52,27 @@ class _GitignoreMatcher:
 
     def __init__(self, root: Path, lines: list[str]) -> None:
         self._root = root.resolve()
-        self._rules: list[tuple[re.Pattern[str], bool, bool]] = []
-        for raw_line in lines:
-            line = raw_line.rstrip("\n")
+        from pathspec import PathSpec
+        from pathspec.patterns.gitignore.base import GitIgnorePatternError
+        from pathspec.patterns.gitignore.basic import GitIgnoreBasicPattern
+
+        effective_lines: list[str] = []
+        for line in lines:
             if not line.strip() or line.lstrip().startswith("#"):
                 continue
-            # A literal leading ``#`` or ``!`` is escaped with a backslash.
-            negated = False
-            if line.startswith("!"):
-                negated = True
-                line = line[1:]
-            elif line.startswith(("\\#", "\\!")):
-                line = line[1:]
-            line = line.rstrip()
-            if not line:
+            if line.rstrip() == "/":
                 continue
-            dir_only = line.endswith("/")
-            body = line[:-1] if dir_only else line
-            anchored = body.startswith("/") or ("/" in body.rstrip("/"))
-            body = body.lstrip("/")
-            if not body:
-                continue
-            fragment = _gitignore_pattern_to_regex(body)
-            if anchored:
-                regex = rf"^{fragment}(?:/.*)?$"
-            else:
-                # Unanchored patterns match at any depth.
-                regex = rf"(?:^|.*/){fragment}(?:/.*)?$"
             try:
-                compiled = re.compile(regex)
-            except re.error:
+                parsed = PathSpec.from_lines(GitIgnoreBasicPattern, [line])
+            except GitIgnorePatternError:
                 continue
-            self._rules.append((compiled, negated, dir_only))
+            if any(pattern.include is not None for pattern in parsed.patterns):
+                effective_lines.append(line)
+        self._spec = PathSpec.from_lines(GitIgnoreBasicPattern, effective_lines)
 
     @property
     def has_rules(self) -> bool:
-        return bool(self._rules)
+        return bool(self._spec.patterns)
 
     def check(self, path: Path, *, is_dir: bool) -> bool | None:
         # Tri-state result so nested .gitignore specs can be stacked with correct git
@@ -106,27 +91,9 @@ class _GitignoreMatcher:
         rel_posix = relative.as_posix()
         if not rel_posix or rel_posix == ".":
             return None
-        # A dir-only pattern (``dist/``) ignores the directory *and everything
-        # inside it*. Test the path itself plus each ancestor segment-prefix so
-        # files under an ignored directory are recognised even when checked in
-        # isolation (the walk also prunes such directories during traversal).
-        segments = rel_posix.split("/")
-        ancestor_prefixes = ["/".join(segments[: index + 1]) for index in range(len(segments) - 1)]
-        decision: bool | None = None
-        for compiled, negated, dir_only in self._rules:
-            if dir_only:
-                matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
-                if is_dir:
-                    matched = matched or bool(compiled.match(rel_posix))
-            else:
-                matched = bool(compiled.match(rel_posix))
-                if not matched:
-                    # An unanchored/file pattern still ignores descendants of a
-                    # directory it matched (e.g. ``build`` matching ``build/x``).
-                    matched = any(compiled.match(prefix) for prefix in ancestor_prefixes)
-            if matched:
-                decision = not negated
-        return decision
+        if is_dir:
+            rel_posix += "/"
+        return self._spec.check_file(rel_posix).include
 
     def is_ignored(self, path: Path, *, is_dir: bool) -> bool:
         return bool(self.check(path, is_dir=is_dir))
