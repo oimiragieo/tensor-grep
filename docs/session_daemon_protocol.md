@@ -37,6 +37,9 @@ eviction cleanup until the last active request releases it. This does not protec
 against session-store retention pruning or payload changes by other processes.
 Cleanup checks the deadline before starting a deletion transaction; admitted filesystem
 operations are synchronous.
+Only an exact initial missing-payload failure can trigger one implicit reopen within the
+original deadline; explicit session IDs, root mismatches, permission failures, and
+corrupt payloads do not use that retry.
 
 ---
 

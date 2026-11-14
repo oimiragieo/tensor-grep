@@ -1929,12 +1929,33 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 refresh_trigger = ""
                 try:
                     load_started_at = monotonic()
-                    payload, cache_status = _load_payload_with_status_retry(
-                        server.payload_cache,
-                        request_session_id,
-                        request_path,
-                        deadline_monotonic=work_deadline,
-                    )
+                    try:
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                            deadline_monotonic=work_deadline,
+                        )
+                    except FileNotFoundError as missing:
+                        replacement = _reacquire_missing_implicit_session(
+                            server,
+                            path=request_path,
+                            request=request,
+                            session_id=request_session_id,
+                            pin_receipt=implicit_pin_receipt,
+                            deadline_monotonic=work_deadline,
+                            exc=missing,
+                        )
+                        if replacement is None:
+                            raise
+                        request_session_id = replacement
+                        request["session_id"] = replacement
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                            deadline_monotonic=work_deadline,
+                        )
                     loaded_at = monotonic()
                     response, response_cache_status = _serve_daemon_response_with_cache(
                         server=server,
