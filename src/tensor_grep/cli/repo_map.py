@@ -1390,17 +1390,12 @@ def _iter_repo_bucket_files(
     *,
     unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> Iterator[Path]:
-    # Nested-.gitignore support (MED-5 part B): load THIS directory's own matcher and push it onto
-    # the ancestor stack, so a nested subdir/.gitignore is honored -- not just the repo root's.
-    # _load_gitignore_matcher is lru_cached per directory, so re-walks stay cheap.
+    # Load this directory's matcher so nested .gitignore rules override ancestors.
     own = _load_gitignore_matcher(str(root))
     stack = (*ancestor_stack, own) if own.has_rules else ancestor_stack
     try:
         entries = list(os.scandir(root))
     except OSError as exc:
-        # Task #276 slice 1: record before returning -- still stops descending into this
-        # subtree (unchanged behavior), but the caller can now learn it happened instead of
-        # a silently-narrower file list.
         if unreadable_hit is not None:
             unreadable_hit.record(exc)
         return
@@ -1409,14 +1404,17 @@ def _iter_repo_bucket_files(
     file_paths: list[Path] = []
     for entry in entries:
         try:
-            if entry.is_dir(follow_symlinks=False):
+            is_reparse_point = os.name == "nt" and bool(
+                getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0) & 0x400
+            )
+            if not is_reparse_point and entry.is_dir(follow_symlinks=False):
                 directory = Path(entry.path)
                 if _should_skip_repo_dir(directory):
                     continue
                 if _stack_ignored(directory, is_dir=True, stack=stack):
                     continue
                 dir_paths.append(directory)
-            elif entry.is_file(follow_symlinks=False):
+            elif not is_reparse_point and entry.is_file(follow_symlinks=False):
                 file_path = Path(entry.path)
                 if _stack_ignored(file_path, is_dir=False, stack=stack):
                     continue
@@ -1448,10 +1446,9 @@ def _iter_repo_files(
     unreadable_hit: _UnreadablePathFlag | None = None,
     exclude_files: frozenset[Path] = frozenset(),
 ) -> list[Path]:
-    """Walk with optional count/deadline bounds, excluding exact absolute paths before the cap.
+    """Walk with count/deadline bounds, excluding exact paths before the cap.
 
-    Mutable deadline and unreadable signals preserve distinct reasons for an incomplete walk.
-    Callers normalize ``exclude_files`` once; child paths are never resolved individually.
+    Mutable signals preserve incomplete reasons; paths are normalized once, never per entry.
     """
     with _profiling_phase(_profiling_collector, "file_walk"):
         if root.is_file():
@@ -1472,7 +1469,10 @@ def _iter_repo_files(
             buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
             for entry in entries:
                 try:
-                    if entry.is_dir(follow_symlinks=False):
+                    is_reparse_point = os.name == "nt" and bool(
+                        getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0) & 0x400
+                    )
+                    if not is_reparse_point and entry.is_dir(follow_symlinks=False):
                         path = Path(entry.path)
                         if _should_skip_repo_dir(path):
                             continue
@@ -1484,7 +1484,7 @@ def _iter_repo_files(
                                 path, (gitignore,), unreadable_hit=unreadable_hit
                             ),
                         ))
-                    elif entry.is_file(follow_symlinks=False):
+                    elif not is_reparse_point and entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
                         if gitignore.is_ignored(path, is_dir=False):
                             continue

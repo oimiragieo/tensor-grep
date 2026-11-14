@@ -237,3 +237,62 @@ def test_gitignore_character_classes_and_preserved_semantics(
     assert (
         _GitignoreMatcher(tmp_path, rule.splitlines()).check(Path(path), is_dir=is_dir) is expected
     )
+
+
+@pytest.fixture
+def owned_junction(tmp_path, tmp_path_factory, request):
+    if sys.platform != "win32" or not hasattr(os.path, "isjunction"):
+        pytest.skip("BLOCKED_SETUP: native Windows junction capability unavailable")
+    fixture = tmp_path.resolve()
+    basetemp = tmp_path_factory.getbasetemp().resolve()
+    assert fixture.is_relative_to(basetemp), "fixture must stay under owned pytest basetemp"
+    root, target = fixture / "repo", fixture / "outside"
+    for p in (root, target):
+        assert p.resolve().is_relative_to(fixture)
+        p.mkdir()
+    write(root / "ordinary.py", "ordinary=1\n")
+    write(target / "outside_marker.py", "outside=1\n")
+    kind = request.param
+    link = root / ("self" if kind == "loop" else "linked")
+    destination = root if kind == "loop" else target
+    assert link.parent.resolve().is_relative_to(fixture)
+    assert destination.resolve().is_relative_to(fixture)
+    quoted_link = str(link).replace("'", "''")
+    quoted_destination = str(destination).replace("'", "''")
+    command = (
+        "New-Item -ItemType Junction -Path '"
+        + quoted_link
+        + "' -Target '"
+        + quoted_destination
+        + "' -ErrorAction Stop | Out-Null"
+    )
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    if proc.returncode:
+        pytest.skip("BLOCKED_SETUP: junction creation refused: " + proc.stderr)
+    try:
+        assert os.path.isjunction(link), "BLOCKED_SETUP: creation did not produce junction"
+        yield root, kind
+    finally:
+        assert link.parent.resolve().is_relative_to(fixture)
+        assert link.resolve().is_relative_to(fixture)
+        assert os.path.isjunction(link)
+        os.rmdir(link)  # Delete owned LINK only; never recursively touch its target.
+        assert not link.exists() and root.exists() and target.exists()
+        assert (target / "outside_marker.py").exists()
+
+
+@pytest.mark.parametrize("owned_junction", ["loop", "escape"], indirect=True)
+@pytest.mark.parametrize("walker", ["bucket", "capped"])
+def test_repo_walk_refuses_owned_junctions(owned_junction, walker):
+    root, kind = owned_junction
+    if walker == "bucket":
+        files = list(islice(rm._iter_repo_bucket_files(root), 8))
+    else:
+        files = rm._iter_repo_files(root, max_files=8, deadline_monotonic=time.monotonic() + 3)
+    assert root / "ordinary.py" in files, "non-link positive control missing"
+    assert files == [root / "ordinary.py"], f"{walker} followed {kind} junction: {files!r}"
