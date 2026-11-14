@@ -1733,7 +1733,11 @@ class _ThreadedSessionDaemon(_HandlerAdmissionThreads, socketserver.TCPServer):
         self.response_cache = _SessionResponseCache()
         # tg-ledger step-0: demand instrumentation, see docs/multi_agent_context_plane.md.
         self.demand_metrics = _DemandMetrics()
-        self.implicit_session_ids: OrderedDict[tuple[str, str], str] = OrderedDict()
+        self.implicit_session_ids: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+        self._implicit_inflight: dict[tuple[str, str, str], threading.Event] = {}
+        self._implicit_active_pins: dict[tuple[str, str], int] = {}
+        self._implicit_pending_evictions: set[tuple[str, str]] = set()
+        self._implicit_cleanup_owned: set[tuple[str, str]] = set()
         self.started_at = monotonic()
         self.request_count = 0
         # audit I7: track last client activity so an idle daemon can shut itself down.
@@ -1808,6 +1812,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
             server.request_count += 1
         request_session_id = ""
         request_path = str(server.root)
+        implicit_pin_receipt: list[Any] = []
         inflight_incremented = False
 
         try:
@@ -1853,6 +1858,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 path=request_path,
                 request=request,
                 deadline_monotonic=work_deadline,
+                pin_receipt=implicit_pin_receipt,
             )
             if request_session_id:
                 request["session_id"] = request_session_id

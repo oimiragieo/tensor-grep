@@ -32,6 +32,10 @@ Implicit sessions are keyed by project root, resolved requested scan scope, and 
 budget. Opening one scope does not hold the cache lock while another scope opens;
 requests for the same key share creation work within each request's original deadline.
 
+The daemon pins an implicit payload for the request lifetime and defers its own LRU
+eviction cleanup until the last active request releases it. This does not protect
+against session-store retention pruning or payload changes by other processes.
+
 ---
 
 ## 2. Authentication

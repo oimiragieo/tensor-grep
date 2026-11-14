@@ -425,7 +425,7 @@ def test_daemon_request_path_field_cannot_escape_root(tmp_path: Path, monkeypatc
     monkeypatch.setattr(
         session_daemon,
         "_implicit_session_id_for_request",
-        lambda server, *, command, session_id, path, request, deadline_monotonic=None: (
+        lambda server, *, command, session_id, path, request, deadline_monotonic=None, pin_receipt=None: (
             session_id or "session-x"
         ),
     )
