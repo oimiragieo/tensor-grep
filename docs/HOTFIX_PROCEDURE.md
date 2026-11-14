@@ -54,5 +54,5 @@ Homebrew users should use the exact URL to the previous formula commit or downlo
 
 To verify that a published binary matches the source code:
 1. Clone the repository and checkout the exact tag (for example `vX.Y.Z`).
-2. Execute the build scripts in `scripts/build_binaries.py` using the exact Rust/Python toolchains specified in `.github/workflows/release.yml`.
+2. Execute the build scripts using the exact Rust/Python toolchains specified by the release jobs in `.github/workflows/ci.yml`.
 3. Compare the SHA256 hashes of the generated binaries against the `CHECKSUMS.txt` provided in the GitHub Release assets.

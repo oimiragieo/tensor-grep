@@ -8,42 +8,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
 
+#[path = "support/routing.rs"]
+mod routing_support;
+
+use routing_support::{combined_output, repo_python, repo_root, tg};
+
 const RG_SENTINEL: &str = "TG_RG_ROUTING_SENTINEL";
 
 fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
-fn combined_output(output: &Output) -> String {
-    format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    )
-}
-
-fn tg() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_tg"))
-}
-
 fn tg_fast() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg-search-fast"))
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn repo_python() -> PathBuf {
-    let windows = repo_root().join(".venv").join("Scripts").join("python.exe");
-    if windows.exists() {
-        return windows;
-    }
-
-    repo_root().join(".venv").join("bin").join("python")
 }
 
 fn write_text_corpus(dir: &Path) {

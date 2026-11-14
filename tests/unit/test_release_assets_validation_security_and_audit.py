@@ -192,10 +192,12 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
     gpu_workflow = (root / ".github" / "workflows" / "public-gpu-proof.yml").read_text(
         encoding="utf-8"
     )
-    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     dockerfile = (root / "scripts" / "ci-local" / "Dockerfile").read_text(encoding="utf-8")
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
     audit_workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    rust_core_job = ci_workflow.split("  test-rust-core:", 1)[1].split("  cuda-feature-check:", 1)[
+        0
+    ]
 
     build_tokens = shlex.split(
         tomllib.loads(pyproject)["tool"]["semantic_release"]["build_command"]
@@ -205,15 +207,15 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
         "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/"
         "pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
     )
-    assert ci_workflow.count(fixed_pip) == 13
-    assert ci_workflow.replace(native_e2e, "").count(fixed_pip) == 12
+    assert ci_workflow.count(fixed_pip) == 14
+    assert ci_workflow.replace(native_e2e, "").count(fixed_pip) == 13
     assert native_e2e.index(fixed_pip) < native_e2e.index(
         "pip install --disable-pip-version-check pytest"
     )
+    assert fixed_pip in rust_core_job
+    assert "uv sync --locked --no-dev --no-install-project --extra scan" in rust_core_job
+    assert "tg-runtime-deps.txt" not in rust_core_job
     assert fixed_pip in gpu_workflow
-    assert release_workflow.index(fixed_pip) < release_workflow.index(
-        "run: pip install mkdocs-material"
-    )
     assert dockerfile.index(
         "python3.12 -m pip install --break-system-packages --no-deps"
     ) < dockerfile.index("python3.12 -m pip install --break-system-packages uv==0.13.4")
@@ -267,7 +269,7 @@ def test_should_require_dependabot_automation_automerge_contract():
       issues: write
     jobs:
       dependabot-triage:
-        if: github.actor == 'dependabot[bot]'
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
         runs-on: ubuntu-latest
         steps:
           - name: Fetch Dependabot metadata
@@ -282,6 +284,34 @@ def test_should_require_dependabot_automation_automerge_contract():
     assert "Ensure dependency labels exist" in joined_errors
     assert "Approve safe updates" in joined_errors
     assert "gh pr merge" in joined_errors
+
+
+def test_should_reject_dependabot_actor_without_dependabot_pr_author():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow_path = root / ".github" / "workflows" / "dependabot-automation.yml"
+    safe_workflow = workflow_path.read_text(encoding="utf-8")
+    workflow = safe_workflow.replace(
+        "github.event.pull_request.user.login == 'dependabot[bot]'",
+        "github.actor == 'dependabot[bot]'",
+    )
+    errors = module.validate_dependabot_automation_workflow_content(workflow_content=workflow)
+    assert any("must only run for dependabot[bot]" in error for error in errors)
+
+    workflow = safe_workflow.replace(
+        "  dependabot-triage:\n",
+        "  unguarded:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo unsafe\n"
+        "  dependabot-triage:\n",
+        1,
+    )
+    errors = module.validate_dependabot_automation_workflow_content(workflow_content=workflow)
+    assert any("must define only `dependabot-triage` job" in error for error in errors)
 
 
 def test_should_require_dependabot_automation_explicit_repo_targeting():
@@ -304,7 +334,7 @@ def test_should_require_dependabot_automation_explicit_repo_targeting():
       issues: write
     jobs:
       dependabot-triage:
-        if: github.actor == 'dependabot[bot]'
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
         runs-on: ubuntu-latest
         steps:
           - name: Fetch Dependabot metadata

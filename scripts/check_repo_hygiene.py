@@ -56,7 +56,6 @@ APPROVED_GITHUB_FILES = frozenset({
     ".github/workflows/dependabot-automation.yml",
     ".github/workflows/issue-triage.yml",
     ".github/workflows/public-gpu-proof.yml",
-    ".github/workflows/release.yml",
     ".github/workflows/stacked-pr-guard.yml",
     ".github/workflows/trust-benchmark.yml",
 })

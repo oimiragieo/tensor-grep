@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 import urllib.request
+from pathlib import Path
 
 
 def _normalize_digest(raw_digest: str) -> str | None:
@@ -72,7 +74,7 @@ def _validate_manifest_against_assets(
         if not isinstance(asset, dict):
             continue
         size = asset.get("size")
-        if not isinstance(size, int) or size <= 0:
+        if type(size) is not int or size <= 0:
             errors.append(f"Release asset {name} has invalid size metadata")
 
         raw_asset_digest = asset.get("digest")
@@ -138,6 +140,17 @@ def validate_release_assets_payload(
     unexpected_assets = sorted(names - expected_set)
     for name in unexpected_assets:
         errors.append(f"Unexpected release asset: {name}")
+
+    metadata_only = expected_set - checksum_required_set - bundle_checksum_required_set
+    metadata_only.update({"CHECKSUMS.txt", "BUNDLE_CHECKSUMS.txt"} & expected_set)
+    for name in sorted(metadata_only & names):
+        asset = named_assets[name]
+        size = asset.get("size")
+        if type(size) is not int or size <= 0:
+            errors.append(f"Release asset {name} has invalid size metadata")
+        digest = asset.get("digest")
+        if not isinstance(digest, str) or _normalize_digest(digest) is None:
+            errors.append(f"Release asset {name} has invalid digest metadata: {digest}")
 
     expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
     errors.extend(
@@ -214,11 +227,19 @@ PACKAGE_MANAGER_ASSETS = [
     "BUNDLE_CHECKSUMS.txt",
 ]
 
+SBOM_ASSETS = ["sbom-rust.json", "sbom-python.json"]
+
 BINARY_ASSET_PROFILES = {
     "full": FULL_BINARY_ASSETS,
     "native-frontdoor": NATIVE_FRONTDOOR_BINARY_ASSETS,
     "native-frontdoor-gpu": GPU_READY_NATIVE_FRONTDOOR_BINARY_ASSETS,
 }
+
+
+def _release_asset_sets(expected_profile: str) -> tuple[list[str], list[str]]:
+    checksum_required = [*BINARY_ASSET_PROFILES[expected_profile], *SBOM_ASSETS, "CHECKSUMS.txt"]
+    signatures = [f"{name}.sigstore.json" for name in checksum_required]
+    return [*checksum_required, *PACKAGE_MANAGER_ASSETS, *signatures], checksum_required
 
 
 def verify_release_assets(
@@ -227,6 +248,7 @@ def verify_release_assets(
     tag: str,
     token: str | None = None,
     expected_profile: str = "full",
+    local_artifacts_dir: Path | None = None,
 ) -> list[str]:
     api_url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
     release_data = _github_json(api_url, token=token)
@@ -255,7 +277,6 @@ def verify_release_assets(
 
     checksums_content = _download_text(checksums_url, token=token)
     bundle_checksums_content = _download_text(bundle_checksums_url, token=token)
-    binary_assets = BINARY_ASSET_PROFILES[expected_profile]
     version = tag.removeprefix("v")
     bundle_checksum_asset_paths = {
         "tensor-grep.rb": "homebrew-tap/Formula/tensor-grep.rb",
@@ -264,10 +285,9 @@ def verify_release_assets(
         ),
         "PUBLISH_INSTRUCTIONS.md": "PUBLISH_INSTRUCTIONS.md",
     }
-    expected_assets = [*binary_assets, *PACKAGE_MANAGER_ASSETS, "CHECKSUMS.txt"]
-    checksum_required_assets = [*binary_assets, "CHECKSUMS.txt"]
+    expected_assets, checksum_required_assets = _release_asset_sets(expected_profile)
     bundle_checksum_required_assets = PACKAGE_MANAGER_ASSETS
-    return validate_release_assets_payload(
+    errors = validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
         bundle_checksums_content=bundle_checksums_content,
@@ -276,6 +296,67 @@ def verify_release_assets(
         bundle_checksum_required_assets=bundle_checksum_required_assets,
         bundle_checksum_asset_paths=bundle_checksum_asset_paths,
     )
+    if local_artifacts_dir is not None:
+        errors.extend(
+            _validate_local_release_assets(
+                release_data=release_data,
+                expected_assets=expected_assets,
+                artifacts_dir=local_artifacts_dir,
+            )
+        )
+    return errors
+
+
+def _validate_local_release_assets(
+    *,
+    release_data: dict,
+    expected_assets: list[str],
+    artifacts_dir: Path,
+) -> list[str]:
+    root = artifacts_dir.resolve()
+    local_by_name: dict[str, list[Path]] = {}
+    for path in artifacts_dir.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        resolved = path.resolve()
+        if not resolved.is_relative_to(root):
+            continue
+        local_by_name.setdefault(path.name, []).append(path)
+
+    api_assets = release_data.get("assets", [])
+    if not isinstance(api_assets, list):
+        return []
+    api_by_name = {
+        asset.get("name"): asset
+        for asset in api_assets
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    }
+    errors: list[str] = []
+    for name in expected_assets:
+        paths = local_by_name.get(name, [])
+        if len(paths) != 1:
+            errors.append(
+                f"Publisher-local release asset {name} must resolve to exactly one file; "
+                f"found {len(paths)}"
+            )
+            continue
+        api_asset = api_by_name.get(name)
+        if not isinstance(api_asset, dict):
+            continue
+        path = paths[0]
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        api_size = api_asset.get("size")
+        if type(api_size) is not int:
+            errors.append(f"Uploaded release asset {name} has invalid size metadata")
+        elif api_size != size:
+            errors.append(f"Uploaded release asset {name} size differs from publisher-local bytes")
+        if _normalize_digest(str(api_asset.get("digest", ""))) != digest:
+            errors.append(
+                f"Uploaded release asset {name} digest differs from publisher-local bytes"
+            )
+    return errors
 
 
 def verify_release_assets_with_retries(
@@ -284,6 +365,7 @@ def verify_release_assets_with_retries(
     tag: str,
     token: str | None = None,
     expected_profile: str = "full",
+    local_artifacts_dir: Path | None = None,
     wait_seconds: float = 0.0,
     poll_interval_seconds: float = 5.0,
 ) -> list[str]:
@@ -296,6 +378,7 @@ def verify_release_assets_with_retries(
                 tag=tag,
                 token=token,
                 expected_profile=expected_profile,
+                local_artifacts_dir=local_artifacts_dir,
             )
         except Exception as exc:
             errors = [f"GitHub release asset request failed: {exc}"]
@@ -318,6 +401,11 @@ def main() -> int:
         help="Expected GitHub release binary asset matrix profile.",
     )
     parser.add_argument(
+        "--local-artifacts-dir",
+        type=Path,
+        help="Also bind uploaded asset metadata to these publisher-local files.",
+    )
+    parser.add_argument(
         "--wait-seconds",
         type=float,
         default=0.0,
@@ -336,6 +424,7 @@ def main() -> int:
         tag=args.tag,
         token=args.token,
         expected_profile=args.expected_profile,
+        local_artifacts_dir=args.local_artifacts_dir,
         wait_seconds=args.wait_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
     )

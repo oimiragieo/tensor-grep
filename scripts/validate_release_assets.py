@@ -38,7 +38,10 @@ from _release_assets_checks.docs_and_manifest_checks import (  # noqa: E402
     validate_uv_security_constraints,
     validate_winget_manifest,
 )
-from _release_assets_checks.release_workflow import validate_release_workflow_content  # noqa: E402
+from _release_assets_checks.release_security import (  # noqa: E402
+    validate_ci_release_security_contract,
+    validate_release_publisher_census,
+)
 from _release_assets_checks.workflow_checks import (  # noqa: E402
     validate_actions_sha_pinned,
     validate_audit_workflow_content,
@@ -57,6 +60,7 @@ __all__ = [
     "validate_audit_workflow_content",
     "validate_benchmarks_docs",
     "validate_ci_pipeline_doc_contract",
+    "validate_ci_release_security_contract",
     "validate_ci_workflow_content",
     "validate_dependabot_automation_workflow_content",
     "validate_dependabot_config",
@@ -70,7 +74,7 @@ __all__ = [
     "validate_public_gpu_proof_workflow_content",
     "validate_readme_contract",
     "validate_release_docs_current_prose",
-    "validate_release_workflow_content",
+    "validate_release_publisher_census",
     "validate_semantic_release_config",
     "validate_uv_security_constraints",
     "validate_winget_manifest",
@@ -83,6 +87,13 @@ __all__ = [
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _workflow_sources(workflow_dir: Path, *, root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): _read(path)
+        for path in sorted(workflow_dir.glob("*.y*ml"))
+    }
 
 
 def _version_from_pyproject() -> str:
@@ -223,11 +234,13 @@ def validate_all() -> list[str]:
     if "PLACEHOLDER" in brew:
         errors.append("Homebrew formula contains unresolved PLACEHOLDER text")
 
-    release_workflow = _read(ROOT / ".github" / "workflows" / "release.yml")
-    errors.extend(validate_release_workflow_content(release_workflow=release_workflow))
-
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+    errors.extend(validate_ci_release_security_contract(ci_workflow=ci_workflow))
+    workflow_dir = ROOT / ".github" / "workflows"
+    errors.extend(
+        validate_release_publisher_census(workflows=_workflow_sources(workflow_dir, root=ROOT))
+    )
 
     public_gpu_proof_workflow = _read(ROOT / ".github" / "workflows" / "public-gpu-proof.yml")
     errors.extend(

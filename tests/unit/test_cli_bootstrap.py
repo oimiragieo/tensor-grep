@@ -2650,7 +2650,6 @@ def test_main_entry_should_fallback_to_full_cli_for_lsp_setup_subcommand(monkeyp
 
 def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     seen: dict[str, object] = {}
-
     monkeypatch.setattr(sys, "argv", ["tg", "scan", "--config", "sgconfig.yml"])
     monkeypatch.setattr(
         bootstrap, "_run_ast_workflow_cli", lambda argv: seen.update({"argv": list(argv)})
@@ -2660,6 +2659,7 @@ def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     bootstrap.main_entry()
 
     assert seen == {"argv": ["scan", "--config", "sgconfig.yml"]}
+    assert bootstrap._scan_requires_full_cli(["src/sub"])
 
 
 def test_main_entry_should_route_run_to_full_cli(monkeypatch):

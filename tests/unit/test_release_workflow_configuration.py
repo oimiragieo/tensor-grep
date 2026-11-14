@@ -13,39 +13,6 @@ def _job_section(workflow: str, job_name: str) -> str:
     return workflow[start : start + 1 + match.start()]
 
 
-def test_release_workflow_should_not_use_removed_skip_pypi_flag() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "--skip-pypi" not in workflow
-
-
-def test_release_workflow_should_call_parity_validator_with_expected_tag() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "python scripts/validate_release_version_parity.py" in workflow
-    assert '--expected-tag "${GITHUB_REF#refs/tags/}"' in workflow
-
-
-def test_release_workflow_should_verify_npm_registry_parity_after_publish() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "Verify npm registry parity for release version" in workflow
-    assert "--check-npm" in workflow
-
-
-def test_release_success_gate_should_recheck_npm_parity_before_success() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "Verify final npm parity before release success gate" in workflow
-    assert '--expected-version "${GITHUB_REF#refs/tags/v}"' in workflow
-    assert '--expected-tag "${GITHUB_REF#refs/tags/}"' in workflow
-    assert "--check-npm" in workflow
-
-
-def test_release_success_gate_should_recheck_pypi_parity_before_success() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "Verify final PyPI parity before release success gate" in workflow
-    assert '--expected-version "${GITHUB_REF#refs/tags/v}"' in workflow
-    assert '--expected-tag "${GITHUB_REF#refs/tags/}"' in workflow
-    assert "--check-pypi" in workflow
-
-
 def test_ci_publish_parity_gate_should_validate_package_manager_versions() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "python scripts/validate_release_version_parity.py" in workflow
@@ -176,20 +143,6 @@ def test_benchmark_workflow_should_prepare_ast_benchmark_tools_before_running() 
     assert "cargo build --release --no-default-features" in workflow
 
 
-def test_release_workflow_should_smoke_test_package_manager_bundle_before_publish() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "Smoke-test package-manager bundle contracts" in workflow
-    assert "scripts/smoke_test_package_manager_bundle.py" in workflow
-    assert "--bundle-dir artifacts/package-manager-bundle" in workflow
-
-
-def test_release_workflow_should_preflight_build_and_verify_package_manager_bundle() -> None:
-    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "Preflight build package-manager publish bundle artifact" in workflow
-    assert "Preflight verify package-manager bundle checksums" in workflow
-    assert "Preflight smoke-test package-manager bundle contracts" in workflow
-
-
 def test_ci_workflow_should_run_agent_readiness_gate() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     agent_section = _job_section(workflow, "agent-readiness")
@@ -269,10 +222,14 @@ def test_native_publisher_uses_minimal_script_dependencies() -> None:
     workflow = yaml.safe_load(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))
     steps = workflow["jobs"]["publish-github-release-assets"]["steps"]
     expected = {
+        "generate_release_rust_sbom.py": [],
+        "validate_release_sbom_identity.py": [],
         "validate_release_binary_artifacts.py": [],
         "prepare_package_manager_release.py": ["--with", "pyyaml==6.0.3"],
         "verify_package_manager_bundle_checksums.py": [],
         "smoke_test_package_manager_bundle.py": ["--with", "pyyaml==6.0.3"],
+        "prepare_release_asset_paths.py": [],
+        "verify_release_subject_attestations.py": [],
         "verify_github_release_assets.py": [],
     }
     commands = [

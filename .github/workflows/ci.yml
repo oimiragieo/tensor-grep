@@ -796,6 +796,13 @@ jobs:
             echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
           fi
         shell: bash
+
+      - name: Install Python runtime dependencies for native routing tests
+        shell: bash
+        run: |
+          python -m pip install --no-deps "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+          python -m pip install uv==0.13.4
+          uv sync --locked --no-dev --no-install-project --extra scan
           
       - name: Ensure PCRE2 ripgrep is available
         shell: bash
@@ -1855,13 +1862,20 @@ jobs:
 
   publish-github-release-assets:
     name: publish-github-release-assets
-    needs: [release, build-release-native-assets]
+    needs: [release, build-release-native-assets, build-wheels-pypi]
     if: needs.release.outputs.released == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
+      RELEASE_VERSION: ${{ needs.release.outputs.release_version }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Checkout publisher source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
@@ -1877,13 +1891,50 @@ jobs:
           pattern: release-native-*
           path: artifacts/native
 
-      - name: Validate native release asset matrix and generate checksums
-        env:
-          RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
+      - name: Download tag-matched Python wheel
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: pypi-wheels-ubuntu-latest
+          path: artifacts/wheel
+
+      - name: Install cargo-cyclonedx
+        run: cargo install --locked cargo-cyclonedx --version 0.5.10
+
+      - name: Generate Rust SBOM
+        run: |
+          uv run --no-project --python 3.12 -- python scripts/generate_release_rust_sbom.py \
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"
+
+      - name: Prepare clean Python SBOM environments
+        run: |
+          uv export --locked --no-dev --no-emit-project \
+            --format requirements.txt \
+            --output-file "$RUNNER_TEMP/tg-core-requirements.txt"
+          uv venv --python 3.12 .sbom-python-core
+          uv pip sync --python .sbom-python-core/bin/python --require-hashes \
+            "$RUNNER_TEMP/tg-core-requirements.txt"
+          uv pip install --python .sbom-python-core/bin/python --no-deps artifacts/wheel/*.whl
+          uv venv --python 3.12 .sbom-python-tools
+          uv pip sync --python .sbom-python-tools/bin/python --require-hashes \
+            --only-binary :all: scripts/release-sbom-tools.txt
+          .sbom-python-tools/bin/cyclonedx-py environment -E .sbom-python-core/bin/python \
+            --pyproject pyproject.toml \
+            --output-file artifacts/sbom-python.json
+
+      - name: Validate release SBOM identity
+        run: |
+          uv run --no-project --python 3.12 -- python scripts/validate_release_sbom_identity.py \
+            --rust-sbom artifacts/sbom-rust.json \
+            --python-sbom artifacts/sbom-python.json \
+            --expected-version "$RELEASE_VERSION"
+
+      - name: Validate release asset matrix and generate checksums
         run: |
           uv run --no-project --python 3.12 -- python scripts/validate_release_binary_artifacts.py \
-            --artifacts-dir artifacts/native \
+            --artifacts-dir artifacts \
             --checksums-out artifacts/CHECKSUMS.txt \
+            --additional-checksum-asset artifacts/sbom-rust.json \
+            --additional-checksum-asset artifacts/sbom-python.json \
             --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE"
 
       - name: Build package-manager publish bundle
@@ -1901,29 +1952,56 @@ jobs:
         run: |
           uv run --no-project --python 3.12 --with pyyaml==6.0.3 -- python scripts/smoke_test_package_manager_bundle.py \
             --bundle-dir artifacts/package-manager-bundle \
-            --expected-version "${{ needs.release.outputs.release_version }}"
+            --expected-version "$RELEASE_VERSION"
 
-      - name: Upload GitHub release native assets
+      - name: Prepare release asset path list
+        id: release_paths
+        run: |
+          uv run --no-project --python 3.12 -- python scripts/prepare_release_asset_paths.py \
+            --artifacts-dir artifacts \
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Generate SLSA provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: ${{ steps.release_paths.outputs.subject_paths }}
+
+      - name: Verify SLSA provenance
+        run: |
+          uv run --no-project --python 3.12 -- python scripts/verify_release_subject_attestations.py \
+            --artifacts-dir artifacts \
+            --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Sign release subjects with Sigstore
+        uses: sigstore/gh-action-sigstore-python@f514d46b907ebcd5bedc05145c03b69c1edd8b46 # v3.0.0
+        with:
+          inputs: artifacts/native/**/tg-* artifacts/CHECKSUMS.txt artifacts/sbom-rust.json artifacts/sbom-python.json
+          release-signing-artifacts: false
+          verify: true
+          verify-cert-identity: https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/main
+          verify-oidc-issuer: https://token.actions.githubusercontent.com
+
+      - name: Upload GitHub release assets
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           tag_name: v${{ needs.release.outputs.release_version }}
           fail_on_unmatched_files: true
           files: |
-            artifacts/native/**/tg-*
-            artifacts/CHECKSUMS.txt
-            artifacts/package-manager-bundle/homebrew-tap/Formula/tensor-grep.rb
-            artifacts/package-manager-bundle/winget-pkgs/manifests/o/oimiragieo/tensor-grep/${{ needs.release.outputs.release_version }}/oimiragieo.tensor-grep.yaml
-            artifacts/package-manager-bundle/PUBLISH_INSTRUCTIONS.md
-            artifacts/package-manager-bundle/BUNDLE_CHECKSUMS.txt
+            ${{ steps.release_paths.outputs.upload_files }}
+            artifacts/native/**/tg-*.sigstore.json
+            artifacts/sbom-rust.json.sigstore.json
+            artifacts/sbom-python.json.sigstore.json
+            artifacts/CHECKSUMS.txt.sigstore.json
 
-      - name: Verify GitHub release native asset coverage
-        env:
-          RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
+      - name: Verify GitHub release asset coverage
         run: |
           uv run --no-project --python 3.12 -- python scripts/verify_github_release_assets.py \
-            --repo "${{ github.repository }}" \
+            --repo "$GITHUB_REPOSITORY" \
             --tag "v${{ needs.release.outputs.release_version }}" \
             --token "${{ secrets.GITHUB_TOKEN }}" \
+            --local-artifacts-dir artifacts \
             --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
             --wait-seconds 120 \
             --poll-interval-seconds 5
