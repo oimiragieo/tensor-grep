@@ -8,7 +8,7 @@ from typing import ClassVar
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
 from tensor_grep.core.case_semantics import effective_ignore_case
-from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.config import SearchConfig, configured_positive_int
 from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
 _STRING_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES"
@@ -57,14 +57,7 @@ class StringZillaBackend(ComputeBackend):
 
     @staticmethod
     def _configured_positive_int(env_var: str, default: int) -> int:
-        raw_value = os.environ.get(env_var)
-        if raw_value is None:
-            return default
-        try:
-            value = int(raw_value)
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
+        return configured_positive_int(env_var, default)
 
     @classmethod
     def _index_cache_max_entries(cls) -> int:

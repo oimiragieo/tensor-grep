@@ -205,27 +205,8 @@ def _is_clean_symbol_name(name: str) -> bool:
     return lang_registry.is_clean_symbol_name(name)
 
 
-def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
-    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
-
-
-def _symbol_record(
-    *,
-    name: str,
-    kind: str,
-    file: Path,
-    start_line: int,
-    end_line: int | None = None,
-) -> dict[str, Any]:
-    normalized_end_line = start_line if end_line is None else end_line
-    return {
-        "name": name,
-        "kind": kind,
-        "file": str(file),
-        "line": start_line,
-        "start_line": start_line,
-        "end_line": normalized_end_line,
-    }
+_tree_sitter_node_text = lang_registry._tree_sitter_node_text
+_symbol_record = lang_registry._symbol_record
 
 
 # ---------------------------------------------------------------------------

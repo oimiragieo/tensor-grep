@@ -1,4 +1,16 @@
+import os
 from dataclasses import dataclass
+
+
+def configured_positive_int(env_var: str, default: int) -> int:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 @dataclass

@@ -871,7 +871,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5257,
+    "lineno": 5248,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5304,
+    "lineno": 5295,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5373,
+    "lineno": 5364,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5423,
+    "lineno": 5414,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5465,
+    "lineno": 5456,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 7207,
+    "lineno": 7198,
     "enclosing_symbol": "_maybe_swap_reversed_session_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8969,
+    "lineno": 8960,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9146,
+    "lineno": 9137,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9302,
+    "lineno": 9293,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9430,
+    "lineno": 9421,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1371,7 +1371,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 792,
+    "lineno": 760,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 8,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1381,7 +1381,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 825,
+    "lineno": 778,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 9,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1391,7 +1391,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 845,
+    "lineno": 798,
     "enclosing_symbol": "_decode_line",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1401,7 +1401,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 948,
+    "lineno": 901,
     "enclosing_symbol": "_search_word_line_context_via_rust",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1461,7 +1461,7 @@
   },
   {
     "module": "backends/ast_backend.py",
-    "lineno": 681,
+    "lineno": 674,
     "enclosing_symbol": "_get_parser",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1531,7 +1531,7 @@
   },
   {
     "module": "backends/stringzilla_backend.py",
-    "lineno": 521,
+    "lineno": 514,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3051,7 +3051,7 @@
   },
   {
     "module": "cli/session_store.py",
-    "lineno": 1812,
+    "lineno": 1729,
     "enclosing_symbol": "serve_session_stream",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3281,7 +3281,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 561,
+    "lineno": 554,
     "enclosing_symbol": "_start_locked",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3291,7 +3291,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 615,
+    "lineno": 608,
     "enclosing_symbol": "_graceful_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3301,7 +3301,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 644,
+    "lineno": 637,
     "enclosing_symbol": "_request_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

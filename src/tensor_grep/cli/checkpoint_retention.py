@@ -7,6 +7,8 @@ import os
 import shutil
 from typing import TYPE_CHECKING
 
+from tensor_grep.core.config import configured_positive_int
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -69,15 +71,7 @@ def _prune_checkpoint_records(
     return retained
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw = os.environ.get(env_var)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _configured_checkpoint_max_file_bytes() -> int:

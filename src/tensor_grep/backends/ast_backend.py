@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
-from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.config import SearchConfig, configured_positive_int
 from tensor_grep.core.lang_suffixes import JS_TS_SUFFIXES, TS_SUFFIXES
 from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
@@ -192,14 +192,7 @@ class AstBackend(ComputeBackend):
 
     @staticmethod
     def _configured_positive_int(env_var: str, default: int) -> int:
-        raw_value = os.environ.get(env_var)
-        if raw_value is None:
-            return default
-        try:
-            value = int(raw_value)
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
+        return configured_positive_int(env_var, default)
 
     @classmethod
     def _query_cache_max_entries(cls) -> int:

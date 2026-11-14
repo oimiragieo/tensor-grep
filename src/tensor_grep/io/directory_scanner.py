@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.config import SearchConfig, configured_positive_int
 from tensor_grep.io.file_types import TYPE_ALIASES, TYPE_EXTENSIONS
 
 # perf (+10% campaign #6 / F2.4): the 5 broad-scan-guard constants below (plus the private
@@ -76,15 +76,7 @@ DEFAULT_GITIGNORE_MAX_BYTES = 1024 * 1024  # 1 MiB is generous for a real .gitig
 _MAX_UNREADABLE_PATH_SAMPLE = 5
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 class DirectoryScanner:

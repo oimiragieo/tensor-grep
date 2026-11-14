@@ -437,6 +437,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.cli.symbols_cache import SymbolGeneration
+from tensor_grep.core.config import configured_positive_int
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -714,15 +715,7 @@ _EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
 atexit.register(_EXTERNAL_LSP_PROVIDER_MANAGER.stop_all)
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _repo_context_cache_max_roots() -> int:
@@ -2404,31 +2397,14 @@ _NON_CODE_HIDDEN_SUFFIXES = {
 }
 
 
-def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
-    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+_tree_sitter_node_text = lang_registry._tree_sitter_node_text
 
 
 def _is_clean_symbol_name(name: str) -> bool:
     return lang_registry.is_clean_symbol_name(name)
 
 
-def _symbol_record(
-    *,
-    name: str,
-    kind: str,
-    file: Path,
-    start_line: int,
-    end_line: int | None = None,
-) -> dict[str, Any]:
-    normalized_end_line = start_line if end_line is None else end_line
-    return {
-        "name": name,
-        "kind": kind,
-        "file": str(file),
-        "line": start_line,
-        "start_line": start_line,
-        "end_line": normalized_end_line,
-    }
+_symbol_record = lang_registry._symbol_record
 
 
 def _node_has_ancestor_type(node: Any, ancestor_types: set[str]) -> bool:
@@ -3147,9 +3123,7 @@ def _relevant_tests_for_symbol(
         ranked = [str(current["path"]) for current in test_matches]
         ordered: list[str] = []
         for current in [*direct_definition_tests, *ranked]:
-            if current in caller_set and current not in ordered:
-                ordered.append(current)
-            elif current not in ordered:
+            if current not in ordered:
                 ordered.append(current)
         if ordered:
             return ordered

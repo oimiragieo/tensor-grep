@@ -50,10 +50,8 @@ def source_snapshot_digest(path: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Duplicated tiny helpers (see module docstring: this module imports nothing from repo_map.py
-# to avoid a cycle, so the couple of one-line helpers a LanguageSpec's callables might want are
-# copied here rather than imported). Keep these BYTE-IDENTICAL to their repo_map.py twins
-# (``_tree_sitter_node_text`` / ``_is_clean_symbol_name`` there) if either ever changes.
+# Shared tiny helpers. This module imports nothing from repo_map.py to avoid a cycle; language
+# modules and repo_map keep local aliases so their existing patch seams remain stable.
 # ``_CLEAN_SYMBOL_NAME_RE`` is pinned byte-identical across its 8 copies by
 # tests/unit/test_clean_symbol_name_regex_pin.py; ``is_clean_symbol_name`` below is the shared
 # predicate every copy's ``_is_clean_symbol_name`` wrapper delegates to.
@@ -80,6 +78,25 @@ def _is_clean_symbol_name(name: str) -> bool:
 
 def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
     return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def _symbol_record(
+    *,
+    name: str,
+    kind: str,
+    file: Path,
+    start_line: int,
+    end_line: int | None = None,
+) -> dict[str, Any]:
+    normalized_end_line = start_line if end_line is None else end_line
+    return {
+        "name": name,
+        "kind": kind,
+        "file": str(file),
+        "line": start_line,
+        "start_line": start_line,
+        "end_line": normalized_end_line,
+    }
 
 
 # ---------------------------------------------------------------------------
