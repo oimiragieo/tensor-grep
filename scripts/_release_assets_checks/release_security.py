@@ -23,9 +23,8 @@ _PUBLISH_ACTIONS = (
     "python-semantic-release/python-semantic-release",
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
-_EXPRESSION = re.compile(r"\${{(.*?)}}", re.DOTALL)
 _SECRET_DEREFERENCE = re.compile(r"\bsecrets\s*(?:\.|\[)")
-_GITHUB_TOKEN_EXPRESSION = re.compile(r"\s*secrets\s*\.\s*GITHUB_TOKEN\s*")
+_GITHUB_TOKEN_EXPRESSION = re.compile(r"\${{\s*secrets\s*\.\s*GITHUB_TOKEN\s*}}")
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -115,12 +114,14 @@ def _workflow_fingerprint(parsed: object) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _has_unapproved_secret(content: str) -> bool:
-    return any(
-        _SECRET_DEREFERENCE.search(expression)
-        and not _GITHUB_TOKEN_EXPRESSION.fullmatch(expression)
-        for expression in _EXPRESSION.findall(content)
-    )
+def _has_unapproved_secret(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(_SECRET_DEREFERENCE.search(_GITHUB_TOKEN_EXPRESSION.sub("", value)))
+    if isinstance(value, dict):
+        return any(_has_unapproved_secret(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_unapproved_secret(item) for item in value)
+    return False
 
 
 def _shell_argv(command: str) -> list[str]:
@@ -616,7 +617,7 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
                     f"Release write authority is only allowed in {_AUTHORITATIVE_PUBLISHER}; "
                     f"found {filename}: {names}"
                 )
-            if _has_unapproved_secret(content):
+            if _has_unapproved_secret(parsed):
                 errors.append(
                     f"Release-capable secrets are only allowed in {_AUTHORITATIVE_PUBLISHER}; "
                     f"found {filename}"
