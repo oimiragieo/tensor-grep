@@ -437,6 +437,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.cli.symbols_cache import SymbolGeneration
+from tensor_grep.core.config import configured_positive_int
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -714,15 +715,7 @@ _EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
 atexit.register(_EXTERNAL_LSP_PROVIDER_MANAGER.stop_all)
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _repo_context_cache_max_roots() -> int:

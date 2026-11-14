@@ -99,6 +99,7 @@ from tensor_grep.cli.session_root import (
     _shared_territory_roots as _shared_territory_roots,
 )
 from tensor_grep.cli.symbols_cache import collect_content_receipts
+from tensor_grep.core.config import configured_positive_int
 
 logger = logging.getLogger(__name__)
 
@@ -194,15 +195,7 @@ class _SessionServeResponseCacheEntry:
     size_bytes: int
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _configured_session_max() -> int:

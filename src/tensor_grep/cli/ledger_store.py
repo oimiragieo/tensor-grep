@@ -115,6 +115,7 @@ from tensor_grep.cli.evidence_receipt import _repo_revision_identity
 from tensor_grep.cli.evidence_signing import receipt_digest, verify_receipt
 from tensor_grep.cli.session_root import require_existing_path
 from tensor_grep.cli.session_store import _resolve_literal_dir
+from tensor_grep.core.config import configured_positive_int
 
 LEDGER_SCHEMA_VERSION = 1
 
@@ -284,15 +285,7 @@ class FindingRecord:
 # ---------------------------------------------------------------------------
 
 
-def _configured_positive_int(env_var: str, default: int) -> int:
-    raw_value = os.environ.get(env_var)
-    if raw_value is None:
-        return default
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+_configured_positive_int = configured_positive_int
 
 
 def _configured_ttl_seconds(explicit: int | None) -> int:
