@@ -213,7 +213,7 @@ def test_ReleaseBootstrap_NetworkInstall_UsesFixedPipBeforeTools() -> None:
         "pip install --disable-pip-version-check pytest"
     )
     assert fixed_pip in rust_core_job
-    assert "uv sync --locked --no-dev --no-install-project" in rust_core_job
+    assert "uv sync --locked --no-dev --no-install-project --extra scan" in rust_core_job
     assert "tg-runtime-deps.txt" not in rust_core_job
     assert fixed_pip in gpu_workflow
     assert dockerfile.index(
