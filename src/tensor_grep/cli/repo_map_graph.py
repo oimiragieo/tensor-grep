@@ -538,3 +538,85 @@ def reverse_import_distances(
             candidate_statuses.clear()
             candidate_statuses.update(statuses)
         return distances
+
+
+def uncertainty_gaps(
+    owner: ModuleType, paths: list[str], repo_root: Path | None
+) -> list[dict[str, Any]]:
+    grouped: dict[str, list[str]] = {}
+    for raw_path in paths:
+        path = Path(raw_path)
+        spec = owner.lang_registry.spec_for_path(path)
+        language = (
+            spec.language_id if spec is not None else path.suffix.lstrip(".").lower() or "unknown"
+        )
+        try:
+            sample = (
+                path.resolve().relative_to(repo_root.resolve()).as_posix()
+                if repo_root
+                else path.as_posix()
+            )
+        except (OSError, ValueError):
+            sample = path.as_posix()
+        grouped.setdefault(language, []).append(sample)
+    return [
+        {
+            "language": language,
+            "reason": "partial or unresolved import resolution leaves reverse-import candidates uncertain",
+            "files_affected": len(samples),
+            "files_sample": sorted(set(samples))[:5],
+            "remediation": "resolve the listed imports to project files or treat these matches as heuristic",
+            "affects_completeness": "never",
+        }
+        for language, samples in sorted(grouped.items())
+    ]
+
+
+def merge_uncertainty_gaps(
+    existing: list[dict[str, Any]], new: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged = list(existing)
+    for gap in new:
+        same = next(
+            (
+                current
+                for current in merged
+                if current.get("language") == gap.get("language")
+                and current.get("reason") == gap.get("reason")
+            ),
+            None,
+        )
+        if same is None:
+            merged.append(gap)
+            continue
+        same["files_affected"] = max(
+            int(same.get("files_affected", 0)), int(gap.get("files_affected", 0))
+        )
+        same["files_sample"] = sorted(
+            set(same.get("files_sample", [])) | set(gap.get("files_sample", []))
+        )[:5]
+    return merged
+
+
+def add_uncertainty(
+    owner: ModuleType, payload: dict[str, Any], paths: list[str], root: Path
+) -> None:
+    if not paths:
+        return
+    payload["resolution_gaps"] = merge_uncertainty_gaps(
+        list(payload.get("resolution_gaps", [])), uncertainty_gaps(owner, paths, root)
+    )
+    payload.setdefault("coverage_summary", {})["graph_completeness"] = "partial"
+
+
+def uncertain_paths(matches: list[dict[str, Any]], additional: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            [
+                str(item.get("path", ""))
+                for item in matches
+                if "heuristic-import" in item.get("reasons", [])
+            ]
+            + list(additional)
+        )
+    )
