@@ -233,7 +233,7 @@ dependencies = [
     # TracerProvider is ever configured, so tracing is inert even with the SDK present. The
     # heavier opentelemetry-sdk/-exporter-otlp packages (and their grpcio+protobuf chain) live in
     # no extra -- they were dead weight on every install; see test_pyproject_dependencies.py.
-    "opentelemetry-api>=1.45.1",
+    "opentelemetry-api>=1.45.2",
     "importlib-metadata<8.5.0; python_version < '3.12'",
     # Ed25519 EvidenceReceipt signing (`tg evidence emit --sign` / verify / keygen / pubkey,
     # task #124). Already resolved transitively via mcp>=1.27.2 -> pyjwt[crypto] -> cryptography

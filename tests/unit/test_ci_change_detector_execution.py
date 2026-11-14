@@ -50,6 +50,10 @@ def _history(root: Path, changed: str) -> str:
 
 
 def _detect(root: Path, detector: str, base: str, event: str):
+    if detector == "code":
+        target = root / "scripts/benchmark_change_scope.py"
+        target.parent.mkdir(exist_ok=True)
+        shutil.copy2(WORKFLOW.parents[2] / "scripts/benchmark_change_scope.py", target)
     steps = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["changes"]["steps"]
     script = next(s["run"] for s in steps if s.get("id") == detector)
     script = script.replace("${{ github.event_name }}", event).replace(
@@ -75,7 +79,7 @@ def test_detector_valid_comparison(tmp_path, detector, changed):
     result, output = _detect(tmp_path, detector, base, "pull_request")
     expected = changed.startswith("src/" if detector == "code" else "docs/")
     assert result.returncode == 0, result.stderr
-    assert output == f"{detector}={str(expected).lower()}"
+    assert f"{detector}={str(expected).lower()}" in output.splitlines()
 
 
 @pytest.mark.parametrize("detector", ["code", "docs"])
@@ -90,4 +94,4 @@ def test_detector_refuses_missing_base(tmp_path, detector):
 def test_non_pr_detector_keeps_full_checks(tmp_path, detector):
     result, output = _detect(tmp_path, detector, "unavailable", "push")
     assert result.returncode == 0, result.stderr
-    assert output == f"{detector}=true"
+    assert f"{detector}=true" in output.splitlines()
