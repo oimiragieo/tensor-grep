@@ -59,6 +59,9 @@ cyclonedx-py environment -E --output-file artifacts/sbom-python.json""",
     for step in steps:
         if step["name"] in runs:
             step["run"] = runs[str(step["name"])]
+    next(step for step in steps if step["name"] == "Prepare release asset path list")["id"] = (
+        "release_paths"
+    )
     attest_index = step_names.index("Generate SLSA provenance")
     steps[attest_index] = {
         "name": step_names[attest_index],
@@ -231,12 +234,34 @@ def test_release_security_contract_rejects_nonexecuted_command_text(prefix: str)
         'gh attestation verify --help # --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-ref refs/heads/main',
         'uv run echo python scripts/validate_release_sbom_identity.py --rust-sbom artifacts/sbom-rust.json --python-sbom artifacts/sbom-python.json --expected-version "$RELEASE_VERSION"',
         'gh attestation verify subject --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-ref refs/heads/main ||:',
+        'gh attestation verify subject --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ci.yml" --source-ref refs/heads/main &',
     ],
 )
 def test_release_security_contract_rejects_executable_noop(run: str) -> None:
     workflow = _workflow()
     name = "Verify SLSA provenance" if run.startswith("gh ") else "Validate release SBOM identity"
     _step(workflow, name)["run"] = run
+    assert _errors(workflow)
+
+
+def test_release_security_contract_rejects_duplicate_security_option() -> None:
+    workflow = _workflow()
+    step = _step(workflow, "Verify SLSA provenance")
+    step["run"] = str(step["run"]) + " --repo attacker/example"
+    assert any("gh attestation verify" in error for error in _errors(workflow))
+
+
+@pytest.mark.parametrize("fault", ["id", "output", "rust-feature"])
+def test_release_security_contract_binds_outputs_and_rust_features(fault: str) -> None:
+    workflow = _workflow()
+    if fault == "id":
+        _step(workflow, "Prepare release asset path list")["id"] = "wrong"
+    elif fault == "output":
+        step = _step(workflow, "Prepare release asset path list")
+        step["run"] = str(step["run"]).replace("$GITHUB_OUTPUT", "$RUNNER_TEMP/out")
+    else:
+        step = _step(workflow, "Generate Rust SBOM")
+        step["run"] = str(step["run"]).replace("--no-default-features", "")
     assert _errors(workflow)
 
 

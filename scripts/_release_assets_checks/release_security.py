@@ -49,7 +49,7 @@ def _shell_words(command: str) -> list[str]:
 
 
 def _shell_argv(command: str) -> list[str]:
-    if re.search(r"(?:\|\||&&|[;`]|\$\()", command):
+    if re.search(r"[|&;`<>]|\$\(", command):
         return []
     return _shell_words(command)
 
@@ -57,7 +57,17 @@ def _shell_argv(command: str) -> list[str]:
 def _command_with(script: str, prefix: tuple[str, ...], required: tuple[str, ...]) -> bool:
     for command in _shell_commands(script):
         argv = _shell_argv(command)
-        if tuple(argv[: len(prefix)]) == prefix and all(token in argv for token in required):
+        unique_options = all(
+            argv.count(token) == required.count(token)
+            and not any(argument.startswith(token + "=") for argument in argv)
+            for token in set(required)
+            if token.startswith("--")
+        )
+        if (
+            tuple(argv[: len(prefix)]) == prefix
+            and all(token in argv for token in required)
+            and unique_options
+        ):
             return True
     return False
 
@@ -165,6 +175,7 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "all",
                 "--override-filename",
                 "sbom-rust",
+                "--no-default-features",
                 "--features",
                 "cuda",
             ),
@@ -205,7 +216,9 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "artifacts",
                 "--checksums-out",
                 "artifacts/CHECKSUMS.txt",
+                "--additional-checksum-asset",
                 "artifacts/sbom-rust.json",
+                "--additional-checksum-asset",
                 "artifacts/sbom-python.json",
                 "--expected-profile",
                 "$RELEASE_NATIVE_ASSET_PROFILE",
@@ -228,6 +241,7 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
                 "--expected-profile",
                 "$RELEASE_NATIVE_ASSET_PROFILE",
                 "--github-output",
+                "$GITHUB_OUTPUT",
             ),
         ),
         "Verify SLSA provenance": (
@@ -267,6 +281,8 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             errors.append(
                 f"CI release publisher `{name}` must run `{' '.join(prefix)}` with {tokens}"
             )
+    if named["Prepare release asset path list"].get("id") != "release_paths":
+        errors.append("CI release asset path preparation must use `id: release_paths`")
     python_sbom = runs["Prepare clean Python SBOM environments"]
     for prefix, tokens in (
         (("uv", "export"), ("--locked", "--no-dev", "--no-emit-project")),
