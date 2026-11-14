@@ -647,17 +647,7 @@ class CPUBackend(ComputeBackend):
                 candidate_line_indexes = set(self._candidate_line_indexes(trigram_index, literal))
 
         total_matches_count = 0
-        before_lines = getattr(config, "before_context", 0) or 0
-        after_lines = getattr(config, "after_context", 0) or 0
-        if getattr(config, "context", None):
-            before_lines = config.context
-            after_lines = config.context
-
         try:
-            from collections import deque
-
-            before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
-            context_after_remaining = 0
             if source_lines is not None:
                 line_iter = (
                     (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
@@ -700,7 +690,7 @@ class CPUBackend(ComputeBackend):
                     if config.invert_match:
                         matched = not matched
 
-                    if matched or before_lines > 0 or context_after_remaining > 0:
+                    if matched:
                         # Decode lazily only what we need to return
                         try:
                             line = line_bytes.decode("utf-8")
@@ -718,28 +708,13 @@ class CPUBackend(ComputeBackend):
                             matched = not matched
 
                     if matched:
-                        while before_queue:
-                            b_idx, b_text = before_queue.popleft()
-                            matches.append(
-                                MatchLine(line_number=b_idx, text=b_text, file=file_path)
-                            )
-
                         matches.append(
                             MatchLine(line_number=line_idx, text=line_text, file=file_path)
                         )
                         total_matches_count += 1
-                        context_after_remaining = after_lines
 
                         if config.max_count and total_matches_count >= config.max_count:
                             break
-                    elif context_after_remaining > 0:
-                        matches.append(
-                            MatchLine(line_number=line_idx, text=line_text, file=file_path)
-                        )
-                        context_after_remaining -= 1
-                    else:
-                        if before_lines > 0:
-                            before_queue.append((line_idx, line_text))
             else:
                 with open(path, "rb") as f:
                     for line_idx, line_bytes in enumerate(f, 1):
@@ -775,7 +750,7 @@ class CPUBackend(ComputeBackend):
                         if config.invert_match:
                             matched = not matched
 
-                        if matched or before_lines > 0 or context_after_remaining > 0:
+                        if matched:
                             # Decode lazily only what we need to return
                             try:
                                 line = line_bytes.decode("utf-8")
@@ -793,28 +768,13 @@ class CPUBackend(ComputeBackend):
                                 matched = not matched
 
                         if matched:
-                            while before_queue:
-                                b_idx, b_text = before_queue.popleft()
-                                matches.append(
-                                    MatchLine(line_number=b_idx, text=b_text, file=file_path)
-                                )
-
                             matches.append(
                                 MatchLine(line_number=line_idx, text=line_text, file=file_path)
                             )
                             total_matches_count += 1
-                            context_after_remaining = after_lines
 
                             if config.max_count and total_matches_count >= config.max_count:
                                 break
-                        elif context_after_remaining > 0:
-                            matches.append(
-                                MatchLine(line_number=line_idx, text=line_text, file=file_path)
-                            )
-                            context_after_remaining -= 1
-                        else:
-                            if before_lines > 0:
-                                before_queue.append((line_idx, line_text))
         except Exception as exc:
             raise RuntimeError(f"CPU backend search failed for {file_path}: {exc}") from exc
 
