@@ -3008,6 +3008,7 @@ def _relevant_tests_for_symbol(
     deadline_hit: _DeadlineBreakFlag | None = None,
     _test_scan_counts: _TestScanCounts | None = None,
     _profiling_collector: _ProfileCollector | None = None,
+    _graph_uncertainty: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
     repo_root = _repo_map_root_dir(repo_map)
     tests = [str(current) for current in repo_map.get("tests", [])]
@@ -3057,14 +3058,25 @@ def _relevant_tests_for_symbol(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        graph_uncertainty: dict[str, dict[str, Any]] = {}
+        graph_candidate_statuses: dict[str, dict[str, Any]] = {}
         file_distances = _self._reverse_import_distances(
             source_files,
             all_files,
             imports_by_file,
+            repo_root=repo_root,
+            uncertain_candidates=graph_uncertainty,
+            candidate_statuses=graph_candidate_statuses,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
+        for target, importers in reverse_importers.items():
+            reverse_importers[target] = {
+                importer
+                for importer in importers
+                if graph_candidate_statuses.get(importer, {}).get("status") != "nonedge"
+            }
         graph_scores = _self._personalized_reverse_import_pagerank(
             source_files,
             all_files,
@@ -3078,6 +3090,9 @@ def _relevant_tests_for_symbol(
             file_scores[current] = max(file_scores.get(current, 0), 5)
         for current, depth in file_distances.items():
             file_scores[current] = max(file_scores.get(current, 0), max(1, 5 - int(depth)))
+        test_graph_targets = list(dict.fromkeys([*source_files, *file_distances]))[
+            :_GRAPH_PAGERANK_SEED_FILE_LIMIT
+        ]
 
         test_matches = _self._context_tests(
             source_files,
@@ -3088,6 +3103,9 @@ def _relevant_tests_for_symbol(
             graph_scores,
             file_scores,
             raw_query=symbol,
+            candidate_statuses=graph_candidate_statuses,
+            test_graph_targets=test_graph_targets,
+            repo_root=repo_root,
             # opt10 #3: this call's `source_files` (caller_files + definition_files) is the fully
             # CONSUMED copy -- `test_matches` here feeds `ranked`/`ordered` in full just below, not
             # test_matches[:1] -- so only the deadline gate is threaded (already in scope as this
@@ -3102,6 +3120,8 @@ def _relevant_tests_for_symbol(
             # so it is the more expensive of the two.
             _test_scan_counts=_test_scan_counts,
         )
+        if _graph_uncertainty is not None:
+            _graph_uncertainty.update(graph_uncertainty)
         direct_definition_tests = []
         for current in tests:
             # #52 fix (loop B): this loop re-walks the FULL tests list with no deadline check --
@@ -5502,6 +5522,9 @@ def _context_tests(
     file_scores: dict[str, int],
     *,
     raw_query: str | None = None,
+    candidate_statuses: dict[str, dict[str, Any]] | None = None,
+    test_graph_targets: list[str] | None = None,
+    repo_root: Path | None = None,
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
     _test_scan_counts: _TestScanCounts | None = None,
@@ -5546,16 +5569,31 @@ def _context_tests(
         if stem in source_stems:
             score += 2
             reasons.append("filename")
-        import_bonus = _test_import_bonus(current, source_tokens, imports_by_file, file_distances)
+        graph_targets = test_graph_targets if test_graph_targets is not None else source_files
+        root = repo_root or _self._infer_project_root(
+            Path(graph_targets[0]) if graph_targets else Path.cwd()
+        )
+        import_bonus, confirmed_targets, confirmed_imports = _repo_map_graph.scored_test_imports(
+            _self,
+            current,
+            graph_targets[:_GRAPH_PAGERANK_SEED_FILE_LIMIT],
+            root,
+            imports_by_file.get(current, []),
+            source_tokens,
+            file_distances,
+            candidate_statuses=candidate_statuses or {},
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
         score += import_bonus
         if import_bonus > 0:
-            reasons.append("test-graph")
-        graph_score = _test_graph_score(
-            current,
-            source_files,
-            imports_by_file,
-            graph_scores,
-            file_scores,
+            reasons.append("heuristic-import" if not confirmed_targets else "test-graph")
+        graph_score = (
+            _test_graph_score(
+                current, confirmed_targets, confirmed_imports, graph_scores, file_scores
+            )
+            if confirmed_targets
+            else 0.0
         )
         framework_bonus = (
             _framework_test_pattern_bonus(current, terms, raw_query=raw_query)
@@ -5569,7 +5607,9 @@ def _context_tests(
             reasons.append("graph-centrality")
             score += max(1, round(graph_score * 10))
         if score > 0:
-            if import_bonus > 0 and stem in source_stems:
+            if not confirmed_targets and import_bonus > 0:
+                edge_kind = "heuristic-import"
+            elif import_bonus > 0 and stem in source_stems:
                 edge_kind = "hybrid"
             elif import_bonus > 0:
                 edge_kind = "import-graph"
@@ -5579,7 +5619,9 @@ def _context_tests(
                 edge_kind = "filename"
             else:
                 edge_kind = "path"
-            if import_bonus > 0 or graph_score > 0.0:
+            if not confirmed_targets and import_bonus > 0:
+                confidence = "weak"
+            elif import_bonus > 0 or graph_score > 0.0:
                 confidence = "strong" if import_bonus > 0 and graph_score > 0.0 else "moderate"
             elif framework_bonus > 0:
                 confidence = "moderate" if framework_bonus >= 3 else "weak"
