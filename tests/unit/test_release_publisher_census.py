@@ -16,7 +16,10 @@ validate_release_publisher_census = importlib.import_module(
 
 
 def _workflow(step: dict[str, object]) -> str:
-    return yaml.safe_dump({"jobs": {"publish": {"steps": [step]}}})
+    return yaml.safe_dump({
+        "permissions": {"contents": "read"},
+        "jobs": {"publish": {"steps": [step]}},
+    })
 
 
 def test_publisher_census_accepts_only_authoritative_ci() -> None:
@@ -25,6 +28,24 @@ def test_publisher_census_accepts_only_authoritative_ci() -> None:
         ".github/workflows/proof.yml": _workflow({"run": 'echo "Use gh release upload manually"'}),
     }
     assert validate_release_publisher_census(workflows=workflows) == []
+
+
+def test_publisher_census_rejects_inherited_default_permissions() -> None:
+    backfill = """
+on: pull_request_target
+jobs:
+  publish:
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: curl -X POST https://api.github.com/repos/o/r/releases
+"""
+    workflows = {
+        ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
+        ".github/workflows/backfill.yml": backfill,
+    }
+    errors = validate_release_publisher_census(workflows=workflows)
+    assert any("requires explicit permissions" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -115,12 +136,20 @@ def test_publisher_census_rejects_release_write_authority(
     assert any("Release write authority is only allowed" in error for error in errors)
 
 
-def test_publisher_census_rejects_non_github_secret() -> None:
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "${{ secrets.NPM_TOKEN }}",
+        "${{ format('{0}', secrets.RELEASE_PAT) }}",
+        "${{ secrets ['RELEASE_PAT'] }}",
+    ],
+)
+def test_publisher_census_rejects_non_github_secret(expression: str) -> None:
     workflows = {
         ".github/workflows/ci.yml": _workflow({"uses": "softprops/action-gh-release@sha"}),
         ".github/workflows/backfill.yml": _workflow({
             "run": "echo opaque publisher",
-            "env": {"TOKEN": "${{ secrets.NPM_TOKEN }}"},
+            "env": {"TOKEN": expression},
         }),
     }
     errors = validate_release_publisher_census(workflows=workflows)

@@ -23,7 +23,9 @@ _PUBLISH_ACTIONS = (
     "python-semantic-release/python-semantic-release",
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
-_NON_GITHUB_SECRET = re.compile(r"\${{\s*secrets(?:\.|\[)")
+_EXPRESSION = re.compile(r"\${{(.*?)}}", re.DOTALL)
+_SECRET_DEREFERENCE = re.compile(r"\bsecrets\s*(?:\.|\[)")
+_GITHUB_TOKEN_EXPRESSION = re.compile(r"\s*secrets\s*\.\s*GITHUB_TOKEN\s*")
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -111,6 +113,14 @@ def _release_write_permissions(permissions: object) -> set[str]:
 def _workflow_fingerprint(parsed: object) -> str:
     canonical = yaml.safe_dump(parsed, sort_keys=True).encode()
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _has_unapproved_secret(content: str) -> bool:
+    return any(
+        _SECRET_DEREFERENCE.search(expression)
+        and not _GITHUB_TOKEN_EXPRESSION.fullmatch(expression)
+        for expression in _EXPRESSION.findall(content)
+    )
 
 
 def _shell_argv(command: str) -> list[str]:
@@ -583,6 +593,18 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
         if not isinstance(jobs, dict):
             continue
         if filename != _AUTHORITATIVE_PUBLISHER:
+            if parsed.get("permissions") is None:
+                jobs_without_permissions = [
+                    str(name)
+                    for name, job in jobs.items()
+                    if isinstance(job, dict) and "permissions" not in job
+                ]
+                if jobs_without_permissions:
+                    names = ", ".join(sorted(jobs_without_permissions))
+                    errors.append(
+                        f"Workflow publisher census requires explicit permissions for "
+                        f"{filename}: {names}"
+                    )
             write_permissions = _release_write_permissions(parsed.get("permissions"))
             for job in jobs.values():
                 if isinstance(job, dict):
@@ -594,8 +616,7 @@ def validate_release_publisher_census(*, workflows: dict[str, str]) -> list[str]
                     f"Release write authority is only allowed in {_AUTHORITATIVE_PUBLISHER}; "
                     f"found {filename}: {names}"
                 )
-            content_without_github_token = re.sub(r"\${{\s*secrets\.GITHUB_TOKEN\s*}}", "", content)
-            if _NON_GITHUB_SECRET.search(content_without_github_token):
+            if _has_unapproved_secret(content):
                 errors.append(
                     f"Release-capable secrets are only allowed in {_AUTHORITATIVE_PUBLISHER}; "
                     f"found {filename}"
