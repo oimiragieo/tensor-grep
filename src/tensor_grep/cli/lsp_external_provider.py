@@ -1442,11 +1442,6 @@ class ExternalLSPProviderManager:
         for client in clients:
             client.stop()
 
-    def close_all(self) -> None:
-        clients = self._pop_all_clients()
-        for current in clients:
-            current.stop()
-
 
 def _command_source(command: list[str]) -> str:
     if not command:
