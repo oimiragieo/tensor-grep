@@ -8,7 +8,8 @@ import pytest
 
 from tensor_grep.cli import lsp_provider_setup
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
-from tensor_grep.core import retrieval_chunker
+from tensor_grep.core import cross_encoder_assets, retrieval_chunker, retrieval_fusion
+from tensor_grep.core.cross_encoder import apply_cross_encoder
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -108,3 +109,28 @@ def test_tg049_mts_and_cts_use_typescript_structural_parser(monkeypatch) -> None
     assert retrieval_chunker._structural_parser_for_path("module.mts") is parser
     assert retrieval_chunker._structural_parser_for_path("module.cts") is parser
     assert tsx_modes == [False, False]
+
+
+def test_tg050_cross_encoder_uses_shared_rrf_constant(monkeypatch) -> None:
+    import tensor_grep
+
+    class FakeRustCore:
+        @staticmethod
+        def cross_encoder_scores(*_args):
+            return [0.0, 3.0, 4.0, 2.0]
+
+    monkeypatch.setattr(retrieval_fusion, "DEFAULT_K", 1)
+    monkeypatch.setattr(tensor_grep, "rust_core", FakeRustCore, raising=False)
+    monkeypatch.setattr(
+        cross_encoder_assets,
+        "scorer_assets",
+        lambda _root, **_kwargs: (Path("model"), Path("tokenizer"), Path("runtime")),
+    )
+    result = SearchResult(
+        matches=[MatchLine(line_number=i + 1, file=f"file{i}", text=f"text{i}") for i in range(4)]
+    )
+
+    apply_cross_encoder(result, "query", "cross-encoder")
+
+    assert [match.text for match in result.matches] == ["text2", "text0", "text1", "text3"]
+    assert result.rank_fusion["cross_encoder"]["rrf_k"] == 1
