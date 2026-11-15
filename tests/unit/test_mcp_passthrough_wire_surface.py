@@ -59,7 +59,7 @@ _DECLARED_SCAN_LIMIT_KEYS = {
 # The version in force when the key set above was last reviewed. This is not a "bump me every
 # release" pin -- it moves when the response contract changes, which is exactly when a reviewer
 # should be looking.
-_CONTRACT_AT_LAST_WIRE_REVIEW = "1.22.0"
+_CONTRACT_AT_LAST_WIRE_REVIEW = "1.23.0"
 
 
 @pytest.fixture
@@ -84,12 +84,12 @@ def _call_checkpoint(tool: str, arguments: dict[str, object]) -> tuple[dict[str,
     return payload, isinstance(payload.get("error"), dict) and bool(payload["error"])
 
 
-def _assert_checkpoint_envelope(payload: dict[str, Any]) -> None:
-    assert payload["incomplete"] == {
-        "status": False,
-        "cause": None,
-        "budget_remediable": False,
-    }
+def _assert_checkpoint_envelope(payload: dict[str, Any], *, refused: bool = False) -> None:
+    assert payload["incomplete"] == (
+        {"status": True, "cause": "error", "budget_remediable": False}
+        if refused
+        else {"status": False, "cause": None, "budget_remediable": False}
+    )
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     serialized = json.dumps(payload, indent=2)
     assert _inject_mcp_contract_fields(serialized) == serialized
@@ -251,7 +251,7 @@ def test_CheckpointCall_RefusedInput_PreservesErrorAndCompleteness(
     assert payload["error"]["code"] == "invalid_input"
     assert source.read_bytes() == before
     assert not (outside / ".tensor-grep").exists()
-    _assert_checkpoint_envelope(payload)
+    _assert_checkpoint_envelope(payload, refused=tool == "tg_checkpoint")
 
 
 @requires_checkpoint_creation

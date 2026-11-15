@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
 # TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.22.0"  # session-root and rewrite-manifest safety
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.23.0"  # complete refusals and impact scan bounds
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -924,7 +924,7 @@ _TRUSTED_EXCEPTION_CLASSES[PathConfinementError] = "PathConfinementError"
 def _meta_confinement_error(tool: str, action: str, exc: PathConfinementError) -> str:
     payload = _meta_envelope(tool=tool, action=action)
     payload["error"] = {"code": "invalid_input", "message": str(exc)}
-
+    payload["incomplete"] = {"status": True, "cause": "error", "budget_remediable": False}
     return json.dumps(payload, indent=2)
 
 
@@ -1624,6 +1624,7 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
             )
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = {"status": True, "cause": "error", "budget_remediable": False}
             return json.dumps(payload, indent=2)
 
         try:
@@ -3722,12 +3723,7 @@ def tg_ast_search(
                 )
 
             if by_file:
-                for filepath, matches in list(by_file.items())[:15]:
-                    output.append(f"\n{filepath}:")
-                    for m in matches[:10]:
-                        output.append(f"  {m.line_number}: {_bounds._plain_match_text(m)}")
-                if len(by_file) > 15:
-                    output.append(f"\n... and {len(by_file) - 15} more files.")
+                _bounds._render_ast_plain(output, by_file, all_results.total_matches)
             elif all_results.match_counts_by_file:
                 for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
                     output.append(f"\n{filepath}:")
@@ -4404,7 +4400,11 @@ def tg_impact(
         try:
             if action == "impact":
                 return _self.tg_symbol_impact(
-                    symbol=symbol, path=path, provider=provider, deadline=deadline
+                    symbol=symbol,
+                    path=path,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline=deadline,
                 )
             if action == "blast_radius":
                 return _self.tg_symbol_blast_radius(
