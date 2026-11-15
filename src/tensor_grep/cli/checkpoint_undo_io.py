@@ -184,6 +184,7 @@ def publish_restored_file(
     expect_absent: bool = False,
     on_new_file_identity: Callable[[tuple[int, int]], None] | None = None,
     on_publication: Callable[[], None] | None = None,
+    on_complete: Callable[[], None] | None = None,
 ) -> None:
     """Restore bytes atomically under the expected parent without writing through hardlinks."""
     _check_pinned_leaf(root, path, expected_parent_identity, expected_file_identity)
@@ -232,6 +233,8 @@ def publish_restored_file(
         expected_file_identity=expected_file_identity,
         after_publish=record_published_identity,
     )
+    if on_complete is not None:
+        on_complete()
 
 
 def rollback_overwrites(
@@ -252,7 +255,14 @@ def rollback_overwrites(
     failures: list[Path] = []
     for entry in reversed(entries):
         path = entry[0]
-        _attempt_rollback(path, partial(_rollback_overwrite, root, entry), failures, interruptions)
+        completed = [False]
+        _attempt_rollback(
+            path,
+            partial(_rollback_overwrite, root, entry, completed),
+            failures,
+            interruptions,
+            completed,
+        )
     return failures
 
 
@@ -266,6 +276,7 @@ def _rollback_overwrite(
         list[tuple[int, int] | None],
         list[bool],
     ],
+    completed: list[bool],
 ) -> None:
     path, prior_bytes, prior_info, parent_identity, published_identity, publication_state = entry
     expected_file_identity = published_identity[0]
@@ -294,6 +305,7 @@ def _rollback_overwrite(
         prior_info,
         expected_parent_identity=parent_identity,
         expected_file_identity=expected_file_identity,
+        on_complete=partial(completed.__setitem__, 0, True),
     )
 
 
@@ -302,6 +314,7 @@ def _attempt_rollback(
     operation: Callable[[], None],
     failures: list[Path],
     interruptions: list[BaseException] | None,
+    completed: list[bool],
 ) -> None:
     """Defer catchable interrupts until one rollback step settles."""
     while True:
@@ -313,6 +326,8 @@ def _attempt_rollback(
                 raise
             if not interruptions:
                 interruptions.append(interruption)
+            if completed[0]:
+                return
             continue
         except OSError:
             pass
@@ -340,12 +355,21 @@ def rollback_removes(
     failures: list[Path] = []
     for entry in reversed(entries):
         path = entry[0]
-        _attempt_rollback(path, partial(_rollback_remove, root, entry), failures, interruptions)
+        completed = [False]
+        _attempt_rollback(
+            path,
+            partial(_rollback_remove, root, entry, completed),
+            failures,
+            interruptions,
+            completed,
+        )
     return failures
 
 
 def _rollback_remove(
-    root: Path, entry: tuple[Path, bytes, os.stat_result, tuple[int, int]]
+    root: Path,
+    entry: tuple[Path, bytes, os.stat_result, tuple[int, int]],
+    completed: list[bool],
 ) -> None:
     path, prior_bytes, prior_info, parent_identity = entry
     check = partial(_check_removed_parent, path, parent_identity)
@@ -370,4 +394,5 @@ def _rollback_remove(
         on_new_file_identity=partial(
             _check_removed_parent_after_publish, path=path, identity=parent_identity
         ),
+        on_complete=partial(completed.__setitem__, 0, True),
     )
