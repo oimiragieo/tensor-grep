@@ -51,9 +51,9 @@ or partial path.
 TASK 10C: ``php_references_and_calls`` promotes PHP from the foundational (defs/imports-only)
 tier to the parser-backed refs/callers tier, mirroring Task 10A's Java landing
 (``lang_java.java_references_and_calls``) and Task 10B's C# landing
-(``lang_csharp.csharp_references_and_calls``) -- IN-FILE AST reference/call extraction only, no
-cross-file import resolution (``file_imports_symbol_from_definition``/``import_update_target``/
-``prime_repo_context`` all stay ``None``, same deferred-scope shape as Go/Java/C#'s own gaps).
+(``lang_csharp.csharp_references_and_calls``) -- IN-FILE AST reference/call extraction plus the
+implemented ``file_imports_symbol_from_definition`` hook. ``import_update_target`` and
+``prime_repo_context`` remain ``None``, so reverse-import graph resolution stays deferred.
 PHP's own grammar shape (verified against the installed ``tree_sitter_php`` grammar via a live AST
 dump, not guessed -- see B5 of ``tensor-grep-add-language``) has FIVE distinct call/access node
 types where Java has two and C# has effectively one:
