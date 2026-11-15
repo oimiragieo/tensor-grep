@@ -22,6 +22,7 @@ from tensor_grep.io.confined import (
 
 class _PinnedFileIdentity(tuple[int, int]):
     _descriptor: int | None
+    _temporary: Path | None
 
     def __new__(cls, identity: tuple[int, int], descriptor: int) -> _PinnedFileIdentity:
         pinned = super().__new__(cls, identity)
@@ -110,6 +111,18 @@ def _check_pinned_leaf(
     descriptor = file_identity._descriptor
     if descriptor is None:
         raise OSError("checkpoint restore target's pinned handle is closed")
+    temporary = getattr(file_identity, "_temporary", None)
+    if temporary is not None:
+        try:
+            unlink_confined(
+                root,
+                temporary,
+                expected_parent_identity=parent_identity,
+                expected_file_identity=file_identity,
+            )
+        except FileNotFoundError:
+            pass
+        file_identity._temporary = None
     validate_confined_parent_prefix(root, path)
     info = path.lstat()
     pinned = os.fstat(descriptor)
@@ -136,24 +149,6 @@ def check_restore_target(
         or (info.st_dev, info.st_ino) != leaf_identity
     ):
         raise OSError("checkpoint restore target identity changed")
-
-
-def _restored_file_matches(
-    root: Path,
-    path: Path,
-    data: bytes,
-    parent_identity: tuple[int, int],
-) -> bool:
-    validate_confined_parent_prefix(root, path)
-    if dir_identity(path.parent) != parent_identity or not os.path.lexists(path):
-        return False
-    info = path.lstat()
-    identity = (info.st_dev, info.st_ino)
-    check_restore_target(root, path, parent_identity, identity)
-    if info.st_size != len(data) or read_confined(root, path, len(data)) != data:
-        return False
-    check_restore_target(root, path, parent_identity, identity)
-    return True
 
 
 def read_for_rollback(
@@ -223,6 +218,7 @@ def publish_restored_file(
             pinned = _PinnedFileIdentity(
                 (info.st_dev, info.st_ino), _pin_published_file(temporary, descriptor)
             )
+            pinned._temporary = temporary
             try:
                 on_new_file_identity(pinned)
             except BaseException:
@@ -300,18 +296,30 @@ def _rollback_overwrite(
         raise OSError("checkpoint restore target parent changed")
     if prior_bytes is None:
         descriptor = getattr(expected_file_identity, "_descriptor", None)
-        if (descriptor is not None and os.fstat(descriptor).st_nlink == 0) or not os.path.lexists(
-            path
-        ):
+        if descriptor is None or os.fstat(descriptor).st_nlink == 0:
+            close_published_identity(expected_file_identity)
+            if not os.path.lexists(path):
+                return
+            raise OSError("checkpoint restore target was replaced after rollback unlink")
+    restored = published_identity[1]
+    if restored is not None:
+        try:
+            _check_pinned_leaf(root, path, parent_identity, restored)
             return
+        except OSError:
+            pass
     try:
         _check_pinned_leaf(root, path, parent_identity, expected_file_identity)
     except OSError:
-        if prior_bytes is not None and _restored_file_matches(
-            root, path, prior_bytes, parent_identity
-        ):
+        if not publication_state[0] and prior_info is not None:
+            check_restore_target(
+                root, path, parent_identity, (prior_info.st_dev, prior_info.st_ino)
+            )
             return
         raise
+    if restored is not None:
+        close_published_identity(restored)
+        published_identity[1] = None
     if prior_bytes is None:
         unlink_with_pinned_parent(root, path, parent_identity, expected_file_identity)
         return
@@ -324,6 +332,7 @@ def _rollback_overwrite(
         prior_info,
         expected_parent_identity=parent_identity,
         expected_file_identity=expected_file_identity,
+        on_new_file_identity=partial(published_identity.__setitem__, 1),
     )
 
 
@@ -333,7 +342,6 @@ def _attempt_rollback(
     failures: list[Path],
     interruptions: list[BaseException] | None,
 ) -> None:
-    """Defer catchable interrupts until one rollback step settles."""
     pending_interruption: BaseException | None = None
     failed = False
     while True:
@@ -368,24 +376,20 @@ def _check_removed_parent(path: Path, identity: tuple[int, int]) -> None:
         raise OSError("checkpoint removed parent identity changed")
 
 
-def _check_removed_parent_after_publish(
-    _file_identity: tuple[int, int], *, path: Path, identity: tuple[int, int]
-) -> None:
-    _check_removed_parent(path, identity)
-
-
 def rollback_removes(
     root: Path,
     entries: list[tuple[Path, bytes, os.stat_result, tuple[int, int]]],
+    restored_identities: dict[Path, list[tuple[int, int] | None]],
     *,
     interruptions: list[BaseException] | None = None,
 ) -> list[Path]:
     failures: list[Path] = []
     for entry in reversed(entries):
         path = entry[0]
+        restored_identity = restored_identities.setdefault(path, [None])
         _attempt_rollback(
             path,
-            partial(_rollback_remove, root, entry),
+            partial(_rollback_remove, root, entry, restored_identity),
             failures,
             interruptions,
         )
@@ -395,12 +399,21 @@ def rollback_removes(
 def _rollback_remove(
     root: Path,
     entry: tuple[Path, bytes, os.stat_result, tuple[int, int]],
+    restored_identity: list[tuple[int, int] | None],
 ) -> None:
     path, prior_bytes, prior_info, parent_identity = entry
     check = partial(_check_removed_parent, path, parent_identity)
     check()
-    if _restored_file_matches(root, path, prior_bytes, parent_identity):
-        return
+    restored = restored_identity[0]
+    if restored is not None:
+        try:
+            _check_pinned_leaf(root, path, parent_identity, restored)
+            return
+        except OSError:
+            if os.path.lexists(path):
+                raise
+            close_published_identity(restored)
+            restored_identity[0] = None
     if os.path.lexists(path):
         current = path.lstat()
         identity = (prior_info.st_dev, prior_info.st_ino)
@@ -418,7 +431,5 @@ def _rollback_remove(
         prior_info,
         expected_parent_identity=parent_identity,
         expect_absent=True,
-        on_new_file_identity=partial(
-            _check_removed_parent_after_publish, path=path, identity=parent_identity
-        ),
+        on_new_file_identity=partial(restored_identity.__setitem__, 0),
     )
