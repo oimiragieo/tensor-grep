@@ -181,6 +181,17 @@ def test_tg_ast_search_plain_text_truncates_each_line_and_stays_bounded():
     assert "  1: ok" in short
 
 
+def test_tg_ast_search_plain_text_discloses_omitted_matches() -> None:
+    plain = _run_tg_ast_search_many(25, "ok", structured_json=False)
+    assert "  10: ok" in plain
+    assert "  11: ok" not in plain
+    assert "omitted 15 matches" in plain
+
+    structured = json.loads(_run_tg_ast_search_many(25, "ok", structured_json=True))
+    assert structured["rendered_match_count"] == 25
+    assert structured["omitted_matches"] == 0
+
+
 def _real_ast_search(tmp_path, monkeypatch, pattern):
     import pytest
 

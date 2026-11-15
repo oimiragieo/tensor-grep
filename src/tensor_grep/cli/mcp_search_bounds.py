@@ -224,6 +224,17 @@ def _render_plain(
     return rendered_matches, rendered_files, False
 
 
+def _render_ast_plain(output: list[str], by_file: dict[str, list[Any]], total_matches: int) -> None:
+    rendered, _, _ = _render_plain(
+        output, {filepath: matches[:10] for filepath, matches in list(by_file.items())[:15]}
+    )
+    omitted = max(0, total_matches - rendered)
+    if omitted:
+        output.append(f"\n... output truncated; omitted {omitted} matches.")
+    if len(by_file) > 15:
+        output.append(f"\n... and {len(by_file) - 15} more files.")
+
+
 def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
     """True when the caller asked for more rows than the fixed ceiling AND more exist."""
     return (
