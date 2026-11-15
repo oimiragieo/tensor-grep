@@ -409,7 +409,7 @@ class Pipeline:
                 # the force_cpu arm for the same reason the -c semantics guard does.
                 self.backend = rg_backend
                 selected_backend_reason = "column_rg_offsets"
-            elif force_cpu:
+            elif force_cpu and not (config and config.ast):
                 if rust_available and not needs_python_cpu:
                     self.backend = rust_backend
                     selected_backend_reason = "force_cpu_rust"
