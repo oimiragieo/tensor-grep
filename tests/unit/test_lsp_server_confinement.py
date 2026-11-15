@@ -397,11 +397,7 @@ def test_fileop_all_in_root_file_ops_are_not_refused(tmp_path: Path) -> None:
 def test_fileop_all_in_root_file_op_edit_is_not_refused_and_still_returns_an_edit(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Gate finding 3a (end to end): an all-in-root file-op edit is allowed by confinement and
-    the rename still returns an edit. The separate LSP-EDIT-CONSTRUCTION mismatch (lsprotocol
-    rejects camelCase ``documentChanges`` in ``WorkspaceEdit(**result)``) is explicitly NOT
-    fixed here — the confined edit flows through the existing native fallback, which is the
-    pre-existing behavior (owner: lsp-change-control)."""
+    """An all-in-root provider file operation survives wire-to-model conversion."""
     (tmp_path / "pyproject.toml").write_text(
         "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
     )
@@ -438,13 +434,9 @@ def test_fileop_all_in_root_file_op_edit_is_not_refused_and_still_returns_an_edi
         Position(line=0, character=5),
         "make_invoice",
     )
-    # the rename still answers via the existing fallback; it never carries the provider's
-    # file-op (construction is not fixed here — see the LSP-EDIT-CONSTRUCTION comment).
     assert edit is not None
     assert edit.changes is None
-    assert all(
-        getattr(doc_change, "kind", None) is None for doc_change in (edit.document_changes or [])
-    )
+    assert [getattr(change, "kind", None) for change in (edit.document_changes or [])] == ["create"]
 
 
 # --- audit-M3 gate round 2 (independent codex security gate, FIX-BEFORE-MERGE) -----------
