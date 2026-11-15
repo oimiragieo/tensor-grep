@@ -92,6 +92,9 @@ class MatchLine:
     # rg record kind: "match", "inverted" (a -v line: rg prints it without a column) or
     # "context" (-A/-B/-C). None for non-rg engines. Only RipgrepBackend sets it.
     rg_kind: str | None = field(default=None, compare=False)
+    # Backend-owned match evidence for citation filtering when no rg record/submatch exists.
+    # None means the backend did not classify the line; False distinguishes context-only rows.
+    citation_matched: bool | None = field(default=None, compare=False)
     container: dict[str, object] | None = field(default=None, compare=False)
     why_ranked: list[str] | None = field(default=None, compare=False)
 
