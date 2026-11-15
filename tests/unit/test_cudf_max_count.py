@@ -43,3 +43,18 @@ def test_cap_noop_when_config_none() -> None:
     result = _result([1, 2, 3])
     capped = CuDFBackend._cap_to_max_count(result, None)
     assert capped.total_matches == 3
+
+
+def test_cap_zero_clears_matches_and_count_envelope() -> None:
+    capped = CuDFBackend._cap_to_max_count(_result([1]), SearchConfig(max_count=0))
+    assert capped.matches == []
+    assert capped.total_files == 0
+    assert capped.total_matches == 0
+
+
+def test_cap_zero_repairs_metadata_only_count_envelope() -> None:
+    result = SearchResult(matches=[], total_files=1, total_matches=5)
+    capped = CuDFBackend._cap_to_max_count(result, SearchConfig(max_count=0))
+    assert capped.matches == []
+    assert capped.total_files == 0
+    assert capped.total_matches == 0
