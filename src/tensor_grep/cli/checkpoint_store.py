@@ -1413,12 +1413,23 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
         except BaseException as original_error:
             rollback_interruptions: list[BaseException] = []
-            rollback_failures = rollback_overwrites(
-                root, committed_overwrites, interruptions=rollback_interruptions
-            )
-            rollback_failures.extend(
-                rollback_removes(root, committed_removes, interruptions=rollback_interruptions)
-            )
+            phase_interruption: BaseException | None = None
+            while True:
+                try:
+                    rollback_failures = rollback_overwrites(
+                        root, committed_overwrites, interruptions=rollback_interruptions
+                    )
+                    rollback_failures.extend(
+                        rollback_removes(
+                            root, committed_removes, interruptions=rollback_interruptions
+                        )
+                    )
+                    break
+                except (KeyboardInterrupt, SystemExit) as interruption:
+                    if phase_interruption is None:
+                        phase_interruption = interruption
+            if phase_interruption is not None and not rollback_interruptions:
+                rollback_interruptions.append(phase_interruption)
             if rollback_failures:
                 failed_path = rollback_failures[0]
                 raise CheckpointUndoUnsafeError(

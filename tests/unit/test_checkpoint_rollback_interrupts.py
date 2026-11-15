@@ -1,5 +1,3 @@
-"""Rollback must restore working bytes before propagating catchable interrupts."""
-
 from pathlib import Path
 
 import pytest
@@ -7,180 +5,119 @@ import pytest
 from tensor_grep.cli import checkpoint_store, checkpoint_undo_io
 
 
-def test_tg011_second_interrupt_finishes_checkpoint_rollback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _project(tmp_path: Path, *, extra: bool = False):
     root = tmp_path / "project"
     root.mkdir()
-    first = root / "a.txt"
-    second = root / "b.txt"
+    first, second, added = root / "a.txt", root / "b.txt", root / "extra.txt"
     first.write_bytes(b"snapshot-a\n")
     second.write_bytes(b"snapshot-b\n")
-    created = checkpoint_store.create_checkpoint(str(root))
+    checkpoint_id = checkpoint_store.create_checkpoint(str(root)).checkpoint_id
     first.write_bytes(b"working-a\n")
     second.write_bytes(b"working-b\n")
-
-    commit_publish = checkpoint_store.publish_restored_file
-    rollback_publish = checkpoint_undo_io.publish_restored_file
-    commit_calls = 0
-    rollback_calls = 0
-
-    def fail_second_commit(*args, **kwargs):
-        nonlocal commit_calls
-        commit_calls += 1
-        if commit_calls == 2:
-            raise OSError("controlled commit failure")
-        return commit_publish(*args, **kwargs)
-
-    def interrupt_first_rollback(*args, **kwargs):
-        nonlocal rollback_calls
-        rollback_calls += 1
-        if rollback_calls <= 2:
-            raise KeyboardInterrupt("controlled rollback interrupt")
-        return rollback_publish(*args, **kwargs)
-
-    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_second_commit)
-    monkeypatch.setattr(checkpoint_undo_io, "publish_restored_file", interrupt_first_rollback)
-
-    with pytest.raises(KeyboardInterrupt, match="controlled rollback interrupt") as caught:
-        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
-
-    assert isinstance(caught.value.__cause__, OSError)
-    assert commit_calls == 2
-    assert rollback_calls == 3
-    assert first.read_bytes() == b"working-a\n"
-    assert second.read_bytes() == b"working-b\n"
+    if extra:
+        added.write_bytes(b"working-extra\n")
+    return root, checkpoint_id, first, second, added
 
 
-def test_tg011_interrupt_after_checkpoint_rollback_publication_is_not_retried(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    first = root / "a.txt"
-    second = root / "b.txt"
-    first.write_bytes(b"snapshot-a\n")
-    second.write_bytes(b"snapshot-b\n")
-    created = checkpoint_store.create_checkpoint(str(root))
-    first.write_bytes(b"working-a\n")
-    second.write_bytes(b"working-b\n")
-
-    commit_publish = checkpoint_store.publish_restored_file
-    rollback_publish = checkpoint_undo_io.publish_restored_file
-    rollback_calls = 0
-
-    def fail_second_commit(root_arg, path, *args, **kwargs):
+def _fail_second_commit(monkeypatch: pytest.MonkeyPatch, second: Path) -> None:
+    def fail(root, path, *args, _original=checkpoint_store.publish_restored_file, **kwargs):
         if Path(path) == second:
             raise OSError("controlled commit failure")
-        return commit_publish(root_arg, path, *args, **kwargs)
+        return _original(root, path, *args, **kwargs)
 
-    def interrupt_after_rollback_publication(*args, **kwargs):
-        nonlocal rollback_calls
-        rollback_publish(*args, **kwargs)
-        rollback_calls += 1
-        raise KeyboardInterrupt("controlled post-publication interrupt")
-
-    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_second_commit)
-    monkeypatch.setattr(
-        checkpoint_undo_io, "publish_restored_file", interrupt_after_rollback_publication
-    )
-
-    with pytest.raises(KeyboardInterrupt, match="controlled post-publication interrupt"):
-        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
-
-    assert rollback_calls == 1
-    assert first.read_bytes() == b"working-a\n"
-    assert second.read_bytes() == b"working-b\n"
+    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail)
 
 
-def test_tg011_second_interrupt_finishes_removed_file_rollback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def _assert_working(first: Path, second: Path, extra: Path | None = None) -> None:
+    assert [path.read_bytes() for path in (first, second)] == [b"working-a\n", b"working-b\n"]
+    if extra is not None:
+        assert extra.read_bytes() == b"working-extra\n"
+
+
+@pytest.mark.parametrize("after,new", [(False, False), (False, True), (True, False), (True, True)])
+def test_tg011_rollback_interrupt_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after: bool, new: bool
 ) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    first = root / "a.txt"
-    second = root / "b.txt"
-    first.write_bytes(b"snapshot-a\n")
-    second.write_bytes(b"snapshot-b\n")
-    created = checkpoint_store.create_checkpoint(str(root))
-    first.write_bytes(b"working-a\n")
-    second.write_bytes(b"working-b\n")
-    extra = root / "extra.txt"
-    extra.write_bytes(b"working-extra\n")
+    root, checkpoint_id, first, second, extra = _project(tmp_path, extra=new)
+    _fail_second_commit(monkeypatch, second)
+    original = checkpoint_undo_io.publish_restored_file
+    calls = 0
+    message = "post-publication interrupt" if after else "rollback interrupt"
 
-    commit_publish = checkpoint_store.publish_restored_file
-    rollback_publish = checkpoint_undo_io.publish_restored_file
-    commit_calls = 0
-    extra_rollback_calls = 0
+    def interrupt(root_arg, path, *args, **kwargs):
+        nonlocal calls
+        target = not new or Path(path) == extra
+        if after:
+            result = original(root_arg, path, *args, **kwargs)
+            if target:
+                calls += 1
+                raise KeyboardInterrupt(message)
+            return result
+        if target:
+            calls += 1
+            if calls <= 2:
+                raise KeyboardInterrupt(message)
+        return original(root_arg, path, *args, **kwargs)
 
-    def fail_second_commit(*args, **kwargs):
-        nonlocal commit_calls
-        commit_calls += 1
-        if commit_calls == 2:
-            raise OSError("controlled commit failure")
-        return commit_publish(*args, **kwargs)
-
-    def interrupt_extra_rollback(root_arg, path, *args, **kwargs):
-        nonlocal extra_rollback_calls
-        if Path(path) == extra:
-            extra_rollback_calls += 1
-            if extra_rollback_calls <= 2:
-                raise KeyboardInterrupt("controlled removal rollback interrupt")
-        return rollback_publish(root_arg, path, *args, **kwargs)
-
-    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_second_commit)
-    monkeypatch.setattr(checkpoint_undo_io, "publish_restored_file", interrupt_extra_rollback)
-
-    with pytest.raises(KeyboardInterrupt, match="controlled removal rollback interrupt"):
-        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
-
-    assert extra_rollback_calls == 3
-    assert first.read_bytes() == b"working-a\n"
-    assert second.read_bytes() == b"working-b\n"
-    assert extra.read_bytes() == b"working-extra\n"
+    monkeypatch.setattr(checkpoint_undo_io, "publish_restored_file", interrupt)
+    with pytest.raises(KeyboardInterrupt, match=message):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+    _assert_working(first, second, extra if new else None)
 
 
-def test_tg011_interrupt_after_removed_file_publication_is_not_retried(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("rollback", [False, True])
+def test_tg011_publication_window_is_rolled_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rollback: bool
 ) -> None:
-    root = tmp_path / "project"
-    root.mkdir()
-    first = root / "a.txt"
-    second = root / "b.txt"
-    first.write_bytes(b"snapshot-a\n")
-    second.write_bytes(b"snapshot-b\n")
-    created = checkpoint_store.create_checkpoint(str(root))
-    first.write_bytes(b"working-a\n")
-    second.write_bytes(b"working-b\n")
-    extra = root / "extra.txt"
-    extra.write_bytes(b"working-extra\n")
+    root, checkpoint_id, first, second, _ = _project(tmp_path)
+    if rollback:
+        _fail_second_commit(monkeypatch, second)
+    original = checkpoint_undo_io.atomic_write_bytes_confined
+    calls = 0
+    message = f"{'rollback' if rollback else 'commit'} publication window"
 
-    commit_publish = checkpoint_store.publish_restored_file
-    rollback_publish = checkpoint_undo_io.publish_restored_file
-    rollback_calls = 0
+    def interrupt(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1 + rollback:
+            kwargs["after_publish"] = lambda: (_ for _ in ()).throw(KeyboardInterrupt(message))
+        return original(*args, **kwargs)
 
-    def fail_second_commit(root_arg, path, *args, **kwargs):
-        if Path(path) == second:
-            raise OSError("controlled commit failure")
-        return commit_publish(root_arg, path, *args, **kwargs)
+    monkeypatch.setattr(checkpoint_undo_io, "atomic_write_bytes_confined", interrupt)
+    with pytest.raises(KeyboardInterrupt, match=message):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+    _assert_working(first, second)
 
-    def interrupt_after_extra_publication(root_arg, path, *args, **kwargs):
-        nonlocal rollback_calls
-        result = rollback_publish(root_arg, path, *args, **kwargs)
-        if Path(path) == extra:
-            rollback_calls += 1
-            raise KeyboardInterrupt("controlled post-publication removal interrupt")
+
+def test_tg011_unlink_retry_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, checkpoint_id, first, second, _ = _project(tmp_path)
+    first.unlink()
+    _fail_second_commit(monkeypatch, second)
+
+    def interrupt(*args, _original=checkpoint_undo_io.unlink_with_pinned_parent, **kwargs):
+        _original(*args, **kwargs)
+        raise KeyboardInterrupt("rollback unlink window")
+
+    monkeypatch.setattr(checkpoint_undo_io, "unlink_with_pinned_parent", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="rollback unlink window"):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+    assert (first.exists(), second.read_bytes()) == (False, b"working-b\n")
+
+
+def test_tg011_phase_replay_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, checkpoint_id, first, second, extra = _project(tmp_path, extra=True)
+    _fail_second_commit(monkeypatch, second)
+    calls = 0
+
+    def interrupt(*args, _original=checkpoint_store.rollback_overwrites, **kwargs):
+        nonlocal calls
+        result = _original(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            raise KeyboardInterrupt("rollback phase boundary")
         return result
 
-    monkeypatch.setattr(checkpoint_store, "publish_restored_file", fail_second_commit)
-    monkeypatch.setattr(
-        checkpoint_undo_io, "publish_restored_file", interrupt_after_extra_publication
-    )
-
-    with pytest.raises(KeyboardInterrupt, match="controlled post-publication removal interrupt"):
-        checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
-
-    assert rollback_calls == 1
-    assert first.read_bytes() == b"working-a\n"
-    assert second.read_bytes() == b"working-b\n"
-    assert extra.read_bytes() == b"working-extra\n"
+    monkeypatch.setattr(checkpoint_store, "rollback_overwrites", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="rollback phase boundary"):
+        checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
+    _assert_working(first, second, extra)

@@ -138,6 +138,24 @@ def check_restore_target(
         raise OSError("checkpoint restore target identity changed")
 
 
+def _restored_file_matches(
+    root: Path,
+    path: Path,
+    data: bytes,
+    parent_identity: tuple[int, int],
+) -> bool:
+    validate_confined_parent_prefix(root, path)
+    if dir_identity(path.parent) != parent_identity or not os.path.lexists(path):
+        return False
+    info = path.lstat()
+    identity = (info.st_dev, info.st_ino)
+    check_restore_target(root, path, parent_identity, identity)
+    if info.st_size != len(data) or read_confined(root, path, len(data)) != data:
+        return False
+    check_restore_target(root, path, parent_identity, identity)
+    return True
+
+
 def read_for_rollback(
     root: Path, path: Path, checkpoint_id: str, read: Callable[[Path, str], bytes]
 ) -> tuple[bytes, tuple[int, int], tuple[int, int]]:
@@ -184,14 +202,11 @@ def publish_restored_file(
     expect_absent: bool = False,
     on_new_file_identity: Callable[[tuple[int, int]], None] | None = None,
     on_publication: Callable[[], None] | None = None,
-    on_complete: Callable[[], None] | None = None,
 ) -> None:
     """Restore bytes atomically under the expected parent without writing through hardlinks."""
     _check_pinned_leaf(root, path, expected_parent_identity, expected_file_identity)
     times = (metadata.st_atime_ns, metadata.st_mtime_ns)
     mode = stat.S_IMODE(metadata.st_mode)
-    new_file_identity: list[tuple[int, int] | None] = [None]
-    published_descriptor: list[int | None] = [None]
 
     def preserve_metadata(descriptor: int, temporary: Path) -> None:
         if os.name == "nt":
@@ -205,23 +220,18 @@ def publish_restored_file(
             fchmod(descriptor, mode)
         if on_new_file_identity is not None:
             info = os.fstat(descriptor)
-            new_file_identity[0] = (info.st_dev, info.st_ino)
-            published_descriptor[0] = descriptor
-
-    def record_published_identity() -> None:
-        if on_publication is not None:
-            on_publication()
-        if on_new_file_identity is not None:
-            identity = new_file_identity[0]
-            descriptor = published_descriptor[0]
-            if identity is None or descriptor is None:
-                raise OSError("restored file identity was not captured before publication")
-            pinned = _PinnedFileIdentity(identity, _pin_published_file(path, descriptor))
+            pinned = _PinnedFileIdentity(
+                (info.st_dev, info.st_ino), _pin_published_file(temporary, descriptor)
+            )
             try:
                 on_new_file_identity(pinned)
             except BaseException:
                 pinned.close()
                 raise
+
+    def record_published_identity() -> None:
+        if on_publication is not None:
+            on_publication()
 
     atomic_write_bytes_confined(
         root,
@@ -233,8 +243,6 @@ def publish_restored_file(
         expected_file_identity=expected_file_identity,
         after_publish=record_published_identity,
     )
-    if on_complete is not None:
-        on_complete()
 
 
 def rollback_overwrites(
@@ -255,13 +263,11 @@ def rollback_overwrites(
     failures: list[Path] = []
     for entry in reversed(entries):
         path = entry[0]
-        completed = [False]
         _attempt_rollback(
             path,
-            partial(_rollback_overwrite, root, entry, completed),
+            partial(_rollback_overwrite, root, entry),
             failures,
             interruptions,
-            completed,
         )
     return failures
 
@@ -276,7 +282,6 @@ def _rollback_overwrite(
         list[tuple[int, int] | None],
         list[bool],
     ],
-    completed: list[bool],
 ) -> None:
     path, prior_bytes, prior_info, parent_identity, published_identity, publication_state = entry
     expected_file_identity = published_identity[0]
@@ -287,12 +292,26 @@ def _rollback_overwrite(
         # place before treating this entry as untouched.
         if prior_info is not None:
             check_restore_target(
-                root,
-                path,
-                parent_identity,
-                (prior_info.st_dev, prior_info.st_ino),
+                root, path, parent_identity, (prior_info.st_dev, prior_info.st_ino)
             )
         return
+    validate_confined_parent_prefix(root, path)
+    if dir_identity(path.parent) != parent_identity:
+        raise OSError("checkpoint restore target parent changed")
+    if prior_bytes is None:
+        descriptor = getattr(expected_file_identity, "_descriptor", None)
+        if (descriptor is not None and os.fstat(descriptor).st_nlink == 0) or not os.path.lexists(
+            path
+        ):
+            return
+    try:
+        _check_pinned_leaf(root, path, parent_identity, expected_file_identity)
+    except OSError:
+        if prior_bytes is not None and _restored_file_matches(
+            root, path, prior_bytes, parent_identity
+        ):
+            return
+        raise
     if prior_bytes is None:
         unlink_with_pinned_parent(root, path, parent_identity, expected_file_identity)
         return
@@ -305,7 +324,6 @@ def _rollback_overwrite(
         prior_info,
         expected_parent_identity=parent_identity,
         expected_file_identity=expected_file_identity,
-        on_complete=partial(completed.__setitem__, 0, True),
     )
 
 
@@ -314,25 +332,35 @@ def _attempt_rollback(
     operation: Callable[[], None],
     failures: list[Path],
     interruptions: list[BaseException] | None,
-    completed: list[bool],
 ) -> None:
     """Defer catchable interrupts until one rollback step settles."""
+    pending_interruption: BaseException | None = None
+    failed = False
     while True:
         try:
             operation()
+            break
+        except (KeyboardInterrupt, SystemExit) as interruption:
+            if interruptions is None:
+                raise
+            if pending_interruption is None:
+                pending_interruption = interruption
+            continue
+        except OSError:
+            failed = True
+            break
+    while True:
+        try:
+            if failed:
+                failures.append(path)
+            if pending_interruption is not None and interruptions is not None and not interruptions:
+                interruptions.append(pending_interruption)
             return
         except (KeyboardInterrupt, SystemExit) as interruption:
             if interruptions is None:
                 raise
-            if not interruptions:
-                interruptions.append(interruption)
-            if completed[0]:
-                return
-            continue
-        except OSError:
-            pass
-        failures.append(path)
-        return
+            if pending_interruption is None:
+                pending_interruption = interruption
 
 
 def _check_removed_parent(path: Path, identity: tuple[int, int]) -> None:
@@ -355,13 +383,11 @@ def rollback_removes(
     failures: list[Path] = []
     for entry in reversed(entries):
         path = entry[0]
-        completed = [False]
         _attempt_rollback(
             path,
-            partial(_rollback_remove, root, entry, completed),
+            partial(_rollback_remove, root, entry),
             failures,
             interruptions,
-            completed,
         )
     return failures
 
@@ -369,11 +395,12 @@ def rollback_removes(
 def _rollback_remove(
     root: Path,
     entry: tuple[Path, bytes, os.stat_result, tuple[int, int]],
-    completed: list[bool],
 ) -> None:
     path, prior_bytes, prior_info, parent_identity = entry
     check = partial(_check_removed_parent, path, parent_identity)
     check()
+    if _restored_file_matches(root, path, prior_bytes, parent_identity):
+        return
     if os.path.lexists(path):
         current = path.lstat()
         identity = (prior_info.st_dev, prior_info.st_ino)
@@ -394,5 +421,4 @@ def _rollback_remove(
         on_new_file_identity=partial(
             _check_removed_parent_after_publish, path=path, identity=parent_identity
         ),
-        on_complete=partial(completed.__setitem__, 0, True),
     )
