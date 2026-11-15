@@ -1301,6 +1301,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         # failure can recreate a file it already unlinked. Previously the revert had only the path
         # and permanently lost the content.
         committed_removes: list[tuple[Path, bytes, os.stat_result, tuple[int, int]]] = []
+        restored_removes: dict[Path, list[tuple[int, int] | None]] = {}
         committed_overwrites: list[
             tuple[
                 Path,
@@ -1377,7 +1378,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     )
                     if (prior_info.st_dev, prior_info.st_ino) != prior_leaf_identity:
                         raise OSError("checkpoint restore target changed during rollback read")
-                published_identity: list[tuple[int, int] | None] = [None]
+                published_identity: list[tuple[int, int] | None] = [None, None]
                 publication_state = [False]
                 committed_overwrites.append((
                     target,
@@ -1412,8 +1413,30 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 )
 
         except BaseException as original_error:
-            rollback_failures = rollback_overwrites(root, committed_overwrites)
-            rollback_failures.extend(rollback_removes(root, committed_removes))
+            rollback_interruptions: list[BaseException] = []
+            phase_interruption: BaseException | None = None
+            while True:
+                try:
+                    rollback_failures = rollback_overwrites(
+                        root, committed_overwrites, interruptions=rollback_interruptions
+                    )
+                    rollback_failures.extend(
+                        rollback_removes(
+                            root,
+                            committed_removes,
+                            restored_removes,
+                            interruptions=rollback_interruptions,
+                        )
+                    )
+                    break
+                except (KeyboardInterrupt, SystemExit) as interruption:
+                    if phase_interruption is None:
+                        phase_interruption = interruption
+            while phase_interruption is not None and not rollback_interruptions:
+                try:
+                    rollback_interruptions.append(phase_interruption)
+                except (KeyboardInterrupt, SystemExit):
+                    continue
             if rollback_failures:
                 failed_path = rollback_failures[0]
                 raise CheckpointUndoUnsafeError(
@@ -1421,10 +1444,15 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     f"restored safely; check {failed_path} before retrying.",
                     path=str(failed_path),
                 ) from original_error
+            if rollback_interruptions:
+                raise rollback_interruptions[0] from original_error
             raise
         finally:
             for _, _, _, _, published_identity, _ in committed_overwrites:
                 close_published_identity(published_identity[0])
+                close_published_identity(published_identity[1])
+            for restored_identity in restored_removes.values():
+                close_published_identity(restored_identity[0])
 
     finally:
         staging_dir_obj.cleanup()
