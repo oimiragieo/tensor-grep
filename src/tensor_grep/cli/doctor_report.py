@@ -32,6 +32,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
@@ -808,6 +809,13 @@ def _doctor_rust_binary_warning(
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     from tensor_grep.cli.frontdoor_hops import probe_env
 
+    if candidate.suffix.lower() == ".ps1":
+        shim_target = powershell_shim_target(candidate)
+        if shim_target is None:
+            return None
+        probe_candidate = shim_target
+    else:
+        probe_candidate = candidate
     env = probe_env()
     if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
@@ -815,7 +823,7 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
         env.pop(key, None)
     try:
         res = _self.subprocess.run(
-            [str(candidate), "--version"],
+            [str(probe_candidate), "--version"],
             capture_output=True,
             env=env,
             stdin=subprocess.DEVNULL,
