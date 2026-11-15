@@ -19,7 +19,11 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
-def iter_top_level_vendored_dirs(paths: list[str], vendored_names: frozenset[str]) -> Iterator[str]:
+def iter_top_level_vendored_dirs(
+    paths: list[str],
+    vendored_names: frozenset[str],
+    follow_symlinks: bool = False,
+) -> Iterator[str]:
     """Yield the on-disk name of every top-level child directory of ``paths`` whose
     lowercased name is in ``vendored_names``.
 
@@ -29,8 +33,8 @@ def iter_top_level_vendored_dirs(paths: list[str], vendored_names: frozenset[str
     rather than raising -- preserving both prior adapters' fail-open-on-cleanup-error policy
     exactly (this is a *diagnostic* probe, not a refusal decision).
 
-    Callers choose their own aggregation: short-circuit on the first item (``bootstrap.py``) or
-    collect/dedupe/sort every item (``main.py``).
+    Callers choose their own aggregation and pass the effective search follow policy. A vendored
+    symlink is irrelevant to a default no-follow scan but must remain guarded when it will be read.
     """
     lower_names = {name.lower() for name in vendored_names}
     for raw_path in paths:
@@ -41,7 +45,11 @@ def iter_top_level_vendored_dirs(paths: list[str], vendored_names: frozenset[str
             if not path.is_dir():
                 continue
             for child in path.iterdir():
-                if not child.is_symlink() and child.is_dir() and child.name.lower() in lower_names:
+                if (
+                    (follow_symlinks or not child.is_symlink())
+                    and child.is_dir()
+                    and child.name.lower() in lower_names
+                ):
                     yield child.name
         except OSError:
             continue
