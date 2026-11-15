@@ -12,6 +12,9 @@ writes and cross-process locks for creation and refresh, and bounds retention wi
 before loading. Files in a snapshot are checked for size/mtime changes; stale
 sessions must be refreshed before reuse.
 
+Retention protects the session being published by the current opening. A later opening can
+evict it when the configured cap is reached.
+
 See `src/tensor_grep/cli/session_store.py` for the storage implementation and
 [the harness API](harness_api.md#session-open-json) for response shapes.
 

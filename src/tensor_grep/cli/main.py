@@ -1416,10 +1416,7 @@ def _execute_find(
     # causes -- walk deadline, --max-repo-files cap, an UNREADABLE subtree, chunking deadline,
     # chunk-count cap, and a per-file parse/read error that doesn't map onto the closed
     # vocabulary at all -- into one `incomplete_reasons` list. `incomplete_reason_class` is a
-    # single field, so first-cause-wins (mirrors `SearchResult`'s own merge convention):
-    # classify whichever of the causes below actually fits the closed vocabulary, and leave it
-    # `None` (never emitted -- see `json_fmt._routing_envelope`) if only an unclassifiable
-    # per-file error occurred.
+    # single field, so first-cause-wins; it stays `None` if only an unclassifiable error occurred.
     #
     # This list is NOT a completeness guarantee. Read it as "the causes wired so far", never as
     # "the causes that exist" -- #284 was exactly this defect: the unreadable-path cause was
@@ -1433,11 +1430,13 @@ def _execute_find(
     walk_unreadable_hit = _UnreadablePathFlag()
     all_files = _iter_repo_files(
         root,
-        max_files=max_repo_files,
+        max_files=max_repo_files + 1,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=walk_deadline_hit,
         unreadable_hit=walk_unreadable_hit,
     )
+    file_limit_hit = len(all_files) > max_repo_files
+    del all_files[max_repo_files:]
 
     if walk_deadline_hit.hit:
         reason = (
@@ -1447,7 +1446,7 @@ def _execute_find(
         incomplete_reasons.append(reason)
         incomplete_reason_class = "deadline"
         sys.stderr.write(f"tg: {reason}\n")
-    elif len(all_files) >= max_repo_files:
+    elif file_limit_hit:
         reason = (
             f"repo walk capped at --max-repo-files={max_repo_files}; the repo may hold more "
             "files -- raise --max-repo-files to widen coverage"

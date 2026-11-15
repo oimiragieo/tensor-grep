@@ -35,26 +35,29 @@ def _select_retained_checkpoints(
     records: list[CheckpointRecord],
     *,
     max_records: int | None = None,
+    preserve_id: str | None = None,
 ) -> tuple[list[CheckpointRecord], list[Path]]:
-    """Bound index records while retaining snapshots whose cleanup ownership is unknown.
+    """Bound records, retaining an optional current writer before newest ``created_at`` records.
 
-    Keep at most ``max_records`` newest records. The empty second result preserves the internal
-    return shape; records from the shared index do not authorize recursive deletion.
-
-    M8: ``created_at`` is stamped BEFORE the caller acquires ``index_lock``, so under
-    concurrent writers the insert (lock-arrival) order does not reliably match creation
-    order -- trusting list position for the ``[:limit]`` cut can prune a genuinely newer
-    checkpoint (the ``checkpoint undo`` safety net) and keep an older one. Re-sort by
-    ``created_at`` (newest first) immediately before slicing.
+    Shared-index paths do not prove directory cleanup ownership; preserve the empty second result.
     """
     limit = _configured_checkpoint_max() if max_records is None else max(1, int(max_records))
     if len(records) <= limit:
         return records, []
-    ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
+    ordered = sorted(
+        records,
+        key=lambda record: (
+            preserve_id is not None and record.checkpoint_id == preserve_id,
+            record.created_at,
+        ),
+        reverse=True,
+    )
     retained = ordered[:limit]
+    if preserve_id is not None:
+        retained.sort(key=lambda record: record.created_at, reverse=True)
     _LOGGER.warning(
-        "checkpoint retention selected %d older index record(s); their directories are retained "
-        "because the shared index cannot prove cleanup ownership",
+        "checkpoint retention selected %d index record(s) outside the retention limit; "
+        "their directories are retained because the shared index cannot prove cleanup ownership",
         len(ordered) - limit,
     )
     return retained, []

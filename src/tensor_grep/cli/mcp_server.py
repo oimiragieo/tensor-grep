@@ -1050,7 +1050,7 @@ def _agent_capsule_error(message: str, *, code: str, query: str, path: str) -> s
 
 
 def _mcp_capabilities_payload() -> dict[str, Any]:
-    native_tg, native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg, native_error = _self._resolve_native_tg_binary_for_mcp()
     native_tg_payload: dict[str, Any] = {
         "available": native_tg is not None,
         "path": None if native_tg is None else str(native_tg),

@@ -1017,7 +1017,7 @@ def sql_command(
         payload["unreadable_paths_count"] = imports_unreadable_hit.count
 
     if json_output:
-        encoded = json.dumps(payload, indent=2).encode("utf-8")
+        encoded = json.dumps(payload, indent=2, default=str).encode("utf-8")
         while len(encoded) + 1 > MAX_PAYLOAD_BYTES and rows:
             rows.pop()
             output_truncated = True
@@ -1027,7 +1027,7 @@ def sql_command(
             payload["truncated"] = True
             payload["result_incomplete"] = True
             payload["partial"] = True
-            encoded = json.dumps(payload, indent=2).encode("utf-8")
+            encoded = json.dumps(payload, indent=2, default=str).encode("utf-8")
         typer.echo(encoded.decode("utf-8"))
     else:
         # LEADING stdout disclosure (task #329 rule): the table below is partial repository data.

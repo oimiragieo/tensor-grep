@@ -280,6 +280,10 @@ def run_command(
     from tensor_grep.core.pipeline import ConfigurationError
     from tensor_grep.core.result import SearchResult, merge_runtime_routing
 
+    if apply and not interactive and filter_regex is not None:
+        print("--filter cannot be combined with --apply.", file=sys.stderr)
+        return 1
+
     if policy is not None and not apply and not interactive:
         print("--policy requires --apply or --interactive.", file=sys.stderr)
         return 1

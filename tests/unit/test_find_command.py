@@ -217,6 +217,21 @@ def test_find_max_repo_files_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> 
     assert payload.get("incomplete_reason_class") == "scan_limit"
 
 
+def test_find_exact_max_repo_files_is_complete(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    _stub_dense_unavailable(monkeypatch)
+    for i in range(2):
+        (tmp_path / f"f{i}.py").write_text(f"def fn_{i}():\n    return {i}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["find", "fn", str(tmp_path), "--max-repo-files", "2", "--json"]
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload.get("result_incomplete") is not True
+    assert payload.get("incomplete_reason_class") is None
+
+
 def test_find_chunk_cap_partial_exit_2(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """C2: the corpus-wide chunk cap trip is PARTIAL COVERAGE (no regex pre-filter narrowed the
     corpus first, unlike `--semantic`) -> result_incomplete + exit 2, never the exit-0 BM25-only

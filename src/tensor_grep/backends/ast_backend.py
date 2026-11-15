@@ -754,6 +754,7 @@ class AstBackend(ComputeBackend):
             lang = config.lang
         else:
             lang = _AST_EXTENSION_LANGUAGES.get(Path(file_path).suffix.lower(), "python")
+        lang = normalize_ast_language(lang)
 
         persistent_cached_result = self._load_persistent_cached_result(
             file_path,
