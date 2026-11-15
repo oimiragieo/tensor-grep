@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from tensor_grep.io.directory_scanner import DirectoryScanner
+from tensor_grep.io.reader_fallback import FallbackReader
 
 
 def test_tg037_gitignore_directory_does_not_abort_scan(tmp_path: Path) -> None:
@@ -13,3 +14,10 @@ def test_tg037_gitignore_directory_does_not_abort_scan(tmp_path: Path) -> None:
     scanner = DirectoryScanner()
 
     assert list(scanner.walk(str(tmp_path))) == [str(source)]
+
+
+def test_tg038_fallback_reader_ignores_directory_input(tmp_path: Path) -> None:
+    directory = tmp_path / "not-a-file.log"
+    directory.mkdir()
+
+    assert list(FallbackReader().read_lines(str(directory))) == []

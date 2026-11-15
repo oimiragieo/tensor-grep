@@ -8,7 +8,7 @@ from tensor_grep.io.base import IOBackend
 
 class FallbackReader(IOBackend):
     def read_lines(self, file_path: str) -> Iterator[str]:
-        if not os.path.exists(file_path):
+        if not os.path.isfile(file_path):
             return
 
         is_gzip = file_path.endswith(".gz")
