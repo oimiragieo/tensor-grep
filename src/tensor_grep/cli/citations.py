@@ -260,6 +260,9 @@ def _match_line_is_citable(match: Any, *, query_pattern: str | None, fixed_strin
         return True
     if getattr(match, "submatches", None):
         return True
+    citation_matched = getattr(match, "citation_matched", None)
+    if citation_matched is not None:
+        return bool(citation_matched)
     if not query_pattern:
         return True
     text = str(getattr(match, "text", ""))
