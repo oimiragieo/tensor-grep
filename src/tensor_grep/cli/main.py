@@ -4368,7 +4368,6 @@ def search_command(
             AST_ENRICH_FILE_LIMIT,
             enrich_match_with_container,
         )
-        from tensor_grep.core.result import MatchLine
 
         unique_files = list(dict.fromkeys(m.file for m in all_results.matches))
         selected_files = set(unique_files[:AST_ENRICH_FILE_LIMIT])
@@ -4380,17 +4379,7 @@ def search_command(
             if m.file in selected_files:
                 container = enrich_match_with_container(m.file, m.line_number, symbols_cache)
                 if container:
-                    m = MatchLine(
-                        line_number=m.line_number,
-                        text=m.text,
-                        file=m.file,
-                        start_byte=m.start_byte,
-                        end_byte=m.end_byte,
-                        range=m.range,
-                        meta_variables=m.meta_variables,
-                        submatches=m.submatches,
-                        container=container,
-                    )
+                    m = dataclasses.replace(m, container=container)
             enriched_matches.append(m)
         all_results.matches = enriched_matches
 
