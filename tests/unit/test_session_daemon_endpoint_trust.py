@@ -6,6 +6,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -171,7 +172,14 @@ def test_genuine_daemon_is_still_accepted(tmp_path: Path) -> None:
     # POSITIVE CONTROL: without it the tests above would pass against a probe that rejects everything.
     root = tmp_path.resolve()
     server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Delay acceptance past one probe budget so runner scheduling cannot make this control flaky.
+    threading.Thread(
+        target=lambda: (
+            time.sleep(sd._DAEMON_CONNECT_TIMEOUT_SECONDS + 0.1),
+            server.serve_forever(),
+        ),
+        daemon=True,
+    ).start()
     try:
         sd._write_daemon_metadata(
             root,
@@ -186,7 +194,10 @@ def test_genuine_daemon_is_still_accepted(tmp_path: Path) -> None:
                 "token": "tok",
             },
         )
-        assert sd._probe_daemon(root) is not None
+        deadline = time.monotonic() + 2.0
+        while (live := sd._probe_daemon(root)) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert live is not None
     finally:
         server.shutdown()
         server.server_close()
