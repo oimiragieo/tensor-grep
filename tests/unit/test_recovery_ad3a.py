@@ -4,6 +4,9 @@ import builtins
 import os
 from pathlib import Path
 
+import pytest
+
+from tensor_grep.cli import lsp_provider_setup
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.io.directory_scanner import DirectoryScanner
 from tensor_grep.io.reader_fallback import FallbackReader
@@ -52,3 +55,28 @@ def test_tg043_missing_psutil_uses_safe_cpu_fallback(monkeypatch) -> None:
     monkeypatch.setattr(builtins, "__import__", block_psutil)
 
     assert manager.get_recommended_chunk_size_mb() == 819
+
+
+def test_tg046_download_failure_closes_destination_fd(tmp_path: Path, monkeypatch) -> None:
+    opened: list[int] = []
+    real_open = os.open
+
+    def tracking_open(*args, **kwargs):
+        fd = real_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def fail_download(*_args, **_kwargs):
+        raise RuntimeError("controlled download failure")
+
+    monkeypatch.setattr(lsp_provider_setup.os, "open", tracking_open)
+    monkeypatch.setattr(lsp_provider_setup.urllib.request, "urlopen", fail_download)
+    destination = tmp_path / "tool.bin"
+
+    with pytest.raises(RuntimeError, match="controlled download failure"):
+        lsp_provider_setup._download("https://example.invalid/tool", destination)
+
+    assert opened
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+    assert not destination.exists()
