@@ -6,11 +6,14 @@ import os
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from tensor_grep.cli import bootstrap, lsp_provider_setup, mcp_server
 from tensor_grep.cli import coverage as coverage_module
-from tensor_grep.cli import lsp_provider_setup, mcp_server
+from tensor_grep.cli import main as cli_main
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
 from tensor_grep.core import cross_encoder_assets, retrieval_chunker, retrieval_fusion
+from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.cross_encoder import apply_cross_encoder
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -45,6 +48,31 @@ def test_tg039_symlinked_vendor_is_not_a_vendored_root(tmp_path: Path) -> None:
     link.symlink_to(target, target_is_directory=True)
 
     assert list(iter_top_level_vendored_dirs([str(root)], frozenset({"vendor"}))) == []
+
+
+def test_tg039_followed_symlinked_vendor_remains_guarded(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "needle.txt").write_text("needle\n", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "vendor").symlink_to(target, target_is_directory=True)
+
+    assert bootstrap._search_args_include_unbounded_broad_scan(["needle", "--follow", str(root)])
+    refused, names = cli_main._should_refuse_unbounded_vendored_root_scan(
+        [str(root)],
+        SearchConfig(follow=True),
+        allow_broad_generated_scan=False,
+        paths_defaulted=False,
+    )
+    assert refused is True
+    assert names == ["vendor"]
+
+    result = CliRunner().invoke(cli_main.app, ["search", "needle", "--follow", str(root)])
+
+    assert result.exit_code == 2
+    assert "broad root scan refused" in result.output
+    assert "--allow-broad-generated-scan" in result.output
 
 
 def test_tg043_missing_psutil_uses_safe_cpu_fallback(monkeypatch) -> None:
@@ -150,6 +178,14 @@ def test_tg052_coverage_classifies_only_expected_path_errors_as_invalid_input(
 
     assert missing_payload["error"]["code"] == "invalid_input"
     assert str(missing) not in missing_payload["error"]["message"]
+    assert "internal error" not in missing_payload["error"]["message"].lower()
+
+    blocker = project / "file.txt"
+    blocker.write_text("not a directory\n", encoding="utf-8")
+    not_directory_payload = json.loads(mcp_server.tg_coverage(str(blocker / "child")))
+
+    assert not_directory_payload["error"]["code"] == "invalid_input"
+    assert "internal error" not in not_directory_payload["error"]["message"].lower()
 
     def fail_unexpected(*_args, **_kwargs):
         raise RuntimeError("unexpected implementation failure")
@@ -158,3 +194,13 @@ def test_tg052_coverage_classifies_only_expected_path_errors_as_invalid_input(
     unexpected_payload = json.loads(mcp_server.tg_coverage(str(project)))
 
     assert unexpected_payload["error"]["code"] == "internal_error"
+
+    for error_type in (FileNotFoundError, NotADirectoryError):
+
+        def fail_nested_path(*_args, _error_type=error_type, **_kwargs):
+            raise _error_type("controlled internal session/cache race")
+
+        monkeypatch.setattr(coverage_module, "check_coverage", fail_nested_path)
+        nested_payload = json.loads(mcp_server.tg_coverage(str(project)))
+
+        assert nested_payload["error"]["code"] == "internal_error"
