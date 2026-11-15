@@ -49,6 +49,7 @@ from tensor_grep.cli.repo_map_cache import (
     _resolved_path_str as _resolved_path_str,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import (
+    _language_coverage_gaps_for_universe,
     answer_empty,
     apply_answer_gaps,
     apply_coverage_gap_incompleteness,
@@ -57,10 +58,6 @@ from tensor_grep.cli.repo_map_coverage_gaps import (
     attach_target_gaps,
     copy_coverage_gap_state,
     inherit_coverage_gap,
-    source_coverage_gaps,
-)
-from tensor_grep.cli.repo_map_coverage_gaps import (
-    language_coverage_gap_remediation as _language_coverage_gap_remediation,
 )
 from tensor_grep.cli.repo_map_gitignore import (
     _gitignore_pattern_to_regex as _gitignore_pattern_to_regex,
@@ -4976,94 +4973,6 @@ def _graph_trust_summary(
             "by_ref_kind": by_ref_kind,
         },
     }
-
-
-from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap  # noqa: E402
-
-
-def _language_coverage_gaps_for_universe(
-    bounded_files: list[Path], scan_root: Path | None = None
-) -> list[dict[str, Any]]:
-    """PATH A Stage 0 honesty floor (additive): label files in the refs/callers scan universe
-    that have no registered ``LanguageSpec`` (or, for a registered language whose grammar is
-    fail-closed with no regex fallback, no usable parser) instead of silently degrading them.
-    Zero behavior change for python/javascript/typescript/rust today -- every file with one of
-    those suffixes always resolves a spec, so this only ever fires for a language tensor-grep's
-    symbol graph does not yet cover (e.g. .kt, .swift) that happens to sit in the scan universe.
-
-    Also covers a NARROWER partial-capability gap (audit #81 #4): a language can be fully
-    registered with a working parser (defs/refs/callers all resolve normally) yet still have
-    ``LanguageSpec.import_update_target is None`` -- Go today (PATH A Stage 2: Java hits this
-    same branch too, but for Java refs/callers are not just import-resolution-incomplete, they
-    are UNIMPLEMENTED entirely -- foundational tier only, see the Java LanguageSpec registration
-    above; `tg refs`/`tg callers` simply find nothing in a Java file rather than resolving
-    normally). Before this fix, that combination fell through the two branches above straight to
-    ``continue``, so a Go-only repo with the grammar installed reported an EMPTY
-    ``resolution_gaps`` even though
-    ``_build_import_graph_consumers_from_map`` can never produce a single reverse-import edge for
-    it -- indistinguishable from "genuinely has zero import-graph consumers". The third branch
-    below flags that combination explicitly so `tg callers`/`tg blast-radius` stay honest about
-    it instead of reading as a proven-zero.
-    """
-    gaps_by_language: dict[str, dict[str, Any]] = {}
-    for current in bounded_files:
-        spec = lang_registry.spec_for_path(current)
-        fail_closed = False
-        import_resolution_only = False
-        if spec is None:
-            language = _provider_language_for_path(current) or (
-                current.suffix.lstrip(".").lower() or "unknown"
-            )
-            reason = "no registered language extractor for this file suffix"
-        elif spec.parser_for_path is not None and spec.parser_for_path(current) is None:
-            # Only a genuine gap for a language that FAILS CLOSED with no fallback when its
-            # grammar is missing (Stage 1+ languages like Go). None of the 4 current languages
-            # set this: JS/TS/Rust always fall back to regex-heuristic extraction, so this
-            # branch is unreachable for them today and only matters for future registrations.
-            if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:
-                language = spec.language_id
-                reason = (
-                    "required parser/grammar is not installed for this language and it has no "
-                    "regex fallback (fail-closed)"
-                )
-                fail_closed = True
-            else:
-                continue
-        elif spec.import_update_target is None:
-            language = spec.language_id
-            reason = (
-                "registered language extractor has no reverse-import resolver -- "
-                "import_graph_consumers can never be computed for this language"
-            )
-            import_resolution_only = True
-        else:
-            continue
-        entry = gaps_by_language.setdefault(
-            language,
-            {
-                "language": language,
-                "reason": reason,
-                "files_affected": 0,
-                "remediation": _language_coverage_gap_remediation(
-                    language,
-                    fail_closed=fail_closed,
-                    import_resolution_only=import_resolution_only,
-                ),
-                "affects_completeness": "when_empty" if fail_closed else "never",
-            },
-        )
-        entry["files_affected"] += 1
-    # A JS/TS scan rooted BELOW its tsconfig.json silently stops resolving path aliases, so
-    # import_graph_consumers under-reports with no stated cause. Disclose it as a real gap.
-    scope_gap = js_ts_scope_gap(bounded_files, scan_root)
-    if scope_gap is not None:
-        gaps_by_language.setdefault(
-            str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}
-        )
-    return sorted(
-        [*gaps_by_language.values(), *source_coverage_gaps(bounded_files, scan_root)],
-        key=lambda item: (-int(item["files_affected"]), str(item["language"])),
-    )
 
 
 def _downgrade_graph_trust_summary_for_coverage_gaps(
@@ -11931,6 +11840,7 @@ def build_symbol_defs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
     if not definitions:
         payload["no_match"] = True
         payload["message"] = f"No exact definition found for symbol {symbol!r}."
@@ -11961,7 +11871,10 @@ def build_symbol_defs_from_map(
         # the same honesty-floor gap here so a defs-only caller gets the hint too.
         gap_files, gap_tests = _repo_map_file_and_test_universe(repo_map)
         resolution_gaps = _language_coverage_gaps_for_universe(
-            [*gap_files, *gap_tests], _repo_map_root_dir(repo_map)
+            [*gap_files, *gap_tests],
+            _repo_map_root_dir(repo_map),
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=coverage_gap_deadline_hit,
         )
         payload["resolution_gaps"] = resolution_gaps
         apply_coverage_gap_incompleteness(payload, resolution_gaps, answer_empty=True)
@@ -11982,7 +11895,16 @@ def build_symbol_defs_from_map(
         payload["related_paths"] = []
         payload["graph_completeness"] = "empty"
     else:
-        attach_found_answer_gaps(payload, repo_map)
+        attach_found_answer_gaps(
+            payload,
+            repo_map,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=coverage_gap_deadline_hit,
+        )
+    if coverage_gap_deadline_hit.hit:
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
     return payload
 
 
@@ -12819,7 +12741,13 @@ def build_symbol_refs_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(
+        bounded_files,
+        repo_root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=coverage_gap_deadline_hit,
+    )
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(references)
     if normalized_provider != "native" and lsp_proof_count == 0 and references:
@@ -12843,7 +12771,7 @@ def build_symbol_refs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
-    if refs_scan_deadline_hit or context_pack_deadline_hit.hit:
+    if refs_scan_deadline_hit or context_pack_deadline_hit.hit or coverage_gap_deadline_hit.hit:
         payload["partial"] = True
         payload["deadline_limit"] = {
             "deadline_exceeded": True,
@@ -13919,6 +13847,7 @@ def build_symbol_callers_from_map(
     # related-test matching, context-pack symbol scoring) pushes wall-clock well past --deadline.
     # Any one of the five breaking early makes this result partial.
     # task #103 Fix 2: context_pack_deadline_hit joins the same fold-in.
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
     if (
         caller_scan_deadline_hit
         or import_graph_consumers_deadline_hit.hit
@@ -13950,7 +13879,16 @@ def build_symbol_callers_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(
+        bounded_files,
+        repo_root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=coverage_gap_deadline_hit,
+    )
+    if coverage_gap_deadline_hit.hit:
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        payload.setdefault("deadline_limit", {})["deadline_exceeded"] = True
     callers_uncertain_paths = _repo_map_graph.uncertain_paths(
         context_payload.get("file_matches", []), related_graph_uncertainty
     )
