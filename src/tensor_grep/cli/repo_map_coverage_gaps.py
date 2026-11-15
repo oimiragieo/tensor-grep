@@ -16,10 +16,13 @@ builders take their `repo_map` helpers through a function-local import.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap
 from tensor_grep.cli.repo_map_cache import _MTIME_CACHE_CLEAR_REGISTRY
 
 _SAMPLE_LIMIT = 5
@@ -86,6 +89,89 @@ def language_coverage_gap_remediation(
     )
 
 
+def _language_coverage_gaps_for_universe(
+    bounded_files: list[Path],
+    scan_root: Path | None = None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+) -> list[dict[str, Any]]:
+    """Disclose unsupported languages, missing parsers, and absent import resolvers."""
+    from tensor_grep.cli import repo_map as _rm
+
+    gaps_by_language: dict[str, dict[str, Any]] = {}
+    deadline_exceeded = False
+    for current in bounded_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            deadline_exceeded = True
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
+        spec = lang_registry.spec_for_path(current)
+        fail_closed = False
+        import_resolution_only = False
+        if spec is None:
+            language = _rm._provider_language_for_path(current) or (
+                current.suffix.lstrip(".").lower() or "unknown"
+            )
+            reason = "no registered language extractor for this file suffix"
+        elif spec.parser_for_path is not None and spec.parser_for_path(current) is None:
+            if spec.provenance_when_missing in {"regex-heuristic", "heuristic"}:
+                continue
+            language = spec.language_id
+            reason = (
+                "required parser/grammar is not installed for this language and it has no "
+                "regex fallback (fail-closed)"
+            )
+            fail_closed = True
+        elif spec.import_update_target is None:
+            language = spec.language_id
+            reason = (
+                "registered language extractor has no reverse-import resolver -- "
+                "import_graph_consumers can never be computed for this language"
+            )
+            import_resolution_only = True
+        else:
+            continue
+        entry = gaps_by_language.setdefault(
+            language,
+            {
+                "language": language,
+                "reason": reason,
+                "files_affected": 0,
+                "remediation": language_coverage_gap_remediation(
+                    language,
+                    fail_closed=fail_closed,
+                    import_resolution_only=import_resolution_only,
+                ),
+                "affects_completeness": "when_empty" if fail_closed else "never",
+            },
+        )
+        entry["files_affected"] += 1
+    if deadline_exceeded:
+        return sorted(
+            gaps_by_language.values(),
+            key=lambda item: (-int(item["files_affected"]), str(item["language"])),
+        )
+    scope_gap = js_ts_scope_gap(bounded_files, scan_root)
+    if scope_gap is not None:
+        gaps_by_language.setdefault(
+            str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}
+        )
+    return sorted(
+        [
+            *gaps_by_language.values(),
+            *source_coverage_gaps(
+                bounded_files,
+                scan_root,
+                deadline_monotonic=deadline_monotonic,
+                deadline_hit=deadline_hit,
+            ),
+        ],
+        key=lambda item: (-int(item["files_affected"]), str(item["language"])),
+    )
+
+
 def _sample_name(path: Path, root: Path | None) -> str:
     if root is not None:
         try:
@@ -116,25 +202,54 @@ def _clear_source_coverage_cache() -> None:
 _MTIME_CACHE_CLEAR_REGISTRY.append(_clear_source_coverage_cache)
 
 
-def _classify(files: list[Path], root: Path | None) -> dict[tuple[str, str], dict[str, Any]]:
+def _classify(
+    files: list[Path],
+    root: Path | None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+) -> dict[tuple[str, str], dict[str, Any]]:
     """Memoised (last universe only): a render loop asks for the same universe many times."""
     global _MEMO
     from tensor_grep.cli import repo_map as _rm
 
-    signature = tuple(
-        _stat_key(current) for current in files if lang_registry.spec_for_path(current) is not None
-    )
+    local_deadline = SimpleNamespace(hit=False)
+    signature_entries: list[tuple[str, int | None, int | None]] = []
+    for current in files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            local_deadline.hit = True
+            break
+        if lang_registry.spec_for_path(current) is not None:
+            signature_entries.append(_stat_key(current))
+    if local_deadline.hit:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return {}
+    signature = tuple(signature_entries)
     key = (_rm._max_parse_bytes(), str(root), signature)
     memo = _MEMO
     if memo is not None and memo[0] == key:
         return memo[1]
-    result = _classify_uncached(files, root)
+    result = _classify_uncached(
+        files,
+        root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=local_deadline,
+    )
+    if local_deadline.hit:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return result
     _MEMO = (key, result)
     return result
 
 
 def _classify_uncached(
-    files: list[Path], root: Path | None
+    files: list[Path],
+    root: Path | None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
 ) -> dict[tuple[str, str], dict[str, Any]]:
     """One pass: bucket every spec-bearing file into at most the causes that hide it."""
     from tensor_grep.cli import repo_map as _rm
@@ -149,6 +264,10 @@ def _classify_uncached(
             bucket["causes"].add(cause)
 
     for current in files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            break
         spec = lang_registry.spec_for_path(current)
         if spec is None:
             continue
@@ -206,9 +325,23 @@ def _entries(
     return sorted(entries, key=lambda item: (-int(item["files_affected"]), str(item["language"])))
 
 
-def source_coverage_gaps(files: list[Path], root: Path | None = None) -> list[dict[str, Any]]:
+def source_coverage_gaps(
+    files: list[Path],
+    root: Path | None = None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+) -> list[dict[str, Any]]:
     """Every file-level coverage gap (parse cap, syntax error, unreadable, lossy decode)."""
-    return _entries(_classify(files, root), set(_REMEDIATION))
+    return _entries(
+        _classify(
+            files,
+            root,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        ),
+        set(_REMEDIATION),
+    )
 
 
 def parse_cap_gap(files: list[Path], root: Path | None = None) -> dict[str, Any] | None:
@@ -329,13 +462,22 @@ def inherit_coverage_gap(payload: dict[str, Any], source: dict[str, Any]) -> boo
     return True
 
 
-def universe_gaps(files: list[Path], root: Path | None) -> list[dict[str, Any]]:
+def universe_gaps(
+    files: list[Path],
+    root: Path | None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+) -> list[dict[str, Any]]:
     """Blocking-capable coverage gaps (grammar missing, parse cap, syntax, unreadable, decode)."""
-    from tensor_grep.cli import repo_map as _rm
-
     return [
         gap
-        for gap in _rm._language_coverage_gaps_for_universe(files, root)
+        for gap in _language_coverage_gaps_for_universe(
+            files,
+            root,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=deadline_hit,
+        )
         if gap.get("affects_completeness") != "never"
     ]
 
@@ -392,12 +534,23 @@ def apply_answer_gaps(payload: dict[str, Any], kind: str) -> None:
     )
 
 
-def attach_found_answer_gaps(payload: dict[str, Any], repo_map: dict[str, Any]) -> None:
+def attach_found_answer_gaps(
+    payload: dict[str, Any],
+    repo_map: dict[str, Any],
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any = None,
+) -> None:
     """Disclose (never block on) the blocking-capable gaps on a FOUND defs answer."""
     from tensor_grep.cli import repo_map as _rm
 
     files, tests = _rm._repo_map_file_and_test_universe(repo_map)
-    gaps = universe_gaps([*files, *tests], _rm._repo_map_root_dir(repo_map))
+    gaps = universe_gaps(
+        [*files, *tests],
+        _rm._repo_map_root_dir(repo_map),
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
     if gaps:
         payload["resolution_gaps"] = gaps
         apply_coverage_gap_incompleteness(payload, gaps, answer_empty=False)
