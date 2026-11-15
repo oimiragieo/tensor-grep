@@ -347,10 +347,14 @@ class CuDFBackend(ComputeBackend):
         """
         if config is None or config.max_count is None:
             return result
+        if config.max_count == 0:
+            return dataclasses.replace(result, matches=[], total_files=0, total_matches=0)
         if len(result.matches) <= config.max_count:
             return result
         kept = sorted(result.matches, key=lambda match: match.line_number)[: config.max_count]
-        return dataclasses.replace(result, matches=kept, total_matches=len(kept))
+        return dataclasses.replace(
+            result, matches=kept, total_files=int(bool(kept)), total_matches=len(kept)
+        )
 
     def _search_uncapped(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
