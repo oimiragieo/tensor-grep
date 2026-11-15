@@ -9,10 +9,9 @@ SCOPE: this module extracts DEFS + IMPORTS (``php_imports_and_symbols``, the ``.
 AST pass" shape) and ``php_parser_symbol_sources`` (the ``tg source`` companion, mirroring
 ``lang_go.go_parser_symbol_sources``), PLUS (as of Task 10C) in-file AST reference/call extraction
 via ``php_references_and_calls`` (see the "TASK 10C" section below for the full design). The
-remaining cross-file caller-graph fields (``file_imports_symbol_from_definition`` /
-``import_update_target`` / ``prime_repo_context``) stay DEFERRED to a follow-up -- PHP's
-``LanguageSpec`` registers all three of those callables as ``None``, same shape as Java's/C#'s own
-Task 11A-equivalent gap. ``_language_coverage_gaps_for_universe`` in repo_map.py already treats
+cross-file ``file_imports_symbol_from_definition`` field is implemented; ``import_update_target``
+and ``prime_repo_context`` stay DEFERRED to a follow-up and remain ``None`` in PHP's
+``LanguageSpec``. ``_language_coverage_gaps_for_universe`` in repo_map.py already treats
 ``import_update_target is None`` as an honest ``resolution_gaps`` entry (see the "audit #81 #4"
 comment on that function), so `tg callers`/`tg blast-radius` stay honest about PHP's current lack
 of reverse-import (PSR-4/``composer.json``) resolution instead of silently reading as a proven
