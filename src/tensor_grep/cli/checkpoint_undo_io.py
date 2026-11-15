@@ -246,47 +246,78 @@ def rollback_overwrites(
             list[bool],
         ]
     ],
+    *,
+    interruptions: list[BaseException] | None = None,
 ) -> list[Path]:
     failures: list[Path] = []
-    for (
+    for entry in reversed(entries):
+        path = entry[0]
+        _attempt_rollback(path, partial(_rollback_overwrite, root, entry), failures, interruptions)
+    return failures
+
+
+def _rollback_overwrite(
+    root: Path,
+    entry: tuple[
+        Path,
+        bytes | None,
+        os.stat_result | None,
+        tuple[int, int],
+        list[tuple[int, int] | None],
+        list[bool],
+    ],
+) -> None:
+    path, prior_bytes, prior_info, parent_identity, published_identity, publication_state = entry
+    expected_file_identity = published_identity[0]
+    if expected_file_identity is None:
+        if publication_state[0]:
+            raise OSError("Refusing rollback without a pinned published identity")
+        # Publication did not happen, so verify that the original target is still in
+        # place before treating this entry as untouched.
+        if prior_info is not None:
+            check_restore_target(
+                root,
+                path,
+                parent_identity,
+                (prior_info.st_dev, prior_info.st_ino),
+            )
+        return
+    if prior_bytes is None:
+        unlink_with_pinned_parent(root, path, parent_identity, expected_file_identity)
+        return
+    if prior_info is None:
+        raise OSError("Refusing to restore an undo target without captured identities")
+    publish_restored_file(
+        root,
         path,
         prior_bytes,
         prior_info,
-        parent_identity,
-        published_identity,
-        publication_state,
-    ) in reversed(entries):
+        expected_parent_identity=parent_identity,
+        expected_file_identity=expected_file_identity,
+    )
+
+
+def _attempt_rollback(
+    path: Path,
+    operation: Callable[[], None],
+    failures: list[Path],
+    interruptions: list[BaseException] | None,
+) -> None:
+    """Defer catchable interrupts until one rollback step settles."""
+    while True:
         try:
-            expected_file_identity = published_identity[0]
-            if expected_file_identity is None:
-                if publication_state[0]:
-                    raise OSError("Refusing rollback without a pinned published identity")
-                # Publication did not happen, so verify that the original target is still in
-                # place before treating this entry as untouched.
-                if prior_info is not None:
-                    check_restore_target(
-                        root,
-                        path,
-                        parent_identity,
-                        (prior_info.st_dev, prior_info.st_ino),
-                    )
-                continue
-            if prior_bytes is None:
-                unlink_with_pinned_parent(root, path, parent_identity, expected_file_identity)
-                continue
-            if prior_info is None:
-                raise OSError("Refusing to restore an undo target without captured identities")
-            publish_restored_file(
-                root,
-                path,
-                prior_bytes,
-                prior_info,
-                expected_parent_identity=parent_identity,
-                expected_file_identity=expected_file_identity,
-            )
+            operation()
+            return
+        except (KeyboardInterrupt, SystemExit) as interruption:
+            if interruptions is None:
+                raise
+            if not interruptions:
+                interruptions.append(interruption)
+            continue
         except OSError:
-            failures.append(path)
-    return failures
+            pass
+        failures.append(path)
+        return
 
 
 def _check_removed_parent(path: Path, identity: tuple[int, int]) -> None:
@@ -303,33 +334,40 @@ def _check_removed_parent_after_publish(
 def rollback_removes(
     root: Path,
     entries: list[tuple[Path, bytes, os.stat_result, tuple[int, int]]],
+    *,
+    interruptions: list[BaseException] | None = None,
 ) -> list[Path]:
     failures: list[Path] = []
-    for path, prior_bytes, prior_info, parent_identity in reversed(entries):
-        try:
-            check = partial(_check_removed_parent, path, parent_identity)
-            check()
-            if os.path.lexists(path):
-                current = path.lstat()
-                identity = (prior_info.st_dev, prior_info.st_ino)
-                if (current.st_dev, current.st_ino) != identity:
-                    raise OSError("checkpoint removed target was replaced before rollback")
-                check_restore_target(root, path, parent_identity, identity)
-                if read_confined(root, path, prior_info.st_size) != prior_bytes:
-                    raise OSError("checkpoint removed target content changed before rollback")
-                check_restore_target(root, path, parent_identity, identity)
-                continue
-            publish_restored_file(
-                root,
-                path,
-                prior_bytes,
-                prior_info,
-                expected_parent_identity=parent_identity,
-                expect_absent=True,
-                on_new_file_identity=partial(
-                    _check_removed_parent_after_publish, path=path, identity=parent_identity
-                ),
-            )
-        except OSError:
-            failures.append(path)
+    for entry in reversed(entries):
+        path = entry[0]
+        _attempt_rollback(path, partial(_rollback_remove, root, entry), failures, interruptions)
     return failures
+
+
+def _rollback_remove(
+    root: Path, entry: tuple[Path, bytes, os.stat_result, tuple[int, int]]
+) -> None:
+    path, prior_bytes, prior_info, parent_identity = entry
+    check = partial(_check_removed_parent, path, parent_identity)
+    check()
+    if os.path.lexists(path):
+        current = path.lstat()
+        identity = (prior_info.st_dev, prior_info.st_ino)
+        if (current.st_dev, current.st_ino) != identity:
+            raise OSError("checkpoint removed target was replaced before rollback")
+        check_restore_target(root, path, parent_identity, identity)
+        if read_confined(root, path, prior_info.st_size) != prior_bytes:
+            raise OSError("checkpoint removed target content changed before rollback")
+        check_restore_target(root, path, parent_identity, identity)
+        return
+    publish_restored_file(
+        root,
+        path,
+        prior_bytes,
+        prior_info,
+        expected_parent_identity=parent_identity,
+        expect_absent=True,
+        on_new_file_identity=partial(
+            _check_removed_parent_after_publish, path=path, identity=parent_identity
+        ),
+    )

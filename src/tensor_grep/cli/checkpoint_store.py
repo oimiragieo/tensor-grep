@@ -1412,8 +1412,13 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                 )
 
         except BaseException as original_error:
-            rollback_failures = rollback_overwrites(root, committed_overwrites)
-            rollback_failures.extend(rollback_removes(root, committed_removes))
+            rollback_interruptions: list[BaseException] = []
+            rollback_failures = rollback_overwrites(
+                root, committed_overwrites, interruptions=rollback_interruptions
+            )
+            rollback_failures.extend(
+                rollback_removes(root, committed_removes, interruptions=rollback_interruptions)
+            )
             if rollback_failures:
                 failed_path = rollback_failures[0]
                 raise CheckpointUndoUnsafeError(
@@ -1421,6 +1426,8 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
                     f"restored safely; check {failed_path} before retrying.",
                     path=str(failed_path),
                 ) from original_error
+            if rollback_interruptions:
+                raise rollback_interruptions[0] from original_error
             raise
         finally:
             for _, _, _, _, published_identity, _ in committed_overwrites:
