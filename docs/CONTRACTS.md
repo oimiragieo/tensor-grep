@@ -316,6 +316,8 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
 
 - Python checkpoint undo removes files relative to validated parent directories and restores them by atomic replacement, so restoration does not write through a target's hardlink aliases. Failed-undo rollback checks the journaled leaf identity before restoring or deleting and retains recovery data if a different leaf is present. A same-user replacement in the final check-to-rename or check-to-unlink window remains outside the guarantee.
 
+- An interrupted or otherwise incomplete checkpoint undo leaves repository state **UNKNOWN**. There is no automatic retry, replay, or background reclaimer. Do not claim that recovery data or original working bytes were retained unless the returned result and an explicit filesystem inspection establish that fact; inspect the repository and checkpoint state before choosing any manual recovery or retry.
+
 - `tg checkpoint create [PATH] --label TEXT` accepts an optional trimmed label of 1-120 printable
   Unicode characters. The label is carried in create/list JSON and human-readable list output,
   and is persisted in both checkpoint metadata and `index.json`; omitted labels are `null` in new
