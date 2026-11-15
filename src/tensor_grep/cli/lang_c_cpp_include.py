@@ -29,7 +29,9 @@ _INCLUDE_RE = re.compile(
     re.MULTILINE,
 )
 _COMMENT_OR_LITERAL_RE = re.compile(
-    r"//[^\r\n]*|/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+    r'(?P<raw_literal>(?:u8|u|U|L)?R"(?P<raw_delimiter>[^\s()\\]{0,16})\(.*?\)'
+    r'(?P=raw_delimiter)")'
+    r"|//[^\r\n]*|/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
     re.DOTALL,
 )
 
@@ -42,7 +44,7 @@ def iter_include_directives(source: str) -> list[tuple[str, bool]]:
     source = _COMMENT_OR_LITERAL_RE.sub(
         lambda match: (
             "".join("\n" if char == "\n" else " " for char in match.group())
-            if match.group().startswith(("//", "/*"))
+            if match.group("raw_literal") is not None or match.group().startswith(("//", "/*"))
             else match.group()
         ),
         source,
