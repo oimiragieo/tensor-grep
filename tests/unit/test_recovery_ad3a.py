@@ -8,6 +8,7 @@ import pytest
 
 from tensor_grep.cli import lsp_provider_setup
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
+from tensor_grep.core import retrieval_chunker
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -92,3 +93,18 @@ def test_tg048_table_formatter_escapes_tabs_in_cells() -> None:
     row = TableFormatter().format(result).splitlines()[1]
 
     assert row.split("\t") == [r"dir\tname.py", "7", r"needle\ttext"]
+
+
+def test_tg049_mts_and_cts_use_typescript_structural_parser(monkeypatch) -> None:
+    parser = object()
+    tsx_modes: list[bool] = []
+
+    def fake_typescript_parser(*, tsx: bool):
+        tsx_modes.append(tsx)
+        return parser
+
+    monkeypatch.setattr(retrieval_chunker, "_structural_typescript_parser", fake_typescript_parser)
+
+    assert retrieval_chunker._structural_parser_for_path("module.mts") is parser
+    assert retrieval_chunker._structural_parser_for_path("module.cts") is parser
+    assert tsx_modes == [False, False]
