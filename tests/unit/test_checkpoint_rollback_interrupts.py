@@ -5,11 +5,15 @@ import pytest
 from tensor_grep.cli import checkpoint_store, checkpoint_undo_io
 from tensor_grep.io import confined
 
+CASES = "repeat commit replace unlink phase cleanup win_commit win_rollback win_replace win_lookup".split()
 
-@pytest.mark.parametrize("case", ["repeat", "commit", "replace", "unlink", "phase", "cleanup"])
+
+@pytest.mark.parametrize("case", CASES)
 def test_tg011_interrupts(tmp_path, monkeypatch, case):
     if case == "cleanup" and os.name == "nt":
         pytest.skip("POSIX owned-temp cleanup")
+    if case.startswith("win_") and os.name != "nt":
+        pytest.skip("Windows publication interruption")
     (root := tmp_path / "project").mkdir()
     first, second, extra = root / "a.txt", root / "b.txt", root / "extra.txt"
     first.write_bytes(b"snapshot-a\n")
@@ -86,6 +90,36 @@ def test_tg011_interrupts(tmp_path, monkeypatch, case):
             return result
 
         monkeypatch.setattr(checkpoint_store, "rollback_overwrites", interrupt)
+    elif case.startswith("win_"):
+        from tensor_grep.io import windows_publication
+
+        name = "rename_open" if case in {"win_commit", "win_lookup"} else "replace_open"
+        original = getattr(windows_publication, name)
+        interruption = KeyboardInterrupt if case in {"win_commit", "win_lookup"} else SystemExit
+
+        if case == "win_lookup":
+            file_identity = confined._file_identity
+
+            def fail_identity(path):
+                nonlocal calls
+                if calls == 1:
+                    calls += 1
+                    raise OSError("controlled metadata failure")
+                return file_identity(path)
+
+            monkeypatch.setattr(confined, "_file_identity", fail_identity)
+
+        def interrupt(descriptor, path, **kwargs):
+            nonlocal calls
+            original(descriptor, path, **kwargs)
+            if case == "win_lookup":
+                calls = 1
+            if case == "win_replace":
+                first.with_suffix(".replacement").write_bytes(b"working-a\n")
+                os.replace(first.with_suffix(".replacement"), first)
+            raise interruption("post-rename publication window")
+
+        monkeypatch.setattr(windows_publication, name, interrupt)
     else:
 
         def interrupt(path, *args, _unlink=os.unlink, **kwargs):
@@ -98,7 +132,12 @@ def test_tg011_interrupts(tmp_path, monkeypatch, case):
         monkeypatch.setattr(confined.os, "unlink", interrupt)
 
     unsafe = checkpoint_store.CheckpointUndoUnsafeError
-    expected = unsafe if case in {"replace", "unlink"} else KeyboardInterrupt
+    expected = {
+        "win_rollback": SystemExit,
+        "win_replace": unsafe,
+        "replace": unsafe,
+        "unlink": unsafe,
+    }.get(case, KeyboardInterrupt)
     with pytest.raises(expected):
         checkpoint_store.undo_checkpoint(checkpoint_id, str(root))
     assert first.read_bytes() == (b"unrelated\n" if case == "unlink" else b"working-a\n")

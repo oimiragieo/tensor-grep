@@ -85,6 +85,14 @@ def _publish_windows(
     finally:
         try:
             if not published:
+                try:
+                    opened = os.fstat(descriptor)
+                    published = _file_identity(path)[:2] == (opened.st_dev, opened.st_ino)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    published = True
+            if not published:
                 discard_open(descriptor)
         finally:
             os.close(descriptor)
