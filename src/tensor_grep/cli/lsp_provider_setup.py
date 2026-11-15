@@ -224,23 +224,35 @@ def _download(url: str, destination: Path) -> None:
     # close-then-reopen gap exists here for a symlink to be swapped in between the claim and the
     # first byte written.
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(destination, flags, 0o644)
+    raw_fd = os.open(destination, flags, 0o644)
+    fd_to_close: int | None = raw_fd
     total = 0
     try:
-        with urllib.request.urlopen(url, timeout=60) as response, os.fdopen(fd, "wb") as output:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
-                    raise RuntimeError(
-                        f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
-                        f"(possible oversized or malicious response): {url}"
-                    )
-                output.write(chunk)
-    except BaseException:
-        destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+        with urllib.request.urlopen(url, timeout=60) as response:
+            output = os.fdopen(raw_fd, "wb")
+            fd_to_close = None  # ownership transferred to ``output``
+            with output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
+                        raise RuntimeError(
+                            f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
+                            f"(possible oversized or malicious response): {url}"
+                        )
+                    output.write(chunk)
+    except BaseException as error:
+        if fd_to_close is not None:
+            try:
+                os.close(fd_to_close)
+            except OSError as cleanup_error:
+                error.add_note(f"Failed to close partial download: {cleanup_error}")
+        try:
+            destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+        except OSError as cleanup_error:
+            error.add_note(f"Failed to remove partial download: {cleanup_error}")
         raise
 
 
