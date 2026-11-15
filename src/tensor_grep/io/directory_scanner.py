@@ -114,7 +114,7 @@ class DirectoryScanner:
             return None
 
         gitignore = base_path / ".gitignore"
-        if not gitignore.exists():
+        if not gitignore.is_file():
             return None
 
         import pathspec
