@@ -16,7 +16,12 @@ from tensor_grep.cli.session_root import (
     _session_root_for_payload,
     _snapshot_generation,
 )
-from tensor_grep.cli.session_store import _load_session_payload, _write_json_atomic
+from tensor_grep.cli.session_store import (
+    SessionStaleError,
+    _load_session_payload,
+    _write_json_atomic,
+    get_session,
+)
 
 
 def session_prepare(
@@ -28,54 +33,44 @@ def session_prepare(
     root = _session_root_for_payload(session_id, path)
     session_path = _session_payload_path(root, session_id)
 
-    # Lock on the SAME key refresh_session uses for its own payload critical section
-    # (session_store.py) -- this previously locked on `root` itself, a key nothing else in the
-    # session subsystem locks on, so it provided zero mutual exclusion against a concurrent
-    # `tg session refresh` writing the same session_path (Codex Sol delta-verification audit
-    # HIGH finding: "unlocked prepare/refresh read-modify-write race").
+    payload = _load_session_payload(session_id, path)
+    initial_provenance = payload.get("session_provenance")
+
+    # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
+    # decision with the session's CURRENT content identity, not a wall-clock timestamp. A
+    # legacy payload written before this feature existed (or before any refresh recomputed
+    # it) has no `current_generation` yet; derive it from the payload's own `snapshot` rather
+    # than leaving it permanently unknowable, but never invent identity out of thin air.
+    current_generation = payload.get("current_generation")
+    existing_snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
+    if current_generation is None and existing_snapshot:
+        current_generation = _snapshot_generation(existing_snapshot)
+
+    # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): reuse the
+    # session's own repo_map only when its content generation still matches the snapshot.
+    reusable_repo_map: dict[str, Any] | None = None
+    if existing_snapshot and current_generation is not None:
+        if _snapshot_generation(existing_snapshot) == current_generation:
+            candidate_repo_map = payload.get("repo_map")
+            if isinstance(candidate_repo_map, dict):
+                reusable_repo_map = candidate_repo_map
+
+    snapshot = build_prepare_snapshot(path=path, query=query, repo_map=reusable_repo_map)
+    snap_dict = asdict(snapshot)
+    snap_dict["decision_generation"] = current_generation
+    snap_dict["current_generation"] = current_generation
+    snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"
+
+    # Publish under the same lock as refresh, but keep freshness hashing and the cold build out
+    # of the store-wide critical section. The provenance tag covers every mutable session field.
     with index_lock(_index_path(root)):
-        payload = _load_session_payload(session_id, path)
-
-        # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
-        # decision with the session's CURRENT content identity, not a wall-clock timestamp. A
-        # legacy payload written before this feature existed (or before any refresh recomputed
-        # it) has no `current_generation` yet; derive it from the payload's own `snapshot` rather
-        # than leaving it permanently unknowable, but never invent identity out of thin air.
-        current_generation = payload.get("current_generation")
-        existing_snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
-        if current_generation is None:
-            if existing_snapshot:
-                current_generation = _snapshot_generation(existing_snapshot)
-                payload["current_generation"] = current_generation
-
-        # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): reuse the
-        # session's own repo_map instead of paying `build_repo_map`'s full cold scan again, but
-        # ONLY when the payload's stamped `current_generation` still matches a fresh
-        # recomputation of `_snapshot_generation` over the payload's own `snapshot` field -- the
-        # exact identity check AGT-02 established (session_root._snapshot_generation). A legacy
-        # payload with no `current_generation` at all, or one whose stamp has drifted from its
-        # own snapshot, falls back to the existing cold build: never silently serve a map whose
-        # freshness cannot be proven.
-        reusable_repo_map: dict[str, Any] | None = None
-        if existing_snapshot and current_generation is not None:
-            if _snapshot_generation(existing_snapshot) == current_generation:
-                candidate_repo_map = payload.get("repo_map")
-                if isinstance(candidate_repo_map, dict):
-                    reusable_repo_map = candidate_repo_map
-
-        snapshot = build_prepare_snapshot(
-            path=path,
-            query=query,
-            repo_map=reusable_repo_map,
-        )
-        snap_dict = asdict(snapshot)
-        snap_dict["decision_generation"] = current_generation
-        snap_dict["current_generation"] = current_generation
-        snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"
-
-        payload["last_prepare"] = snap_dict
-        seal_session(payload, root)
-        _write_json_atomic(session_path, payload)
+        current_payload = get_session(session_id, path)
+        if current_payload.get("session_provenance") != initial_provenance:
+            raise SessionStaleError("session changed while preparing; retry the prepare request")
+        current_payload["current_generation"] = current_generation
+        current_payload["last_prepare"] = snap_dict
+        seal_session(current_payload, root)
+        _write_json_atomic(session_path, current_payload)
 
     res = dict(snap_dict)
     res["session_id"] = session_id
