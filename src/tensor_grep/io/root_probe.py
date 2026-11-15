@@ -41,11 +41,7 @@ def iter_top_level_vendored_dirs(paths: list[str], vendored_names: frozenset[str
             if not path.is_dir():
                 continue
             for child in path.iterdir():
-                if (
-                    not child.is_symlink()
-                    and child.is_dir()
-                    and child.name.lower() in lower_names
-                ):
+                if not child.is_symlink() and child.is_dir() and child.name.lower() in lower_names:
                     yield child.name
         except OSError:
             continue
