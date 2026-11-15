@@ -4,6 +4,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.cli.main import app
 
 runner = CliRunner()
@@ -29,6 +30,34 @@ def test_search_with_enrich_ast():
         assert "container" in first_match
         assert first_match["container"]["name"] == "outer_function"
         assert first_match["container"]["kind"] in ("function", "def")
+
+
+def test_cpu_enrichment_preserves_regex_citation_evidence(tmp_path, monkeypatch):
+    source = tmp_path / "sample.py"
+    source.write_text("def target_needle():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        CPUBackend,
+        "_rust_match_set",
+        lambda *_args, **_kwargs: [(1, "def target_needle():")],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "target_needle|missing",
+            str(tmp_path),
+            "--cpu",
+            "--enrich-ast",
+            "--citations",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["citations"] == [
+        {"path": "sample.py", "start_line": 1, "end_line": 1}
+    ]
 
 
 def test_bootstrap_cli_search_enrich_ast():
