@@ -148,6 +148,14 @@ def _language_coverage_gaps_for_universe(
             },
         )
         entry["files_affected"] += 1
+    if (
+        not deadline_exceeded
+        and deadline_monotonic is not None
+        and time.monotonic() >= deadline_monotonic
+    ):
+        deadline_exceeded = True
+        if deadline_hit is not None:
+            deadline_hit.hit = True
     if deadline_exceeded:
         return sorted(
             gaps_by_language.values(),
@@ -157,6 +165,13 @@ def _language_coverage_gaps_for_universe(
     if scope_gap is not None:
         gaps_by_language.setdefault(
             str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}
+        )
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return sorted(
+            gaps_by_language.values(),
+            key=lambda item: (-int(item["files_affected"]), str(item["language"])),
         )
     return sorted(
         [
@@ -221,6 +236,12 @@ def _classify(
             break
         if lang_registry.spec_for_path(current) is not None:
             signature_entries.append(_stat_key(current))
+    if (
+        not local_deadline.hit
+        and deadline_monotonic is not None
+        and time.monotonic() >= deadline_monotonic
+    ):
+        local_deadline.hit = True
     if local_deadline.hit:
         if deadline_hit is not None:
             deadline_hit.hit = True

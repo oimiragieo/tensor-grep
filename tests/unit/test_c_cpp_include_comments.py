@@ -11,5 +11,12 @@ def test_comment_markers_in_strings_do_not_hide_live_include() -> None:
     assert iter_include_directives(source) == [("dep.h", False)]
 
 
+def test_comment_markers_in_raw_strings_do_not_hide_live_include() -> None:
+    source = (
+        'const char *s = R"tag(\n#include "decoy.h"\nfoo" /* literal\n)tag";\n#include "dep.h"\n'
+    )
+    assert iter_include_directives(source) == [("dep.h", False)]
+
+
 def test_comment_before_include_is_treated_as_whitespace() -> None:
     assert iter_include_directives("/* note */ #include <dep.h>\n") == [("dep.h", True)]
