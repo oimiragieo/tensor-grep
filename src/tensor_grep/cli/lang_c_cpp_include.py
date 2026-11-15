@@ -28,6 +28,10 @@ _INCLUDE_RE = re.compile(
     r'^[ \t]*#[ \t]*include[ \t]*(?:"([^"]+)"|<([^>]+)>)',
     re.MULTILINE,
 )
+_COMMENT_OR_LITERAL_RE = re.compile(
+    r"//[^\r\n]*|/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+    re.DOTALL,
+)
 
 _SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
@@ -35,6 +39,14 @@ _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
 
 def iter_include_directives(source: str) -> list[tuple[str, bool]]:
     """Return ``(target, is_system)`` pairs for every quote/angle ``#include`` in *source*."""
+    source = _COMMENT_OR_LITERAL_RE.sub(
+        lambda match: (
+            "".join("\n" if char == "\n" else " " for char in match.group())
+            if match.group().startswith(("//", "/*"))
+            else match.group()
+        ),
+        source,
+    )
     results: list[tuple[str, bool]] = []
     for match in _INCLUDE_RE.finditer(source):
         quoted, angled = match.group(1), match.group(2)
