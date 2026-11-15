@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import lsp_provider_setup
+from tensor_grep.cli.formatters.table_fmt import TableFormatter
 from tensor_grep.core.hardware.memory_manager import MemoryManager
+from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
 from tensor_grep.io.reader_fallback import FallbackReader
 from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
@@ -80,3 +82,13 @@ def test_tg046_download_failure_closes_destination_fd(tmp_path: Path, monkeypatc
     with pytest.raises(OSError):
         os.fstat(opened[0])
     assert not destination.exists()
+
+
+def test_tg048_table_formatter_escapes_tabs_in_cells() -> None:
+    result = SearchResult(
+        matches=[MatchLine(line_number=7, file="dir\tname.py", text="needle\ttext")]
+    )
+
+    row = TableFormatter().format(result).splitlines()[1]
+
+    assert row.split("\t") == [r"dir\tname.py", "7", r"needle\ttext"]
