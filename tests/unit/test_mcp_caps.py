@@ -437,6 +437,7 @@ def test_mcp_symbol_impact_exposes_and_forwards_deadline(monkeypatch: pytest.Mon
 
     signature = inspect.signature(mcp_server.tg_symbol_impact)
     assert signature.parameters["deadline"].default is None
+    assert signature.parameters["max_repo_files"].default == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
 
     captured: dict[str, object] = {}
 
@@ -448,9 +449,12 @@ def test_mcp_symbol_impact_exposes_and_forwards_deadline(monkeypatch: pytest.Mon
 
     monkeypatch.setattr(mcp_server, "build_symbol_impact", fake_build_symbol_impact)
 
-    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", ".", deadline=8.5))
+    payload = json.loads(
+        mcp_server.tg_symbol_impact("create_invoice", ".", max_repo_files=17, deadline=8.5)
+    )
 
     assert payload["ok"] is True
+    assert captured["max_repo_files"] == 17
     assert captured["deadline_seconds"] == 8.5
 
 
@@ -468,6 +472,22 @@ def test_mcp_symbol_impact_deadline_defaults_to_none(monkeypatch: pytest.MonkeyP
     mcp_server.tg_symbol_impact("create_invoice", ".")
 
     assert captured["deadline_seconds"] is None
+
+
+def test_tg_impact_forwards_max_repo_files(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.cli import mcp_server
+
+    captured: dict[str, object] = {}
+
+    def fake_symbol_impact(**kwargs: object) -> str:
+        captured.update(kwargs)
+        return "{}"
+
+    monkeypatch.setattr(mcp_server, "tg_symbol_impact", fake_symbol_impact)
+
+    mcp_server.tg_impact(action="impact", symbol="create_invoice", max_repo_files=17)
+
+    assert captured["max_repo_files"] == 17
 
 
 def test_mcp_symbol_refs_exposes_and_forwards_deadline(monkeypatch: pytest.MonkeyPatch) -> None:

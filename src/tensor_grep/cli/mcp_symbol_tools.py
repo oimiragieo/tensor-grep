@@ -169,6 +169,11 @@ def tg_symbol_defs(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = {
+                "status": True,
+                "cause": "error",
+                "budget_remediable": False,
+            }
             return json.dumps(payload, indent=2)
 
         try:
@@ -281,7 +286,11 @@ def tg_symbol_source(
 
 @_register_legacy_tool  # type: ignore
 def tg_symbol_impact(
-    symbol: str, path: str = ".", provider: str = "native", deadline: float | None = None
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float | None = None,
 ) -> str:
     """
     Return likely impacted files and tests for a symbol change.
@@ -290,6 +299,7 @@ def tg_symbol_impact(
         symbol: Exact symbol name to evaluate.
         path: File or directory to inventory.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
             unbounded.
@@ -317,7 +327,7 @@ def tg_symbol_impact(
                         symbol,
                         path,
                         semantic_provider=provider,
-                        max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
+                        max_repo_files=max_repo_files,
                         deadline_seconds=deadline,
                     ),
                     indent=2,

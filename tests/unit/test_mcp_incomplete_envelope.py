@@ -16,6 +16,8 @@ documented in the tensor-grep-architecture-contract skill).
 
 import json
 
+import pytest
+
 from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.cli import mcp_server
 from tensor_grep.cli.incompleteness import unified_incomplete_envelope
@@ -90,6 +92,41 @@ def test_incomplete_envelope_present_on_normally_complete_tool() -> None:
 
 def test_incomplete_envelope_present_on_repo_map() -> None:
     _assert_incomplete_envelope(tg_repo_map("."), "tg_repo_map")
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "kwargs"),
+    [
+        ("tg_symbol_defs", {"symbol": "hello"}),
+        ("tg_repo_map", {}),
+        ("tg_ruleset_scan", {"ruleset": "security"}),
+        ("tg_navigate", {"action": "defs", "symbol": "hello"}),
+        ("tg_impact", {"action": "impact", "symbol": "hello"}),
+        ("tg_scan", {"action": "scan", "ruleset": "security"}),
+        ("tg_audit", {"action": "history"}),
+        (
+            "tg_rewrite",
+            {"action": "plan", "pattern": "x", "replacement": "y", "lang": "python"},
+        ),
+    ],
+)
+def test_refusal_envelope_carries_the_incomplete_object(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, tool_name: str, kwargs: dict[str, object]
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("TG_MCP_ROOT", str(root))
+
+    payload = json.loads(getattr(mcp_server, tool_name)(path=str(outside), **kwargs))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["incomplete"] == {
+        "status": True,
+        "cause": "error",
+        "budget_remediable": False,
+    }
 
 
 def test_incomplete_envelope_present_on_session_open() -> None:

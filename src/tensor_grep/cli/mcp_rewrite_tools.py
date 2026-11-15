@@ -313,6 +313,11 @@ def _ruleset_scan_error(message: str, *, code: str, ruleset: str | None, path: s
     payload["ruleset"] = ruleset
     payload["path"] = str(Path(path).expanduser())
     payload["error"] = {"code": code, "message": message}
+    payload["incomplete"] = {
+        "status": True,
+        "cause": "error",
+        "budget_remediable": False,
+    }
     return json.dumps(payload, indent=2)
 
 
