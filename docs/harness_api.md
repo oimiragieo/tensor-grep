@@ -1592,7 +1592,7 @@ For `tg_query` with `workspace_roots`, citation paths are relative to the MCP ro
 workspace root order in one envelope.
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
-- `tg_symbol_impact(symbol, path=".", deadline=None)`
+- `tg_symbol_impact(symbol, path=".", deadline=None, max_repo_files=2000)`
 - `tg_symbol_refs(symbol, path=".", deadline=None)`
 - `tg_symbol_callers(symbol, path=".", deadline=None)`
 - `tg_symbol_blast_radius(symbol, path=".", max_depth=3, deadline=None)`

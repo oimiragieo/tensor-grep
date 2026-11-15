@@ -289,8 +289,8 @@ def tg_symbol_impact(
     symbol: str,
     path: str = ".",
     provider: str = "native",
-    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     deadline: float | None = None,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Return likely impacted files and tests for a symbol change.
@@ -299,10 +299,10 @@ def tg_symbol_impact(
         symbol: Exact symbol name to evaluate.
         path: File or directory to inventory.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
-        max_repo_files: Maximum repository files to scan before resolving the symbol.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
             unbounded.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.

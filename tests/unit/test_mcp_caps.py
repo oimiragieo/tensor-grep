@@ -457,6 +457,11 @@ def test_mcp_symbol_impact_exposes_and_forwards_deadline(monkeypatch: pytest.Mon
     assert captured["max_repo_files"] == 17
     assert captured["deadline_seconds"] == 8.5
 
+    mcp_server.tg_symbol_impact("create_invoice", ".", "native", 3.25)
+
+    assert captured["max_repo_files"] == mcp_server._DEFAULT_MCP_REPO_SCAN_LIMIT
+    assert captured["deadline_seconds"] == 3.25
+
 
 def test_mcp_symbol_impact_deadline_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     from tensor_grep.cli import mcp_server
