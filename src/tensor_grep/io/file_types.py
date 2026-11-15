@@ -10,7 +10,8 @@ TYPE_EXTENSIONS = {
     "html": ("htm", "html"),
     "java": ("java",),
     "javascript": ("js", "jsx", "mjs", "cjs"),
-    "json": ("json", "jsonl"),
+    "json": ("json", "sarif"),
+    "jsonl": ("jsonl",),
     "kotlin": ("kt", "kts"),
     "lua": ("lua",),
     "markdown": ("md", "markdown"),
@@ -22,8 +23,9 @@ TYPE_EXTENSIONS = {
     "typescript": ("ts", "tsx"),
     "yaml": ("yml", "yaml"),
 }
+TYPE_BASENAMES = {"json": ("composer.lock",)}
 TYPE_ALIASES = {"py": "python", "js": "javascript", "ts": "typescript"}
 BUILTIN_TYPE_LIST = tuple(
-    f"{name}: {', '.join(f'*.{extension}' for extension in extensions)}"
+    f"{name}: {', '.join([*(f'*.{extension}' for extension in extensions), *TYPE_BASENAMES.get(name, ())])}"
     for name, extensions in TYPE_EXTENSIONS.items()
 )

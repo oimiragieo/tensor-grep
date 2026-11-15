@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tensor_grep.core.config import SearchConfig, configured_positive_int
-from tensor_grep.io.file_types import TYPE_ALIASES, TYPE_EXTENSIONS
+from tensor_grep.io.file_types import TYPE_ALIASES, TYPE_BASENAMES, TYPE_EXTENSIONS
 
 # perf (+10% campaign #6 / F2.4): the 5 broad-scan-guard constants below (plus the private
 # `_GENERATED_DIR_NAMES` skip-list they're partly derived from) are now DEFINED in
@@ -368,7 +368,10 @@ class DirectoryScanner:
             matched_type = False
             ext = file_path.suffix.lstrip(".")
             for t in self.config.file_type:
-                if ext in TYPE_EXTENSIONS.get(TYPE_ALIASES.get(t, t), ()):
+                type_name = TYPE_ALIASES.get(t, t)
+                if ext in TYPE_EXTENSIONS.get(
+                    type_name, ()
+                ) or file_path.name in TYPE_BASENAMES.get(type_name, ()):
                     matched_type = True
                     break
             if not matched_type:
@@ -377,7 +380,10 @@ class DirectoryScanner:
         if self.config.type_not:
             ext = file_path.suffix.lstrip(".")
             for t in self.config.type_not:
-                if ext in TYPE_EXTENSIONS.get(TYPE_ALIASES.get(t, t), ()):
+                type_name = TYPE_ALIASES.get(t, t)
+                if ext in TYPE_EXTENSIONS.get(
+                    type_name, ()
+                ) or file_path.name in TYPE_BASENAMES.get(type_name, ()):
                     return False
 
         return True
