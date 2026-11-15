@@ -2108,16 +2108,15 @@ def _should_refuse_unbounded_workspace_root_scan(
 _UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 
-def _root_top_level_vendored_dir_names(paths: list[str]) -> list[str]:
-    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep.
-
-    AGT-06 (Task 08): shares its directory-iteration policy with cli/bootstrap.py's
-    `_search_paths_include_vendored_root` via `io/root_probe.iter_top_level_vendored_dirs` so
-    the two can never drift out of sync.
-    """
+def _root_top_level_vendored_dir_names(
+    paths: list[str], follow_symlinks: bool = False
+) -> list[str]:
+    """One-level vendored-dir probe shared with bootstrap; follows only when search will."""
     from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
 
-    found = set(iter_top_level_vendored_dirs(paths, _UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
+    found = set(
+        iter_top_level_vendored_dirs(paths, _UNBOUNDED_VENDORED_ROOT_DIR_NAMES, follow_symlinks)
+    )
     return sorted(found, key=lambda item: item.lower())
 
 
@@ -2130,7 +2129,7 @@ def _should_refuse_unbounded_vendored_root_scan(
 ) -> tuple[bool, list[str]]:
     if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False, []
-    vendored_dirs = _root_top_level_vendored_dir_names(paths)
+    vendored_dirs = _root_top_level_vendored_dir_names(paths, config.follow)
     return bool(vendored_dirs), vendored_dirs
 
 
