@@ -1,12 +1,14 @@
 """Focused regression coverage for the disjoint AD3A recovery wave."""
 
 import builtins
+import json
 import os
 from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import lsp_provider_setup
+from tensor_grep.cli import coverage as coverage_module
+from tensor_grep.cli import lsp_provider_setup, mcp_server
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
 from tensor_grep.core import cross_encoder_assets, retrieval_chunker, retrieval_fusion
 from tensor_grep.core.cross_encoder import apply_cross_encoder
@@ -134,3 +136,25 @@ def test_tg050_cross_encoder_uses_shared_rrf_constant(monkeypatch) -> None:
 
     assert [match.text for match in result.matches] == ["text2", "text0", "text1", "text3"]
     assert result.rank_fusion["cross_encoder"]["rrf_k"] == 1
+
+
+def test_tg052_coverage_classifies_only_expected_path_errors_as_invalid_input(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    missing = project / "missing.py"
+    monkeypatch.setenv("TG_MCP_ROOT", str(project))
+
+    missing_payload = json.loads(mcp_server.tg_coverage(str(missing)))
+
+    assert missing_payload["error"]["code"] == "invalid_input"
+    assert str(missing) not in missing_payload["error"]["message"]
+
+    def fail_unexpected(*_args, **_kwargs):
+        raise RuntimeError("unexpected implementation failure")
+
+    monkeypatch.setattr(coverage_module, "check_coverage", fail_unexpected)
+    unexpected_payload = json.loads(mcp_server.tg_coverage(str(project)))
+
+    assert unexpected_payload["error"]["code"] == "internal_error"

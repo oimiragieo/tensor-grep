@@ -65,5 +65,10 @@ def coverage_tool(path: str) -> str:
             include_schema_version=False,
         )
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = server._sanitized_tool_error("tg_coverage", exc)
+        code = (
+            "invalid_input"
+            if isinstance(exc, (FileNotFoundError, NotADirectoryError))
+            else "internal_error"
+        )
+        payload["error"] = server._sanitized_tool_error("tg_coverage", exc, code=code)
         return json.dumps(payload, indent=2)
