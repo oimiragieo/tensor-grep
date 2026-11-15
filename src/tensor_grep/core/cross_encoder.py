@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.core import retrieval_fusion
 from tensor_grep.core.pipeline import ConfigurationError
 from tensor_grep.core.result import SearchResult
 
@@ -77,6 +78,7 @@ def apply_cross_encoder(
     if len(scores) != len(candidates) or any(not math.isfinite(s) for s in scores):
         raise BackendExecutionError("native cross-encoder produced invalid scores")
     if candidates:
+        rrf_k = retrieval_fusion.DEFAULT_K
         model_order = sorted(range(len(candidates)), key=lambda index: (-scores[index], index))
         model_positions = {index: position for position, index in enumerate(model_order)}
         # Dense retrieval already contains model evidence. Its stronger prior keeps
@@ -85,7 +87,10 @@ def apply_cross_encoder(
         order = sorted(
             range(len(candidates)),
             key=lambda index: (
-                -(baseline_weight / (61 + index) + 1.0 / (61 + model_positions[index])),
+                -(
+                    baseline_weight / (rrf_k + 1 + index)
+                    + 1.0 / (rrf_k + 1 + model_positions[index])
+                ),
                 index,
             ),
         )
@@ -98,7 +103,7 @@ def apply_cross_encoder(
         "candidates": len(candidates),
         "max_tokens": 256,
         "ranking_policy": "baseline-cross-encoder-rrf",
-        "rrf_k": 60,
+        "rrf_k": retrieval_fusion.DEFAULT_K,
         "baseline_weight": baseline_weight,
     })
     result.rank_fusion = {**(result.rank_fusion or {}), "cross_encoder": metadata}
