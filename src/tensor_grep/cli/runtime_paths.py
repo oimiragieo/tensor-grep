@@ -216,7 +216,11 @@ def _path_binary_candidates(binary_name: str) -> list[Path]:
         if not raw_entry:
             continue
         candidate = Path(raw_entry).expanduser() / binary_name
-        if not candidate.is_file():
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            continue
+        if not is_file:
             continue
         try:
             resolved = candidate.resolve()
@@ -301,8 +305,11 @@ def resolve_native_tg_binary() -> Path | None:
     env_override = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
     if env_override:
         p = Path(env_override).expanduser()
-        if p.is_file():
-            return p.resolve()
+        try:
+            if p.is_file():
+                return p.resolve()
+        except OSError as exc:
+            raise FileNotFoundError(f"Configured binary {p} is not accessible.") from exc
         raise FileNotFoundError(f"Configured binary {p} not found.")
 
     expected_version = _expected_tg_version()

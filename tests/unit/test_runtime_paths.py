@@ -76,6 +76,40 @@ def test_resolve_native_tg_binary_missing_override(tmp_path):
             resolve_native_tg_binary()
 
 
+@pytest.mark.parametrize("override_name", ["TG_NATIVE_TG_BINARY", "TG_MCP_TG_BINARY"])
+def test_inaccessible_native_override_exits_cleanly(monkeypatch, tmp_path, capsys, override_name):
+    from tensor_grep.cli import bootstrap_search_guards
+
+    binary_path = (
+        tmp_path / "n\u00e9\u540d" / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    )
+    original_is_file = Path.is_file
+
+    def denied_is_file(candidate):
+        if candidate == binary_path:
+            raise PermissionError(13, "denied", str(candidate))
+        return original_is_file(candidate)
+
+    monkeypatch.delenv("TG_DISABLE_NATIVE_TG", raising=False)
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setenv(override_name, str(binary_path))
+    monkeypatch.setattr(Path, "is_file", denied_is_file)
+
+    with pytest.raises(SystemExit) as exc_info:
+        bootstrap_search_guards.resolve_native_or_exit()
+
+    assert exc_info.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "Configured binary" in stderr
+    escaped_path = str(binary_path).encode("ascii", "backslashreplace").decode("ascii")
+    assert escaped_path in stderr
+    assert override_name in stderr
+    assert "Traceback" not in stderr
+    assert "PermissionError" not in stderr
+    assert stderr.isascii()
+
+
 def test_resolve_native_tg_binary_can_be_explicitly_disabled(tmp_path):
     binary_path = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
     binary_path.touch()
@@ -428,6 +462,41 @@ def test_resolve_native_tg_binary_skips_python_launcher_and_uses_later_matching_
     resolve_native_tg_binary.cache_clear()
 
     assert resolve_native_tg_binary() == managed_native.resolve()
+
+
+def test_path_binary_candidates_skip_inaccessible_entries(monkeypatch, tmp_path):
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    denied_permission = tmp_path / "denied-permission" / binary_name
+    denied_os_error = tmp_path / "denied-os-error" / binary_name
+    valid_binary = tmp_path / "valid" / binary_name
+    valid_binary.parent.mkdir()
+    valid_binary.write_text("native tg\n", encoding="utf-8")
+
+    original_is_file = Path.is_file
+
+    def guarded_is_file(candidate):
+        if candidate == denied_permission:
+            raise PermissionError(13, "denied", str(candidate))
+        if candidate == denied_os_error:
+            raise OSError(5, "unreadable", str(candidate))
+        return original_is_file(candidate)
+
+    monkeypatch.setattr(Path, "is_file", guarded_is_file)
+    monkeypatch.setenv(
+        "PATH",
+        os.pathsep.join([
+            str(denied_permission.parent),
+            str(valid_binary.parent),
+            str(denied_os_error.parent),
+        ]),
+    )
+
+    assert runtime_paths._path_binary_candidates(binary_name) == [valid_binary.resolve()]
+
+    monkeypatch.setenv(
+        "PATH", os.pathsep.join([str(denied_permission.parent), str(denied_os_error.parent)])
+    )
+    assert runtime_paths._path_binary_candidates(binary_name) == []
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows launcher layout")
