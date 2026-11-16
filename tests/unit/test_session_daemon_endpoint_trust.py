@@ -6,6 +6,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -167,12 +168,19 @@ def test_malformed_planted_port_is_rejected_not_crash(tmp_path: Path) -> None:
     assert sd._probe_daemon(root) is None
 
 
-def test_genuine_daemon_is_still_accepted(tmp_path: Path) -> None:
+def test_genuine_daemon_is_still_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # POSITIVE CONTROL: without it the tests above would pass against a probe that rejects everything.
     root = tmp_path.resolve()
     server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    ready = threading.Event()
+    monkeypatch.setattr(server, "service_actions", ready.set)
+    listener = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    stopper: threading.Thread | None = None
     try:
+        listener.start()
+        assert ready.wait(timeout=5.0)
         sd._write_daemon_metadata(
             root,
             {
@@ -186,10 +194,31 @@ def test_genuine_daemon_is_still_accepted(tmp_path: Path) -> None:
                 "token": "tok",
             },
         )
-        assert sd._probe_daemon(root) is not None
+        real_probe = sd._probe_daemon
+        attempts = 0
+
+        def probe_after_transient_miss(candidate: Path) -> dict[str, Any] | None:
+            nonlocal attempts
+            attempts += 1
+            return None if attempts == 1 else real_probe(candidate)
+
+        monkeypatch.setattr(sd, "_probe_daemon", probe_after_transient_miss)
+        deadline = time.monotonic() + 5.0
+        while (live := sd._probe_daemon(root)) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert live is not None
     finally:
-        server.shutdown()
-        server.server_close()
+        try:
+            if listener.ident is not None and listener.is_alive():
+                stopper = threading.Thread(target=server.shutdown, daemon=True)
+                stopper.start()
+                stopper.join(timeout=5.0)
+        finally:
+            server.server_close()
+            if listener.ident is not None:
+                listener.join(timeout=5.0)
+        assert not listener.is_alive(), "endpoint-trust listener did not settle"
+        assert stopper is None or not stopper.is_alive(), "endpoint-trust shutdown did not settle"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
