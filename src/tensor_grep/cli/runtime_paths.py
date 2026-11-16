@@ -305,8 +305,11 @@ def resolve_native_tg_binary() -> Path | None:
     env_override = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
     if env_override:
         p = Path(env_override).expanduser()
-        if p.is_file():
-            return p.resolve()
+        try:
+            if p.is_file():
+                return p.resolve()
+        except OSError as exc:
+            raise FileNotFoundError(f"Configured binary {p} is not accessible.") from exc
         raise FileNotFoundError(f"Configured binary {p} not found.")
 
     expected_version = _expected_tg_version()
