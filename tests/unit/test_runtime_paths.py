@@ -80,7 +80,9 @@ def test_resolve_native_tg_binary_missing_override(tmp_path):
 def test_inaccessible_native_override_exits_cleanly(monkeypatch, tmp_path, capsys, override_name):
     from tensor_grep.cli import bootstrap_search_guards
 
-    binary_path = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    binary_path = (
+        tmp_path / "n\u00e9\u540d" / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    )
     original_is_file = Path.is_file
 
     def denied_is_file(candidate):
@@ -100,7 +102,8 @@ def test_inaccessible_native_override_exits_cleanly(monkeypatch, tmp_path, capsy
     assert exc_info.value.code == 2
     stderr = capsys.readouterr().err
     assert "Configured binary" in stderr
-    assert str(binary_path) in stderr
+    escaped_path = str(binary_path).encode("ascii", "backslashreplace").decode("ascii")
+    assert escaped_path in stderr
     assert override_name in stderr
     assert "Traceback" not in stderr
     assert "PermissionError" not in stderr
