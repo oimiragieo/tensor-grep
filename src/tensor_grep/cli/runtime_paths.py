@@ -216,7 +216,11 @@ def _path_binary_candidates(binary_name: str) -> list[Path]:
         if not raw_entry:
             continue
         candidate = Path(raw_entry).expanduser() / binary_name
-        if not candidate.is_file():
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            continue
+        if not is_file:
             continue
         try:
             resolved = candidate.resolve()
