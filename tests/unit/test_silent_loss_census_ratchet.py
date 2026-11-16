@@ -210,7 +210,13 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # Content reconciliation now propagates unreadable-source evidence; the final site is gone.
     "session_root.py": 1,
     "ledger_store.py": 1,
-    "runtime_paths.py": 1,
+    # 1 -> 2 by PR #1359: `_path_binary_candidates` scans optional automatic-discovery PATH
+    # entries, not a completeness-reporting result set. An entry that cannot be inspected cannot
+    # be executed; skipping it is fail-closed for that candidate while preserving a later valid
+    # native front door. If every entry is inaccessible the resolver returns None for its existing
+    # fallback/refusal path. Explicit TG_NATIVE_TG_BINARY/TG_MCP_TG_BINARY overrides remain loud
+    # exit-2 configuration errors. Pinned by test_path_binary_candidates_skip_inaccessible_entries.
+    "runtime_paths.py": 2,
     "session_daemon.py": 1,
     # AUDITED F7 Task 11 wave 3 (lang_c_cpp_include.py): two fail-closed confirmation
     # helpers, not a completeness-claiming result set.
