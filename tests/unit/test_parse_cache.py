@@ -98,15 +98,16 @@ def test_caller_scans_share_reads_within_one_reconciled_map(tmp_path: Path, monk
     paths = _build_repo(tmp_path)
     reconciled = repo_map.build_repo_map(paths["root"])
 
-    original_read_bytes = Path.read_bytes
+    original_read_bytes = repo_map.read_content_bytes
     read_counts: dict[str, int] = {}
 
-    def counting_read_bytes(self: Path) -> bytes:
-        key = str(self).replace("\\", "/")
+    def counting_read_bytes(path: str | Path) -> bytes:
+        key = str(path).replace("\\", "/")
         read_counts[key] = read_counts.get(key, 0) + 1
-        return original_read_bytes(self)
+        return original_read_bytes(path)
 
-    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+    # Count the literal/import guard reader. Other stages read text through lang_registry.
+    monkeypatch.setattr(repo_map, "read_content_bytes", counting_read_bytes)
 
     first = repo_map.build_symbol_callers_from_map(reconciled, "create_invoice")
     second = repo_map.build_symbol_callers_from_map(reconciled, "create_invoice")
@@ -124,15 +125,15 @@ def test_file_imports_symbol_from_definition_is_cached(tmp_path: Path, monkeypat
     paths = _build_repo(tmp_path)
     assert hasattr(repo_map._file_imports_symbol_from_definition, "cache_clear")
 
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
     read_calls = {"n": 0}
 
-    def counting_read_text(self: Path, *args: object, **kwargs: object) -> str:
+    def counting_read_bytes(self: Path) -> bytes:
         if str(self).replace("\\", "/").endswith("src/caller_a.py"):
             read_calls["n"] += 1
-        return original_read_text(self, *args, **kwargs)
+        return original_read_bytes(self)
 
-    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
 
     root = str(paths["root"])
     core = str(paths["core"])
