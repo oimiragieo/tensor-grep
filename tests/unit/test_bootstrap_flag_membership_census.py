@@ -131,6 +131,7 @@ _PTH_SITES = {
 _PARSED_SITES = {
     "regex_patterns",
     "engine_selects_pcre2",
+    "effective_rg_follow",
     "explicit_rg_format",
     "strip_noop_rg_format",
 }

@@ -11074,6 +11074,7 @@ fn checkpoint_storage_dir(root: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn checkpoint_snapshot_dir(root: &Path, checkpoint_id: &str) -> PathBuf {
     checkpoint_storage_dir(root)
         .join(checkpoint_id)

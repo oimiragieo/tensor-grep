@@ -59,7 +59,31 @@ use arrow_array::Array;
 use arrow_array::StringArray;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
+use std::path::Path;
 use std::sync::Arc;
+
+#[pyfunction]
+fn _open_search_file_handle(path: &str) -> PyResult<usize> {
+    let file = crate::search_file_open::open_search_file_nofollow(Path::new(path))
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::IntoRawFd;
+        Ok(file.into_raw_fd() as usize)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::IntoRawHandle;
+        Ok(file.into_raw_handle() as usize)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        drop(file);
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "no-follow search open is unsupported on this platform",
+        ))
+    }
+}
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
 #[pyfunction]
@@ -389,6 +413,7 @@ impl RustBackend {
 #[pymodule(gil_used = true)]
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
+    m.add_function(wrap_pyfunction!(_open_search_file_handle, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     m.add_function(wrap_pyfunction!(ast_rewrite_plan_json, m)?)?;

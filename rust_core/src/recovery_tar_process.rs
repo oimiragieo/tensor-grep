@@ -99,14 +99,14 @@ fn quote(value: &OsStr) -> io::Result<Vec<u16>> {
             continue;
         }
         if ch == b'"' as u16 {
-            result.extend(std::iter::repeat(b'\\' as u16).take(slash * 2 + 1));
+            result.extend(std::iter::repeat_n(b'\\' as u16, slash * 2 + 1));
         } else {
-            result.extend(std::iter::repeat(b'\\' as u16).take(slash));
+            result.extend(std::iter::repeat_n(b'\\' as u16, slash));
         }
         slash = 0;
         result.push(ch);
     }
-    result.extend(std::iter::repeat(b'\\' as u16).take(slash * 2));
+    result.extend(std::iter::repeat_n(b'\\' as u16, slash * 2));
     result.push(b'"' as u16);
     Ok(result)
 }
@@ -250,7 +250,7 @@ pub(super) fn extract(archive: &File, stage: &File, timeout: Duration) -> io::Re
         if length == 0 || length > 1024 * 1024 {
             return Err(io::Error::other("attribute list size"));
         }
-        let words = (length + size_of::<usize>() - 1) / size_of::<usize>();
+        let words = length.div_ceil(size_of::<usize>());
         attribute_storage.resize(words, 0);
         attribute_list = attribute_storage.as_mut_ptr().cast();
         if unsafe { InitializeProcThreadAttributeList(attribute_list, 1, 0, &mut length) } == 0 {
@@ -273,8 +273,10 @@ pub(super) fn extract(archive: &File, stage: &File, timeout: Duration) -> io::Re
         {
             return Err(error("set handle list"));
         }
-        let mut startup = StartupInfoEx::default();
-        startup.lpAttributeList = attribute_list;
+        let mut startup = StartupInfoEx {
+            lpAttributeList: attribute_list,
+            ..Default::default()
+        };
         startup.StartupInfo.cb = size_of::<StartupInfoEx>() as u32;
         startup.StartupInfo.dwFlags = USE_STD_HANDLES;
         startup.StartupInfo.hStdInput = input;
@@ -303,7 +305,7 @@ pub(super) fn extract(archive: &File, stage: &File, timeout: Duration) -> io::Re
                 NO_WINDOW | SUSPENDED | EXTENDED_STARTUP | UNICODE_ENVIRONMENT,
                 env.as_mut_ptr().cast(),
                 cwd.as_ptr(),
-                &mut startup.StartupInfo,
+                &startup.StartupInfo,
                 &mut info,
             )
         };

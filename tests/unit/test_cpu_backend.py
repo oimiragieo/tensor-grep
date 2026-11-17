@@ -1473,6 +1473,38 @@ def test_search_refuses_leaf_link_substituted_after_scan(
         )
 
 
+def test_python_file_fallback_refuses_parent_link(tmp_path):
+    import os
+
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("SECRET_BOUNDARY_MARKER\n", encoding="utf-8")
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if os.name != "nt":
+            pytest.skip(f"this environment cannot create a directory symlink: {exc}")
+        import subprocess
+
+        result = subprocess.run(
+            ["cmd", "/C", "mklink", "/J", str(linked_parent), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            pytest.skip(f"this environment cannot create a directory junction: {result.stderr}")
+
+    with pytest.raises(OSError):
+        with _open_search_file(linked_parent / sentinel.name):
+            pytest.fail("opened a file through a linked parent")
+    assert sentinel.read_text(encoding="utf-8") == "SECRET_BOUNDARY_MARKER\n"
+
+
 def test_python_fallback_regex_engine_failure_is_not_clean_no_match(tmp_path):
     """Sol FIX-FIRST (HANDLER-CENSUS-W2-a): regex_str.search failures must not look like no-match.
 

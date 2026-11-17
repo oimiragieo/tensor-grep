@@ -4,6 +4,7 @@ import builtins
 import io
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -207,7 +208,7 @@ def test_tg039_unfollowed_windows_junction_is_not_a_vendored_root(tmp_path: Path
     if completed.returncode != 0:
         pytest.skip(f"cannot create junction on this host: {completed.stderr}")
 
-    assert junction.is_junction()
+    assert junction.lstat().st_reparse_tag == stat.IO_REPARSE_TAG_MOUNT_POINT
     assert list(iter_top_level_vendored_dirs([str(root)], frozenset({"vendor"}))) == []
     assert list(
         iter_top_level_vendored_dirs([str(root)], frozenset({"vendor"}), follow_symlinks=True)

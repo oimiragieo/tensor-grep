@@ -1639,6 +1639,11 @@ def test_population_has_zero_unresolved() -> None:
 _EXPECTED_HELPER_BACKED = {
     ("codemap_pinned.py", "write", "tensor_grep.cli._index_lock.atomic_write_bytes_confined"),
     (
+        "session_resume_service.py",
+        "session_prepare",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
+    ),
+    (
         "codemap_publication.py",
         "publication_lock",
         "tensor_grep.cli._index_lock.atomic_write_bytes_confined",
