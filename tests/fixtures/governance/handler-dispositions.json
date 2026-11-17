@@ -1391,7 +1391,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 891,
+    "lineno": 888,
     "enclosing_symbol": "_decode_line",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1401,7 +1401,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 994,
+    "lineno": 991,
     "enclosing_symbol": "_search_word_line_context_via_rust",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1411,7 +1411,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 1146,
+    "lineno": 1143,
     "enclosing_symbol": "_search_ltl",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
