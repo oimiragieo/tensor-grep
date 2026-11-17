@@ -19,6 +19,9 @@ def _managed_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
     managed_bin.mkdir(parents=True)
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "tensor_grep.cli.managed_runtime_candidate._windows_profile_directory", lambda: home
+    )
 
     source_target = Path(sys.executable).with_name("tg.exe")
     assert source_target.is_file(), "canonical Windows environment must provide tg.exe"
@@ -56,6 +59,26 @@ def _managed_layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pa
         encoding="ascii",
     )
     return home, managed, target
+
+
+def test_doctor_rejects_redirected_managed_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home, _managed, _target = _managed_layout(tmp_path, monkeypatch)
+    managed_root = home / ".tensor-grep"
+    external_root = tmp_path / "external-managed"
+    managed_root.rename(external_root)
+    try:
+        managed_root.symlink_to(external_root, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlink unavailable: {exc}")
+
+    compat = home / "bin" / "tg.ps1"
+    compat.parent.mkdir()
+    external_target = external_root / "bin" / "tg.exe"
+    compat.write_text(f'& "{external_target}" @args\nexit $LASTEXITCODE\n', encoding="ascii")
+
+    assert doctor_report.powershell_shim_target(compat) is None
 
 
 def test_doctor_accepts_installer_managed_and_compatibility_powershell_shims(
