@@ -23,6 +23,7 @@ untyped dict shape by hand.
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -562,10 +563,11 @@ def build_prepare_snapshot(
     deadline_monotonic: float | None = None,
     include_next_action: bool = False,
     repo_map: dict[str, Any] | None = None,
+    _input_validator: Callable[[], None] | None = None,
 ) -> PrepareSnapshotV1:
     """Build a `PrepareSnapshotV1` by calling the existing `_build_prepare_payload` and
     projecting its result onto typed fields. Delegates every computation to that function --
-    this wrapper performs no scanning, ranking, or I/O of its own, so it carries none of
+    this wrapper performs no scanning or ranking of its own, so it carries none of
     `_build_prepare_payload`'s side effects beyond what that function already does (including,
     when `claim=True`, the same advisory ledger claim submission `_build_prepare_payload`
     already performs)."""
@@ -577,6 +579,8 @@ def build_prepare_snapshot(
         include_next_action=include_next_action,
         repo_map=repo_map,
     )
+    if _input_validator is not None:
+        _input_validator()
     return PrepareSnapshotV1(
         version=int(payload.get("version") or 1),
         path=str(payload.get("path") or path),

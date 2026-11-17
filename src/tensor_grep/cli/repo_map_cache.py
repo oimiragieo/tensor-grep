@@ -110,6 +110,14 @@ def _mtime_aware_cache(
 
         @wraps(fn)
         def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
+            # A session prepare must receipt the bytes observed by THIS build. Cached products
+            # carry no proof that the current pathname still names those bytes, so execute the
+            # receipt-aware reader while collection is active. Normal daemon calls retain the
+            # process-global cache behavior unchanged.
+            from tensor_grep.cli.symbols_cache import content_receipts_active
+
+            if content_receipts_active():
+                return fn(path_str, *args, **kwargs)
             mtime_key = _self._mtime_key(path_str)
             cache_key = (
                 path_str,
