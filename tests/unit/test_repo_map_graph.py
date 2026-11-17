@@ -4,6 +4,7 @@ import os
 import time
 
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.symbols_cache import collect_content_receipts
 
 
 def test_reverse_importers_preserves_dotted_and_path_style_import_edges() -> None:
@@ -66,6 +67,39 @@ def test_repo_context_root_caches_obey_entry_cap(tmp_path, monkeypatch) -> None:
     assert str(roots[0]) not in repo_map._RUST_REPO_CONTEXTS
     assert str(roots[1]) in repo_map._RUST_REPO_CONTEXTS
     assert str(roots[2]) in repo_map._RUST_REPO_CONTEXTS
+
+
+def test_repo_context_caches_are_bypassed_and_not_written_during_receipt_collection(
+    tmp_path, monkeypatch
+) -> None:
+    root = tmp_path.resolve()
+    (root / "tsconfig.json").write_text("{}\n", encoding="utf-8")
+    (root / "Cargo.toml").write_text("[workspace]\nmembers = []\n", encoding="utf-8")
+    key = str(root)
+    js_cache = type(repo_map._JS_TS_REPO_CONTEXTS)([
+        (key, {"root": key, "tsconfig": {"poisoned": True}, "re_export_cache": {}})
+    ])
+    rust_cache = type(repo_map._RUST_REPO_CONTEXTS)([
+        (
+            key,
+            {
+                "root": key,
+                "workspace": {"poisoned": True},
+                "mod_tree_cache": {},
+            },
+        )
+    ])
+    monkeypatch.setattr(repo_map, "_JS_TS_REPO_CONTEXTS", js_cache)
+    monkeypatch.setattr(repo_map, "_RUST_REPO_CONTEXTS", rust_cache)
+
+    with collect_content_receipts():
+        js_context = repo_map._js_ts_repo_context(root)
+        rust_context = repo_map._rust_repo_context(root)
+
+    assert js_context["tsconfig"] == {"exists": True, "base_url": None, "paths": []}
+    assert rust_context["workspace"] == {"exists": False, "members": {}}
+    assert js_cache[key]["tsconfig"] == {"poisoned": True}
+    assert rust_cache[key]["workspace"] == {"poisoned": True}
 
 
 def test_reverse_import_pagerank_caps_broad_query_seed_sets() -> None:

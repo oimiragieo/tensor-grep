@@ -13,6 +13,7 @@ from time import monotonic
 from typing import Any, TextIO, cast
 from uuid import uuid4
 
+from tensor_grep.cli import session_content_reconciliation as _reconcile
 from tensor_grep.cli._index_lock import atomic_write_json, index_lock, record_from_entry
 from tensor_grep.cli.agent_capsule import build_agent_capsule_from_map
 from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
@@ -39,7 +40,6 @@ from tensor_grep.cli.repo_map import (
     build_symbol_impact_from_map,
     build_symbol_refs_from_map,
 )
-from tensor_grep.cli.session_content_reconciliation import capture_snapshot, content_digest
 from tensor_grep.cli.session_provenance import (
     SessionPayloadError,
     read_session_payload,
@@ -110,8 +110,10 @@ from tensor_grep.cli.symbols_cache import collect_content_receipts
 from tensor_grep.core.config import configured_positive_int
 
 logger = logging.getLogger(__name__)
+_snapshot_input_paths = _reconcile.snapshot_input_paths
+content_digest = _reconcile.content_digest
 
-# Task #287. Windows ERROR_PATH_NOT_FOUND: a path COMPONENT did not resolve, as opposed to
+# Task #287. ERROR_PATH_NOT_FOUND means a path component, not only the leaf, failed to resolve.
 # ERROR_FILE_NOT_FOUND (2), where the parent resolved and only the file is absent. Both surface as
 # `FileNotFoundError`; only the winerror separates them. `getattr(exc, "winerror", None)` is None
 # on POSIX, so every non-Windows platform keeps the pre-#287 behaviour unchanged -- branch on the
@@ -371,7 +373,7 @@ def _capture_snapshot(
     expected: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Capture bounded content receipts; disclose unreadable or generation-racing files."""
-    return capture_snapshot(
+    return _reconcile.capture_snapshot(
         file_paths,
         limit=_max_parse_bytes(),
         root=root,
@@ -600,7 +602,7 @@ def _new_session_id(root: Path) -> str:
 def _effective_session_max_repo_files(
     requested: int | None,
     payload: dict[str, Any] | None = None,
-) -> int | None:
+) -> int:
     if requested is not None:
         return max(1, int(requested))
     if payload is not None:
@@ -619,23 +621,9 @@ def open_session(
     max_repo_files: int | None = DEFAULT_AGENT_REPO_MAP_LIMIT,
     deadline_monotonic: float | None = None,
 ) -> SessionOpenResult:
-    """Task #304: `deadline_monotonic` defaults to None, which is exactly today's behaviour.
-
-    It exists because this call and the two in `refresh_session` were the only `build_repo_map`
-    sites in the codebase with no time bound at all, while every symbol command already had one.
-    A daemon serving a stale session therefore rebuilt the whole map unbounded, the client hit its
-    own 60s timeout, and the cold path then anchored a FRESH budget -- so the caller's single
-    stated deadline could be exceeded roughly twofold with no disclosure anywhere.
-    """
+    """Open a bounded warm session; one deadline covers map build and snapshot capture."""
     root = _resolve_root(Path(path), must_exist=True)
-    # SCAN THE CALLER'S PATH, STORE AT THE ANCHORED ROOT. These are two different questions and
-    # conflating them is a real regression: once `_resolve_root` anchors a subtree to the project
-    # root (G4.1/G4.2), passing `root` here would silently widen `tg session open src` from
-    # scanning 119 files to scanning 2,226 -- a ~19x blow-up, measured on this repo. A council
-    # seat caught this; the plan that introduced the anchoring did not name it.
-    #
-    # The anchored `root` is still what locates the session store and the daemon, which is the
-    # whole point of the fix. Only the SCAN scope stays where the caller pointed.
+    # Scan the caller's scope while storing beneath the anchored project root; do not widen it.
     scan_target = Path(path).expanduser().resolve()
     if not scan_target.is_dir():
         scan_target = scan_target.parent
@@ -654,7 +642,13 @@ def open_session(
     scan_limit = cast(dict[str, Any] | None, repo_map.get("scan_limit"))
     snapshot_unreadable = _UnreadablePathFlag()
     snapshot = _capture_snapshot(
-        repo_map["related_paths"],
+        _snapshot_input_paths(
+            root,
+            repo_map["related_paths"],
+            content_receipts,
+            max(64, effective_max_repo_files),
+            snapshot_unreadable,
+        ),
         unreadable_hit=snapshot_unreadable,
         root=root,
         deadline_monotonic=deadline_monotonic,
@@ -789,7 +783,13 @@ def refresh_session(
     created_at = str(existing.get("created_at", refreshed_at))
     snapshot_unreadable = _UnreadablePathFlag()  # task #288, see open_session
     snapshot = _capture_snapshot(
-        repo_map["related_paths"],
+        _snapshot_input_paths(
+            root,
+            repo_map["related_paths"],
+            content_receipts,
+            max(64, effective_max_repo_files),
+            snapshot_unreadable,
+        ),
         unreadable_hit=snapshot_unreadable,
         root=root,
         deadline_monotonic=deadline_monotonic,

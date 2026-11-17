@@ -16,7 +16,7 @@ import os
 import sqlite3
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -43,13 +43,22 @@ _CONTENT_RECEIPTS: ContextVar[dict[str, str] | None] = ContextVar(
 _CONTENT_AUTHENTICATED_ROOT: ContextVar[str | None] = ContextVar(
     "tg_content_authenticated_root", default=None
 )
+_CONTENT_AUTHENTICATED_SIZES: ContextVar[dict[str, int] | None] = ContextVar(
+    "tg_content_authenticated_sizes", default=None
+)
+_CONTENT_AUTHENTICATED_SCAN_PATHS: ContextVar[tuple[str, ...] | None] = ContextVar(
+    "tg_content_authenticated_scan_paths", default=None
+)
 CONTENT_ABSENT_RECEIPT = "<absent>"
 CONTENT_PRESENT_RECEIPT = "<present>"
 
 
 @contextmanager
 def collect_content_receipts(
-    *, authenticated_root: str | Path | None = None
+    *,
+    authenticated_root: str | Path | None = None,
+    authenticated_sizes: Mapping[str | Path, int] | None = None,
+    authenticated_scan_paths: Iterable[str | Path] | None = None,
 ) -> Iterator[dict[str, str]]:
     """Let session capture bind metadata to the exact contents used by a build."""
     receipts: dict[str, str] = {}
@@ -57,9 +66,28 @@ def collect_content_receipts(
     root_token = _CONTENT_AUTHENTICATED_ROOT.set(
         content_receipt_key(authenticated_root) if authenticated_root is not None else None
     )
+    normalized_sizes = None
+    if authenticated_sizes is not None:
+        normalized_sizes = {
+            content_receipt_key(path): size
+            for path, size in authenticated_sizes.items()
+            if isinstance(size, int) and not isinstance(size, bool) and size >= 0
+        }
+    sizes_token = _CONTENT_AUTHENTICATED_SIZES.set(normalized_sizes)
+    normalized_scan_paths = None
+    if authenticated_scan_paths is not None:
+        normalized_scan_paths = tuple(
+            {
+                content_receipt_key(path): os.path.abspath(os.fspath(path))
+                for path in authenticated_scan_paths
+            }.values()
+        )
+    scan_paths_token = _CONTENT_AUTHENTICATED_SCAN_PATHS.set(normalized_scan_paths)
     try:
         yield receipts
     finally:
+        _CONTENT_AUTHENTICATED_SCAN_PATHS.reset(scan_paths_token)
+        _CONTENT_AUTHENTICATED_SIZES.reset(sizes_token)
         _CONTENT_AUTHENTICATED_ROOT.reset(root_token)
         _CONTENT_RECEIPTS.reset(token)
 
@@ -73,6 +101,28 @@ def authenticated_content_root() -> Path | None:
     """Return the immutable lexical root selected before receipt collection began."""
     value = _CONTENT_AUTHENTICATED_ROOT.get()
     return Path(value) if value is not None else None
+
+
+def authenticated_content_size(path: str | Path) -> int | None:
+    """Return a signed session-snapshot size, when prepare supplied one for this path."""
+    sizes = _CONTENT_AUTHENTICATED_SIZES.get()
+    return sizes.get(content_receipt_key(path)) if sizes is not None else None
+
+
+def authenticated_content_sizes_active() -> bool:
+    """Whether file-size decisions are bound to an authenticated session snapshot."""
+    return _CONTENT_AUTHENTICATED_SIZES.get() is not None
+
+
+def authenticated_content_size_paths() -> tuple[str, ...] | None:
+    """Return normalized paths whose sizes came from the signed session snapshot."""
+    sizes = _CONTENT_AUTHENTICATED_SIZES.get()
+    return tuple(sizes) if sizes is not None else None
+
+
+def authenticated_scan_paths() -> tuple[str, ...] | None:
+    """Return the signed repo-map file universe with persisted path spelling."""
+    return _CONTENT_AUTHENTICATED_SCAN_PATHS.get()
 
 
 def _digest(data: bytes) -> str:

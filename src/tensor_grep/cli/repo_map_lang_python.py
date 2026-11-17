@@ -589,7 +589,7 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() != ".py":
         return []
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -886,7 +886,7 @@ def _python_sys_path_hack_dirs(path_str: str) -> tuple[str, ...]:
     resolve to the same absolute dirs regardless of which root the caller is scanning from.
     """
     try:
-        file_size = Path(path_str).stat().st_size
+        file_size = _self._file_size_with_receipt(Path(path_str))
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -936,7 +936,9 @@ def _python_sys_path_hack_roots(
     validated: list[Path] = []
     for hacked_dir in _python_sys_path_hack_dirs(str(importer_path)):
         candidate_dir = Path(hacked_dir)
-        if candidate_dir.is_dir() and _self._path_is_relative_to(candidate_dir, normalized_root):
+        if _self._is_dir_with_receipt(candidate_dir) and _self._path_is_relative_to(
+            candidate_dir, normalized_root
+        ):
             validated.append(candidate_dir)
     return tuple(validated)
 
@@ -985,7 +987,7 @@ def _cached_python_candidate_roots(
     # written inside `pkg/main.py` resolves relative to pkg's PARENT, not pkg itself). This
     # covers the common case where no project-root marker file exists at all.
     package_top = importer_path.parent
-    while (package_top / "__init__.py").exists():
+    while _self._is_file_with_receipt(package_top / "__init__.py"):
         parent = package_top.parent
         if parent == package_top:
             break
@@ -1073,7 +1075,9 @@ def _python_module_candidates(
         shadowed = False
         for root in _python_candidate_roots(importer_path, repo_root):
             try:
-                if (root / f"{name}.py").is_file() or (root / name).is_dir():
+                if _self._is_file_with_receipt(root / f"{name}.py") or _self._is_dir_with_receipt(
+                    root / name
+                ):
                     shadowed = True
                     break
             except OSError:

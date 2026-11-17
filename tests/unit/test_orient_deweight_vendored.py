@@ -32,6 +32,7 @@ from tensor_grep.cli.orient_capsule import (
     _detect_vendored_subtrees,
     _file_centrality_scores,
 )
+from tensor_grep.cli.symbols_cache import collect_content_receipts
 
 
 def _rm(root: Path, files: list[Path], imports: dict[Path, list[str]]) -> dict[str, Any]:
@@ -249,6 +250,28 @@ def test_skill_tree_of_pure_markdown_leaf_skills_is_still_deweighted(tmp_path: P
     assert str(skills_dir) in trees
     assert "skill-tree-shape" in trees[str(skills_dir)]["reasons"]
     assert trees[str(skills_dir)]["ignore_glob"] == "core/skills/**"
+
+
+def test_skill_tree_receipts_ignore_unmapped_directory_entries(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    skills_dir = root / "core" / "skills"
+    files = [root / "app.py"]
+    for name in ("alpha", "beta", "gamma"):
+        leaf = skills_dir / name
+        leaf.mkdir(parents=True)
+        skill_md = leaf / "SKILL.md"
+        skill_md.write_text(f"# {name}\n")
+        files.append(skill_md)
+    transient_package = skills_dir / "transient"
+    transient_package.mkdir()
+    (transient_package / "__init__.py").write_text("value = 1\n")
+    rm = _rm(root, files, {})
+
+    assert _detect_vendored_subtrees(rm) == {}
+    with collect_content_receipts(authenticated_root=root):
+        trees = _detect_vendored_subtrees(rm)
+
+    assert "skill-tree-shape" in trees[str(skills_dir)]["reasons"]
 
 
 def test_skill_tree_deweights_central_score_but_keeps_the_file(tmp_path: Path) -> None:

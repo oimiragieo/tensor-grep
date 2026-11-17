@@ -61,6 +61,25 @@ def test_project_without_any_tsconfig_reports_no_gap(tmp_path: Path) -> None:
     assert js_ts_scope_gap(files) is None
 
 
+def test_unreadable_tsconfig_probe_remains_unresolved(tmp_path: Path, monkeypatch) -> None:
+    root = _project(tmp_path, with_tsconfig=False)
+    source = root / "src" / "app" / "page.tsx"
+    source.write_text("export const x = 1;\n", encoding="utf-8")
+    real_is_file = Path.is_file
+
+    def is_file(path: Path) -> bool:
+        if path.name == "tsconfig.json":
+            raise PermissionError("blocked")
+        return real_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", is_file)
+
+    gap = js_ts_scope_gap([source])
+
+    assert gap is not None
+    assert "UNVERIFIED" in gap["reason"]
+
+
 def test_non_js_ts_universe_reports_no_gap(tmp_path: Path) -> None:
     root = _project(tmp_path)
     files = [root / "src" / "app" / "thing.py"]

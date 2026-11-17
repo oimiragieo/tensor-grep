@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map as _repo_map
+from tensor_grep.cli.symbols_cache import content_receipts_active
 
 _CHARS_PER_TOKEN = 3.5
 
@@ -214,12 +215,12 @@ def _dir_contains_init_py(directory: Path) -> bool:
     Python (sub)package" marker used to REFUSE a STRONG-3 skill-leaf match (see
     ``_is_skill_leaf_tree``). Fail-safe: any OSError reads as "not a package" (False)."""
     try:
-        return (directory / "__init__.py").is_file()
+        return _repo_map._is_file_with_receipt(directory / "__init__.py")
     except OSError:
         return False
 
 
-def _child_has_skill_manifest(child_abs_dir: Path) -> bool:
+def _child_has_skill_manifest(child_abs_dir: Path, known_files: set[Path] | None = None) -> bool:
     """One immediate child of a STRONG-3 ``skills/`` candidate: does it carry its own skill manifest
     (``SKILL.md``/``skill.md``, matched case-insensitively directly inside the child -- NOT
     recursively, mirroring how STRONG-1's own manifest check works)?
@@ -232,9 +233,18 @@ def _child_has_skill_manifest(child_abs_dir: Path) -> bool:
     the common ``from skills.<subpkg> import <Symbol>`` idiom. A folder-per-skill bundle always
     carries a manifest; a Python subpackage never does, so requiring one is unambiguous.
     """
+    if known_files is not None:
+        return any(
+            path.parent == child_abs_dir
+            and path.name.lower() in _SKILL_LEAF_MANIFEST_NAMES
+            and _repo_map._is_file_with_receipt(path)
+            for path in known_files
+        )
     try:
         for entry in child_abs_dir.iterdir():
-            if entry.is_file() and entry.name.lower() in _SKILL_LEAF_MANIFEST_NAMES:
+            if entry.name.lower() in _SKILL_LEAF_MANIFEST_NAMES and _repo_map._is_file_with_receipt(
+                entry
+            ):
                 return True
     except OSError:
         pass
@@ -246,6 +256,8 @@ def _is_skill_leaf_tree(
     tree_files: set[str],
     *,
     reverse_importers: dict[str, set[str]],
+    known_files: set[Path] | None = None,
+    known_child_dirs: set[Path] | None = None,
 ) -> bool:
     """STRONG-3 SHAPE gauntlet for an AMBIGUOUS ``skills``-named directory (see the module comment
     above ``_DEWEIGHT_FACTOR``): unlike an unambiguous ``_STRONG0_VENDOR_DIR_NAMES`` entry, a repo's
@@ -271,15 +283,18 @@ def _is_skill_leaf_tree(
         return False  # imported from outside the tree -- looks like real, shared product code
     if _dir_contains_init_py(abs_dir):
         return False  # `skills/__init__.py` -- this is a real Python package, not a skill bundle
-    try:
-        child_dirs = [entry for entry in abs_dir.iterdir() if entry.is_dir()]
-    except OSError:
-        return False
+    if known_child_dirs is None:
+        try:
+            child_dirs = [entry for entry in abs_dir.iterdir() if entry.is_dir()]
+        except OSError:
+            return False
+    else:
+        child_dirs = sorted(known_child_dirs)
     if not child_dirs:
         return False
     if any(_dir_contains_init_py(child) for child in child_dirs):
         return False  # a child is a real Python subpackage -- not a folder-per-skill bundle
-    leaf_count = sum(1 for child in child_dirs if _child_has_skill_manifest(child))
+    leaf_count = sum(1 for child in child_dirs if _child_has_skill_manifest(child, known_files))
     return (leaf_count / len(child_dirs)) >= _SKILL_LEAF_FRACTION_THRESHOLD
 
 
@@ -353,10 +368,10 @@ def _detect_vendored_subtrees(
     if not path_value:
         return {}
     try:
-        root = Path(str(path_value)).resolve()
+        root = _repo_map._resolved_input_path(str(path_value))
     except OSError:
         return {}
-    if not root.is_dir():
+    if not _repo_map._is_dir_with_receipt(root):
         return {}
 
     all_files = [str(f) for f in rm.get("files", [])]
@@ -385,6 +400,7 @@ def _detect_vendored_subtrees(
     # uninterrupted call (measured). Per-iteration check (mirrors `_build_context_pack_from_map`'s
     # own per-symbol loop): break and keep whatever partial `manifest_dirs` was already found --
     # additive de-weight evidence, so a partial pass under-detects (never mis-detects).
+    receipt_active = content_receipts_active()
     manifest_dirs: dict[Path, str] = {}
     for rel_dir in candidate_dirs:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -394,7 +410,13 @@ def _detect_vendored_subtrees(
         abs_dir = root / rel_dir
         for marker in sorted(_BROAD_WORKSPACE_PROJECT_MARKERS):
             try:
-                if (abs_dir / marker).exists():
+                marker_path = abs_dir / marker
+                present = (
+                    marker != ".git" and _repo_map._is_file_with_receipt(marker_path)
+                    if receipt_active
+                    else marker_path.exists()
+                )
+                if present:
                     manifest_dirs[rel_dir] = marker
                     break
             except OSError:
@@ -461,6 +483,12 @@ def _detect_vendored_subtrees(
     # pathological on WSL 9p mounts (profile 2026-07-11). A file not lexically under root never
     # contributed a candidate dir, so it cannot belong to any detected subtree -- skipping it here is
     # consistent with how the subtrees were found.
+    all_rel_parts: list[tuple[str, tuple[str, ...]]] = []
+    for f in all_files:
+        try:
+            all_rel_parts.append((f, Path(f).relative_to(root).parts))
+        except ValueError:
+            continue
     code_rel_parts: list[tuple[str, tuple[str, ...]]] = []
     for f in code_file_set:
         try:
@@ -474,10 +502,26 @@ def _detect_vendored_subtrees(
         tree_files_for_skill_check = {
             f for f, parts in code_rel_parts if parts[:depth] == rel_dir.parts
         }
+        known_files = (
+            {Path(f) for f, parts in all_rel_parts if parts[:depth] == rel_dir.parts}
+            if receipt_active
+            else None
+        )
+        known_child_dirs = (
+            {
+                root / rel_dir / parts[depth]
+                for _f, parts in all_rel_parts
+                if parts[:depth] == rel_dir.parts and len(parts) > depth + 1
+            }
+            if receipt_active
+            else None
+        )
         if _is_skill_leaf_tree(
             root / rel_dir,
             tree_files_for_skill_check,
             reverse_importers=reverse_importers,
+            known_files=known_files,
+            known_child_dirs=known_child_dirs,
         ):
             skill_leaf_dirs.add(rel_dir)
 
@@ -628,13 +672,15 @@ def _detect_workspace_root(
     Returns ``False`` (never guesses) on a synthetic fixture with no ``path`` key, a non-existent
     directory, or an already-exhausted deadline -- the same "nothing to report" shape every
     sibling detector in this module uses for its own bail-out cases."""
+    if content_receipts_active():
+        return False
     if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
         return False
     path_value = rm.get("path")
     if not path_value:
         return False
     try:
-        root = Path(str(path_value)).resolve()
+        root = _repo_map._resolved_input_path(str(path_value))
     except OSError:
         return False
     if not root.is_dir():

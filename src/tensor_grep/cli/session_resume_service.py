@@ -151,7 +151,30 @@ def session_prepare(
         and scan_limit.get("possibly_truncated") is False
         and "snapshot_unreadable_paths" not in payload
     )
-    with collect_content_receipts(authenticated_root=scan_target) as build_receipts:
+    authenticated_sizes: dict[str | Path, int] = {}
+    for entry in existing_snapshot:
+        entry_path = entry.get("path")
+        entry_size = entry.get("size")
+        if (
+            entry_path
+            and isinstance(entry_size, int)
+            and not isinstance(entry_size, bool)
+            and entry_size >= 0
+        ):
+            authenticated_sizes[content_receipt_key(str(entry_path))] = entry_size
+    authenticated_scan_paths: list[str] = []
+    payload_repo_map = payload.get("repo_map")
+    if isinstance(payload_repo_map, dict):
+        authenticated_scan_paths = [
+            str(current)
+            for current in payload_repo_map.get("related_paths", [])
+            if content_receipt_key(str(current)) in authenticated_sizes
+        ]
+    with collect_content_receipts(
+        authenticated_root=scan_target,
+        authenticated_sizes=authenticated_sizes,
+        authenticated_scan_paths=authenticated_scan_paths,
+    ) as build_receipts:
         snapshot = build_prepare_snapshot(
             path=str(scan_target),
             query=query,
