@@ -21,9 +21,9 @@ class MemoryManager:
         if budget == 0:
             import os
 
-            import psutil
-
             try:
+                import psutil
+
                 system_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
             except Exception:
                 # Fallback to a safe estimate if psutil fails
