@@ -33,6 +33,11 @@ mod recovery_directory_create;
 mod recovery_trusted_parent;
 
 #[cfg(all(windows, target_arch = "x86_64"))]
+#[allow(dead_code)]
+#[path = "../recovery_tar_process.rs"]
+mod recovery_tar_process;
+
+#[cfg(all(windows, target_arch = "x86_64"))]
 #[path = "../recovery_python_tree.rs"]
 mod recovery_python_tree;
 

@@ -41,6 +41,8 @@ def test_standalone_preflight_uses_shared_source_and_pinned_dependencies() -> No
             "Win32_Security_Authorization",
             "Win32_System_LibraryLoader",
             "Win32_System_Threading",
+            "Win32_System_JobObjects",
+            "Win32_System_Pipes",
             "Win32_UI_Shell",
         ],
     }
