@@ -10,9 +10,21 @@ use grep_searcher::{Searcher, Sink};
 
 use crate::safe_write::AnchoredDirectory;
 
+#[derive(Debug)]
+pub(crate) struct NativeSearchOpenFailure(PathBuf);
+
+impl std::fmt::Display for NativeSearchOpenFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to open native search path {}",
+            self.0.display()
+        )
+    }
+}
+
 pub(crate) fn open_native_search_file(path: &Path) -> Result<File> {
-    open_search_file_nofollow(path)
-        .with_context(|| format!("failed to open native search path {}", path.display()))
+    open_search_file_nofollow(path).with_context(|| NativeSearchOpenFailure(path.to_path_buf()))
 }
 
 pub(crate) fn resolve_explicit_search_root(path: &Path) -> Result<PathBuf> {
