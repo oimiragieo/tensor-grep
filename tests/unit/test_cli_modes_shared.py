@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -391,6 +392,36 @@ _FAKE_WALK: dict[str, list[str]] = {}
 
 
 _LAST_PIPELINE_CONFIG = None
+
+
+def _patch_doctor_capture_probe(monkeypatch, fake_run=None):
+    """Keep upgrade fixtures on the contained doctor probe's byte-output seam."""
+
+    def _fake_capture_probe(
+        argv,
+        timeout_seconds,
+        *,
+        env=None,
+        require_success=False,
+    ):
+        if fake_run is None:
+            return b"", b""
+        completed = fake_run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+            env=env,
+            encoding="utf-8",
+            errors="strict",
+            stdin=subprocess.DEVNULL,
+        )
+        if require_success and completed.returncode != 0:
+            return b"", b""
+        return (completed.stdout or "").encode("utf-8"), (completed.stderr or "").encode("utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.doctor_report.capture_probe", _fake_capture_probe)
 
 
 def _patch_cli_dependencies(monkeypatch):
@@ -923,6 +954,7 @@ __all__ = [
     "_patch_cli_dependencies",
     "_patch_direct_native_execution",
     "_patch_direct_wrapper_selection",
+    "_patch_doctor_capture_probe",
     "_route_test_agreeing_target",
     "_strip_ansi",
     "_symlink_or_skip",

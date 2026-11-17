@@ -826,7 +826,7 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     try:
         stdout_bytes, _stderr_bytes = capture_probe(
             [str(probe_candidate), "--version"],
-            2,
+            timeout_seconds=2,
             env=env,
             require_success=True,
         )

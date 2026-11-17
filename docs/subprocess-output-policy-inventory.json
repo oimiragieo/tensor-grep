@@ -484,15 +484,15 @@
     "producer_fingerprint": "6889a5181e4e3f8a24271810a51d25f2f1edd0eb0348f58054e92d00fa49c0db"
   },
   {
-    "identity": "cli/doctor_report.py:_doctor_tg_candidate_version:injected.subprocess.run:39d9da03583dc0bc1d3f90e0d3a98c07043549e10a3840f29f226cad479c8dab:0",
+    "identity": "cli/doctor_report.py:_doctor_tg_candidate_version:capture_probe:5376d4125886167b206df487db5e77a639bdc02ec74154b928fc020911eff09f:0",
     "path": "cli/doctor_report.py",
     "function": "_doctor_tg_candidate_version",
-    "line": 817,
-    "column": 14,
-    "target": "injected.subprocess.run",
+    "line": 826,
+    "column": 38,
+    "target": "capture_probe",
     "policy": "strict-protocol",
     "rationale": "Stdout remains bytes until strict UTF-8 protocol decoding; stderr is separately replacement-decoded for diagnostics.",
-    "text": "False",
+    "text": null,
     "encoding": null,
     "errors": null,
     "universal_newlines": null,
@@ -500,8 +500,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "39d9da03583dc0bc1d3f90e0d3a98c07043549e10a3840f29f226cad479c8dab",
-    "producer_fingerprint": "65fca0f7cb0fe7a28ef6cb683e735d10f9fb8d05fa5f47a15439a17b4a5f7dcd"
+    "call_fingerprint": "5376d4125886167b206df487db5e77a639bdc02ec74154b928fc020911eff09f",
+    "producer_fingerprint": "f4e451d1bcb644dd6f17d171d144f05867a169c49d2a9e1b09e98d19f452428f"
   },
   {
     "identity": "cli/doctor_report.py:_doctor_gpu_search_runtime_probe:injected.subprocess.run:2502852b09033e2a910ea1bf6360aacc44ba96b3338b6f332e6ea1565f7e8c43:0",
