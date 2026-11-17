@@ -950,6 +950,11 @@ struct NativeNdjsonMatch<'a> {
     bytes: Option<String>,
 }
 
+/// Whether retrying through another engine would bypass a failed anchored file open.
+pub fn is_native_search_open_failure(error: &anyhow::Error) -> bool {
+    error.is::<crate::search_file_open::NativeSearchOpenFailure>()
+}
+
 pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     if config.json && config.ndjson {
         return Err(anyhow!(
