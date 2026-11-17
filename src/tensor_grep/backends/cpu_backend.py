@@ -24,6 +24,11 @@ from tensor_grep.core.result import (
     strip_line_terminator,
 )
 
+try:
+    from tensor_grep.rust_core import _open_search_file_handle as _native_open_search_file_handle
+except ImportError:
+    _native_open_search_file_handle = None
+
 logger = logging.getLogger(__name__)
 _CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES"
 _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
@@ -42,31 +47,70 @@ _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
 
 @contextmanager
 def _open_search_file(path: Path) -> Iterator[BinaryIO]:
-    """Read one regular file handle, refusing leaf links and path swaps during open."""
-    initial = path.lstat()
-    if not stat.S_ISREG(initial.st_mode) or getattr(initial, "st_file_attributes", 0) & 0x400:
-        raise OSError(f"refusing non-regular search target: {path}")
-    descriptor = os.open(
-        path,
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0),
-    )
+    """Open one regular file without following any path component."""
+    if _native_open_search_file_handle is None:
+        if os.name == "nt":
+            raise OSError("safe search-file opening requires the native extension on Windows")
+        descriptor = _open_search_file_posix(path)
+    else:
+        try:
+            handle = _native_open_search_file_handle(str(path))
+        except RuntimeError as exc:
+            raise OSError(str(exc)) from exc
+        if os.name == "nt":
+            import msvcrt
+
+            try:
+                descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            except OSError:
+                import ctypes
+
+                close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+                close_handle.argtypes = [ctypes.c_void_p]
+                close_handle.restype = ctypes.c_int
+                close_handle(ctypes.c_void_p(handle))
+                raise
+        else:
+            descriptor = handle
     try:
         opened = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino)
-            or getattr(opened, "st_file_attributes", 0) & 0x400
-        ):
-            raise OSError(f"search target changed during open: {path}")
+        if not stat.S_ISREG(opened.st_mode) or getattr(opened, "st_file_attributes", 0) & 0x400:
+            raise OSError(f"refusing non-regular search target: {path}")
         with os.fdopen(descriptor, "rb") as stream:
             descriptor = -1
             yield stream
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def _open_search_file_posix(path: Path) -> int:
+    if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")):
+        raise OSError("safe parent-directory search opening is unsupported on this platform")
+    target = Path(os.path.abspath(path))
+    directory_flags = (
+        os.O_RDONLY
+        | os.__dict__["O_DIRECTORY"]
+        | os.__dict__["O_NOFOLLOW"]
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    parent_fd = os.open(target.anchor, directory_flags)
+    try:
+        for component in target.parent.parts[1:]:
+            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = child_fd
+        return os.open(
+            target.name,
+            os.O_RDONLY
+            | os.__dict__["O_NOFOLLOW"]
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_fd,
+        )
+    finally:
+        os.close(parent_fd)
 
 
 def compute_native_walk_deadline() -> float:

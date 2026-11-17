@@ -26,6 +26,7 @@ pub struct HandleAcl {
     pub allow_grants: Vec<(String, u32)>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct HandleAclDetails {
     pub(crate) acl: HandleAcl,
     pub(crate) allow_grant_flags: Vec<u8>,
