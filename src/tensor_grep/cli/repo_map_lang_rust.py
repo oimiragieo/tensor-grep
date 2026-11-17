@@ -268,7 +268,7 @@ def _rust_module_candidates(
             )
 
     start = normalized_importer.parent
-    while start.name == "":
+    while start.name == "" and start.parent != start:
         start = start.parent
 
     heuristic_parts = list(parts)

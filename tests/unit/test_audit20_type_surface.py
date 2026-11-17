@@ -10,7 +10,7 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 
 @pytest.mark.parametrize(
     "type_name, filename",
-    [("go", "app.go"), ("json", "events.jsonl"), ("markdown", "readme.markdown")],
+    [("go", "app.go"), ("jsonl", "events.jsonl"), ("markdown", "readme.markdown")],
 )
 def test_advertised_types_select_their_files(tmp_path, type_name, filename):
     (tmp_path / filename).write_text("needle\n", encoding="utf-8")

@@ -14,7 +14,10 @@ compiled Rust extension.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from tensor_grep.cli import repo_map
 
@@ -51,6 +54,13 @@ def test_rust_module_candidates_does_not_crash_on_garbage(tmp_path: Path) -> Non
     )
     # No crash; any returned candidate must be well-formed.
     assert isinstance(candidates, list)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive-root regression")
+def test_rust_module_candidates_stops_at_drive_root() -> None:
+    candidates = repo_map._rust_module_candidates(Path(r"C:\lib.rs"), "foo", Path("C:/"))
+
+    assert {Path(candidate["path"]).name for candidate in candidates} == {"foo.rs", "mod.rs"}
 
 
 def test_is_valid_rust_use_path() -> None:

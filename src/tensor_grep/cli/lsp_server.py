@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
+from lsprotocol.converters import get_converter
 from lsprotocol.types import (
     INITIALIZE,
     TEXT_DOCUMENT_DEFINITION,
@@ -967,18 +968,8 @@ def _workspace_edit_for_symbol(
                 # OR any documentChanges member is opaque. The old `edit_uris and all(...)`
                 # guard collected nothing for file-ops and passed vacuously.
                 if not _workspace_edit_refused(result, workspace_root):
-                    # LSP-EDIT-CONSTRUCTION mismatch (pre-existing, NOT fixed in the M3
-                    # confinement PR): lsprotocol 2025.0.0's WorkspaceEdit field is the
-                    # snake_case `document_changes`, so `WorkspaceEdit(**result)` rejects the
-                    # standard camelCase `documentChanges` a provider actually sends and the
-                    # edit falls through to the native branch. Owner: lsp-change-control.
-                    # Disposition: pre-existing. Reopen trigger: an external provider actually
-                    # sending documentChanges to tg's edit-forward path. An all-in-root
-                    # confined edit is NOT refused by this — it just flows through the
-                    # existing native fallback (pinned by test_fileop_all_in_root_edit_is_
-                    # not_refused_and_still_returns_an_edit).
                     try:
-                        return WorkspaceEdit(**result)
+                        return get_converter().structure(result, WorkspaceEdit)
                     except Exception:
                         pass
     current_repo_map = _get_repo_map(ls, uri)
