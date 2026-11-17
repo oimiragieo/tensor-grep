@@ -16,8 +16,11 @@ convention (argv parsing, ``SearchConfig`` interpretation) untouched in its own 
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
+
+_RG_SHORT_OPTIONS_WITH_VALUES = frozenset("ABCEMdefgjmrtT")
 
 
 def _ripgrep_config_follow_policy() -> bool:
@@ -41,6 +44,12 @@ def _ripgrep_config_follow_policy() -> bool:
                     follow = True
                 elif argument == "--no-follow":
                     follow = False
+                elif argument.startswith("-") and not argument.startswith("--"):
+                    for option in argument[1:]:
+                        if option == "L":
+                            follow = True
+                        if option in _RG_SHORT_OPTIONS_WITH_VALUES:
+                            break
     except (OSError, UnicodeError):
         return False
     return follow
@@ -77,7 +86,8 @@ def iter_top_level_vendored_dirs(
     exactly (this is a *diagnostic* probe, not a refusal decision).
 
     Callers choose their own aggregation and pass the effective search follow policy. A vendored
-    symlink is irrelevant to a default no-follow scan but must remain guarded when it will be read.
+    symlink or Windows directory reparse point is irrelevant to a default no-follow scan but must
+    remain guarded when it will be read.
     """
     lower_names = {name.lower() for name in vendored_names}
     for raw_path in paths:
@@ -88,8 +98,12 @@ def iter_top_level_vendored_dirs(
             if not path.is_dir():
                 continue
             for child in path.iterdir():
+                child_info = child.lstat()
+                is_link = stat.S_ISLNK(child_info.st_mode) or bool(
+                    getattr(child_info, "st_file_attributes", 0) & 0x400
+                )
                 if (
-                    (follow_symlinks or not child.is_symlink())
+                    (follow_symlinks or not is_link)
                     and child.is_dir()
                     and child.name.lower() in lower_names
                 ):

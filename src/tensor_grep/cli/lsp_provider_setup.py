@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 
@@ -212,45 +213,36 @@ def _node_archive_name() -> str:
 
 
 def _download(url: str, destination: Path) -> None:
-    # H2 (#859 class ratchet): `destination` is a caller-supplied PARAMETER (every current caller
-    # happens to pass a path inside its own TemporaryDirectory, but that confinement is not
-    # statically provable from the signature alone -- same "no implicit leniency" reasoning as
-    # ast_workflows._batch_search_snippets). A plain `destination.open("wb")` follows a
-    # pre-existing destination symlink; `atomic_write_bytes_anchored` requires the full payload
-    # in memory (unsuited to a size-capped streaming download), so this claims the destination
-    # name exclusively FIRST -- O_CREAT|O_EXCL|O_NOFOLLOW, mirroring the reviewed
-    # `_download_native_frontdoor_asset` (main.py) pattern -- and then writes through that SAME
-    # held fd for the whole streamed transfer, which is strictly tighter than that precedent: no
-    # close-then-reopen gap exists here for a symlink to be swapped in between the claim and the
-    # first byte written.
+    # Stream through one held descriptor. Windows claims DESTINATION directly and deletes by
+    # opened-object identity on failure. POSIX writes inside a private anchored staging directory
+    # and hard-links the completed file into place, so a failed transfer never needs a racy
+    # stat-then-unlink of the public destination name.
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     parent_fd: int | None = None
-    if is_windows():
-        raw_fd = os.open(destination, flags, 0o644)
-    else:
-        parent_fd = os.open(
-            destination.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        try:
-            raw_fd = os.open(destination.name, flags, 0o644, dir_fd=parent_fd)
-        except BaseException:
-            os.close(parent_fd)
-            raise
-    try:
-        owned = os.fstat(raw_fd)
-    except BaseException as error:
-        for descriptor in (raw_fd, parent_fd):
-            if descriptor is None:
-                continue
-            try:
-                os.close(descriptor)
-            except OSError as close_error:
-                error.add_note(f"Failed to close download handle: {close_error}")
-        raise
+    staging_fd: int | None = None
+    staging_name: str | None = None
+    staging_leaf = "payload"
+    raw_fd = -1
+    owned: os.stat_result | None = None
     failure: BaseException | None = None
-    total = 0
     try:
+        if is_windows():
+            raw_fd = os.open(destination, flags, 0o644)
+        else:
+            parent_fd = os.open(
+                destination.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            staging_name = f".tg-download-{uuid4().hex}"
+            os.mkdir(staging_name, 0o700, dir_fd=parent_fd)
+            staging_fd = os.open(
+                staging_name,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            raw_fd = os.open(staging_leaf, flags, 0o600, dir_fd=staging_fd)
+        owned = os.fstat(raw_fd)
+        total = 0
         with urllib.request.urlopen(url, timeout=60) as response:
             # Keep descriptor ownership here so failure cleanup can validate the opened object.
             with os.fdopen(raw_fd, "wb", closefd=False) as output:
@@ -265,9 +257,18 @@ def _download(url: str, destination: Path) -> None:
                             f"(possible oversized or malicious response): {url}"
                         )
                     output.write(chunk)
+        if staging_fd is not None:
+            assert parent_fd is not None
+            os.link(
+                staging_leaf,
+                destination.name,
+                src_dir_fd=staging_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
     except BaseException as error:
         failure = error
-        if is_windows():
+        if is_windows() and owned is not None:
             # Windows can only reopen/delete the exact identity after releasing this writer.
             try:
                 os.close(raw_fd)
@@ -281,24 +282,28 @@ def _download(url: str, destination: Path) -> None:
                     unlink_open(destination, (owned.st_dev, owned.st_ino))
                 except OSError as cleanup_error:
                     error.add_note(f"Failed to remove owned partial download: {cleanup_error}")
-        else:
-            assert parent_fd is not None
-            try:
-                current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
-                if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
-                    owned.st_dev,
-                    owned.st_ino,
-                ):
-                    raise OSError("partial download leaf identity changed; cleanup refused")
-                os.unlink(destination.name, dir_fd=parent_fd)
-            except OSError as cleanup_error:
-                error.add_note(f"Failed to remove owned partial download: {cleanup_error}")
         raise
     finally:
         close_errors: list[OSError] = []
         if raw_fd >= 0:
             try:
                 os.close(raw_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if staging_fd is not None:
+            try:
+                os.unlink(staging_leaf, dir_fd=staging_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                close_errors.append(exc)
+            try:
+                os.close(staging_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if parent_fd is not None and staging_name is not None:
+            try:
+                os.rmdir(staging_name, dir_fd=parent_fd)
             except OSError as exc:
                 close_errors.append(exc)
         if parent_fd is not None:

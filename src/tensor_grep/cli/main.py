@@ -36,6 +36,7 @@ from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
+from tensor_grep.cli import search_follow_options as _search_follow_options
 from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
@@ -2791,10 +2792,7 @@ def search_command(
     no_binary: bool = typer.Option(
         False, "--no-binary", help="Do not search binary files unless --text is set."
     ),
-    follow: bool = typer.Option(False, "-L", "--follow", help="Follow symbolic links."),
-    no_follow: bool = typer.Option(
-        False, "--no-follow", help="Do not follow symbolic links; useful for config overrides."
-    ),
+    follow: bool | None = _search_follow_options.follow_option(),
     glob: list[str] | None = typer.Option(
         None, "-g", "--glob", help="Include/exclude files matching glob."
     ),
@@ -3277,6 +3275,8 @@ def search_command(
         line_number = sys.stdout.isatty()
 
     from tensor_grep.core.config import SearchConfig
+
+    follow, no_follow = _search_follow_options.resolve_flags(follow)
 
     parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
     _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
