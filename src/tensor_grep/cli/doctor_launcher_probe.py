@@ -56,10 +56,19 @@ def _lexical_path_key(path: Path) -> str:
 
 
 def _same_path(left: Path, right: Path) -> bool:
-    return _path_key(left) == _path_key(right)
+    return _lexical_path_key(left) == _lexical_path_key(right)
 
 
 def _home_directories() -> list[Path]:
+    if os.name == "nt":
+        try:
+            from tensor_grep.cli.managed_runtime_candidate import _windows_profile_directory
+
+            home = _windows_profile_directory()
+        except (OSError, RuntimeError):
+            return []
+        return [home] if home.is_absolute() else []
+
     homes: list[Path] = []
     seen: set[str] = set()
     for env_name in ("USERPROFILE", "HOME"):
