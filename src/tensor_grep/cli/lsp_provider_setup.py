@@ -224,14 +224,36 @@ def _download(url: str, destination: Path) -> None:
     # close-then-reopen gap exists here for a symlink to be swapped in between the claim and the
     # first byte written.
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    raw_fd = os.open(destination, flags, 0o644)
-    fd_to_close: int | None = raw_fd
+    parent_fd: int | None = None
+    if is_windows():
+        raw_fd = os.open(destination, flags, 0o644)
+    else:
+        parent_fd = os.open(
+            destination.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            raw_fd = os.open(destination.name, flags, 0o644, dir_fd=parent_fd)
+        except BaseException:
+            os.close(parent_fd)
+            raise
+    try:
+        owned = os.fstat(raw_fd)
+    except BaseException as error:
+        for descriptor in (raw_fd, parent_fd):
+            if descriptor is None:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as close_error:
+                error.add_note(f"Failed to close download handle: {close_error}")
+        raise
+    failure: BaseException | None = None
     total = 0
     try:
         with urllib.request.urlopen(url, timeout=60) as response:
-            output = os.fdopen(raw_fd, "wb")
-            fd_to_close = None  # ownership transferred to ``output``
-            with output:
+            # Keep descriptor ownership here so failure cleanup can validate the opened object.
+            with os.fdopen(raw_fd, "wb", closefd=False) as output:
                 while True:
                     chunk = response.read(1024 * 1024)
                     if not chunk:
@@ -244,16 +266,54 @@ def _download(url: str, destination: Path) -> None:
                         )
                     output.write(chunk)
     except BaseException as error:
-        if fd_to_close is not None:
+        failure = error
+        if is_windows():
+            # Windows can only reopen/delete the exact identity after releasing this writer.
             try:
-                os.close(fd_to_close)
+                os.close(raw_fd)
             except OSError as cleanup_error:
                 error.add_note(f"Failed to close partial download: {cleanup_error}")
-        try:
-            destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
-        except OSError as cleanup_error:
-            error.add_note(f"Failed to remove partial download: {cleanup_error}")
+            else:
+                raw_fd = -1
+                try:
+                    from tensor_grep.io.windows_publication import unlink_open
+
+                    unlink_open(destination, (owned.st_dev, owned.st_ino))
+                except OSError as cleanup_error:
+                    error.add_note(f"Failed to remove owned partial download: {cleanup_error}")
+        else:
+            assert parent_fd is not None
+            try:
+                current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+                if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+                    owned.st_dev,
+                    owned.st_ino,
+                ):
+                    raise OSError("partial download leaf identity changed; cleanup refused")
+                os.unlink(destination.name, dir_fd=parent_fd)
+            except OSError as cleanup_error:
+                error.add_note(f"Failed to remove owned partial download: {cleanup_error}")
         raise
+    finally:
+        close_errors: list[OSError] = []
+        if raw_fd >= 0:
+            try:
+                os.close(raw_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if parent_fd is not None:
+            try:
+                os.close(parent_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if close_errors:
+            if failure is not None:
+                for item in close_errors:
+                    failure.add_note(f"Failed to close partial download handle: {item}")
+            else:
+                for item in close_errors[1:]:
+                    close_errors[0].add_note(f"Additional close failure: {item}")
+                raise close_errors[0]
 
 
 def _allow_unverified_toolchain() -> bool:

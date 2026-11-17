@@ -963,6 +963,8 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
 
 
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
+    from tensor_grep.cli.bootstrap_search_guards import effective_rg_follow
+
     if _flag_present(search_args, {"--allow-broad-generated-scan"}):  # (P) not as a pattern/value
         return False
     paths_defaulted = _search_args_paths_defaulted(search_args)
@@ -971,7 +973,7 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     paths = _search_path_args(search_args)
     if _search_paths_include_workspace_root(paths):
         return True
-    if _search_paths_include_vendored_root(paths, _flag_present(search_args, {"-L", "--follow"})):
+    if _search_paths_include_vendored_root(paths, effective_rg_follow(search_args)):
         return True
     if paths_defaulted and _search_paths_include_oversized_implicit_root(paths, search_args):
         return True

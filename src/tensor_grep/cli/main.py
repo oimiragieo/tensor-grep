@@ -2129,7 +2129,7 @@ def _should_refuse_unbounded_vendored_root_scan(
 ) -> tuple[bool, list[str]]:
     if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False, []
-    vendored_dirs = _root_top_level_vendored_dir_names(paths, config.follow)
+    vendored_dirs = _root_top_level_vendored_dir_names(paths, config.effective_rg_follow)
     return bool(vendored_dirs), vendored_dirs
 
 
