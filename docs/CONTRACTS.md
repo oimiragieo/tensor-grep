@@ -342,9 +342,10 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
   existing `rewrite-audit-manifest`; the Python guard does not secure the separate native writer
   against a symlink swap or no-clobber race.
 
-- **MCP contract 1.23.0** marks path-confinement refusals as incomplete with the non-remediable
-  `error` cause, discloses omitted plain-text AST matches, and lets `tg_symbol_impact` honor the
-  caller's `max_repo_files` value.
+- **MCP contract 1.23.0** marks repo-map, consolidated meta-tool primary-path, and direct
+  symbol-navigation path-confinement refusals as incomplete with the non-remediable `error` cause,
+  discloses omitted plain-text AST matches, and lets `tg_symbol_impact` honor the caller's
+  `max_repo_files` value.
 
 Executable discovery excludes the current directory and its descendants from automatic PATH
 lookup for ripgrep and the AST wrapper. `TG_RG_PATH` remains an explicit ripgrep override.
