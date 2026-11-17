@@ -95,3 +95,85 @@ def test_session_prepare_refuses_byte_identical_session_store_swap(
         (original / f"{opened.session_id}.json").read_text(encoding="utf-8")
     )
     assert "last_prepare" not in original_payload
+
+
+@pytest.mark.parametrize(
+    "original_consumer",
+    [None, "def unrelated():\n    return None\n"],
+    ids=("added-path", "same-path-changed-content"),
+)
+def test_session_prepare_refuses_evidence_built_from_temporary_project_contents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    original_consumer: str | None,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "billing.py").write_text(
+        "def calculate_late_fee(balance, days_late):\n"
+        "    return balance * days_late\n\n"
+        "def apply_late_fee(account):\n"
+        "    return calculate_late_fee(account['balance'], account['days_late'])\n\n"
+        "def process_billing_cycle(accounts):\n"
+        "    return [apply_late_fee(account) for account in accounts]\n",
+        encoding="utf-8",
+    )
+    for name in ("z_padding.py", "zz_padding.py"):
+        (project / name).write_text("value = 1\n", encoding="utf-8")
+    if original_consumer is not None:
+        (project / "consumer.py").write_text(original_consumer, encoding="utf-8")
+
+    opened = open_session(str(project), max_repo_files=1)
+    payload = get_session(opened.session_id, str(project))
+    assert payload["repo_map"]["scan_limit"]["possibly_truncated"] is True
+
+    replacement = tmp_path / "project-replacement"
+    parked = tmp_path / "project-original"
+    shutil.copytree(project, replacement)
+    (replacement / "consumer.py").write_text(
+        "from billing import calculate_late_fee, apply_late_fee, process_billing_cycle\n\n"
+        "def temporary_consumer(account):\n"
+        "    calculate_late_fee(account['balance'], account['days_late'])\n"
+        "    apply_late_fee(account)\n"
+        "    return process_billing_cycle([account])\n",
+        encoding="utf-8",
+    )
+
+    real_build = service.build_prepare_snapshot
+
+    def build(**kwargs):
+        project.rename(parked)
+        replacement.rename(project)
+        try:
+            snapshot = real_build(**kwargs)
+            assert any(
+                Path(str(caller.get("file"))).name == "consumer.py"
+                for caller in snapshot.blast_radius_floor.get("top_callers", [])
+            ), snapshot.blast_radius_floor
+            return snapshot
+        finally:
+            project.rename(replacement)
+            parked.rename(project)
+
+    monkeypatch.setattr(service, "build_prepare_snapshot", build)
+
+    with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
+        service.session_prepare(
+            opened.session_id,
+            "the billing job should skip accounts that already paid earlier this month",
+            str(project),
+        )
+
+    assert "last_prepare" not in get_session(opened.session_id, str(project))
+
+    monkeypatch.setattr(service, "build_prepare_snapshot", real_build)
+    stable = service.session_prepare(
+        opened.session_id,
+        "the billing job should skip accounts that already paid earlier this month",
+        str(project),
+    )
+    assert stable["session_id"] == opened.session_id
+    assert not any(
+        Path(str(caller.get("file"))).name == "consumer.py"
+        for caller in stable["blast_radius_floor"].get("top_callers", [])
+    )
