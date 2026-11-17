@@ -47,7 +47,7 @@ def test_rust_regex_match_is_citable(tmp_path: Path, monkeypatch: pytest.MonkeyP
     source = tmp_path / "sample.py"
     source.write_text("foo_here\n", encoding="utf-8")
     monkeypatch.setattr(rust_backend, "HAVE_RUST", True)
-    monkeypatch.setattr(rust_backend, "NativeRustBackend", FakeNativeRustBackend)
+    monkeypatch.setattr(rust_backend, "NativeRustBackend", FakeNativeRustBackend, raising=False)
 
     result = rust_backend.RustCoreBackend().search(str(source), r"foo_here|bar_baz")
     envelope = result_citations(

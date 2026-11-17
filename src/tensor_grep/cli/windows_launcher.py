@@ -22,6 +22,12 @@ from typing import Any
 from uuid import uuid4
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_launcher_probe import (
+    _WINDOWS_EXE_BRIDGE_MARKER as _WINDOWS_EXE_BRIDGE_MARKER,
+)
+from tensor_grep.cli.doctor_launcher_probe import (
+    _WINDOWS_EXE_BRIDGE_MARKER_CONTENT as _WINDOWS_EXE_BRIDGE_MARKER_CONTENT,
+)
 from tensor_grep.cli.native_frontdoor import (
     _install_release_native_frontdoor as _install_release_native_frontdoor,
 )
@@ -51,10 +57,6 @@ def _same_path(left: Path, right: Path) -> bool:
         return left.resolve() == right.resolve()
     except OSError:
         return left == right
-
-
-_WINDOWS_EXE_BRIDGE_MARKER = "tg.exe.tensor-grep-bridge"
-_WINDOWS_EXE_BRIDGE_MARKER_CONTENT = "tensor-grep managed tg.exe bridge\n"
 
 
 def _windows_exe_bridge_marker_path(path: Path) -> Path:
