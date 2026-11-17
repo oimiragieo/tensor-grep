@@ -17,12 +17,12 @@ pub(crate) fn open_native_search_file(path: &Path) -> Result<File> {
 
 pub(crate) fn resolve_explicit_search_root(path: &Path) -> Result<PathBuf> {
     let metadata = fs::symlink_metadata(path)?;
-    let mut link = metadata.file_type().is_symlink();
+    let link = metadata.file_type().is_symlink();
     #[cfg(windows)]
-    {
+    let link = {
         use std::os::windows::fs::MetadataExt;
-        link |= metadata.file_attributes() & 0x400 != 0;
-    }
+        link || metadata.file_attributes() & 0x400 != 0
+    };
     if link {
         Ok(fs::canonicalize(path)?)
     } else {
