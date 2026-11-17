@@ -35,3 +35,24 @@ def test_cpu_context_is_not_cited(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     assert envelope["citations"] == [{"path": "sample.py", "start_line": 2, "end_line": 2}]
     assert envelope["omitted"] == 0
+
+
+def test_rust_regex_match_is_citable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tensor_grep.backends import rust_backend
+
+    class FakeNativeRustBackend:
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            return [(1, "foo_here")]
+
+    source = tmp_path / "sample.py"
+    source.write_text("foo_here\n", encoding="utf-8")
+    monkeypatch.setattr(rust_backend, "HAVE_RUST", True)
+    monkeypatch.setattr(rust_backend, "NativeRustBackend", FakeNativeRustBackend)
+
+    result = rust_backend.RustCoreBackend().search(str(source), r"foo_here|bar_baz")
+    envelope = result_citations(
+        result, tmp_path, query_pattern=r"foo_here|bar_baz", fixed_strings=False
+    )
+
+    assert envelope["citations"] == [{"path": "sample.py", "start_line": 1, "end_line": 1}]
+    assert envelope["omitted"] == 0

@@ -424,7 +424,14 @@ class RustCoreBackend(ComputeBackend):
         matches = []
         for line_num, text in results:
             clean_text = strip_line_terminator(text)
-            matches.append(MatchLine(line_number=line_num, text=clean_text, file=str(file_path)))
+            matches.append(
+                MatchLine(
+                    line_number=line_num,
+                    text=clean_text,
+                    file=str(file_path),
+                    citation_matched=True,
+                )
+            )
 
         total_matches = len(matches)
 
