@@ -258,7 +258,8 @@ def test_version_probes_stamp_and_do_not_spawn_at_the_cap(
     recorder = _RunRecorder(monkeypatch, subprocess, "run")
     contained_calls: list[tuple[list[str], dict[str, str]]] = []
 
-    def capture(argv, _timeout, *, env=None, **_kwargs):  # type: ignore[no-untyped-def]
+    def capture(argv, timeout_seconds, *, env=None, **_kwargs):  # type: ignore[no-untyped-def]
+        assert timeout_seconds == 2
         contained_calls.append(([str(arg) for arg in argv], _markers(env)))
         return b"", b""
 
