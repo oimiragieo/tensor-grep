@@ -1,8 +1,10 @@
 """Focused regression coverage for the disjoint AD3A recovery wave."""
 
 import builtins
+import io
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -19,7 +21,7 @@ from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
 from tensor_grep.io.reader_fallback import FallbackReader
-from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
+from tensor_grep.io.root_probe import _RG_SHORT_OPTIONS_WITH_VALUES, iter_top_level_vendored_dirs
 
 
 def test_tg037_gitignore_directory_does_not_abort_scan(tmp_path: Path) -> None:
@@ -78,6 +80,9 @@ def test_tg039_followed_symlinked_vendor_remains_guarded(tmp_path: Path) -> None
 def test_tg039_effective_rg_follow_policy_includes_config_and_cli_overrides(
     tmp_path: Path, monkeypatch
 ) -> None:
+    assert _RG_SHORT_OPTIONS_WITH_VALUES == {
+        flag[1] for flag in bootstrap._SEARCH_ATTACHED_VALUE_SHORT_FLAGS
+    }
     target = tmp_path / "target"
     target.mkdir()
     root = tmp_path / "root"
@@ -135,6 +140,85 @@ def test_tg039_effective_rg_follow_policy_includes_config_and_cli_overrides(
     rg_config.write_text("--no-follow\n", encoding="utf-8")
     assert refused(SearchConfig(follow=True))
 
+    rg_config.write_text("-Li\n", encoding="utf-8")
+    assert bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert refused(SearchConfig())
+
+    # The remainder of a value-taking short flag is data, not another flag.
+    rg_config.write_text("-gL\n", encoding="utf-8")
+    assert not bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert not refused(SearchConfig())
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected_follow"),
+    [
+        (["--no-follow", "--follow"], True),
+        (["--follow", "--no-follow"], False),
+        (["--follow", "--no-follow", "--follow"], True),
+        (["--no-follow", "--follow", "--no-follow"], False),
+    ],
+)
+def test_tg039_full_cli_follow_flags_are_last_wins(
+    tmp_path: Path, monkeypatch, flags: list[str], expected_follow: bool
+) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("needle\n", encoding="utf-8")
+    seen: dict[str, SearchConfig] = {}
+
+    def fake_passthrough(_self, _paths, _pattern, config=None):
+        seen["config"] = config
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda _self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        fake_passthrough,
+    )
+
+    result = CliRunner().invoke(
+        cli_main.app,
+        ["search", "--passthrough", *flags, "needle", str(source)],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = seen["config"]
+    assert config.follow is expected_follow
+    assert config.no_follow is not expected_follow
+    assert config.effective_rg_follow is expected_follow
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction semantics")
+def test_tg039_unfollowed_windows_junction_is_not_a_vendored_root(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    junction = root / "vendor"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"cannot create junction on this host: {completed.stderr}")
+
+    assert junction.is_junction()
+    assert list(iter_top_level_vendored_dirs([str(root)], frozenset({"vendor"}))) == []
+    assert list(
+        iter_top_level_vendored_dirs([str(root)], frozenset({"vendor"}), follow_symlinks=True)
+    ) == ["vendor"]
+    assert not bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert bootstrap._search_args_include_unbounded_broad_scan([
+        "needle",
+        "--follow",
+        str(root),
+    ])
+
 
 def test_tg043_missing_psutil_uses_safe_cpu_fallback(monkeypatch) -> None:
     manager = MemoryManager()
@@ -178,6 +262,36 @@ def test_tg046_download_failure_closes_destination_fd(tmp_path: Path, monkeypatc
     assert not destination.exists()
 
 
+def test_tg046_download_success_publishes_and_cleans_staging(tmp_path: Path, monkeypatch) -> None:
+    destination = tmp_path / "tool.bin"
+    monkeypatch.setattr(
+        lsp_provider_setup.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(b"complete payload"),
+    )
+
+    lsp_provider_setup._download("https://example.invalid/tool", destination)
+
+    assert destination.read_bytes() == b"complete payload"
+    assert list(tmp_path.glob(".tg-download-*")) == []
+
+
+def test_tg046_download_never_replaces_existing_destination(tmp_path: Path, monkeypatch) -> None:
+    destination = tmp_path / "tool.bin"
+    destination.write_bytes(b"unowned replacement")
+    monkeypatch.setattr(
+        lsp_provider_setup.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: io.BytesIO(b"downloaded payload"),
+    )
+
+    with pytest.raises(FileExistsError):
+        lsp_provider_setup._download("https://example.invalid/tool", destination)
+
+    assert destination.read_bytes() == b"unowned replacement"
+    assert list(tmp_path.glob(".tg-download-*")) == []
+
+
 def test_tg046_download_failure_never_unlinks_close_time_replacement(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -205,6 +319,63 @@ def test_tg046_download_failure_never_unlinks_close_time_replacement(
 
     assert replacement_created
     assert destination.read_bytes() == b"unowned replacement"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX dir-fd cleanup semantics")
+def test_tg046_download_failure_never_unlinks_identity_check_replacement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    destination = tmp_path / "tool.bin"
+    replacement = b"unowned replacement"
+    real_open = os.open
+    real_close = os.close
+    real_stat = os.stat
+    real_unlink = os.unlink
+    replacement_created = False
+
+    def install_replacement() -> None:
+        nonlocal replacement_created
+        if replacement_created:
+            return
+        destination.unlink(missing_ok=True)
+        destination.write_bytes(replacement)
+        replacement_created = True
+
+    def stat_then_replace(path, *args, **kwargs):
+        info = real_stat(path, *args, **kwargs)
+        if path == destination.name and kwargs.get("dir_fd") is not None:
+            parent_fd = kwargs["dir_fd"]
+            real_unlink(path, dir_fd=parent_fd)
+            descriptor = real_open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o644,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(descriptor, replacement)
+            finally:
+                real_close(descriptor)
+            nonlocal replacement_created
+            replacement_created = True
+        return info
+
+    def fail_download(*_args, **_kwargs):
+        # A staging implementation never creates DESTINATION before publication, so install the
+        # competing leaf here. The old direct-write implementation swaps it after its identity
+        # check in stat_then_replace instead.
+        if not destination.exists():
+            install_replacement()
+        raise RuntimeError("controlled download failure")
+
+    monkeypatch.setattr(lsp_provider_setup.os, "stat", stat_then_replace)
+    monkeypatch.setattr(lsp_provider_setup.urllib.request, "urlopen", fail_download)
+
+    with pytest.raises(RuntimeError, match="controlled download failure"):
+        lsp_provider_setup._download("https://example.invalid/tool", destination)
+
+    assert replacement_created
+    assert destination.read_bytes() == replacement
 
 
 def test_tg048_table_formatter_escapes_tabs_in_cells() -> None:
