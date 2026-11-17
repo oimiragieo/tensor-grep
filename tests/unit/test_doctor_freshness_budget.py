@@ -103,8 +103,8 @@ def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
 
     if probe == "_doctor_tg_candidate_version":
 
-        def capture(_args, _timeout, **kwargs):
-            calls.append(kwargs)
+        def capture(_args, *, timeout_seconds, **kwargs):
+            calls.append({"timeout_seconds": timeout_seconds, **kwargs})
             return b"tensor-grep 1.0.0", b""
 
         monkeypatch.setattr(doctor_report, "capture_probe", capture)
@@ -117,6 +117,7 @@ def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
         monkeypatch.setattr(main.subprocess, "run", run)
     assert getattr(doctor_report, probe)(Path("tg.exe")) == "tensor-grep 1.0.0"
     if probe == "_doctor_tg_candidate_version":
+        assert calls[0]["timeout_seconds"] == 2
         assert calls[0]["require_success"] is True
     else:
         assert calls[0]["stdin"] == subprocess.DEVNULL
