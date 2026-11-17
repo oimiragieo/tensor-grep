@@ -1441,6 +1441,38 @@ def test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fa
         CPUBackend().search(str(f), literal, config=SearchConfig())
 
 
+def test_search_refuses_leaf_link_substituted_after_scan(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    candidate = root / "victim.txt"
+    candidate.write_text("ordinary content\n", encoding="utf-8")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("SECRET_BOUNDARY_MARKER\n", encoding="utf-8")
+    candidates = list(DirectoryScanner(SearchConfig()).walk(str(root)))
+    assert candidates == [str(candidate)]
+
+    candidate.unlink()
+    try:
+        candidate.symlink_to(outside, target_is_directory=False)
+    except OSError as exc:
+        pytest.skip(f"this environment cannot create a file symlink: {exc}")
+
+    def refused_native_search(*_args, **_kwargs):
+        raise OSError("simulated native no-follow refusal")
+
+    monkeypatch.setattr(CPUBackend, "_rust_match_set", refused_native_search)
+    with pytest.raises(RuntimeError, match=r"search target|non-regular"):
+        CPUBackend().search(
+            candidates[0],
+            "SECRET_BOUNDARY_MARKER",
+            config=SearchConfig(fixed_strings=True),
+        )
+
+
 def test_python_fallback_regex_engine_failure_is_not_clean_no_match(tmp_path):
     """Sol FIX-FIRST (HANDLER-CENSUS-W2-a): regex_str.search failures must not look like no-match.
 

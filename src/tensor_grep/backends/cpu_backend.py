@@ -3,11 +3,14 @@ import json
 import logging
 import os
 import re
+import stat
 import time
 import warnings
 from collections import OrderedDict, deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import ClassVar
+from typing import BinaryIO, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
@@ -35,6 +38,35 @@ _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
 # rejects any payload whose `format_version` does not match, forcing a transparent
 # recompute (and on-disk overwrite) on first use after upgrade.
 _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
+
+
+@contextmanager
+def _open_search_file(path: Path) -> Iterator[BinaryIO]:
+    """Read one regular file handle, refusing leaf links and path swaps during open."""
+    initial = path.lstat()
+    if not stat.S_ISREG(initial.st_mode) or getattr(initial, "st_file_attributes", 0) & 0x400:
+        raise OSError(f"refusing non-regular search target: {path}")
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+    )
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino)
+            or getattr(opened, "st_file_attributes", 0) & 0x400
+        ):
+            raise OSError(f"search target changed during open: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            yield stream
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def compute_native_walk_deadline() -> float:
@@ -120,7 +152,7 @@ class CPUBackend(ComputeBackend):
     @staticmethod
     def _is_binary_file(path: Path) -> bool:
         try:
-            with open(path, "rb") as file_obj:
+            with _open_search_file(path) as file_obj:
                 return b"\x00" in file_obj.read(4096)
         except OSError:
             return False
@@ -454,7 +486,8 @@ class CPUBackend(ComputeBackend):
             # decoding path (latin-1/replace) for compatibility.
             if not rust_results:
                 try:
-                    Path(file_path).read_text(encoding="utf-8")
+                    with _open_search_file(Path(file_path)) as file_obj:
+                        file_obj.read().decode("utf-8")
                 except UnicodeDecodeError as exc:
                     raise _RustUtf8DecodeMismatch(
                         "Rust backend UTF-8 decode mismatch, using Python fallback"
@@ -637,7 +670,8 @@ class CPUBackend(ComputeBackend):
                     # stdout-writing layer (task #262). Read raw bytes and split on a bare `\n`
                     # only (never `str.splitlines()`, same reasoning) so a genuine trailing `\r`
                     # survives, matching how the Rust engine and real `rg` both treat it.
-                    decoded = path.read_bytes().decode("utf-8", errors="replace")
+                    with _open_search_file(path) as file_obj:
+                        decoded = file_obj.read().decode("utf-8", errors="replace")
                     source_lines = split_source_lines(decoded)
                     normalized_lines = (
                         [line.lower() for line in source_lines] if ignore_case else source_lines
@@ -726,7 +760,7 @@ class CPUBackend(ComputeBackend):
                         if config.max_count and total_matches_count >= config.max_count:
                             break
             else:
-                with open(path, "rb") as f:
+                with _open_search_file(path) as f:
                     for line_idx, line_bytes in enumerate(f, 1):
                         if (
                             candidate_line_indexes is not None
@@ -974,7 +1008,7 @@ class CPUBackend(ComputeBackend):
         before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
         context_after_remaining = 0
 
-        with open(path, "rb") as file_obj:
+        with _open_search_file(path) as file_obj:
             for line_idx, line_bytes in enumerate(file_obj, 1):
                 line_text = self._decode_line(line_bytes)
                 matched = line_idx in matched_line_numbers
@@ -1077,7 +1111,7 @@ class CPUBackend(ComputeBackend):
             ) from exc
 
         lines: list[tuple[int, str]] = []
-        with open(path, "rb") as file_obj:
+        with _open_search_file(path) as file_obj:
             for line_idx, line_bytes in enumerate(file_obj, 1):
                 lines.append((line_idx, self._decode_line(line_bytes)))
 
