@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import importlib.metadata
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -39,21 +40,96 @@ Product = tuple[list[str], list[dict[str, Any]]]
 _CONTENT_RECEIPTS: ContextVar[dict[str, str] | None] = ContextVar(
     "tg_content_receipts", default=None
 )
+_CONTENT_AUTHENTICATED_ROOT: ContextVar[str | None] = ContextVar(
+    "tg_content_authenticated_root", default=None
+)
+CONTENT_ABSENT_RECEIPT = "<absent>"
+CONTENT_PRESENT_RECEIPT = "<present>"
 
 
 @contextmanager
-def collect_content_receipts() -> Iterator[dict[str, str]]:
-    """Let session capture bind metadata to the exact contents used by a map build."""
+def collect_content_receipts(
+    *, authenticated_root: str | Path | None = None
+) -> Iterator[dict[str, str]]:
+    """Let session capture bind metadata to the exact contents used by a build."""
     receipts: dict[str, str] = {}
     token = _CONTENT_RECEIPTS.set(receipts)
+    root_token = _CONTENT_AUTHENTICATED_ROOT.set(
+        content_receipt_key(authenticated_root) if authenticated_root is not None else None
+    )
     try:
         yield receipts
     finally:
+        _CONTENT_AUTHENTICATED_ROOT.reset(root_token)
         _CONTENT_RECEIPTS.reset(token)
+
+
+def content_receipts_active() -> bool:
+    """Whether exact build-input observations must bypass process-global caches."""
+    return _CONTENT_RECEIPTS.get() is not None
+
+
+def authenticated_content_root() -> Path | None:
+    """Return the immutable lexical root selected before receipt collection began."""
+    value = _CONTENT_AUTHENTICATED_ROOT.get()
+    return Path(value) if value is not None else None
 
 
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def content_receipt_key(path: str | Path) -> str:
+    """Normalize receipt keys lexically without following a mutable filesystem target."""
+    return os.path.normcase(os.path.abspath(os.fspath(path)))
+
+
+def record_content_receipt_digest(path: str | Path, digest: str) -> None:
+    """Record one observed input; conflicting reads remain permanently unauthenticated."""
+    collector = _CONTENT_RECEIPTS.get()
+    if collector is None:
+        return
+    key = content_receipt_key(path)
+    previous = collector.get(key)
+    if previous is None or previous == digest:
+        collector[key] = digest
+    elif previous == CONTENT_PRESENT_RECEIPT and digest not in {CONTENT_ABSENT_RECEIPT, ""}:
+        collector[key] = digest
+    elif digest == CONTENT_PRESENT_RECEIPT and previous not in {CONTENT_ABSENT_RECEIPT, ""}:
+        collector[key] = previous
+    else:
+        collector[key] = ""
+
+
+def record_content_receipt(path: str | Path, content: bytes) -> None:
+    record_content_receipt_digest(path, _digest(content))
+
+
+def record_content_absence(path: str | Path) -> None:
+    """Record a missing input whose absence affected the build."""
+    record_content_receipt_digest(path, CONTENT_ABSENT_RECEIPT)
+
+
+def record_content_presence(path: str | Path) -> None:
+    """Record an existence-only decision for a file input."""
+    record_content_receipt_digest(path, CONTENT_PRESENT_RECEIPT)
+
+
+def read_content_bytes(path: str | Path) -> bytes:
+    """Read and receipt exact bytes, including a fail-closed missing-file observation."""
+    source = Path(path)
+    try:
+        content = source.read_bytes()
+    except (FileNotFoundError, NotADirectoryError):
+        record_content_absence(source)
+        raise
+    except OSError:
+        # An input that could not be authenticated must not later become publishable merely
+        # because another read of the same pathname succeeds.
+        record_content_receipt_digest(source, "")
+        raise
+    record_content_receipt(source, content)
+    return content
 
 
 def _json(value: Any) -> str:
@@ -410,9 +486,8 @@ class SymbolGeneration:
                     ),
                 }
             complete = complete and not self.failures
-            collector = _CONTENT_RECEIPTS.get()
-            if collector is not None:
-                collector.update({path: digest for path, (digest, _) in self.files.items()})
+            for path, (digest, _) in self.files.items():
+                record_content_receipt_digest(path, digest)
             merkle = _digest(_json(sorted(self.files.items())).encode())
             if self.deadline is not None and time.monotonic() >= self.deadline:
                 self.cache_status = "not-persisted: deadline exceeded"

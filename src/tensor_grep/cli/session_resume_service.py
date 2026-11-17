@@ -19,6 +19,7 @@ from tensor_grep.cli.session_root import (
     _index_path,
     _session_payload_path,
     _session_root_for_payload,
+    _session_scan_target,
     _snapshot_generation,
 )
 from tensor_grep.cli.session_store import (
@@ -27,7 +28,13 @@ from tensor_grep.cli.session_store import (
     _load_session_payload,
     get_session,
 )
-from tensor_grep.cli.symbols_cache import collect_content_receipts
+from tensor_grep.cli.symbols_cache import (
+    CONTENT_ABSENT_RECEIPT,
+    CONTENT_PRESENT_RECEIPT,
+    collect_content_receipts,
+    content_receipt_key,
+    record_content_receipt_digest,
+)
 
 
 def _session_store_identity(
@@ -54,9 +61,51 @@ def _require_session_store_identity(
         raise SessionStaleError("session store changed while preparing; retry the prepare request")
 
 
-def _require_prepare_inputs_unchanged(root: Path, receipts: dict[str, str]) -> None:
-    """Reconcile every build input against the original project before publishing evidence."""
-    if len(_capture_snapshot(list(receipts), root=root, expected=receipts)) != len(receipts):
+def _require_authenticated_prepare_inputs(
+    session_snapshot: list[dict[str, Any]],
+    receipts: dict[str, str],
+    *,
+    snapshot_complete: bool,
+) -> None:
+    """Bind every newly scanned input to the authenticated session snapshot."""
+    authenticated = {
+        content_receipt_key(str(entry.get("path"))): str(entry.get("content_sha256"))
+        for entry in session_snapshot
+        if entry.get("path") and entry.get("content_sha256")
+    }
+    invalid_receipt = False
+    for path, digest in receipts.items():
+        if digest == CONTENT_ABSENT_RECEIPT:
+            invalid_receipt = path in authenticated or not snapshot_complete
+        elif digest == CONTENT_PRESENT_RECEIPT:
+            invalid_receipt = path not in authenticated
+        else:
+            invalid_receipt = authenticated.get(path) != digest
+        if invalid_receipt:
+            break
+    if authenticated.keys() - receipts.keys():
+        invalid_receipt = True
+    if (authenticated and not receipts) or invalid_receipt:
+        raise SessionStaleError(
+            "project contents changed while preparing; retry the prepare request"
+        )
+
+
+def _require_authenticated_snapshot_unchanged(
+    root: Path, session_snapshot: list[dict[str, Any]]
+) -> None:
+    expected = {
+        str(entry.get("path")): str(entry.get("content_sha256"))
+        for entry in session_snapshot
+        if entry.get("path") and entry.get("content_sha256")
+    }
+    observed = _capture_snapshot(list(expected), root=root, expected=expected)
+    for entry in observed:
+        record_content_receipt_digest(
+            str(entry["path"]),
+            str(entry["content_sha256"]),
+        )
+    if len(observed) != len(expected):
         raise SessionStaleError(
             "project contents changed while preparing; retry the prepare request"
         )
@@ -75,6 +124,7 @@ def session_prepare(
     payload = _load_session_payload(session_id, path)
     _require_session_store_identity(root, session_path, initial_store_identity)
     initial_provenance = payload.get("session_provenance")
+    scan_target = _session_scan_target(payload, root)
 
     # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
     # decision with the session's CURRENT content identity, not a wall-clock timestamp. A
@@ -95,10 +145,27 @@ def session_prepare(
             if isinstance(candidate_repo_map, dict):
                 reusable_repo_map = candidate_repo_map
 
-    with collect_content_receipts() as build_receipts:
-        snapshot = build_prepare_snapshot(path=path, query=query, repo_map=reusable_repo_map)
+    scan_limit = payload.get("scan_limit")
+    snapshot_complete = (
+        isinstance(scan_limit, dict)
+        and scan_limit.get("possibly_truncated") is False
+        and "snapshot_unreadable_paths" not in payload
+    )
+    with collect_content_receipts(authenticated_root=scan_target) as build_receipts:
+        snapshot = build_prepare_snapshot(
+            path=str(scan_target),
+            query=query,
+            repo_map=reusable_repo_map,
+            _input_validator=lambda: _require_authenticated_snapshot_unchanged(
+                root, existing_snapshot
+            ),
+        )
     _require_session_store_identity(root, session_path, initial_store_identity)
-    _require_prepare_inputs_unchanged(root, build_receipts)
+    _require_authenticated_prepare_inputs(
+        existing_snapshot,
+        build_receipts,
+        snapshot_complete=snapshot_complete,
+    )
     _require_session_store_identity(root, session_path, initial_store_identity)
     snap_dict = asdict(snapshot)
     snap_dict["decision_generation"] = current_generation

@@ -29,6 +29,13 @@ def capture_snapshot(
     expected: dict[str, str] | None = None,
     unreadable_hit: Any = None,
 ) -> list[dict[str, Any]]:
+    from tensor_grep.cli.symbols_cache import content_receipt_key
+
+    normalized_expected = (
+        {content_receipt_key(path): digest for path, digest in expected.items()}
+        if expected is not None
+        else None
+    )
     snapshots = []
     for position, raw_path in enumerate(paths):
         if deadline is not None and monotonic() >= deadline:
@@ -40,7 +47,10 @@ def capture_snapshot(
         try:
             info = path.stat()
             digest = content_digest(root or path.parent, path, limit, deadline)
-            if expected is not None and expected.get(str(path)) != digest:
+            if (
+                normalized_expected is not None
+                and normalized_expected.get(content_receipt_key(path)) != digest
+            ):
                 raise OSError(f"session source changed since map generation: {path}")
         except OSError as exc:
             if unreadable_hit is not None:

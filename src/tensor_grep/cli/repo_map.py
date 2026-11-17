@@ -8,7 +8,7 @@ import math
 import os
 import re
 import sys
-import tempfile
+import tempfile as tempfile  # re-exported test patch seam used by the extracted helper
 import threading
 import time
 import tomllib
@@ -70,6 +70,13 @@ from tensor_grep.cli.repo_map_gitignore import (
 )
 from tensor_grep.cli.repo_map_gitignore import (
     _load_gitignore_matcher as _load_gitignore_matcher,
+)
+from tensor_grep.cli.repo_map_input_provenance import (
+    is_file_with_receipt as _is_file_with_receipt,
+)
+from tensor_grep.cli.repo_map_input_provenance import read_text_with_receipt
+from tensor_grep.cli.repo_map_input_provenance import (
+    validation_repo_root as _validation_repo_root,
 )
 from tensor_grep.cli.repo_map_lang_java import (
     _java_import_declaration_text as _java_import_declaration_text,
@@ -436,10 +443,18 @@ from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
-from tensor_grep.cli.symbols_cache import SymbolGeneration
+from tensor_grep.cli.symbols_cache import (
+    SymbolGeneration,
+    authenticated_content_root,
+    read_content_bytes,
+    record_content_absence,
+    record_content_receipt_digest,
+)
 from tensor_grep.core.config import configured_positive_int
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
+
+_read_text_with_receipt = read_text_with_receipt
 
 # Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
@@ -1719,12 +1734,16 @@ def _literal_symbol_candidate(path: Path) -> bool:
 def _file_contains_literal_symbol(path: Path, symbol: str) -> bool:
     try:
         stat = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        record_content_absence(path)
+        return False
     except OSError:
+        record_content_receipt_digest(path, "")
         return False
     if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return False
     try:
-        data = path.read_bytes()
+        data = _read_source_cached(str(path))
     except OSError:
         return False
     if b"\0" in data[:8192]:
@@ -1756,13 +1775,13 @@ def _read_source_cached(path_str: str) -> bytes:
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         # Either stat failed (let read_bytes() raise/propagate the real error below) or the
         # file is too large to be worth caching -- read it directly, uncached (Guard 4).
-        return Path(path_str).read_bytes()
+        return read_content_bytes(path_str)
     return _read_source_cached_bounded(path_str)
 
 
 @_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
 def _read_source_cached_bounded(path_str: str) -> bytes:
-    return Path(path_str).read_bytes()
+    return read_content_bytes(path_str)
 
 
 # PERF increment 1 : every JS/TS/Rust symbol/ref/caller
@@ -2448,11 +2467,11 @@ def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
         "base_url": None,
         "paths": [],
     }
-    if not tsconfig_path.exists():
+    if not _is_file_with_receipt(tsconfig_path):
         return payload
 
     try:
-        parsed = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+        parsed = json.loads(_self._read_text_with_receipt(tsconfig_path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return payload
 
@@ -2602,7 +2621,7 @@ def _build_rust_module_tree(
     visited.add(current_key)
 
     try:
-        source = normalized_entry.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(normalized_entry)
     except (OSError, UnicodeDecodeError):
         return {}
 
@@ -2633,11 +2652,11 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
         "exists": False,
         "members": {},
     }
-    if not cargo_toml.is_file():
+    if not _is_file_with_receipt(cargo_toml):
         return payload
 
     try:
-        parsed = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+        parsed = tomllib.loads(_self._read_text_with_receipt(cargo_toml))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return payload
 
@@ -2663,11 +2682,11 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
         for member_dir in member_dirs:
             normalized_dir = member_dir.expanduser().resolve()
             member_cargo = normalized_dir / "Cargo.toml"
-            if not member_cargo.is_file():
+            if not _is_file_with_receipt(member_cargo):
                 continue
             crate_name = _normalize_rust_crate_name(normalized_dir.name)
             try:
-                member_parsed = tomllib.loads(member_cargo.read_text(encoding="utf-8"))
+                member_parsed = tomllib.loads(_self._read_text_with_receipt(member_cargo))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
                 member_parsed = {}
             package = member_parsed.get("package", {})
@@ -2676,9 +2695,9 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
                 if isinstance(package_name, str) and package_name.strip():
                     crate_name = _normalize_rust_crate_name(package_name)
             entry_path = (normalized_dir / "src" / "lib.rs").resolve()
-            if not entry_path.is_file():
+            if not _is_file_with_receipt(entry_path):
                 fallback_entry = (normalized_dir / "src" / "main.rs").resolve()
-                if fallback_entry.is_file():
+                if _is_file_with_receipt(fallback_entry):
                     entry_path = fallback_entry
                 else:
                     continue
@@ -6456,65 +6475,14 @@ def _primary_span_for_symbol(symbol: dict[str, Any] | None) -> dict[str, int] | 
     }
 
 
-def _validation_repo_root(repo_root: str | Path) -> Path:
-    root = Path(repo_root).expanduser().resolve()
-    if root.is_file():
-        root = root.parent
-    markers = (
-        "package.json",
-        "package-lock.json",
-        "pnpm-workspace.yaml",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "bun.lockb",
-        "pyproject.toml",
-        "setup.py",
-        "setup.cfg",
-        "Cargo.toml",
-        "tsconfig.json",
-    )
-    boundary_markers = (
-        "README.md",
-        ".gitignore",
-        "LICENSE",
-        "AGENTS.md",
-    )
-    boundary_candidate: Path | None = None
-    current = root
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    while True:
-        if current == temp_root and root != temp_root:
-            break
-        if any((current / marker).exists() for marker in markers):
-            return current
-        # F84 Fix A: a directory is only a STRONG boundary -- and thus allowed to trap the
-        # walk-up before its parent is examined -- when it has `.git` (dir or file, the
-        # definitive repo-root signal every other tool uses) OR carries >=2 distinct boundary
-        # markers. A LONE README.md/.gitignore/LICENSE/AGENTS.md living in a scoped
-        # subdirectory used to trap the walk one level too early (the boundary-README trap),
-        # so a single marker is no longer sufficient on its own.
-        matched_boundary_markers = sum(
-            1 for marker in boundary_markers if (current / marker).exists()
-        )
-        if (current / ".git").exists() or matched_boundary_markers >= 2:
-            boundary_candidate = current
-        if current.parent == current:
-            break
-        next_current = current.parent
-        if boundary_candidate is not None and next_current == boundary_candidate.parent:
-            break
-        current = next_current
-    return boundary_candidate or root
-
-
 def _read_package_json(root: Path) -> dict[str, Any]:
     """O(1) fixed-path read of ``<root>/package.json`` -- no directory scan. Returns ``{}``
     when the file is missing, unreadable, or not a JSON object."""
     package_json_path = root / "package.json"
-    if not package_json_path.is_file():
+    if not _is_file_with_receipt(package_json_path):
         return {}
     try:
-        loaded = json.loads(package_json_path.read_text(encoding="utf-8"))
+        loaded = json.loads(_self._read_text_with_receipt(package_json_path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
@@ -6526,11 +6494,13 @@ def _infer_js_package_manager(root: Path, package_json: dict[str, Any]) -> str:
         normalized = package_manager.split("@", 1)[0].strip().lower()
         if normalized in {"npm", "pnpm", "yarn", "bun"}:
             return normalized
-    if (root / "pnpm-lock.yaml").is_file() or (root / "pnpm-workspace.yaml").is_file():
+    if _is_file_with_receipt(root / "pnpm-lock.yaml") or _is_file_with_receipt(
+        root / "pnpm-workspace.yaml"
+    ):
         return "pnpm"
-    if (root / "yarn.lock").is_file():
+    if _is_file_with_receipt(root / "yarn.lock"):
         return "yarn"
-    if (root / "bun.lockb").is_file():
+    if _is_file_with_receipt(root / "bun.lockb"):
         return "bun"
     return "npm"
 
@@ -6585,10 +6555,10 @@ def _ts_jest_configured(
         "jest.config.json",
     ):
         config_path = repo_root / config_name
-        if not config_path.is_file():
+        if not _is_file_with_receipt(config_path):
             continue
         try:
-            if "ts-jest" in config_path.read_text(encoding="utf-8"):
+            if "ts-jest" in _self._read_text_with_receipt(config_path):
                 return True
         except (OSError, UnicodeDecodeError):
             continue
@@ -6611,6 +6581,7 @@ def _detect_validation_runners_from_root(
     documents for its other callers.
     """
     if not root.exists():
+        record_content_receipt_digest(root, "")
         return _ValidationRunnerInfo(
             False, False, False, "generic", False, (), (), None, None, None
         )
@@ -6636,7 +6607,7 @@ def _detect_validation_runners_from_root(
         current.suffix.lower() == ".py" and _is_test_file(current) for current in all_files
     )
     has_python_project_marker = any(
-        (root / marker).is_file()
+        _is_file_with_receipt(root / marker)
         for marker in (
             "pyproject.toml",
             "pytest.ini",
@@ -6651,7 +6622,7 @@ def _detect_validation_runners_from_root(
         python_detection = "heuristic"
     else:
         python_detection = "generic"
-    has_rust = (root / "Cargo.toml").is_file() or any(
+    has_rust = _is_file_with_receipt(root / "Cargo.toml") or any(
         current.name == "Cargo.toml" for current in all_files
     )
     has_javascript = any(current.suffix.lower() in _JS_TS_SUFFIXES for current in all_files)
@@ -6659,10 +6630,10 @@ def _detect_validation_runners_from_root(
     package_json: dict[str, Any] = {}
     package_text = ""
     package_json_path = root / "package.json"
-    has_package_json = package_json_path.is_file()
-    if package_json_path.is_file():
+    has_package_json = _is_file_with_receipt(package_json_path)
+    if has_package_json:
         try:
-            package_text = package_json_path.read_text(encoding="utf-8")
+            package_text = _self._read_text_with_receipt(package_json_path)
             loaded = json.loads(package_text)
             if isinstance(loaded, dict):
                 package_json = loaded
@@ -6870,7 +6841,7 @@ def _nearest_cargo_manifest_for_path(path: str | Path, repo_root: Path) -> Path 
         current = Path(path).expanduser().resolve()
     except (OSError, RuntimeError):
         return None
-    if current.is_file() or current.suffix:
+    if _is_file_with_receipt(current) or current.suffix:
         current = current.parent
     try:
         boundary = repo_root.expanduser().resolve()
@@ -6878,7 +6849,7 @@ def _nearest_cargo_manifest_for_path(path: str | Path, repo_root: Path) -> Path 
         boundary = repo_root
     while True:
         manifest = current / "Cargo.toml"
-        if manifest.is_file():
+        if _is_file_with_receipt(manifest):
             return manifest
         if current == boundary or current.parent == current:
             break
@@ -6952,7 +6923,9 @@ def _primary_language_fallback_validation_steps(
                 "confidence": 0.55,
                 "detection": "detected",
             })
-    elif primary_language in ("javascript", "typescript") and (root / "package.json").is_file():
+    elif primary_language in ("javascript", "typescript") and _is_file_with_receipt(
+        root / "package.json"
+    ):
         # dogfood F3: a TS/JS primary target used to get NO fallback step at all here (this
         # branch only had rust/python) -- on a repo where the raw per-test validation plan
         # comes back empty (e.g. a scan-ceiling-capped root on a large monorepo), that meant an
@@ -6979,7 +6952,7 @@ def _has_python_validation_fallback_evidence(
     deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> bool:
     if any(
-        (root / marker).is_file()
+        _is_file_with_receipt(root / marker)
         for marker in (
             "pyproject.toml",
             "pytest.ini",
@@ -7065,7 +7038,7 @@ def _suggested_validation_command_for_primary_file(
         source_path = Path(primary_file).expanduser().resolve()
     except (OSError, RuntimeError):
         return None
-    if not source_path.is_file():
+    if not _is_file_with_receipt(source_path):
         return None
     try:
         root = _validation_repo_root(repo_root)
@@ -7074,7 +7047,9 @@ def _suggested_validation_command_for_primary_file(
     candidates = _suggested_validation_command_candidates(source_path, repo_root=root)
     if not candidates:
         return None
-    test_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    test_path = next(
+        (candidate for candidate in candidates if _is_file_with_receipt(candidate)), None
+    )
     if test_path is None:
         return None
     relative_test = _relative_validation_path(test_path, root)
@@ -7545,7 +7520,7 @@ def _raw_validation_plan_for_tests(
             scope="repo",
             runner="cargo",
             confidence=0.55,
-            detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
+            detection=("detected" if _is_file_with_receipt(root / "Cargo.toml") else "heuristic"),
         )
 
     return plan
@@ -9855,7 +9830,7 @@ def _fallback_file_source(
     if path.suffix.lower() not in source_suffixes:
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        text = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return None
     lines = text.splitlines()
@@ -10935,7 +10910,7 @@ def _lsp_symbol_kind_name(value: object) -> str:
 
 def _symbol_character_in_file(path: Path, line_number: int, symbol: str) -> int:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _self._read_text_with_receipt(path).splitlines()
     except (FileNotFoundError, OSError, UnicodeDecodeError):
         return 0
     if line_number <= 0 or line_number > len(lines):
@@ -11389,7 +11364,7 @@ def _external_definitions(
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
             break
         current_path = Path(str(native_definition.get("file", ""))).expanduser().resolve()
-        if not current_path.exists():
+        if not _is_file_with_receipt(current_path):
             continue
         language = _provider_language_for_path(current_path) or _language_for_path(current_path)
         try:
@@ -11397,7 +11372,7 @@ def _external_definitions(
                 language=language, workspace_root=repo_root
             )
             document_uri = current_path.as_uri()
-            document_text = current_path.read_text(encoding="utf-8")
+            document_text = _self._read_text_with_receipt(current_path)
             definition_line = int(
                 native_definition.get(
                     "line",
@@ -11492,7 +11467,7 @@ def _external_references(
                 language=language, workspace_root=repo_root
             )
             document_uri = current_path.as_uri()
-            document_text = current_path.read_text(encoding="utf-8")
+            document_text = _self._read_text_with_receipt(current_path)
             definition_line = int(definition.get("line", 1))
             definition_character = _symbol_character_in_file(current_path, definition_line, symbol)
 
@@ -11577,7 +11552,7 @@ def _external_references(
             if resolved_path is None:
                 continue
             try:
-                lines = resolved_path.read_text(encoding="utf-8").splitlines()
+                lines = _self._read_text_with_receipt(resolved_path).splitlines()
             except (FileNotFoundError, OSError, UnicodeDecodeError):
                 lines = []
             line_number = int(start.get("line", 0)) + 1
@@ -12841,9 +12816,18 @@ def _infer_project_root(file_path: Path) -> Path:
     a plausible root inferred from the file's own location rather than passed explicitly.
     """
     current = file_path.parent
+    authenticated_root = authenticated_content_root()
     for candidate in [current, *current.parents]:
         try:
-            if any((candidate / marker).exists() for marker in _PROJECT_ROOT_MARKERS):
+            if any(
+                _is_file_with_receipt(candidate / marker)
+                for marker in _PROJECT_ROOT_MARKERS
+                if marker != ".git"
+            ):
+                return candidate
+            if authenticated_root is not None and candidate == authenticated_root:
+                return candidate
+            if authenticated_root is None and (candidate / ".git").exists():
                 return candidate
         except OSError:
             continue
@@ -12900,7 +12884,11 @@ def _resolve_raw_import_entry(
         is_relative = module.startswith(".")
         has_candidates = bool(candidate_info["paths"])
         resolved = next(
-            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            (
+                str(current)
+                for current in candidate_info["paths"]
+                if _is_file_with_receipt(Path(current))
+            ),
             None,
         )
         external = (not is_relative) and not has_candidates
@@ -12909,7 +12897,11 @@ def _resolve_raw_import_entry(
     elif language_id == "rust":
         candidates = _rust_module_candidates(importer_path, module, repo_root)
         resolved_candidate = next(
-            (current for current in candidates if Path(str(current["path"])).is_file()),
+            (
+                current
+                for current in candidates
+                if _is_file_with_receipt(Path(str(current["path"])))
+            ),
             None,
         )
         parts = [part.strip() for part in module.split("::") if part.strip()]
@@ -12926,7 +12918,11 @@ def _resolve_raw_import_entry(
         level = int(entry.get("level", 0) or 0)
         candidate_info = _python_module_candidates(importer_path, module, repo_root, level=level)
         resolved = next(
-            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            (
+                str(current)
+                for current in candidate_info["paths"]
+                if _is_file_with_receipt(Path(current))
+            ),
             None,
         )
         external = resolved is None
@@ -12997,10 +12993,10 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
     for the reverse (who imports this file) primitive, which does need a bounded repo scan.
     """
     resolved_file = Path(file_path).expanduser().resolve()
-    if not resolved_file.exists():
-        raise FileNotFoundError(f"File not found: {resolved_file}")
     if resolved_file.is_dir():
         raise ValueError(f"tg imports expects a FILE, not a directory: {resolved_file}")
+    if not _is_file_with_receipt(resolved_file):
+        raise FileNotFoundError(f"File not found: {resolved_file}")
 
     payload = _envelope(resolved_file)
     payload["routing_reason"] = "file-imports"
@@ -13213,7 +13209,7 @@ def build_file_importers_from_map(
     if not resolved_file.is_absolute():
         resolved_file = repo_root / resolved_file
     resolved_file = resolved_file.resolve()
-    if not resolved_file.exists():
+    if not _is_file_with_receipt(resolved_file):
         raise FileNotFoundError(f"File not found: {resolved_file}")
     target_file = str(resolved_file)
     # Honesty fix (dogfood, published v1.69.2 wheel): a purely lexical containment check --
