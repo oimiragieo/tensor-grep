@@ -7,9 +7,9 @@ ast-grep provider probes, GPU tier and runtime probes, cache and daemon status -
 `main.py`; only its evidence gathering moved.
 
 `_self` is `cli/main.py`'s module object, imported from `cli/_main_binding`. Every reference
-here to a symbol that still lives in `main.py` goes through it -- including `_self.subprocess`,
-which the test suite patches on `main` to stub out `tg --version` probes. Read that module's
-docstring before adding a bare cross-module reference.
+here to a symbol that still lives in `main.py` goes through it. Read that module's docstring before
+adding a bare cross-module reference. Candidate `tg --version` probes use the contained, byte-capped
+freshness helper directly; its tests patch this module's `capture_probe` binding.
 
 One exception is deliberate: `_doctor_rust_binary_version` keeps its FUNCTION-LOCAL
 `import subprocess` and a bare `subprocess.run`. A local import shadows the module global, so
@@ -32,9 +32,11 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
+from tensor_grep.cli.freshness_process import capture_probe
 from tensor_grep.cli.runtime_paths import (
     gpu_probe_timeout_s,
     iter_in_tree_native_tg_binaries,
@@ -808,26 +810,29 @@ def _doctor_rust_binary_warning(
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     from tensor_grep.cli.frontdoor_hops import probe_env
 
+    if candidate.suffix.lower() == ".ps1":
+        shim_target = powershell_shim_target(candidate)
+        if shim_target is None:
+            return None
+        probe_candidate = shim_target
+    else:
+        probe_candidate = candidate
     env = probe_env()
     if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
     for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
         env.pop(key, None)
     try:
-        res = _self.subprocess.run(
-            [str(candidate), "--version"],
-            capture_output=True,
+        stdout_bytes, _stderr_bytes = capture_probe(
+            [str(probe_candidate), "--version"],
+            2,
             env=env,
-            stdin=subprocess.DEVNULL,
-            text=False,
-            timeout=2,
+            require_success=True,
         )
     except Exception:
         return None
-    if res.returncode != 0:
-        return None
     try:
-        stdout = decode_protocol_output(res.stdout)
+        stdout = decode_protocol_output(stdout_bytes)
     except UnicodeDecodeError:
         return None
     for line in stdout.splitlines():
