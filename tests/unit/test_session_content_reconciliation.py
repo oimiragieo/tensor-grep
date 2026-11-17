@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -119,6 +120,172 @@ def test_snapshot_source_cap_and_confinement_have_readable_positive_control(tmp_
     with pytest.raises(OSError, match="outside captured root"):
         session_content_reconciliation.content_digest(tmp_path / "other", source, 100)
     assert len(session_content_reconciliation.content_digest(tmp_path, source, 100)) == 64
+
+
+def test_snapshot_size_and_digest_describe_the_same_confined_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "a.py"
+    source.write_bytes(b"value = 1\n")
+    replacement = b"value = 200\nextra = True\n"
+    real_read_confined = session_content_reconciliation.read_confined
+
+    def read_confined(root: Path, path: Path, limit: int) -> bytes:
+        source.write_bytes(replacement)
+        return real_read_confined(root, path, limit)
+
+    monkeypatch.setattr(session_content_reconciliation, "read_confined", read_confined)
+
+    snapshot = session_content_reconciliation.capture_snapshot(
+        [str(source)],
+        limit=100,
+        root=tmp_path,
+    )
+
+    assert snapshot == [
+        {
+            "path": str(source),
+            "size": len(replacement),
+            "mtime_ns": snapshot[0]["mtime_ns"],
+            "content_sha256": hashlib.sha256(replacement).hexdigest(),
+        }
+    ]
+
+
+def test_snapshot_present_receipt_seals_actual_digest_and_size(tmp_path: Path) -> None:
+    from tensor_grep.cli.symbols_cache import CONTENT_PRESENT_RECEIPT
+
+    source = tmp_path / "go.mod"
+    content = b"module example.com/demo\n"
+    source.write_bytes(content)
+
+    snapshot = session_content_reconciliation.capture_snapshot(
+        [str(source)],
+        limit=100,
+        root=tmp_path,
+        expected={str(source): CONTENT_PRESENT_RECEIPT},
+    )
+
+    assert snapshot[0]["size"] == len(content)
+    assert snapshot[0]["content_sha256"] == hashlib.sha256(content).hexdigest()
+
+
+def test_snapshot_accepts_verified_file_absence(tmp_path: Path) -> None:
+    from tensor_grep.cli.symbols_cache import CONTENT_ABSENT_RECEIPT
+
+    missing = tmp_path / "go.mod"
+    flag = session_store._UnreadablePathFlag()
+
+    snapshot = session_content_reconciliation.capture_snapshot(
+        [str(missing)],
+        limit=100,
+        root=tmp_path,
+        expected={str(missing): CONTENT_ABSENT_RECEIPT},
+        unreadable_hit=flag,
+    )
+
+    assert snapshot == []
+    assert flag.hit is False
+
+
+@pytest.mark.parametrize("receipt", ["<absent>", "", "0" * 64])
+def test_snapshot_rejects_nonmatching_receipt(tmp_path: Path, receipt: str) -> None:
+    source = tmp_path / "go.mod"
+    source.write_text("module example.com/demo\n", encoding="utf-8")
+    flag = session_store._UnreadablePathFlag()
+
+    snapshot = session_content_reconciliation.capture_snapshot(
+        [str(source)],
+        limit=100,
+        root=tmp_path,
+        expected={str(source): receipt},
+        unreadable_hit=flag,
+    )
+
+    assert snapshot == []
+    assert flag.hit is True
+
+
+def test_snapshot_input_paths_dedupes_and_preserves_invalid_observations(tmp_path: Path) -> None:
+    from tensor_grep.cli.symbols_cache import CONTENT_ABSENT_RECEIPT, content_receipt_key
+
+    source = tmp_path / "main.go"
+    invalid = tmp_path / "go.mod"
+    absent = tmp_path / "go.work"
+
+    paths = session_store._snapshot_input_paths(
+        tmp_path,
+        [str(source)],
+        {
+            content_receipt_key(source): "a" * 64,
+            content_receipt_key(invalid): "",
+            content_receipt_key(absent): CONTENT_ABSENT_RECEIPT,
+        },
+        10,
+    )
+
+    assert paths == [str(source), str(invalid), str(absent)]
+
+
+def test_snapshot_input_path_budget_marks_overflow_incomplete(tmp_path: Path) -> None:
+    flag = session_store._UnreadablePathFlag()
+    receipts = {str(tmp_path / f"marker-{index}"): "<absent>" for index in range(5)}
+
+    paths = session_store._snapshot_input_paths(tmp_path, [], receipts, 3, flag)
+
+    assert len(paths) == 3
+    assert flag.hit is True
+    assert flag.count == 2
+
+
+def test_open_session_discloses_absent_marker_appearing_before_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "go.mod"
+    (tmp_path / "billing.py").write_text(
+        "def process_billing_cycle(accounts):\n    return list(accounts)\n",
+        encoding="utf-8",
+    )
+    real_capture = session_store._capture_snapshot
+
+    def capture(*args, **kwargs):
+        marker.write_text("module example.com/appeared\n", encoding="utf-8")
+        return real_capture(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "_capture_snapshot", capture)
+
+    opened = session_store.open_session(str(tmp_path), max_repo_files=20)
+    payload = session_store.get_session(opened.session_id, str(tmp_path))
+
+    assert payload["snapshot_unreadable_paths"]["count"] == 1
+
+
+def test_open_session_discloses_marker_change_before_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.symbols_cache import content_receipt_key
+
+    marker = tmp_path / "go.mod"
+    marker.write_text("module example.com/demo\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text(
+        "package main\nfunc CalculateTotal(x int) int { return x + 1 }\n",
+        encoding="utf-8",
+    )
+    real_capture = session_store._capture_snapshot
+
+    def capture(*args, **kwargs):
+        marker.write_text("module example.com/changed\n", encoding="utf-8")
+        return real_capture(*args, **kwargs)
+
+    monkeypatch.setattr(session_store, "_capture_snapshot", capture)
+
+    opened = session_store.open_session(str(tmp_path), max_repo_files=20)
+    payload = session_store.get_session(opened.session_id, str(tmp_path))
+
+    assert content_receipt_key(marker) not in {
+        content_receipt_key(entry["path"]) for entry in payload["snapshot"]
+    }
+    assert payload["snapshot_unreadable_paths"]["count"] == 1
 
 
 def test_default_scope_still_requires_explicit_added_file_discovery(tmp_path: Path) -> None:

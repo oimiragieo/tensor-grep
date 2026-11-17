@@ -114,6 +114,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_input_provenance import resolved_input_path
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -201,7 +202,7 @@ def _java_source_root_for_path(path: Path, package: str | None) -> Path | None:
     never a guessed parent.
     """
     try:
-        resolved = path.expanduser().resolve()
+        resolved = resolved_input_path(path)
     except OSError:
         return None
     parts = resolved.parts
@@ -284,7 +285,7 @@ def _java_type_resolves_into_definition_dirs(
             continue
         for directory in definition_dirs:
             try:
-                resolved_dir = Path(directory).expanduser().resolve()
+                resolved_dir = resolved_input_path(directory)
             except OSError:
                 continue
             if _java_fqn_package_dir_matches(fqn, resolved_dir):
@@ -309,8 +310,8 @@ def java_file_imports_symbol_from_definition(
     del repo_root  # signature parity; unused by design
     del symbol  # Java visibility is type/package scoped; member name is not part of import proof
     try:
-        definition = Path(definition_path).expanduser().resolve()
-        importer = file_path.expanduser().resolve()
+        definition = resolved_input_path(definition_path)
+        importer = resolved_input_path(file_path)
     except OSError:
         return False
     try:

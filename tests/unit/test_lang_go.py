@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import agent_capsule, lang_go, lang_registry, repo_map
+from tensor_grep.cli.symbols_cache import collect_content_receipts
 
 # ---------------------------------------------------------------------------
 # Fixture: go.mod + pkg/foo (exported Helper + unexported helper + Widget/Write) + pkg/bar
@@ -157,6 +158,23 @@ def test_target_language_for_path_reports_go() -> None:
     assert repo_map._target_language_for_path("pkg/foo/foo.go") == "go"
     assert repo_map._language_for_path("pkg/foo/foo.go") == "go"
     assert repo_map._provider_language_for_path("pkg/foo/foo.go") == "go"
+
+
+def test_go_repo_context_cache_is_bypassed_and_not_written_during_receipt_collection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "go.mod").write_text("module example.com/stable\n", encoding="utf-8")
+    key = str(tmp_path.resolve())
+    cache = type(lang_go._GO_REPO_CONTEXTS)([
+        (key, {"root": key, "module_dirs": {"example.com/poisoned": key}})
+    ])
+    monkeypatch.setattr(lang_go, "_GO_REPO_CONTEXTS", cache)
+
+    with collect_content_receipts():
+        context = lang_go._go_repo_context(tmp_path)
+
+    assert context["module_dirs"] == {"example.com/stable": key}
+    assert cache[key]["module_dirs"] == {"example.com/poisoned": key}
 
 
 # ---------------------------------------------------------------------------

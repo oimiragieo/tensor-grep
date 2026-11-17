@@ -24,6 +24,8 @@ from typing import Any
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap
 from tensor_grep.cli.repo_map_cache import _MTIME_CACHE_CLEAR_REGISTRY
+from tensor_grep.cli.repo_map_input_provenance import resolved_input_path
+from tensor_grep.cli.symbols_cache import content_receipts_active, read_content_bytes
 
 _SAMPLE_LIMIT = 5
 _REPLACEMENT_CHAR = chr(0xFFFD)
@@ -193,7 +195,7 @@ def _language_coverage_gaps_for_universe(
 def _sample_name(path: Path, root: Path | None) -> str:
     if root is not None:
         try:
-            return path.resolve().relative_to(root.resolve()).as_posix()
+            return resolved_input_path(path).relative_to(resolved_input_path(root)).as_posix()
         except (OSError, ValueError):
             pass
     return path.as_posix()
@@ -232,6 +234,22 @@ def _classify(
     from tensor_grep.cli import repo_map as _rm
 
     local_deadline = SimpleNamespace(hit=False)
+    if content_receipts_active():
+        result = _classify_uncached(
+            files,
+            root,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=local_deadline,
+        )
+        if (
+            not local_deadline.hit
+            and deadline_monotonic is not None
+            and time.monotonic() >= deadline_monotonic
+        ):
+            local_deadline.hit = True
+        if local_deadline.hit and deadline_hit is not None:
+            deadline_hit.hit = True
+        return result
     signature_entries: list[tuple[str, int | None, int | None]] = []
     for current in files:
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
@@ -303,7 +321,7 @@ def _classify_uncached(
             continue
         language = spec.language_id
         try:
-            size = current.stat().st_size
+            size = _rm._file_size_with_receipt(current)
         except OSError:
             record("unreadable", language, current)
             continue
@@ -325,7 +343,7 @@ def _classify_uncached(
             # A VALID UTF-8 file may legitimately contain a literal U+FFFD, so confirm with a
             # strict decode (only for files that already contain one -- rare).
             try:
-                current.read_bytes().decode("utf-8-sig")
+                read_content_bytes(current).decode("utf-8-sig")
             except UnicodeDecodeError:
                 record("lossy-decode", language, current)
             except OSError:

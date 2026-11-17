@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 from contextlib import contextmanager
 from pathlib import Path
@@ -126,7 +127,7 @@ def test_session_prepare_builds_from_authenticated_session_scope(
     [None, "def unrelated():\n    return None\n"],
     ids=("added-path", "same-path-changed-content"),
 )
-def test_session_prepare_refuses_evidence_built_from_temporary_project_contents(
+def test_session_prepare_uses_signed_file_universe_for_temporary_project_contents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     original_consumer: str | None,
@@ -174,7 +175,7 @@ def test_session_prepare_refuses_evidence_built_from_temporary_project_contents(
             assert any(
                 Path(str(caller.get("file"))).name == "consumer.py"
                 for caller in snapshot.blast_radius_floor.get("top_callers", [])
-            ), snapshot.blast_radius_floor
+            ) is (original_consumer is not None), snapshot.blast_radius_floor
         finally:
             project.rename(replacement)
             parked.rename(project)
@@ -183,20 +184,33 @@ def test_session_prepare_refuses_evidence_built_from_temporary_project_contents(
 
     monkeypatch.setattr(service, "build_prepare_snapshot", build)
 
-    with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
-        service.session_prepare(
+    if original_consumer is None:
+        prepared = service.session_prepare(
             opened.session_id,
             "process_billing_cycle",
             str(project),
         )
-
-    assert "last_prepare" not in get_session(opened.session_id, str(project))
+        assert not any(
+            Path(str(caller.get("file"))).name == "consumer.py"
+            for caller in prepared["blast_radius_floor"].get("top_callers", [])
+        )
+    else:
+        with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
+            service.session_prepare(
+                opened.session_id,
+                "process_billing_cycle",
+                str(project),
+            )
+        assert "last_prepare" not in get_session(opened.session_id, str(project))
 
     monkeypatch.setattr(service, "build_prepare_snapshot", real_build)
     if original_consumer is None:
         shutil.copy(replacement / "consumer.py", project / "consumer.py")
-        with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
-            service.session_prepare(opened.session_id, "process_billing_cycle", str(project))
+        added = service.session_prepare(opened.session_id, "process_billing_cycle", str(project))
+        assert not any(
+            Path(str(caller.get("file"))).name == "consumer.py"
+            for caller in added["blast_radius_floor"].get("top_callers", [])
+        )
         (project / "consumer.py").unlink()
 
     stable = service.session_prepare(
@@ -322,6 +336,365 @@ def test_session_prepare_accepts_stable_javascript_inputs(tmp_path: Path) -> Non
     commands = {step.get("command") for step in prepared["raw"]["validation_plan"]}
     assert "npm test" in commands
     assert get_session(opened.session_id, str(project))["last_prepare"]["query"] == "calculateTotal"
+
+
+@pytest.mark.parametrize(
+    ("marker_name", "marker_text", "source_name", "source_text", "query"),
+    [
+        (
+            "go.mod",
+            "module example.com/demo\n",
+            "main.go",
+            "package main\nfunc CalculateTotal(x int) int { return x + 1 }\n",
+            "CalculateTotal",
+        ),
+        (
+            ".gitignore",
+            "*.log\n",
+            "billing.py",
+            "def process_billing_cycle(accounts):\n    return list(accounts)\n",
+            "process_billing_cycle",
+        ),
+    ],
+    ids=("go-mod", "gitignore"),
+)
+def test_session_prepare_accepts_stable_observed_marker_inputs(
+    tmp_path: Path,
+    marker_name: str,
+    marker_text: str,
+    source_name: str,
+    source_text: str,
+    query: str,
+) -> None:
+    from tensor_grep.cli.symbols_cache import content_receipt_key
+
+    project = tmp_path / "project"
+    project.mkdir()
+    marker = project / marker_name
+    marker.write_text(marker_text, encoding="utf-8")
+    (project / source_name).write_text(source_text, encoding="utf-8")
+
+    opened = open_session(str(project), max_repo_files=20)
+    payload = get_session(opened.session_id, str(project))
+    assert content_receipt_key(marker) in {
+        content_receipt_key(entry["path"]) for entry in payload["snapshot"]
+    }
+
+    prepared = service.session_prepare(opened.session_id, query, str(project))
+
+    assert prepared["session_id"] == opened.session_id
+    assert payload["snapshot"]
+
+
+def test_session_prepare_rejects_transient_observed_go_module_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "go.mod").write_text("module example.com/demo\n", encoding="utf-8")
+    (project / "main.go").write_text(
+        "package main\nfunc CalculateTotal(x int) int { return x + 1 }\n", encoding="utf-8"
+    )
+    opened = open_session(str(project), max_repo_files=20)
+
+    replacement_project = tmp_path / "project-replacement"
+    parked = tmp_path / "project-original"
+    shutil.copytree(project, replacement_project)
+    (replacement_project / "go.mod").write_text("module example.com/transient\n", encoding="utf-8")
+    real_build = service.build_prepare_snapshot
+
+    def build(**kwargs):
+        input_validator = kwargs.pop("_input_validator")
+        project.rename(parked)
+        replacement_project.rename(project)
+        try:
+            snapshot = real_build(**kwargs, _input_validator=None)
+        finally:
+            project.rename(replacement_project)
+            parked.rename(project)
+        input_validator()
+        return snapshot
+
+    monkeypatch.setattr(service, "build_prepare_snapshot", build)
+
+    with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
+        service.session_prepare(opened.session_id, "CalculateTotal", str(project))
+
+    assert "last_prepare" not in get_session(opened.session_id, str(project))
+
+
+def test_session_prepare_ignores_transient_gitignore_change_outside_signed_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (project / "billing.py").write_text(
+        "def process_billing_cycle(accounts):\n    return list(accounts)\n", encoding="utf-8"
+    )
+    opened = open_session(str(project), max_repo_files=20)
+    stable = service.session_prepare(opened.session_id, "process_billing_cycle", str(project))
+
+    replacement_project = tmp_path / "project-replacement"
+    parked = tmp_path / "project-original"
+    shutil.copytree(project, replacement_project)
+    (replacement_project / ".gitignore").write_text("billing.py\n", encoding="utf-8")
+    real_build = service.build_prepare_snapshot
+
+    def build(**kwargs):
+        input_validator = kwargs.pop("_input_validator")
+        project.rename(parked)
+        replacement_project.rename(project)
+        try:
+            snapshot = real_build(**kwargs, _input_validator=None)
+        finally:
+            project.rename(replacement_project)
+            parked.rename(project)
+        input_validator()
+        return snapshot
+
+    monkeypatch.setattr(service, "build_prepare_snapshot", build)
+
+    prepared = service.session_prepare(opened.session_id, "process_billing_cycle", str(project))
+
+    assert prepared == stable
+    assert prepared["blast_radius_floor"] == stable["blast_radius_floor"]
+
+
+def test_session_prepare_authenticates_javascript_reexport_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import repo_map
+
+    project = tmp_path / "project"
+    source = project / "src"
+    source.mkdir(parents=True)
+    (source / "payments.ts").write_text(
+        "export function createInvoice(total: number): number { return total + 1; }\n",
+        encoding="utf-8",
+    )
+    barrel = source / "barrel.ts"
+    barrel.write_text(
+        'export { createInvoice as makeInvoice } from "./payments";\n',
+        encoding="utf-8",
+    )
+    service_path = source / "service.ts"
+    service_path.write_text(
+        'import { makeInvoice } from "./barrel";\n\n'
+        "export function buildReceipt(total: number): number {\n"
+        "  return makeInvoice(total);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    opened = open_session(str(project), max_repo_files=20)
+    repo_map._clear_all_source_caches()
+    real_read_text = Path.read_text
+    direct_reads = 0
+
+    def read_text(path: Path, *args, **kwargs) -> str:
+        nonlocal direct_reads
+        if path.resolve() == barrel.resolve():
+            direct_reads += 1
+            return 'export { unrelated as makeInvoice } from "./unrelated";\n'
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    stable = service.session_prepare(opened.session_id, "createInvoice", str(project))
+
+    assert direct_reads == 0
+    assert any(
+        Path(str(caller.get("file"))) == service_path
+        for caller in stable["blast_radius_floor"].get("top_callers", [])
+    )
+    assert get_session(opened.session_id, str(project))["last_prepare"]["query"] == "createInvoice"
+
+
+def test_session_prepare_authenticates_file_size_observations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import repo_map
+
+    project = tmp_path / "project"
+    project.mkdir()
+    source = project / "billing.py"
+    original = b"def process_billing_cycle(accounts):\n    return list(accounts)\n"
+    source.write_bytes(original)
+    opened = open_session(str(project), max_repo_files=10)
+
+    stable = service.session_prepare(
+        opened.session_id,
+        "process_billing_cycle",
+        str(project),
+    )
+    assert stable["session_id"] == opened.session_id
+
+    signed_stat = source.stat()
+    real_file_size = repo_map._file_size_with_receipt
+    mutated = False
+
+    def file_size(path: Path) -> int:
+        nonlocal mutated
+        if not mutated and path.resolve() == source.resolve():
+            mutated = True
+            source.write_bytes(b"#" * (repo_map._max_parse_bytes() + 1))
+            try:
+                return real_file_size(path)
+            finally:
+                source.write_bytes(original)
+                os.utime(source, ns=(signed_stat.st_atime_ns, signed_stat.st_mtime_ns))
+        return real_file_size(path)
+
+    monkeypatch.setattr(repo_map, "_file_size_with_receipt", file_size)
+
+    transient = service.session_prepare(
+        opened.session_id,
+        "process_billing_cycle",
+        str(project),
+    )
+
+    assert mutated is True
+    assert transient["blast_radius_floor"] == stable["blast_radius_floor"]
+    assert get_session(opened.session_id, str(project))["last_prepare"]["query"] == (
+        "process_billing_cycle"
+    )
+
+
+def test_session_prepare_derives_python_sys_path_directory_from_signed_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import agent_capsule_builder
+
+    project = tmp_path / "project"
+    lib = project / "lib"
+    lib.mkdir(parents=True)
+    (lib / "mymod.py").write_text(
+        "def calculate_total(x):\n    return x + 1\n",
+        encoding="utf-8",
+    )
+    (project / "app.py").write_text(
+        "import sys, os\n"
+        'sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))\n'
+        "from mymod import calculate_total\n\n"
+        "def run(x):\n    return calculate_total(x)\n",
+        encoding="utf-8",
+    )
+    opened = open_session(str(project), max_repo_files=20)
+    stable = service.session_prepare(opened.session_id, "calculate_total", str(project))
+
+    real_collect = agent_capsule_builder._collect_capsule_call_site_evidence
+    real_is_dir = Path.is_dir
+
+    def collect(*args, **kwargs):
+        def is_dir(path: Path) -> bool:
+            if path.resolve() == lib.resolve():
+                return False
+            return real_is_dir(path)
+
+        with monkeypatch.context() as nested:
+            nested.setattr(Path, "is_dir", is_dir)
+            return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr(agent_capsule_builder, "_collect_capsule_call_site_evidence", collect)
+
+    transient = service.session_prepare(opened.session_id, "calculate_total", str(project))
+
+    assert transient["blast_radius_floor"] == stable["blast_radius_floor"]
+
+    alternate = tmp_path / "alternate"
+    alternate.mkdir()
+    real_resolve = Path.resolve
+    lib_abs = lib.absolute()
+    alternate_abs = alternate.absolute()
+
+    def collect_with_redirect(*args, **kwargs):
+        def resolve(path: Path, *resolve_args, **resolve_kwargs) -> Path:
+            if path.absolute() == lib_abs:
+                return alternate_abs
+            return real_resolve(path, *resolve_args, **resolve_kwargs)
+
+        with monkeypatch.context() as nested:
+            nested.setattr(Path, "resolve", resolve)
+            return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr(
+        agent_capsule_builder,
+        "_collect_capsule_call_site_evidence",
+        collect_with_redirect,
+    )
+
+    redirected = service.session_prepare(opened.session_id, "calculate_total", str(project))
+
+    assert redirected["blast_radius_floor"] == stable["blast_radius_floor"]
+
+
+def test_unknown_authenticated_file_size_poison_receipt(tmp_path: Path) -> None:
+    from tensor_grep.cli.repo_map_input_provenance import file_size_with_receipt
+    from tensor_grep.cli.symbols_cache import collect_content_receipts, content_receipt_key
+
+    source = tmp_path / "source.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+
+    with collect_content_receipts(authenticated_sizes={}) as receipts:
+        assert file_size_with_receipt(source) == source.stat().st_size
+
+    assert receipts[content_receipt_key(source)] == ""
+
+
+def test_session_prepare_rejects_transient_signed_source_disappearance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import agent_capsule_builder
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "billing.py").write_text(
+        "def process_billing_cycle(accounts):\n    return list(accounts)\n",
+        encoding="utf-8",
+    )
+    caller = project / "service.py"
+    caller.write_text(
+        "from billing import process_billing_cycle\n\n"
+        "def run_cycle(accounts):\n    return process_billing_cycle(accounts)\n",
+        encoding="utf-8",
+    )
+    opened = open_session(str(project), max_repo_files=20)
+
+    stable = service.session_prepare(
+        opened.session_id,
+        "process_billing_cycle",
+        str(project),
+    )
+    assert stable["session_id"] == opened.session_id
+
+    parked = tmp_path / "service.py.parked"
+    real_collect = agent_capsule_builder._collect_capsule_call_site_evidence
+    disappeared = False
+
+    def collect(*args, **kwargs):
+        nonlocal disappeared
+        if not disappeared:
+            disappeared = True
+            caller.rename(parked)
+            try:
+                return real_collect(*args, **kwargs)
+            finally:
+                parked.rename(caller)
+        return real_collect(*args, **kwargs)
+
+    monkeypatch.setattr(agent_capsule_builder, "_collect_capsule_call_site_evidence", collect)
+
+    with pytest.raises(SessionStaleError, match="project contents changed while preparing"):
+        service.session_prepare(
+            opened.session_id,
+            "process_billing_cycle",
+            str(project),
+        )
+
+    assert disappeared is True
+    assert get_session(opened.session_id, str(project))["last_prepare"]["query"] == (
+        "process_billing_cycle"
+    )
 
 
 def test_session_prepare_does_not_read_parent_manifest_for_subtree_scope(

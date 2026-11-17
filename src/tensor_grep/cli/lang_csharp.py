@@ -96,6 +96,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_input_provenance import resolved_input_path
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -415,7 +416,7 @@ def csharp_file_imports_symbol_from_definition(
     del repo_root
     del symbol
     try:
-        definition = Path(definition_path).expanduser().resolve()
+        definition = resolved_input_path(definition_path)
     except OSError:
         return False
     try:
@@ -496,7 +497,7 @@ def _csharp_type_resolves_into_definition_dirs(
             continue
         for directory in definition_dirs:
             try:
-                resolved_dir = Path(directory).expanduser().resolve()
+                resolved_dir = resolved_input_path(directory)
             except OSError:
                 continue
             if _csharp_fqn_namespace_dir_matches(fqn, resolved_dir):

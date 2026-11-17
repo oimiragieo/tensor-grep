@@ -4,6 +4,12 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from tensor_grep.cli.repo_map_input_provenance import (
+    is_file_with_receipt,
+    read_text_with_receipt,
+    resolved_input_path,
+)
+
 
 def _gitignore_pattern_to_regex(pattern: str) -> str:
     """Translate a single gitignore glob body to an anchored regex fragment.
@@ -51,7 +57,7 @@ class _GitignoreMatcher:
     """
 
     def __init__(self, root: Path, lines: list[str]) -> None:
-        self._root = root.resolve()
+        self._root = resolved_input_path(root)
         from pathspec import PathSpec
         from pathspec.patterns.gitignore.base import GitIgnorePatternError
         from pathspec.patterns.gitignore.basic import GitIgnoreBasicPattern
@@ -105,8 +111,8 @@ def _load_gitignore_matcher(root_key: str) -> _GitignoreMatcher:
     gitignore_path = root / ".gitignore"
     lines: list[str] = []
     try:
-        if gitignore_path.is_file():
-            lines = gitignore_path.read_text(encoding="utf-8").splitlines()
+        if is_file_with_receipt(gitignore_path):
+            lines = read_text_with_receipt(gitignore_path).splitlines()
     except (OSError, UnicodeDecodeError):
         lines = []
     return _GitignoreMatcher(root, lines)
