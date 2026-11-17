@@ -277,6 +277,14 @@ def test_nonzero_and_partial_stalled_output_is_preserved():
     ) == (b"partial\n", b"")
 
 
+def test_success_required_probe_discards_nonzero_output():
+    assert freshness_process.capture_probe(
+        [sys.executable, "-c", "import os,sys; os.write(1,b'false-green\\n'); sys.exit(3)"],
+        3,
+        require_success=True,
+    ) == (b"", b"")
+
+
 def test_descendant_holding_output_pipes_is_stopped():
     code = (
         "import os,subprocess,sys; "
