@@ -28,27 +28,119 @@ _INCLUDE_RE = re.compile(
     r'^[ \t]*#[ \t]*include[ \t]*(?:"([^"]+)"|<([^>]+)>)',
     re.MULTILINE,
 )
-_COMMENT_OR_LITERAL_RE = re.compile(
-    r'(?P<raw_literal>(?:u8|u|U|L)?R"(?P<raw_delimiter>[^\s()\\]{0,16})\(.*?\)'
-    r'(?P=raw_delimiter)")'
-    r"|//[^\r\n]*|/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
-    re.DOTALL,
-)
+_RAW_LITERAL_PREFIXES = ('u8R"', 'uR"', 'UR"', 'LR"', 'R"')
 
 _SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
 
 
+def _splice_physical_lines(source: str) -> str:
+    """Apply C/C++ phase-2 backslash-newline splicing in one pass."""
+    pieces: list[str] = []
+    cursor = 0
+    start = 0
+    size = len(source)
+    while cursor < size:
+        if source[cursor] != "\\" or cursor + 1 >= size:
+            cursor += 1
+            continue
+        following = source[cursor + 1]
+        splice_end = cursor + 2
+        if following == "\r" and splice_end < size and source[splice_end] == "\n":
+            splice_end += 1
+        elif following not in "\r\n":
+            cursor += 1
+            continue
+        pieces.append(source[start:cursor])
+        cursor = splice_end
+        start = cursor
+    if not pieces:
+        return source
+    pieces.append(source[start:])
+    return "".join(pieces)
+
+
+def _raw_literal_end(source: str, start: int) -> int | None:
+    """Return the end of a raw literal, consuming an unterminated valid opener to EOF."""
+    prefix = next(
+        (candidate for candidate in _RAW_LITERAL_PREFIXES if source.startswith(candidate, start)),
+        None,
+    )
+    if prefix is None:
+        return None
+    delimiter_start = start + len(prefix)
+    cursor = delimiter_start
+    while cursor < len(source) and cursor - delimiter_start <= 16:
+        char = source[cursor]
+        if char == "(":
+            delimiter = source[delimiter_start:cursor]
+            terminator = f'){delimiter}"'
+            closing = source.find(terminator, cursor + 1)
+            return len(source) if closing < 0 else closing + len(terminator)
+        if char.isspace() or char in ")\\":
+            return None
+        cursor += 1
+    return None
+
+
+def _quoted_literal_end(source: str, start: int, quote: str) -> int:
+    cursor = start + 1
+    while cursor < len(source):
+        char = source[cursor]
+        if char == "\\" and cursor + 1 < len(source):
+            cursor += 2
+            continue
+        if char == quote:
+            return cursor + 1
+        if char in "\r\n":
+            return cursor
+        cursor += 1
+    return cursor
+
+
+def _mask_span(masked: list[str], source: str, start: int, end: int, fill: str) -> None:
+    for cursor in range(start, end):
+        if source[cursor] not in "\r\n":
+            masked[cursor] = fill
+
+
+def _mask_comments_and_raw_literals(source: str) -> str:
+    """Mask non-code with disjoint one-pass spans; raw-literal lookup never rescans a suffix."""
+    source = _splice_physical_lines(source)
+    masked = list(source)
+    cursor = 0
+    size = len(source)
+    while cursor < size:
+        raw_end = _raw_literal_end(source, cursor)
+        if raw_end is not None:
+            # Unlike comments, a raw literal is a real token. Non-whitespace fill prevents a
+            # following same-line #include from becoming a fabricated directive after masking.
+            _mask_span(masked, source, cursor, raw_end, "x")
+            cursor = raw_end
+            continue
+        if source.startswith("//", cursor):
+            end = cursor + 2
+            while end < size and source[end] not in "\r\n":
+                end += 1
+            _mask_span(masked, source, cursor, end, " ")
+            cursor = end
+            continue
+        if source.startswith("/*", cursor):
+            closing = source.find("*/", cursor + 2)
+            end = size if closing < 0 else closing + 2
+            _mask_span(masked, source, cursor, end, " ")
+            cursor = end
+            continue
+        if source[cursor] in "\"'":
+            cursor = _quoted_literal_end(source, cursor, source[cursor])
+            continue
+        cursor += 1
+    return "".join(masked)
+
+
 def iter_include_directives(source: str) -> list[tuple[str, bool]]:
     """Return ``(target, is_system)`` pairs for every quote/angle ``#include`` in *source*."""
-    source = _COMMENT_OR_LITERAL_RE.sub(
-        lambda match: (
-            "".join("\n" if char == "\n" else " " for char in match.group())
-            if match.group("raw_literal") is not None or match.group().startswith(("//", "/*"))
-            else match.group()
-        ),
-        source,
-    )
+    source = _mask_comments_and_raw_literals(source)
     results: list[tuple[str, bool]] = []
     for match in _INCLUDE_RE.finditer(source):
         quoted, angled = match.group(1), match.group(2)

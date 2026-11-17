@@ -2981,7 +2981,7 @@
   },
   {
     "module": "cli/session_resume_service.py",
-    "lineno": 124,
+    "lineno": 155,
     "enclosing_symbol": "dispatch_session_prepare_cli",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2991,7 +2991,7 @@
   },
   {
     "module": "cli/session_resume_service.py",
-    "lineno": 141,
+    "lineno": 172,
     "enclosing_symbol": "dispatch_session_resume_cli",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3261,7 +3261,7 @@
   },
   {
     "module": "cli/lsp_server.py",
-    "lineno": 1075,
+    "lineno": 1066,
     "enclosing_symbol": "did_close",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3271,7 +3271,7 @@
   },
   {
     "module": "cli/lsp_server.py",
-    "lineno": 1080,
+    "lineno": 1071,
     "enclosing_symbol": "did_close",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",

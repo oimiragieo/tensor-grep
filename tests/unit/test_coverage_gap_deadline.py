@@ -55,6 +55,34 @@ def test_deadline_crossed_during_final_stat_does_not_reuse_cache(tmp_path, monke
     assert deadline.hit is True
 
 
+def test_deadline_crossed_while_classifying_last_file_is_reported_and_not_cached(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "a.py"
+    source.write_text("def value():\n    return 1\n", encoding="utf-8")
+    clock = {"now": 0.0}
+    reads = 0
+
+    def read_after_deadline(_path: str) -> str:
+        nonlocal reads
+        reads += 1
+        clock["now"] = 2.0
+        return "def value():\n    return 1\n"
+
+    monkeypatch.setattr(gaps.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr("tensor_grep.cli.repo_map._read_source_text_cached", read_after_deadline)
+    gaps._clear_source_coverage_cache()
+    deadline = SimpleNamespace(hit=False)
+
+    assert (
+        gaps.source_coverage_gaps([source], tmp_path, deadline_monotonic=1.0, deadline_hit=deadline)
+        == []
+    )
+    assert reads == 1
+    assert deadline.hit is True
+    assert gaps._MEMO is None
+
+
 def test_expired_language_gap_scan_skips_later_scope_probes(tmp_path, monkeypatch) -> None:
     source = tmp_path / "a.ts"
     source.write_text("export const value = 1;\n", encoding="utf-8")
