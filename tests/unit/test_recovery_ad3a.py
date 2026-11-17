@@ -75,6 +75,67 @@ def test_tg039_followed_symlinked_vendor_remains_guarded(tmp_path: Path) -> None
     assert "--allow-broad-generated-scan" in result.output
 
 
+def test_tg039_effective_rg_follow_policy_includes_config_and_cli_overrides(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "vendor").symlink_to(target, target_is_directory=True)
+    rg_config = tmp_path / "ripgrep.conf"
+    rg_config.write_text("--follow\n", encoding="utf-8")
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(rg_config))
+
+    assert bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert not bootstrap._search_args_include_unbounded_broad_scan([
+        "needle",
+        "--no-follow",
+        str(root),
+    ])
+    assert not bootstrap._search_args_include_unbounded_broad_scan([
+        "needle",
+        "--no-config",
+        str(root),
+    ])
+    assert not bootstrap._search_args_include_unbounded_broad_scan([
+        "needle",
+        "--follow",
+        "--no-follow",
+        str(root),
+    ])
+    assert bootstrap._search_args_include_unbounded_broad_scan([
+        "needle",
+        "--no-follow",
+        "--follow",
+        str(root),
+    ])
+
+    def refused(config: SearchConfig) -> bool:
+        return cli_main._should_refuse_unbounded_vendored_root_scan(
+            [str(root)],
+            config,
+            allow_broad_generated_scan=False,
+            paths_defaulted=False,
+        )[0]
+
+    assert refused(SearchConfig())
+    assert not refused(SearchConfig(no_config=True))
+    assert not refused(SearchConfig(no_follow=True))
+    assert not refused(SearchConfig(follow=True, no_follow=True))
+
+    rg_config.write_text("--follow\n--no-follow\n", encoding="utf-8")
+    assert not bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert not refused(SearchConfig())
+
+    rg_config.write_text("--no-follow\n--follow\n", encoding="utf-8")
+    assert bootstrap._search_args_include_unbounded_broad_scan(["needle", str(root)])
+    assert refused(SearchConfig())
+
+    rg_config.write_text("--no-follow\n", encoding="utf-8")
+    assert refused(SearchConfig(follow=True))
+
+
 def test_tg043_missing_psutil_uses_safe_cpu_fallback(monkeypatch) -> None:
     manager = MemoryManager()
     monkeypatch.setattr(manager, "get_vram_budget_mb", lambda _device_id=0: 0)
@@ -111,9 +172,39 @@ def test_tg046_download_failure_closes_destination_fd(tmp_path: Path, monkeypatc
         lsp_provider_setup._download("https://example.invalid/tool", destination)
 
     assert opened
-    with pytest.raises(OSError):
-        os.fstat(opened[0])
+    for descriptor in opened:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
     assert not destination.exists()
+
+
+def test_tg046_download_failure_never_unlinks_close_time_replacement(
+    tmp_path: Path, monkeypatch
+) -> None:
+    destination = tmp_path / "tool.bin"
+    real_close = os.close
+    replacement_created = False
+
+    def close_and_replace(descriptor: int) -> None:
+        nonlocal replacement_created
+        real_close(descriptor)
+        if replacement_created:
+            return
+        destination.unlink(missing_ok=True)
+        destination.write_bytes(b"unowned replacement")
+        replacement_created = True
+
+    def fail_download(*_args, **_kwargs):
+        raise RuntimeError("controlled download failure")
+
+    monkeypatch.setattr(lsp_provider_setup.os, "close", close_and_replace)
+    monkeypatch.setattr(lsp_provider_setup.urllib.request, "urlopen", fail_download)
+
+    with pytest.raises(RuntimeError, match="controlled download failure"):
+        lsp_provider_setup._download("https://example.invalid/tool", destination)
+
+    assert replacement_created
+    assert destination.read_bytes() == b"unowned replacement"
 
 
 def test_tg048_table_formatter_escapes_tabs_in_cells() -> None:

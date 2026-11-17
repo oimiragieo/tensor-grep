@@ -198,3 +198,12 @@ class SearchConfig:
     # Fusion. Default off. Fails CLOSED to BM25-only (visible via rank_fallback_reason + stderr)
     # when the `semantic` extra is absent or the model has not been fetched -- never silent.
     semantic_rank: bool = False
+
+    @property
+    def effective_rg_follow(self) -> bool:
+        """Follow state after rg's environment config and emitted CLI overrides."""
+        from tensor_grep.io.root_probe import effective_rg_follow_policy
+
+        return effective_rg_follow_policy(
+            follow=self.follow, no_follow=self.no_follow, no_config=self.no_config
+        )

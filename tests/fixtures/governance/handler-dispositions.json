@@ -871,7 +871,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5248,
+    "lineno": 5246,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5295,
+    "lineno": 5293,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5364,
+    "lineno": 5362,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5414,
+    "lineno": 5412,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5456,
+    "lineno": 5454,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1051,7 +1051,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8828,
+    "lineno": 8817,
     "enclosing_symbol": "session_context_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1091,7 +1091,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9195,
+    "lineno": 9184,
     "enclosing_symbol": "session_importers_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2861,7 +2861,7 @@
   },
   {
     "module": "cli/lsp_provider_setup.py",
-    "lineno": 421,
+    "lineno": 493,
     "enclosing_symbol": "_ensure_node_runtime",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2871,7 +2871,7 @@
   },
   {
     "module": "cli/lsp_provider_setup.py",
-    "lineno": 969,
+    "lineno": 1041,
     "enclosing_symbol": "install_managed_lsp_providers",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -2881,7 +2881,7 @@
   },
   {
     "module": "cli/lsp_provider_setup.py",
-    "lineno": 974,
+    "lineno": 1046,
     "enclosing_symbol": "install_managed_lsp_providers",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -2891,7 +2891,7 @@
   },
   {
     "module": "cli/lsp_provider_setup.py",
-    "lineno": 980,
+    "lineno": 1052,
     "enclosing_symbol": "install_managed_lsp_providers",
     "handler_index_within_symbol": 2,
     "category": "LOGGED-DEGRADE",

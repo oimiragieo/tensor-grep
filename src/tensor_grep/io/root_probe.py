@@ -15,8 +15,51 @@ convention (argv parsing, ``SearchConfig`` interpretation) untouched in its own 
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
+
+
+def _ripgrep_config_follow_policy() -> bool:
+    """Return ripgrep's last follow setting from its environment config, if readable.
+
+    Ripgrep prepends one argument per non-comment config line to the real command line. An
+    unreadable or malformed config makes ripgrep refuse before scanning, so it cannot enable a
+    traversal that this guard needs to predict.
+    """
+    config_path = os.environ.get("RIPGREP_CONFIG_PATH")
+    if not config_path:
+        return False
+    follow = False
+    try:
+        with Path(config_path).open(encoding="utf-8") as handle:
+            for raw_line in handle:
+                argument = raw_line.strip()
+                if not argument or argument.startswith("#"):
+                    continue
+                if argument in {"-L", "--follow"}:
+                    follow = True
+                elif argument == "--no-follow":
+                    follow = False
+    except (OSError, UnicodeError):
+        return False
+    return follow
+
+
+def effective_rg_follow_policy(
+    *, follow: bool = False, no_follow: bool = False, no_config: bool = False
+) -> bool:
+    """Mirror the follow state emitted by ``RipgrepBackend`` after rg's prepended config.
+
+    The backend appends ``--follow`` and then ``--no-follow`` when both parsed flags are set, so
+    ``no_follow`` deliberately wins here too.
+    """
+    enabled = False if no_config else _ripgrep_config_follow_policy()
+    if follow:
+        enabled = True
+    if no_follow:
+        enabled = False
+    return enabled
 
 
 def iter_top_level_vendored_dirs(
