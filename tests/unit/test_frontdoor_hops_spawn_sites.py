@@ -256,18 +256,29 @@ def test_version_probes_stamp_and_do_not_spawn_at_the_cap(
     from tensor_grep.cli import doctor_report, runtime_paths
 
     recorder = _RunRecorder(monkeypatch, subprocess, "run")
+    contained_calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def capture(argv, _timeout, *, env=None, **_kwargs):  # type: ignore[no-untyped-def]
+        contained_calls.append(([str(arg) for arg in argv], _markers(env)))
+        return b"", b""
+
+    monkeypatch.setattr(doctor_report, "capture_probe", capture)
     runtime_paths._native_tg_version(fake_native)
     doctor_report._doctor_rust_binary_version(fake_native)
     doctor_report._doctor_tg_candidate_version(fake_native)
-    assert len(recorder.calls) == 3
-    assert all(markers.get(FRONTDOOR_HOPS_ENV) == "1" for _argv, markers in recorder.calls)
+    all_calls = recorder.calls + contained_calls
+    assert len(recorder.calls) == 2
+    assert len(contained_calls) == 1
+    assert all(markers.get(FRONTDOOR_HOPS_ENV) == "1" for _argv, markers in all_calls)
 
     recorder.calls.clear()
+    contained_calls.clear()
     monkeypatch.setenv(FRONTDOOR_HOPS_ENV, "4")
     assert runtime_paths._native_tg_version(fake_native) is None
     assert doctor_report._doctor_rust_binary_version(fake_native) is None
     assert doctor_report._doctor_tg_candidate_version(fake_native) is None
     assert recorder.calls == []
+    assert contained_calls == []
 
 
 # ---------------------------------------------------------------------------
