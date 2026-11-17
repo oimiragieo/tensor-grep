@@ -1039,6 +1039,7 @@ impl AnchoredDirectory {
     }
 
     #[cfg(any(unix, windows))]
+    #[cfg(windows)]
     pub(crate) fn open_parent(&self) -> anyhow::Result<Self> {
         anyhow::ensure!(
             self.handles.len() > 1,

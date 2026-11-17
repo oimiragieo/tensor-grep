@@ -392,10 +392,10 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         let mut results = Vec::new();
 
         if fixed_strings && !ignore_case {
+            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
             let pat_bytes = pattern.as_bytes();
             if path_obj.metadata()?.is_file() {
                 results.extend(self.search_file_memmem(pat_bytes, &path_obj, invert_match)?);
@@ -426,6 +426,7 @@ impl CpuBackend {
                 .build()?
         };
 
+        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         if path_obj.metadata()?.is_file() {
             results.extend(self.search_file_regex(&re, &path_obj, invert_match)?);
         } else if path_obj.metadata()?.is_dir() {
@@ -948,11 +949,11 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         let mut total_count = 0;
 
         // Extreme fast path: fixed strings, case sensitive, use memmem
         if fixed_strings && !ignore_case {
+            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
             let pat_bytes = pattern.as_bytes();
             if path_obj.metadata()?.is_file() {
                 total_count += self.count_file_memmem(pat_bytes, &path_obj, invert_match)?;
@@ -980,6 +981,7 @@ impl CpuBackend {
                 .build()?
         };
 
+        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         if path_obj.metadata()?.is_file() {
             total_count += self.count_file_regex(&re, &path_obj, invert_match)?;
         } else if path_obj.metadata()?.is_dir() {
