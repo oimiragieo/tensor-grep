@@ -98,6 +98,13 @@ def test_incomplete_envelope_present_on_repo_map() -> None:
     ("tool_name", "kwargs"),
     [
         ("tg_symbol_defs", {"symbol": "hello"}),
+        ("tg_symbol_source", {"symbol": "hello"}),
+        ("tg_symbol_impact", {"symbol": "hello"}),
+        ("tg_symbol_refs", {"symbol": "hello"}),
+        ("tg_symbol_callers", {"symbol": "hello"}),
+        ("tg_symbol_blast_radius_plan", {"symbol": "hello"}),
+        ("tg_symbol_blast_radius", {"symbol": "hello"}),
+        ("tg_symbol_blast_radius_render", {"symbol": "hello"}),
         ("tg_repo_map", {}),
         ("tg_ruleset_scan", {"ruleset": "security"}),
         ("tg_navigate", {"action": "defs", "symbol": "hello"}),
