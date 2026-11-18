@@ -150,7 +150,7 @@ def _java_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() not in _self._JAVA_SUFFIXES:
         return []
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():

@@ -77,9 +77,8 @@ def promote_verified_snapshot(path: str, digest: str) -> None:
 # profiled at ~27,669 resolve() calls / ~83,114 nt._getfinalpathname syscalls on a real repo
 # (~18s of ~22s wall time), because caller_scan re-derives candidate module paths for every
 # (candidate file, definition file) pair even when the underlying importer path / repo root /
-# module name repeats across pairs. Path.resolve() is a pure function of the path string for the
-# lifetime of a single resolution (no dependency on the target FILE's mtime -- it's a syscall
-# that walks the filesystem to canonicalize the string), so memoize it directly by string.
+# module name repeats across pairs. Memoize live resolution directly by string, but bypass that
+# cache for authenticated builds, whose inputs must remain lexical under junction/symlink churn.
 #
 # Guard 3 (daemon safety): this is a PLAIN lru_cache, not _mtime_aware_cache -- there's no single
 # file whose mtime this could key off (the input is a path STRING, not a file whose bytes we're
@@ -87,8 +86,30 @@ def promote_verified_snapshot(path: str, digest: str) -> None:
 # resolves to. Register its cache_clear in the same _MTIME_CACHE_CLEAR_REGISTRY sweep the parse
 # cache uses so a daemon session refresh/detected-staleness flushes it too.
 @lru_cache(maxsize=8192)
-def _resolved_path_str(path_str: str) -> str:
+def _resolved_path_str_live(path_str: str) -> str:
     return str(Path(path_str).resolve())
+
+
+class _ResolvedPathStr:
+    def __call__(self, path_str: str) -> str:
+        from tensor_grep.cli.repo_map_input_provenance import resolved_input_path
+        from tensor_grep.cli.symbols_cache import (
+            authenticated_content_sizes_active,
+            authenticated_scan_paths,
+        )
+
+        if authenticated_content_sizes_active() or authenticated_scan_paths() is not None:
+            return str(resolved_input_path(path_str))
+        return _resolved_path_str_live(path_str)
+
+    def cache_clear(self) -> None:
+        _resolved_path_str_live.cache_clear()
+
+    def cache_info(self) -> Any:
+        return _resolved_path_str_live.cache_info()
+
+
+_resolved_path_str = _ResolvedPathStr()
 
 
 _MTIME_CACHE_CLEAR_REGISTRY.append(_resolved_path_str.cache_clear)
@@ -110,6 +131,14 @@ def _mtime_aware_cache(
 
         @wraps(fn)
         def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
+            # A session prepare must receipt the bytes observed by THIS build. Cached products
+            # carry no proof that the current pathname still names those bytes, so execute the
+            # receipt-aware reader while collection is active. Normal daemon calls retain the
+            # process-global cache behavior unchanged.
+            from tensor_grep.cli.symbols_cache import content_receipts_active
+
+            if content_receipts_active():
+                return fn(path_str, *args, **kwargs)
             mtime_key = _self._mtime_key(path_str)
             cache_key = (
                 path_str,

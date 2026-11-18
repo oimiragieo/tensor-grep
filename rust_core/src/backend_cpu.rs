@@ -392,17 +392,13 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let path_obj = Path::new(path);
         let mut results = Vec::new();
 
         if fixed_strings && !ignore_case {
+            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
             let pat_bytes = pattern.as_bytes();
             if path_obj.metadata()?.is_file() {
-                results.extend(self.search_file_memmem(
-                    pat_bytes,
-                    &path_obj.to_path_buf(),
-                    invert_match,
-                )?);
+                results.extend(self.search_file_memmem(pat_bytes, &path_obj, invert_match)?);
             } else if path_obj.metadata()?.is_dir() {
                 for entry in WalkDir::new(path_obj)
                     .into_iter()
@@ -411,7 +407,7 @@ impl CpuBackend {
                     if entry.file_type().is_file() {
                         results.extend(self.search_file_memmem(
                             pat_bytes,
-                            &entry.path().to_path_buf(),
+                            entry.path(),
                             invert_match,
                         )?);
                     }
@@ -430,19 +426,16 @@ impl CpuBackend {
                 .build()?
         };
 
+        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         if path_obj.metadata()?.is_file() {
-            results.extend(self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)?);
+            results.extend(self.search_file_regex(&re, &path_obj, invert_match)?);
         } else if path_obj.metadata()?.is_dir() {
             for entry in WalkDir::new(path_obj)
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?
             {
                 if entry.file_type().is_file() {
-                    results.extend(self.search_file_regex(
-                        &re,
-                        &entry.path().to_path_buf(),
-                        invert_match,
-                    )?);
+                    results.extend(self.search_file_regex(&re, entry.path(), invert_match)?);
                 }
             }
         }
@@ -468,10 +461,10 @@ impl CpuBackend {
     fn search_file_memmem(
         &self,
         pattern: &[u8],
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_search_file_nofollow(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_memmem_maybe_parallel(
@@ -485,10 +478,10 @@ impl CpuBackend {
     fn search_file_regex(
         &self,
         re: &regex::bytes::Regex,
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_search_file_nofollow(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_regex_maybe_parallel(
@@ -626,11 +619,7 @@ impl CpuBackend {
 
         if fixed_strings && !ignore_case && !pattern.is_empty() {
             if path_obj.is_file() {
-                self.replace_file_literal(
-                    pattern.as_bytes(),
-                    replacement.as_bytes(),
-                    &path_obj.to_path_buf(),
-                )?;
+                self.replace_file_literal(pattern.as_bytes(), replacement.as_bytes(), path_obj)?;
             } else if path_obj.is_dir() {
                 self.replace_directory_literal(
                     path_obj,
@@ -653,7 +642,7 @@ impl CpuBackend {
         };
 
         if path_obj.is_file() {
-            self.replace_file_regex(&re, replacement, &path_obj.to_path_buf())?;
+            self.replace_file_regex(&re, replacement, path_obj)?;
         } else if path_obj.is_dir() {
             self.replace_directory_regex(path_obj, &re, replacement)?;
         }
@@ -749,7 +738,7 @@ impl CpuBackend {
         &self,
         pattern: &[u8],
         replacement: &[u8],
-        path: &PathBuf,
+        path: &Path,
     ) -> anyhow::Result<()> {
         #[cfg(test)]
         if self
@@ -806,7 +795,7 @@ impl CpuBackend {
         &self,
         re: &regex::bytes::Regex,
         replacement: &str,
-        path: &PathBuf,
+        path: &Path,
     ) -> anyhow::Result<()> {
         #[cfg(test)]
         if self
@@ -960,26 +949,22 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let path_obj = Path::new(path);
         let mut total_count = 0;
 
         // Extreme fast path: fixed strings, case sensitive, use memmem
         if fixed_strings && !ignore_case {
+            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
             let pat_bytes = pattern.as_bytes();
             if path_obj.metadata()?.is_file() {
-                total_count +=
-                    self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)?;
+                total_count += self.count_file_memmem(pat_bytes, &path_obj, invert_match)?;
             } else if path_obj.metadata()?.is_dir() {
                 for entry in WalkDir::new(path_obj)
                     .into_iter()
                     .collect::<Result<Vec<_>, _>>()?
                 {
                     if entry.file_type().is_file() {
-                        total_count += self.count_file_memmem(
-                            pat_bytes,
-                            &entry.path().to_path_buf(),
-                            invert_match,
-                        )?;
+                        total_count +=
+                            self.count_file_memmem(pat_bytes, entry.path(), invert_match)?;
                     }
                 }
             }
@@ -996,16 +981,16 @@ impl CpuBackend {
                 .build()?
         };
 
+        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
         if path_obj.metadata()?.is_file() {
-            total_count += self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match)?;
+            total_count += self.count_file_regex(&re, &path_obj, invert_match)?;
         } else if path_obj.metadata()?.is_dir() {
             for entry in WalkDir::new(path_obj)
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()?
             {
                 if entry.file_type().is_file() {
-                    total_count +=
-                        self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)?;
+                    total_count += self.count_file_regex(&re, entry.path(), invert_match)?;
                 }
             }
         }
@@ -1016,10 +1001,10 @@ impl CpuBackend {
     fn count_file_memmem(
         &self,
         pattern: &[u8],
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_search_file_nofollow(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // For ripgrep parity on count matches, we count MATCHING LINES, not total occurrences.
@@ -1053,10 +1038,10 @@ impl CpuBackend {
     fn count_file_regex(
         &self,
         re: &regex::bytes::Regex,
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_search_file_nofollow(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // See count_file_memmem: strip a single trailing '\n', keep interior empties so -v

@@ -101,13 +101,26 @@ def test_pip_freshness_child_is_noninteractive(monkeypatch) -> None:
 def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
     calls = []
 
-    def run(args, **kwargs):
-        calls.append(kwargs)
-        return subprocess.CompletedProcess(args, 0, b"tensor-grep 1.0.0", b"")
+    if probe == "_doctor_tg_candidate_version":
 
-    monkeypatch.setattr(main.subprocess, "run", run)
+        def capture(_args, *, timeout_seconds, **kwargs):
+            calls.append({"timeout_seconds": timeout_seconds, **kwargs})
+            return b"tensor-grep 1.0.0", b""
+
+        monkeypatch.setattr(doctor_report, "capture_probe", capture)
+    else:
+
+        def run(args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args, 0, b"tensor-grep 1.0.0", b"")
+
+        monkeypatch.setattr(main.subprocess, "run", run)
     assert getattr(doctor_report, probe)(Path("tg.exe")) == "tensor-grep 1.0.0"
-    assert calls[0]["stdin"] == subprocess.DEVNULL
+    if probe == "_doctor_tg_candidate_version":
+        assert calls[0]["timeout_seconds"] == 2
+        assert calls[0]["require_success"] is True
+    else:
+        assert calls[0]["stdin"] == subprocess.DEVNULL
 
 
 def test_nested_native_version_probe_is_noninteractive(monkeypatch) -> None:

@@ -317,7 +317,7 @@ def _js_ts_resolve_exported_symbol(
     visited.add(cache_key)
 
     try:
-        source = normalized_module.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(normalized_module)
     except (OSError, UnicodeDecodeError):
         context["re_export_cache"][cache_key] = None
         return None
@@ -1118,7 +1118,7 @@ def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():

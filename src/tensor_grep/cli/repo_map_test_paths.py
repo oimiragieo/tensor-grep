@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from tensor_grep.cli.lang_suffixes import JS_TS_SUFFIXES
+from tensor_grep.cli.symbols_cache import authenticated_content_root
 
 _TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
 # The shared JS/TS suffix set (lang_suffixes imports nothing from tensor_grep, so this module
@@ -20,7 +21,9 @@ _LEGACY_TEST_DIR_NAMES = frozenset({"tests", "__tests__"})
 
 
 @lru_cache(maxsize=8192)
-def _checkout_root(directory: str) -> str | None:
+def _checkout_root(directory: str, authenticated_root: str | None = None) -> str | None:
+    if authenticated_root is not None:
+        return authenticated_root
     current = Path(directory)
     try:
         if (current / ".git").exists():
@@ -34,7 +37,8 @@ def _checkout_root(directory: str) -> str | None:
 def _classification_parts(path: Path) -> tuple[tuple[str, ...], frozenset[str]]:
     if not path.is_absolute():
         return path.parts, _TEST_DIR_NAMES
-    root = _checkout_root(str(path.parent))
+    root_path = authenticated_content_root()
+    root = _checkout_root(str(path.parent), str(root_path) if root_path is not None else None)
     if root is None:
         return path.parts, _LEGACY_TEST_DIR_NAMES
     try:

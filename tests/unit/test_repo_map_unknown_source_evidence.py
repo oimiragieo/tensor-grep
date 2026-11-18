@@ -34,22 +34,15 @@ def test_supported_unknown_source_keeps_heuristic_consumer_without_confirmed_dis
     imports = {entry["file"]: entry["imports"] for entry in repo["imports"]}
 
     if failure == "unreadable":
-        original = Path.read_text
         original_bytes = Path.read_bytes
         denied = []
 
-        def read_text(path, *args, **kwargs):
+        def read_bytes(path):
             if str(path) == candidate:
                 denied.append(str(path))
                 raise PermissionError(errno.EACCES, "controlled owned leaf read", candidate)
-            return original(path, *args, **kwargs)
-
-        def read_bytes(path):
-            if str(path) == candidate:
-                raise PermissionError(errno.EACCES, "controlled owned leaf read", candidate)
             return original_bytes(path)
 
-        monkeypatch.setattr(Path, "read_text", read_text)
         monkeypatch.setattr(Path, "read_bytes", read_bytes)
         rm._read_source_cached_bounded.cache_clear()
         rm._read_source_text_cached_bounded.cache_clear()

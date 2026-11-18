@@ -9538,7 +9538,9 @@ fn run_native_search_with_optional_rg_fallback(
                 err
             };
             exit_json_search_runtime_error_if_needed(json, ndjson, &err);
-            if let Some(rg_args) = rg_fallback {
+            if let Some(rg_args) = rg_fallback
+                .filter(|_| !tensor_grep_rs::native_search::is_native_search_open_failure(&err))
+            {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");
                 if !json && !ndjson && verbose {
                     emit_verbose_metadata(RoutingDecision::ripgrep());
@@ -11074,6 +11076,7 @@ fn checkpoint_storage_dir(root: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
+#[allow(dead_code)]
 fn checkpoint_snapshot_dir(root: &Path, checkpoint_id: &str) -> PathBuf {
     checkpoint_storage_dir(root)
         .join(checkpoint_id)

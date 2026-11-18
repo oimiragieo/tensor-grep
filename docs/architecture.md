@@ -115,6 +115,10 @@ objects and clears that cache before rebuilding a repository map. Matching uses
 do not discard valid sibling rules. Walks skip symlinks and Windows reparse-point
 entries, including directory junctions.
 
+An explicitly selected symlink/reparse root is resolved once before native CPU traversal. Readers
+then retain parent directory handles and refuse links encountered beneath that root. Python
+fallback uses the Rust opener on Windows and handle-relative `openat` traversal on POSIX.
+
 Reverse-import expansion distinguishes confirmed edges from uncertain candidates.
 Unresolved, unreadable, unsupported, and over-budget evidence stays heuristic and
 appears in partial graph coverage and resolution gaps. A concrete import of a weak

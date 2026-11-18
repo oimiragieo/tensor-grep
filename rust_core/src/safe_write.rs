@@ -1038,6 +1038,20 @@ impl AnchoredDirectory {
         anchored_directory::clone(self)
     }
 
+    #[cfg(any(unix, windows))]
+    #[cfg(windows)]
+    pub(crate) fn open_parent(&self) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            self.handles.len() > 1,
+            "cannot ascend above filesystem root"
+        );
+        let mut parent = self.try_clone()?;
+        parent.handles.pop();
+        parent.path.pop();
+        parent.owned_name = None;
+        Ok(parent)
+    }
+
     /// Opens one child directory without following a symlink or reparse point.
     pub fn open_child(&self, name: &OsStr) -> anyhow::Result<Self> {
         require_child_name(name)?;
@@ -1061,6 +1075,12 @@ impl AnchoredDirectory {
         target
             .open_leaf_read()
             .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
+    /// Opens a regular child file through the retained parent handle (no pathname re-walk).
+    pub(crate) fn open_regular_child_file(&self, name: &OsStr) -> anyhow::Result<File> {
+        require_child_name(name)?;
+        anchored_directory::open_regular_child_file(self, name)
     }
 
     /// Returns a child directory while keeping the parent chain anchored.

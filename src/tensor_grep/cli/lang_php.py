@@ -9,10 +9,9 @@ SCOPE: this module extracts DEFS + IMPORTS (``php_imports_and_symbols``, the ``.
 AST pass" shape) and ``php_parser_symbol_sources`` (the ``tg source`` companion, mirroring
 ``lang_go.go_parser_symbol_sources``), PLUS (as of Task 10C) in-file AST reference/call extraction
 via ``php_references_and_calls`` (see the "TASK 10C" section below for the full design). The
-remaining cross-file caller-graph fields (``file_imports_symbol_from_definition`` /
-``import_update_target`` / ``prime_repo_context``) stay DEFERRED to a follow-up -- PHP's
-``LanguageSpec`` registers all three of those callables as ``None``, same shape as Java's/C#'s own
-Task 11A-equivalent gap. ``_language_coverage_gaps_for_universe`` in repo_map.py already treats
+cross-file ``file_imports_symbol_from_definition`` field is implemented; ``import_update_target``
+and ``prime_repo_context`` stay DEFERRED to a follow-up and remain ``None`` in PHP's
+``LanguageSpec``. ``_language_coverage_gaps_for_universe`` in repo_map.py already treats
 ``import_update_target is None`` as an honest ``resolution_gaps`` entry (see the "audit #81 #4"
 comment on that function), so `tg callers`/`tg blast-radius` stay honest about PHP's current lack
 of reverse-import (PSR-4/``composer.json``) resolution instead of silently reading as a proven
@@ -52,9 +51,9 @@ or partial path.
 TASK 10C: ``php_references_and_calls`` promotes PHP from the foundational (defs/imports-only)
 tier to the parser-backed refs/callers tier, mirroring Task 10A's Java landing
 (``lang_java.java_references_and_calls``) and Task 10B's C# landing
-(``lang_csharp.csharp_references_and_calls``) -- IN-FILE AST reference/call extraction only, no
-cross-file import resolution (``file_imports_symbol_from_definition``/``import_update_target``/
-``prime_repo_context`` all stay ``None``, same deferred-scope shape as Go/Java/C#'s own gaps).
+(``lang_csharp.csharp_references_and_calls``) -- IN-FILE AST reference/call extraction plus the
+implemented ``file_imports_symbol_from_definition`` hook. ``import_update_target`` and
+``prime_repo_context`` remain ``None``, so reverse-import graph resolution stays deferred.
 PHP's own grammar shape (verified against the installed ``tree_sitter_php`` grammar via a live AST
 dump, not guessed -- see B5 of ``tensor-grep-add-language``) has FIVE distinct call/access node
 types where Java has two and C# has effectively one:
@@ -190,6 +189,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_input_provenance import resolved_input_path
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -744,7 +744,7 @@ def php_file_imports_symbol_from_definition(
     del repo_root  # signature parity; unused by design
     del symbol  # PHP visibility is type/namespace scoped; member name is not part of import proof
     try:
-        definition = Path(definition_path).expanduser().resolve()
+        definition = resolved_input_path(definition_path)
     except OSError:
         return False
     try:
@@ -820,7 +820,7 @@ def _php_type_resolves_into_definition_dirs(
             continue
         for directory in definition_dirs:
             try:
-                resolved_dir = Path(directory).expanduser().resolve()
+                resolved_dir = resolved_input_path(directory)
             except OSError:
                 continue
             if _php_fqn_namespace_dir_matches(fqn, resolved_dir):

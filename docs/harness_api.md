@@ -1544,7 +1544,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.22.0`), which is distinct from the installed CLI/package version and
+`1.23.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1591,7 +1591,7 @@ For `tg_query` with `workspace_roots`, citation paths are relative to the MCP ro
 workspace root order in one envelope.
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
-- `tg_symbol_impact(symbol, path=".", deadline=None)`
+- `tg_symbol_impact(symbol, path=".", deadline=None, max_repo_files=2000)`
 - `tg_symbol_refs(symbol, path=".", deadline=None)`
 - `tg_symbol_callers(symbol, path=".", deadline=None)`
 - `tg_symbol_blast_radius(symbol, path=".", max_depth=3, deadline=None)`

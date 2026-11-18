@@ -6,11 +6,15 @@ use anyhow::{Context, Result};
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
 use grep_searcher::sinks::Bytes;
-use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
 const MAX_BINARY_PROBE_BYTES: u64 = 64 * 1024 * 1024;
+
+fn open_binary_candidate(path: &Path) -> Result<std::fs::File> {
+    crate::search_file_open::open_native_search_file(path)
+        .with_context(|| format!("failed to open binary candidate {}", path.display()))
+}
 
 pub(crate) fn index_binary_matcher(
     pattern: &str,
@@ -29,8 +33,7 @@ pub(crate) fn first_binary_nul_offset(path: &Path) -> Result<Option<u64>> {
     use std::io::Read;
 
     let mut prefix = Vec::with_capacity(BINARY_DETECTION_PREFIX_BYTES);
-    File::open(path)
-        .with_context(|| format!("failed to read binary candidate {}", path.display()))?
+    open_binary_candidate(path)?
         .take(BINARY_DETECTION_PREFIX_BYTES as u64)
         .read_to_end(&mut prefix)
         .with_context(|| format!("failed to read binary candidate {}", path.display()))?;
@@ -44,8 +47,9 @@ pub(crate) fn native_binary_nul_offset(matcher: &RegexMatcher, path: &Path) -> R
     let config = NativeSearchConfig::default();
     let mut searcher = super::build_searcher(&config, true);
     let mut sink = super::BinaryAwareSink::new(Bytes(|_, _| Ok(true)));
+    let file = open_binary_candidate(path)?;
     searcher
-        .search_path(matcher, path, &mut sink)
+        .search_file(matcher, &file, &mut sink)
         .with_context(|| {
             format!(
                 "native binary detection search failed for {}",
@@ -66,8 +70,7 @@ pub(crate) fn binary_file_matches_pattern(
 
     use std::io::Read;
 
-    let file = File::open(path)
-        .with_context(|| format!("failed to open binary candidate {}", path.display()))?;
+    let file = open_binary_candidate(path)?;
     let max_read = file
         .metadata()
         .with_context(|| format!("failed to stat binary candidate {}", path.display()))?
@@ -132,4 +135,16 @@ pub fn emit_index_binary_match_warning(
         false,
         with_filename,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_binary_candidate_keeps_anchored_open_error() {
+        let root = tempfile::tempdir().unwrap();
+        let error = open_binary_candidate(&root.path().join("missing")).unwrap_err();
+        assert!(super::super::is_native_search_open_failure(&error));
+    }
 }

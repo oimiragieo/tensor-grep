@@ -19,6 +19,7 @@ const ANCHOR: &str = ".tg-recovery-anchor";
 
 /// Retains verified objects and borrows their stage; this does not authorize execution.
 /// ACL changes, alternate streams, and late names remain possible.
+#[allow(dead_code)] // Shared with the full recovery binary; the preflight binary only verifies.
 pub(super) struct HeldVerifiedTree<'a> {
     _stage: &'a AnchoredDirectory,
     _pins: Vec<File>,
@@ -177,7 +178,9 @@ fn verify_tree(
                     return Err(refuse("anchor name is ambiguous"));
                 }
                 anchor_seen = true;
-                check_anchor(stage.unwrap(), root, &root_final)?;
+                if let Some(stage) = stage {
+                    check_anchor(stage, root, &root_final)?;
+                }
                 continue;
             }
             if !text.is_ascii() || !windows::safe_component(&name) {
@@ -322,6 +325,7 @@ pub(super) fn verify(root: &Path) -> io::Result<()> {
     verify_expected(root, &PYTHON)
 }
 
+#[allow(dead_code)] // Shared with the full recovery binary; the preflight binary only verifies.
 pub(super) fn verify_anchored<'a>(
     root: &Path,
     stage: &'a AnchoredDirectory,
@@ -329,6 +333,7 @@ pub(super) fn verify_anchored<'a>(
     verify_anchored_expected(root, stage, &PYTHON)
 }
 
+#[allow(dead_code)] // Shared with the full recovery binary; the preflight binary only verifies.
 fn verify_anchored_expected<'a>(
     root: &Path,
     stage: &'a AnchoredDirectory,

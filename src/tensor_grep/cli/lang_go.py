@@ -41,6 +41,12 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_input_provenance import (
+    is_file_with_receipt,
+    read_text_with_receipt,
+    resolved_input_path,
+)
+from tensor_grep.cli.symbols_cache import content_receipts_active
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -424,10 +430,11 @@ _GO_WORK_USE_BLOCK_RE = re.compile(r"use\s*\(([^)]*)\)", re.DOTALL)
 
 
 def _remember_go_repo_context(key: str, context: dict[str, Any]) -> dict[str, Any]:
-    _GO_REPO_CONTEXTS.pop(key, None)
-    _GO_REPO_CONTEXTS[key] = context
-    while len(_GO_REPO_CONTEXTS) > _GO_REPO_CONTEXT_CACHE_MAX_ROOTS:
-        _GO_REPO_CONTEXTS.popitem(last=False)
+    if not content_receipts_active():
+        _GO_REPO_CONTEXTS.pop(key, None)
+        _GO_REPO_CONTEXTS[key] = context
+        while len(_GO_REPO_CONTEXTS) > _GO_REPO_CONTEXT_CACHE_MAX_ROOTS:
+            _GO_REPO_CONTEXTS.popitem(last=False)
     return context
 
 
@@ -439,7 +446,7 @@ def clear_go_repo_context_cache() -> None:
 
 def _parse_go_mod_module(go_mod_path: Path) -> str | None:
     try:
-        text = go_mod_path.read_text(encoding="utf-8")
+        text = read_text_with_receipt(go_mod_path)
     except (OSError, UnicodeDecodeError):
         return None
     match = _GO_MODULE_LINE_RE.search(text)
@@ -448,7 +455,7 @@ def _parse_go_mod_module(go_mod_path: Path) -> str | None:
 
 def _go_work_use_dirs(go_work_path: Path) -> list[str]:
     try:
-        text = go_work_path.read_text(encoding="utf-8")
+        text = read_text_with_receipt(go_work_path)
     except (OSError, UnicodeDecodeError):
         return []
     dirs: list[str] = []
@@ -472,22 +479,22 @@ def _prime_go_repo_context(root: Path) -> dict[str, Any]:
     """Prime the ``{module-path-prefix: absolute-dir}`` map for *root* from its own ``go.mod``
     plus any ``go.work`` workspace ``use`` entries (each pointing at ANOTHER directory with its
     own ``go.mod``, e.g. a multi-module monorepo)."""
-    normalized_root = root.expanduser().resolve()
+    normalized_root = resolved_input_path(root)
     key = str(normalized_root)
     module_dirs: dict[str, str] = {}
 
     go_mod = normalized_root / "go.mod"
-    if go_mod.is_file():
+    if is_file_with_receipt(go_mod):
         module_path = _parse_go_mod_module(go_mod)
         if module_path:
             module_dirs[module_path] = str(normalized_root)
 
     go_work = normalized_root / "go.work"
-    if go_work.is_file():
+    if is_file_with_receipt(go_work):
         for use_dir in _go_work_use_dirs(go_work):
-            candidate_dir = (normalized_root / use_dir).resolve()
+            candidate_dir = resolved_input_path(normalized_root / use_dir)
             candidate_mod = candidate_dir / "go.mod"
-            if candidate_mod.is_file():
+            if is_file_with_receipt(candidate_mod):
                 candidate_module_path = _parse_go_mod_module(candidate_mod)
                 if candidate_module_path:
                     module_dirs[candidate_module_path] = str(candidate_dir)
@@ -506,11 +513,11 @@ def _go_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
     if repo_root is None:
         return {"root": None, "module_dirs": {}}
     try:
-        normalized_root = Path(repo_root).expanduser().resolve()
+        normalized_root = resolved_input_path(repo_root)
     except OSError:
         return {"root": None, "module_dirs": {}}
     key = str(normalized_root)
-    cached = _GO_REPO_CONTEXTS.get(key)
+    cached = None if content_receipts_active() else _GO_REPO_CONTEXTS.get(key)
     if cached is not None:
         _GO_REPO_CONTEXTS.move_to_end(key)
         return cached
@@ -540,14 +547,14 @@ def _go_import_path_to_dir(import_path: str, context: dict[str, Any]) -> Path | 
                 best_prefix = prefix
     if best_prefix is None:
         return None
-    base_dir = Path(str(module_dirs[best_prefix])).resolve()
+    base_dir = resolved_input_path(str(module_dirs[best_prefix]))
     remainder = import_path[len(best_prefix) :].lstrip("/")
     if not remainder:
         return base_dir
     current = base_dir
     for part in remainder.split("/"):
         current = current / part
-        if (current / "go.mod").is_file():
+        if is_file_with_receipt(current / "go.mod"):
             return None
     return current
 
@@ -620,8 +627,8 @@ def go_file_imports_symbol_from_definition(
     resolved import of the definition's package AND *symbol* is exported (``symbol[0].isupper()``
     -- Go's own visibility rule, not a tensor-grep heuristic)."""
     try:
-        definition_dir = Path(definition_path).expanduser().resolve().parent
-        importer_dir = file_path.expanduser().resolve().parent
+        definition_dir = resolved_input_path(definition_path).parent
+        importer_dir = resolved_input_path(file_path).parent
     except OSError:
         return False
     if importer_dir == definition_dir:

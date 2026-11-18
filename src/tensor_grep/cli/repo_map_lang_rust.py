@@ -104,17 +104,19 @@ def _rust_mod_declarations(source: str) -> list[str]:
 
 def _rust_module_base_dir(module_file: Path) -> Path:
     if module_file.name in {"lib.rs", "main.rs", "mod.rs"}:
-        return module_file.parent.resolve()
-    return (module_file.parent / module_file.stem).resolve()
+        return _self._resolved_input_path(module_file.parent)
+    return _self._resolved_input_path(module_file.parent / module_file.stem)
 
 
 def _rust_module_file_for_declaration(module_file: Path, module_name: str) -> Path | None:
     base_dir = _rust_module_base_dir(module_file)
     candidates = [
-        (base_dir / f"{module_name}.rs").resolve(),
-        (base_dir / module_name / "mod.rs").resolve(),
+        _self._resolved_input_path(base_dir / f"{module_name}.rs"),
+        _self._resolved_input_path(base_dir / module_name / "mod.rs"),
     ]
-    return next((candidate for candidate in candidates if candidate.is_file()), None)
+    return next(
+        (candidate for candidate in candidates if _self._is_file_with_receipt(candidate)), None
+    )
 
 
 def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
@@ -135,16 +137,16 @@ def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
 
 
 def _rust_crate_entry_for_path(path: Path) -> Path | None:
-    normalized_path = path.expanduser().resolve()
+    normalized_path = _self._resolved_input_path(path)
     candidates = [normalized_path.parent, *normalized_path.parents]
     src_root = next((parent for parent in candidates if parent.name == "src"), None)
     if src_root is None:
         return None
-    lib_path = (src_root / "lib.rs").resolve()
-    if lib_path.is_file():
+    lib_path = _self._resolved_input_path(src_root / "lib.rs")
+    if _self._is_file_with_receipt(lib_path):
         return lib_path
-    main_path = (src_root / "main.rs").resolve()
-    if main_path.is_file():
+    main_path = _self._resolved_input_path(src_root / "main.rs")
+    if _self._is_file_with_receipt(main_path):
         return main_path
     if normalized_path.name in {"lib.rs", "main.rs"} and normalized_path.parent == src_root:
         return normalized_path
@@ -155,7 +157,7 @@ def _rust_module_tree_for_entry(
     entry_path: Path,
     repo_root: Path | str | None = None,
 ) -> dict[str, str]:
-    normalized_entry = entry_path.expanduser().resolve()
+    normalized_entry = _self._resolved_input_path(entry_path)
     context = _rust_repo_context(repo_root if repo_root is not None else normalized_entry.parent)
     cache_key = str(normalized_entry)
     cached = context["mod_tree_cache"].get(cache_key)
@@ -173,7 +175,7 @@ def _rust_workspace_entry_for_crate(
     context = _rust_repo_context(repo_root)
     members = context.get("workspace", {}).get("members", {})
     member_path = members.get(_self._normalize_rust_crate_name(crate_name))
-    return Path(str(member_path)).expanduser().resolve() if member_path else None
+    return _self._resolved_input_path(str(member_path)) if member_path else None
 
 
 def _rust_module_tree_lookup(
@@ -182,10 +184,10 @@ def _rust_module_tree_lookup(
     repo_root: Path | str | None = None,
 ) -> Path | None:
     if not module_parts:
-        return entry_path.expanduser().resolve()
+        return _self._resolved_input_path(entry_path)
     module_tree = _rust_module_tree_for_entry(entry_path, repo_root)
     resolved = module_tree.get("::".join(module_parts))
-    return Path(resolved).expanduser().resolve() if resolved else None
+    return _self._resolved_input_path(resolved) if resolved else None
 
 
 def _rust_partial_candidate_paths(
@@ -197,16 +199,20 @@ def _rust_partial_candidate_paths(
     if normalized_root is None:
         return []
 
-    normalized_definition = Path(definition_path).expanduser().resolve()
+    normalized_definition = _self._resolved_input_path(definition_path)
     inferred_candidates: list[dict[str, Any]] = []
     module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
     if not module_parts or module_parts[0] in {"crate", "self", "super"}:
         return inferred_candidates
 
-    external_entry = (normalized_root / module_parts[0] / "src" / "lib.rs").resolve()
-    if not external_entry.is_file():
-        fallback_entry = (normalized_root / module_parts[0] / "src" / "main.rs").resolve()
-        if fallback_entry.is_file():
+    external_entry = _self._resolved_input_path(
+        normalized_root / module_parts[0] / "src" / "lib.rs"
+    )
+    if not _self._is_file_with_receipt(external_entry):
+        fallback_entry = _self._resolved_input_path(
+            normalized_root / module_parts[0] / "src" / "main.rs"
+        )
+        if _self._is_file_with_receipt(fallback_entry):
             external_entry = fallback_entry
         else:
             return inferred_candidates
@@ -236,13 +242,13 @@ def _rust_module_candidates(
         return []
 
     normalized_root = _self._normalized_repo_root(repo_root)
-    normalized_importer = importer_path.expanduser().resolve()
+    normalized_importer = _self._resolved_input_path(importer_path)
     candidates: list[dict[str, Any]] = []
 
     def _add_candidate(path: Path | None, provenance: list[str], confidence: float) -> None:
         if path is None:
             return
-        resolved_path = str(path.expanduser().resolve())
+        resolved_path = str(_self._resolved_input_path(path))
         if any(str(current["path"]) == resolved_path for current in candidates):
             return
         candidates.append({
@@ -268,7 +274,7 @@ def _rust_module_candidates(
             )
 
     start = normalized_importer.parent
-    while start.name == "":
+    while start.name == "" and start.parent != start:
         start = start.parent
 
     heuristic_parts = list(parts)
@@ -282,7 +288,7 @@ def _rust_module_candidates(
             None,
         )
         if crate_root is not None:
-            start = crate_root.resolve()
+            start = _self._resolved_input_path(crate_root)
         heuristic_parts = heuristic_parts[1:]
     else:
         while heuristic_parts and heuristic_parts[0] == "super":
@@ -292,7 +298,7 @@ def _rust_module_candidates(
             heuristic_parts = heuristic_parts[1:]
 
     if heuristic_parts:
-        base = start.joinpath(*heuristic_parts).resolve()
+        base = _self._resolved_input_path(start.joinpath(*heuristic_parts))
         # Defensive guard: a malformed module name (e.g. a mis-parsed doc
         # comment) can yield a base path whose final component has an empty
         # name, which makes ``with_suffix`` raise ``ValueError``. Skip the
@@ -313,7 +319,7 @@ def _rust_module_match_details(
     definition_path: str,
     repo_root: Path | str | None = None,
 ) -> dict[str, Any]:
-    resolved_definition = str(Path(definition_path).expanduser().resolve())
+    resolved_definition = str(_self._resolved_input_path(definition_path))
     module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
     for candidate in _rust_module_candidates(importer_path, module_name, repo_root):
         if str(candidate.get("path")) == resolved_definition:
@@ -385,7 +391,7 @@ def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str
     if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return ()
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return ()
 
@@ -409,7 +415,7 @@ def _rust_impl_owner_type(definition_path: str, line_number: int) -> str | None:
     if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return None
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -442,7 +448,7 @@ def _rust_file_references_symbol_from_definition(
     definition_path: str,
 ) -> bool:
     try:
-        source = file_path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(file_path)
     except (OSError, UnicodeDecodeError):
         return False
 
@@ -512,7 +518,7 @@ def _rust_resolve_use_binding(
                     "confidence": float(candidate.get("confidence", 1.0)),
                 }
             try:
-                candidate_source = candidate_path.read_text(encoding="utf-8")
+                candidate_source = _self._read_text_with_receipt(candidate_path)
             except (OSError, UnicodeDecodeError):
                 continue
             for nested_binding in _rust_use_bindings(candidate_source):
@@ -586,7 +592,7 @@ def _rust_import_update_target(
     repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     try:
-        source = file_path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(file_path)
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -822,7 +828,7 @@ def _rust_provider_alias_calls(
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -1020,7 +1026,7 @@ def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return []
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -1116,7 +1122,7 @@ def _rust_test_function_candidates_from_source(
 def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return ()
     return _rust_test_function_candidates_from_source(source, tokio_only=False)
@@ -1126,7 +1132,7 @@ def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
 def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        source = path.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return ()
     return _rust_test_function_candidates_from_source(source, tokio_only=True)
@@ -1136,7 +1142,7 @@ def _rust_test_target(test_path: Path, repo_root: Path) -> str | None:
     """The ``cargo test --test <target>`` integration-test target for a ``tests/`` file. The
     caller renders it through ``render_command`` as a ``Derived`` token -- never formats it."""
     try:
-        relative = test_path.resolve().relative_to(repo_root)
+        relative = _self._resolved_input_path(test_path).relative_to(repo_root)
     except ValueError:
         return None
     if relative.suffix != ".rs" or "tests" not in relative.parts:
@@ -1150,7 +1156,7 @@ def _rust_test_target(test_path: Path, repo_root: Path) -> str | None:
 
 def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:
     try:
-        relative = test_path.resolve().relative_to(repo_root)
+        relative = _self._resolved_input_path(test_path).relative_to(repo_root)
     except ValueError:
         return False
     if relative.suffix.lower() != ".rs" or "tests" not in relative.parts:

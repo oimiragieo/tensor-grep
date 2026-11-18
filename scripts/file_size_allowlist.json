@@ -8,8 +8,8 @@
   },
   "grandfathered": {
     "benchmarks/run_gpu_native_benchmarks.py": 1919,
-    "rust_core/src/backend_ast.rs": 2553,
-    "rust_core/src/backend_ast_workflow.rs": 2109,
+    "rust_core/src/backend_ast.rs": 2552,
+    "rust_core/src/backend_ast_workflow.rs": 2036,
     "rust_core/src/backend_cpu.rs": 1817,
     "rust_core/src/gpu_native.rs": 4952,
     "rust_core/src/index.rs": 1583,
@@ -20,9 +20,9 @@
     "rust_core/tests/test_public_native_cli_parity.rs": 2318,
     "rust_core/tests/test_routing.rs": 2995,
     "rust_core/tests/test_schema_compat.rs": 4412,
-    "src/tensor_grep/cli/main.py": 13349,
+    "src/tensor_grep/cli/main.py": 13337,
     "src/tensor_grep/cli/mcp_server.py": 5679,
-    "src/tensor_grep/cli/repo_map.py": 14962,
+    "src/tensor_grep/cli/repo_map.py": 14900,
     "src/tensor_grep/cli/session_daemon.py": 2122,
     "src/tensor_grep/cli/session_store.py": 1737,
     "tests/unit/test_apply_policy.py": 2375,
@@ -30,6 +30,6 @@
     "tests/unit/test_file_deps.py": 2901,
     "tests/unit/test_semantic_provider_navigation.py": 2251,
     "tests/unit/test_session_cli.py": 3337,
-    "tests/unit/test_mcp_error_sanitization.py": 2518
+    "tests/unit/test_mcp_error_sanitization.py": 2502
   }
 }

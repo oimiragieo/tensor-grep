@@ -8,7 +8,7 @@ import math
 import os
 import re
 import sys
-import tempfile
+import tempfile as tempfile  # re-exported test patch seam used by the extracted helper
 import threading
 import time
 import tomllib
@@ -32,6 +32,7 @@ from tensor_grep.cli import (
     lang_suffixes,
 )
 from tensor_grep.cli import repo_map_graph as _repo_map_graph
+from tensor_grep.cli import repo_map_input_provenance as _input_provenance
 from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
@@ -49,6 +50,10 @@ from tensor_grep.cli.repo_map_cache import (
     _resolved_path_str as _resolved_path_str,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import (
+    _language_coverage_gap_remediation as _language_coverage_gap_remediation,
+)
+from tensor_grep.cli.repo_map_coverage_gaps import (
+    _language_coverage_gaps_for_universe,
     answer_empty,
     apply_answer_gaps,
     apply_coverage_gap_incompleteness,
@@ -57,10 +62,6 @@ from tensor_grep.cli.repo_map_coverage_gaps import (
     attach_target_gaps,
     copy_coverage_gap_state,
     inherit_coverage_gap,
-    source_coverage_gaps,
-)
-from tensor_grep.cli.repo_map_coverage_gaps import (
-    language_coverage_gap_remediation as _language_coverage_gap_remediation,
 )
 from tensor_grep.cli.repo_map_gitignore import (
     _gitignore_pattern_to_regex as _gitignore_pattern_to_regex,
@@ -436,14 +437,32 @@ from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
-from tensor_grep.cli.symbols_cache import SymbolGeneration
+from tensor_grep.cli.symbols_cache import (
+    SymbolGeneration,
+    authenticated_content_root,
+    content_receipts_active,
+    record_content_absence,
+    record_content_receipt_digest,
+)
+from tensor_grep.cli.symbols_cache import (
+    read_content_bytes as read_content_bytes,
+)
 from tensor_grep.core.config import configured_positive_int
 from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
+_authenticated_scan_paths_under = _input_provenance.authenticated_scan_paths_under
+_file_size_with_receipt = _input_provenance.file_size_with_receipt
+_glob_dirs_with_receipt = _input_provenance.glob_dirs_with_receipt
+_is_dir_with_receipt = _input_provenance.is_dir_with_receipt
+_is_file_with_receipt = _input_provenance.is_file_with_receipt
+_path_exists_with_receipt = _input_provenance.path_exists_with_receipt
+_read_text_with_receipt = _input_provenance.read_text_with_receipt
+_resolved_input_path = _input_provenance.resolved_input_path
+_validation_repo_root = _input_provenance.validation_repo_root
+
 # Read this module object through late-bound
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
-# globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
 #
 # The two branches are load-bearing. At runtime only `sys.modules[__name__]` works (the
@@ -740,10 +759,11 @@ def _remember_repo_context(
     key: str,
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    cache.pop(key, None)
-    cache[key] = context
-    while len(cache) > _repo_context_cache_max_roots():
-        cache.popitem(last=False)
+    if not content_receipts_active():
+        cache.pop(key, None)
+        cache[key] = context
+        while len(cache) > _repo_context_cache_max_roots():
+            cache.popitem(last=False)
     return context
 
 
@@ -751,7 +771,7 @@ def _get_repo_context_cache_entry(
     cache: OrderedDict[str, dict[str, Any]],
     key: str,
 ) -> dict[str, Any] | None:
-    cached = cache.pop(key, None)
+    cached = None if content_receipts_active() else cache.pop(key, None)
     if cached is None:
         return None
     cache[key] = cached
@@ -1444,6 +1464,17 @@ def _iter_repo_files(
     Mutable signals preserve incomplete reasons; paths are normalized once, never per entry.
     """
     with _profiling_phase(_profiling_collector, "file_walk"):
+        authenticated_files = _self._authenticated_scan_paths_under(root, exclude_files)
+        if authenticated_files is not None:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                if deadline_hit is not None:
+                    deadline_hit.hit = True
+                return []
+            return (
+                authenticated_files[: max(1, max_files)]
+                if max_files is not None
+                else authenticated_files
+            )
         if root.is_file():
             current = root.resolve()
             return [] if current in exclude_files else [current]
@@ -1546,7 +1577,7 @@ def _iter_repo_files(
 
 def _safe_resolve(path: Path) -> Path:
     try:
-        return path.resolve()
+        return _self._resolved_input_path(path)
     except OSError:
         return path
 
@@ -1595,25 +1626,9 @@ def _is_repo_context_file(path: Path, root: Path) -> bool:
 
 
 def _path_is_relative_to(path: Path, parent: Path) -> bool:
-    """Is ``path`` inside ``parent``? Answers False rather than raising when it cannot tell.
-
-    Task #291. This caught ``ValueError`` only -- the "different drive / not a subpath" answer --
-    while both ``resolve()`` calls can also raise ``OSError`` (permission denied, a vanished
-    component, a disconnected share). That escaped through all 9 call sites and CRASHED the
-    command with an unhandled traceback, which is strictly worse than the silent-loss class this
-    module has been hardening against: the caller gets no answer at all, not a partial one.
-
-    Found while testing the #291 fix, which made it reachable in an ordinary way -- that fix hands
-    this function a path whose ``resolve()`` ALREADY failed once, so the retry here was guaranteed
-    to raise on exactly the input the fix exists to handle.
-
-    Fails CLOSED (False = treat as outside the root). That matches the existing ValueError arm and
-    is the safe direction: an unverifiable path is excluded from a scope-limited set rather than
-    silently admitted into one. Callers that need to know a file was DROPPED for this reason
-    record it separately -- see ``_precomputed_validation_files_for_root``.
-    """
+    """Check containment lexically for signed inputs and fail closed on live resolution errors."""
     try:
-        path.resolve().relative_to(parent.resolve())
+        _self._resolved_input_path(path).relative_to(_self._resolved_input_path(parent))
     except (ValueError, OSError):
         return False
     return True
@@ -1641,7 +1656,7 @@ def _precomputed_validation_files_for_root(
     """
     if file_paths is None:
         return None
-    normalized_root = root.expanduser().resolve()
+    normalized_root = _self._resolved_input_path(root)
     selected: list[Path] = []
     seen: set[str] = set()
     for raw_path in file_paths:
@@ -1654,7 +1669,7 @@ def _precomputed_validation_files_for_root(
             current = normalized_root / current
         resolve_error: OSError | None = None
         try:
-            resolved = current.resolve()
+            resolved = _self._resolved_input_path(current)
         except OSError as exc:
             # The `absolute()` fallback keeps this loop from crashing, but MEASURED: it does not
             # save the entry. `_path_is_relative_to` below re-resolves the path, hits the same
@@ -1694,11 +1709,11 @@ def _repo_map_validation_file_paths(
 ) -> list[str | Path] | None:
     if validation_root is not None:
         try:
-            map_root = Path(str(repo_map.get("path", "."))).expanduser().resolve()
-            resolved_validation_root = validation_root.expanduser().resolve()
+            map_root = _self._resolved_input_path(str(repo_map.get("path", ".")))
+            resolved_validation_root = _self._resolved_input_path(validation_root)
         except (OSError, RuntimeError):
             return None
-        if map_root.is_file():
+        if not _self._is_dir_with_receipt(map_root):
             map_root = map_root.parent
         if map_root != resolved_validation_root and not _self._path_is_relative_to(
             resolved_validation_root,
@@ -1718,13 +1733,17 @@ def _literal_symbol_candidate(path: Path) -> bool:
 
 def _file_contains_literal_symbol(path: Path, symbol: str) -> bool:
     try:
-        stat = path.stat()
-    except OSError:
+        size = _self._file_size_with_receipt(path)
+    except (FileNotFoundError, NotADirectoryError):
+        record_content_absence(path)
         return False
-    if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+    except OSError:
+        record_content_receipt_digest(path, "")
+        return False
+    if size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return False
     try:
-        data = path.read_bytes()
+        data = _read_source_cached(str(path))
     except OSError:
         return False
     if b"\0" in data[:8192]:
@@ -1754,15 +1773,13 @@ def _read_source_cached(path_str: str) -> bytes:
     except OSError:
         size = -1
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
-        # Either stat failed (let read_bytes() raise/propagate the real error below) or the
-        # file is too large to be worth caching -- read it directly, uncached (Guard 4).
-        return Path(path_str).read_bytes()
+        return _self.read_content_bytes(path_str)
     return _read_source_cached_bounded(path_str)
 
 
 @_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
 def _read_source_cached_bounded(path_str: str) -> bytes:
-    return Path(path_str).read_bytes()
+    return _self.read_content_bytes(path_str)
 
 
 # PERF increment 1 : every JS/TS/Rust symbol/ref/caller
@@ -1865,10 +1882,10 @@ def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
     if not normalized_symbol:
         return True
     try:
-        stat = path.stat()
+        size = _self._file_size_with_receipt(path)
     except OSError:
         return True
-    if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+    if size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return True
     try:
         data = _read_source_cached(str(path))
@@ -1884,10 +1901,10 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
     if spec is None:
         return False
     try:
-        stat = path.stat()
+        size = _self._file_size_with_receipt(path)
     except OSError:
         return True
-    if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+    if size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         return True
     try:
         data = _read_source_cached(str(path))
@@ -1928,10 +1945,10 @@ def _literal_symbol_seed_files(
     existing_files: list[Path],
 ) -> list[Path]:
     normalized_symbol = (symbol or "").strip()
-    if not normalized_symbol or root.is_file():
+    if not normalized_symbol or not _self._is_dir_with_receipt(root):
         return []
 
-    normalized_root = root.resolve()
+    normalized_root = _self._resolved_input_path(root)
     existing = {str(_safe_resolve(path)) for path in existing_files}
     seed_files: list[Path] = []
     scanned = 0
@@ -1968,8 +1985,8 @@ def _repo_map_root_dir(repo_map: dict[str, Any]) -> Path:
     crash on `tg defs <file> <symbol> --provider lsp/hybrid` (native is unaffected; it never reaches
     this code). Mirrors the pre-existing ``root if root.is_dir() else root.parent`` pattern already
     used by ``build_repo_map`` (``context_root``)."""
-    root = Path(str(repo_map["path"])).expanduser().resolve()
-    return root if root.is_dir() else root.parent
+    root = _self._resolved_input_path(str(repo_map["path"]))
+    return root if _self._is_dir_with_receipt(root) else root.parent
 
 
 def _repo_map_file_and_test_universe(repo_map: dict[str, Any]) -> tuple[list[Path], list[Path]]:
@@ -2448,11 +2465,11 @@ def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
         "base_url": None,
         "paths": [],
     }
-    if not tsconfig_path.exists():
+    if not _is_file_with_receipt(tsconfig_path):
         return payload
 
     try:
-        parsed = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+        parsed = json.loads(_self._read_text_with_receipt(tsconfig_path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return payload
 
@@ -2463,7 +2480,7 @@ def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
     payload["exists"] = True
     base_url = compiler_options.get("baseUrl")
     if isinstance(base_url, str) and base_url.strip():
-        payload["base_url"] = str((root / base_url).resolve())
+        payload["base_url"] = str(_self._resolved_input_path(root / base_url))
 
     raw_paths = compiler_options.get("paths", {})
     if isinstance(raw_paths, dict):
@@ -2485,7 +2502,7 @@ def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
 
 
 def _prime_js_ts_repo_context(root: Path) -> dict[str, Any]:
-    normalized_root = root.expanduser().resolve()
+    normalized_root = _self._resolved_input_path(root)
     key = str(normalized_root)
     context = {
         "root": key,
@@ -2594,7 +2611,7 @@ def _build_rust_module_tree(
     _prefix: tuple[str, ...] = (),
     _visited: set[str] | None = None,
 ) -> dict[str, str]:
-    normalized_entry = entry_path.expanduser().resolve()
+    normalized_entry = _self._resolved_input_path(entry_path)
     visited = set() if _visited is None else set(_visited)
     current_key = str(normalized_entry)
     if current_key in visited:
@@ -2602,7 +2619,7 @@ def _build_rust_module_tree(
     visited.add(current_key)
 
     try:
-        source = normalized_entry.read_text(encoding="utf-8")
+        source = _self._read_text_with_receipt(normalized_entry)
     except (OSError, UnicodeDecodeError):
         return {}
 
@@ -2633,11 +2650,11 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
         "exists": False,
         "members": {},
     }
-    if not cargo_toml.is_file():
+    if not _is_file_with_receipt(cargo_toml):
         return payload
 
     try:
-        parsed = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+        parsed = tomllib.loads(_self._read_text_with_receipt(cargo_toml))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return payload
 
@@ -2656,18 +2673,18 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
             continue
         has_glob = any(token in member_pattern for token in {"*", "?", "["})
         member_dirs = (
-            [candidate for candidate in root.glob(member_pattern) if candidate.is_dir()]
+            _self._glob_dirs_with_receipt(root, member_pattern)
             if has_glob
             else [root / member_pattern]
         )
         for member_dir in member_dirs:
-            normalized_dir = member_dir.expanduser().resolve()
+            normalized_dir = _self._resolved_input_path(member_dir)
             member_cargo = normalized_dir / "Cargo.toml"
-            if not member_cargo.is_file():
+            if not _is_file_with_receipt(member_cargo):
                 continue
             crate_name = _normalize_rust_crate_name(normalized_dir.name)
             try:
-                member_parsed = tomllib.loads(member_cargo.read_text(encoding="utf-8"))
+                member_parsed = tomllib.loads(_self._read_text_with_receipt(member_cargo))
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
                 member_parsed = {}
             package = member_parsed.get("package", {})
@@ -2675,10 +2692,10 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
                 package_name = package.get("name")
                 if isinstance(package_name, str) and package_name.strip():
                     crate_name = _normalize_rust_crate_name(package_name)
-            entry_path = (normalized_dir / "src" / "lib.rs").resolve()
-            if not entry_path.is_file():
-                fallback_entry = (normalized_dir / "src" / "main.rs").resolve()
-                if fallback_entry.is_file():
+            entry_path = _self._resolved_input_path(normalized_dir / "src" / "lib.rs")
+            if not _is_file_with_receipt(entry_path):
+                fallback_entry = _self._resolved_input_path(normalized_dir / "src" / "main.rs")
+                if _is_file_with_receipt(fallback_entry):
                     entry_path = fallback_entry
                 else:
                     continue
@@ -2690,7 +2707,7 @@ def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
 
 
 def _prime_rust_repo_context(root: Path) -> dict[str, Any]:
-    normalized_root = root.expanduser().resolve()
+    normalized_root = _self._resolved_input_path(root)
     key = str(normalized_root)
     context = {
         "root": key,
@@ -2834,7 +2851,9 @@ def _import_update_target(
     definition_path: str,
     repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
-    if str(file_path.resolve()) == str(Path(definition_path).resolve()):
+    if str(_self._resolved_input_path(file_path)) == str(
+        _self._resolved_input_path(definition_path)
+    ):
         return None
     spec = lang_registry.spec_for_path(file_path)
     if spec is None or spec.import_update_target is None:
@@ -3181,10 +3200,10 @@ def _discover_validation_tests_for_primary_file(
 ) -> list[str]:
     if not primary_file:
         return []
-    source_path = Path(primary_file).expanduser().resolve()
+    source_path = _self._resolved_input_path(primary_file)
     validation_root = _validation_repo_root(source_path.parent)
-    scoped_path = Path(scoped_root).expanduser().resolve()
-    if scoped_path.is_dir() and validation_root == scoped_path:
+    scoped_path = _self._resolved_input_path(scoped_root)
+    if _self._is_dir_with_receipt(scoped_path) and validation_root == scoped_path:
         return []
 
     terms: list[str] = []
@@ -3239,7 +3258,7 @@ def _discover_validation_tests_for_primary_file(
             break
         if not _is_test_file(current):
             continue
-        resolved = current.resolve()
+        resolved = _self._resolved_input_path(current)
         if resolved == source_path:
             continue
         if (
@@ -4097,7 +4116,7 @@ def _imports_and_symbols_for_path(
     # multi-MB bundled/generated files.  The cap is configurable via the
     # TENSOR_GREP_MAX_PARSE_BYTES env var (default 2 MB).
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -4137,7 +4156,7 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
         # check for free from THEIR caller (`_imports_and_symbols_for_path`, above) rather than
         # self-guarding -- applied here once, at this dispatcher, for the identical reason.
         try:
-            file_size = path.stat().st_size
+            file_size = _self._file_size_with_receipt(path)
         except OSError:
             file_size = 0
         if file_size > _self._max_parse_bytes():
@@ -4178,7 +4197,7 @@ def _normalized_changeset_paths(
             current_path = Path(str(raw_path)).expanduser()
             if not current_path.is_absolute():
                 current_path = root / current_path
-            entries.append(str(current_path.resolve()))
+            entries.append(str(_self._resolved_input_path(current_path)))
         normalized[key] = sorted(dict.fromkeys(entries))
     return normalized
 
@@ -4193,20 +4212,20 @@ def build_repo_map(
     exclude_files: frozenset[Path] = frozenset(),
 ) -> dict[str, Any]:
     """Build repository context, optionally excluding exact lexically absolute file paths."""
-    root = Path(path).expanduser().resolve()
-    if not root.exists():
+    root = _self._resolved_input_path(path)
+    if not _self._path_exists_with_receipt(root):
         raise FileNotFoundError(f"Path not found: {root}")
     normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
     exclude_files = frozenset(Path(os.path.abspath(current)) for current in exclude_files)
     walk_options: dict[str, Any] = {"exclude_files": exclude_files} if exclude_files else {}
 
     with _profiling_phase(_profiling_collector, "repo_map_build"):
-        context_root = root if root.is_dir() else root.parent
+        context_root = root if _self._is_dir_with_receipt(root) else root.parent
         _clear_all_source_caches()
         _load_gitignore_matcher.cache_clear()
         _prime_all_language_repo_contexts(context_root)
         generation = SymbolGeneration(
-            _infer_project_root(root) if root.is_file() else context_root,
+            _infer_project_root(root) if not _self._is_dir_with_receipt(root) else context_root,
             scope=root,
             max_bytes=_self._max_parse_bytes(),
             ignore_policy=sorted(_SKIP_DIR_NAMES),
@@ -4976,94 +4995,6 @@ def _graph_trust_summary(
             "by_ref_kind": by_ref_kind,
         },
     }
-
-
-from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap  # noqa: E402
-
-
-def _language_coverage_gaps_for_universe(
-    bounded_files: list[Path], scan_root: Path | None = None
-) -> list[dict[str, Any]]:
-    """PATH A Stage 0 honesty floor (additive): label files in the refs/callers scan universe
-    that have no registered ``LanguageSpec`` (or, for a registered language whose grammar is
-    fail-closed with no regex fallback, no usable parser) instead of silently degrading them.
-    Zero behavior change for python/javascript/typescript/rust today -- every file with one of
-    those suffixes always resolves a spec, so this only ever fires for a language tensor-grep's
-    symbol graph does not yet cover (e.g. .kt, .swift) that happens to sit in the scan universe.
-
-    Also covers a NARROWER partial-capability gap (audit #81 #4): a language can be fully
-    registered with a working parser (defs/refs/callers all resolve normally) yet still have
-    ``LanguageSpec.import_update_target is None`` -- Go today (PATH A Stage 2: Java hits this
-    same branch too, but for Java refs/callers are not just import-resolution-incomplete, they
-    are UNIMPLEMENTED entirely -- foundational tier only, see the Java LanguageSpec registration
-    above; `tg refs`/`tg callers` simply find nothing in a Java file rather than resolving
-    normally). Before this fix, that combination fell through the two branches above straight to
-    ``continue``, so a Go-only repo with the grammar installed reported an EMPTY
-    ``resolution_gaps`` even though
-    ``_build_import_graph_consumers_from_map`` can never produce a single reverse-import edge for
-    it -- indistinguishable from "genuinely has zero import-graph consumers". The third branch
-    below flags that combination explicitly so `tg callers`/`tg blast-radius` stay honest about
-    it instead of reading as a proven-zero.
-    """
-    gaps_by_language: dict[str, dict[str, Any]] = {}
-    for current in bounded_files:
-        spec = lang_registry.spec_for_path(current)
-        fail_closed = False
-        import_resolution_only = False
-        if spec is None:
-            language = _provider_language_for_path(current) or (
-                current.suffix.lstrip(".").lower() or "unknown"
-            )
-            reason = "no registered language extractor for this file suffix"
-        elif spec.parser_for_path is not None and spec.parser_for_path(current) is None:
-            # Only a genuine gap for a language that FAILS CLOSED with no fallback when its
-            # grammar is missing (Stage 1+ languages like Go). None of the 4 current languages
-            # set this: JS/TS/Rust always fall back to regex-heuristic extraction, so this
-            # branch is unreachable for them today and only matters for future registrations.
-            if spec.provenance_when_missing not in {"regex-heuristic", "heuristic"}:
-                language = spec.language_id
-                reason = (
-                    "required parser/grammar is not installed for this language and it has no "
-                    "regex fallback (fail-closed)"
-                )
-                fail_closed = True
-            else:
-                continue
-        elif spec.import_update_target is None:
-            language = spec.language_id
-            reason = (
-                "registered language extractor has no reverse-import resolver -- "
-                "import_graph_consumers can never be computed for this language"
-            )
-            import_resolution_only = True
-        else:
-            continue
-        entry = gaps_by_language.setdefault(
-            language,
-            {
-                "language": language,
-                "reason": reason,
-                "files_affected": 0,
-                "remediation": _language_coverage_gap_remediation(
-                    language,
-                    fail_closed=fail_closed,
-                    import_resolution_only=import_resolution_only,
-                ),
-                "affects_completeness": "when_empty" if fail_closed else "never",
-            },
-        )
-        entry["files_affected"] += 1
-    # A JS/TS scan rooted BELOW its tsconfig.json silently stops resolving path aliases, so
-    # import_graph_consumers under-reports with no stated cause. Disclose it as a real gap.
-    scope_gap = js_ts_scope_gap(bounded_files, scan_root)
-    if scope_gap is not None:
-        gaps_by_language.setdefault(
-            str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}
-        )
-    return sorted(
-        [*gaps_by_language.values(), *source_coverage_gaps(bounded_files, scan_root)],
-        key=lambda item: (-int(item["files_affected"]), str(item["language"])),
-    )
 
 
 def _downgrade_graph_trust_summary_for_coverage_gaps(
@@ -6544,65 +6475,14 @@ def _primary_span_for_symbol(symbol: dict[str, Any] | None) -> dict[str, int] | 
     }
 
 
-def _validation_repo_root(repo_root: str | Path) -> Path:
-    root = Path(repo_root).expanduser().resolve()
-    if root.is_file():
-        root = root.parent
-    markers = (
-        "package.json",
-        "package-lock.json",
-        "pnpm-workspace.yaml",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "bun.lockb",
-        "pyproject.toml",
-        "setup.py",
-        "setup.cfg",
-        "Cargo.toml",
-        "tsconfig.json",
-    )
-    boundary_markers = (
-        "README.md",
-        ".gitignore",
-        "LICENSE",
-        "AGENTS.md",
-    )
-    boundary_candidate: Path | None = None
-    current = root
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    while True:
-        if current == temp_root and root != temp_root:
-            break
-        if any((current / marker).exists() for marker in markers):
-            return current
-        # F84 Fix A: a directory is only a STRONG boundary -- and thus allowed to trap the
-        # walk-up before its parent is examined -- when it has `.git` (dir or file, the
-        # definitive repo-root signal every other tool uses) OR carries >=2 distinct boundary
-        # markers. A LONE README.md/.gitignore/LICENSE/AGENTS.md living in a scoped
-        # subdirectory used to trap the walk one level too early (the boundary-README trap),
-        # so a single marker is no longer sufficient on its own.
-        matched_boundary_markers = sum(
-            1 for marker in boundary_markers if (current / marker).exists()
-        )
-        if (current / ".git").exists() or matched_boundary_markers >= 2:
-            boundary_candidate = current
-        if current.parent == current:
-            break
-        next_current = current.parent
-        if boundary_candidate is not None and next_current == boundary_candidate.parent:
-            break
-        current = next_current
-    return boundary_candidate or root
-
-
 def _read_package_json(root: Path) -> dict[str, Any]:
     """O(1) fixed-path read of ``<root>/package.json`` -- no directory scan. Returns ``{}``
     when the file is missing, unreadable, or not a JSON object."""
     package_json_path = root / "package.json"
-    if not package_json_path.is_file():
+    if not _is_file_with_receipt(package_json_path):
         return {}
     try:
-        loaded = json.loads(package_json_path.read_text(encoding="utf-8"))
+        loaded = json.loads(_self._read_text_with_receipt(package_json_path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
@@ -6614,11 +6494,13 @@ def _infer_js_package_manager(root: Path, package_json: dict[str, Any]) -> str:
         normalized = package_manager.split("@", 1)[0].strip().lower()
         if normalized in {"npm", "pnpm", "yarn", "bun"}:
             return normalized
-    if (root / "pnpm-lock.yaml").is_file() or (root / "pnpm-workspace.yaml").is_file():
+    if _is_file_with_receipt(root / "pnpm-lock.yaml") or _is_file_with_receipt(
+        root / "pnpm-workspace.yaml"
+    ):
         return "pnpm"
-    if (root / "yarn.lock").is_file():
+    if _is_file_with_receipt(root / "yarn.lock"):
         return "yarn"
-    if (root / "bun.lockb").is_file():
+    if _is_file_with_receipt(root / "bun.lockb"):
         return "bun"
     return "npm"
 
@@ -6673,10 +6555,10 @@ def _ts_jest_configured(
         "jest.config.json",
     ):
         config_path = repo_root / config_name
-        if not config_path.is_file():
+        if not _is_file_with_receipt(config_path):
             continue
         try:
-            if "ts-jest" in config_path.read_text(encoding="utf-8"):
+            if "ts-jest" in _self._read_text_with_receipt(config_path):
                 return True
         except (OSError, UnicodeDecodeError):
             continue
@@ -6698,7 +6580,8 @@ def _detect_validation_runners_from_root(
     ``_build_edit_plan_seed``). Mirrors the SAME optional-kwarg contract that function already
     documents for its other callers.
     """
-    if not root.exists():
+    if not _self._path_exists_with_receipt(root):
+        record_content_receipt_digest(root, "")
         return _ValidationRunnerInfo(
             False, False, False, "generic", False, (), (), None, None, None
         )
@@ -6724,7 +6607,7 @@ def _detect_validation_runners_from_root(
         current.suffix.lower() == ".py" and _is_test_file(current) for current in all_files
     )
     has_python_project_marker = any(
-        (root / marker).is_file()
+        _is_file_with_receipt(root / marker)
         for marker in (
             "pyproject.toml",
             "pytest.ini",
@@ -6739,7 +6622,7 @@ def _detect_validation_runners_from_root(
         python_detection = "heuristic"
     else:
         python_detection = "generic"
-    has_rust = (root / "Cargo.toml").is_file() or any(
+    has_rust = _is_file_with_receipt(root / "Cargo.toml") or any(
         current.name == "Cargo.toml" for current in all_files
     )
     has_javascript = any(current.suffix.lower() in _JS_TS_SUFFIXES for current in all_files)
@@ -6747,10 +6630,10 @@ def _detect_validation_runners_from_root(
     package_json: dict[str, Any] = {}
     package_text = ""
     package_json_path = root / "package.json"
-    has_package_json = package_json_path.is_file()
-    if package_json_path.is_file():
+    has_package_json = _is_file_with_receipt(package_json_path)
+    if has_package_json:
         try:
-            package_text = package_json_path.read_text(encoding="utf-8")
+            package_text = _self._read_text_with_receipt(package_json_path)
             loaded = json.loads(package_text)
             if isinstance(loaded, dict):
                 package_json = loaded
@@ -6806,7 +6689,12 @@ def _detect_validation_runners(repo_root: str) -> _ValidationRunnerInfo:
 
 def _relative_validation_path(path: Path, repo_root: Path) -> str:
     try:
-        return path.resolve().relative_to(repo_root).as_posix()
+        return (
+            _self
+            ._resolved_input_path(path)
+            .relative_to(_self._resolved_input_path(repo_root))
+            .as_posix()
+        )
     except ValueError:
         return path.name
 
@@ -6955,18 +6843,18 @@ def _javascript_test_file_uses_node_test(test_path: str) -> bool:
 
 def _nearest_cargo_manifest_for_path(path: str | Path, repo_root: Path) -> Path | None:
     try:
-        current = Path(path).expanduser().resolve()
+        current = _self._resolved_input_path(path)
     except (OSError, RuntimeError):
         return None
-    if current.is_file() or current.suffix:
+    if _is_file_with_receipt(current) or current.suffix:
         current = current.parent
     try:
-        boundary = repo_root.expanduser().resolve()
+        boundary = _self._resolved_input_path(repo_root)
     except (OSError, RuntimeError):
         boundary = repo_root
     while True:
         manifest = current / "Cargo.toml"
-        if manifest.is_file():
+        if _is_file_with_receipt(manifest):
             return manifest
         if current == boundary or current.parent == current:
             break
@@ -6984,7 +6872,7 @@ def _cargo_test_command_for_primary_file(
     if manifest is None:
         return None
     try:
-        if manifest.parent.resolve() == repo_root.resolve():
+        if _self._resolved_input_path(manifest.parent) == _self._resolved_input_path(repo_root):
             return "cargo test"
     except (OSError, RuntimeError):
         pass
@@ -7040,7 +6928,9 @@ def _primary_language_fallback_validation_steps(
                 "confidence": 0.55,
                 "detection": "detected",
             })
-    elif primary_language in ("javascript", "typescript") and (root / "package.json").is_file():
+    elif primary_language in ("javascript", "typescript") and _is_file_with_receipt(
+        root / "package.json"
+    ):
         # dogfood F3: a TS/JS primary target used to get NO fallback step at all here (this
         # branch only had rust/python) -- on a repo where the raw per-test validation plan
         # comes back empty (e.g. a scan-ceiling-capped root on a large monorepo), that meant an
@@ -7067,7 +6957,7 @@ def _has_python_validation_fallback_evidence(
     deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> bool:
     if any(
-        (root / marker).is_file()
+        _is_file_with_receipt(root / marker)
         for marker in (
             "pyproject.toml",
             "pytest.ini",
@@ -7150,10 +7040,10 @@ def _suggested_validation_command_for_primary_file(
     if not primary_file:
         return None
     try:
-        source_path = Path(primary_file).expanduser().resolve()
+        source_path = _self._resolved_input_path(primary_file)
     except (OSError, RuntimeError):
         return None
-    if not source_path.is_file():
+    if not _is_file_with_receipt(source_path):
         return None
     try:
         root = _validation_repo_root(repo_root)
@@ -7162,7 +7052,9 @@ def _suggested_validation_command_for_primary_file(
     candidates = _suggested_validation_command_candidates(source_path, repo_root=root)
     if not candidates:
         return None
-    test_path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    test_path = next(
+        (candidate for candidate in candidates if _is_file_with_receipt(candidate)), None
+    )
     if test_path is None:
         return None
     relative_test = _relative_validation_path(test_path, root)
@@ -7302,10 +7194,10 @@ def _raw_validation_plan_for_tests(
     deadline_monotonic: float | None = None,
     deadline_hit: _DeadlineBreakFlag | None = None,
 ) -> list[dict[str, Any]]:
-    explicit_root = Path(repo_root).expanduser().resolve()
-    if explicit_root.is_file():
+    explicit_root = _self._resolved_input_path(repo_root)
+    if not _self._is_dir_with_receipt(explicit_root):
         explicit_root = explicit_root.parent
-    resolved_tests = [Path(current).expanduser().resolve() for current in tests]
+    resolved_tests = [_self._resolved_input_path(current) for current in tests]
     tests_under_explicit_root = bool(resolved_tests) and all(
         _self._path_is_relative_to(current, explicit_root) for current in resolved_tests
     )
@@ -7405,12 +7297,12 @@ def _raw_validation_plan_for_tests(
     for current in tests:
         path = Path(current)
         suffix = path.suffix.lower()
-        absolute_path = str(path.resolve())
+        absolute_path = str(_self._resolved_input_path(path))
         relative_path = _relative_validation_path(path, root)
         if not _inert.is_shell_inert_path(relative_path):
             _inert.record_omission(relative_path)  # disclosure only; commands gated per token
         is_primary_test = primary_test is not None and absolute_path == str(
-            Path(primary_test).resolve()
+            _self._resolved_input_path(primary_test)
         )
 
         if suffix == ".py":
@@ -7633,7 +7525,7 @@ def _raw_validation_plan_for_tests(
             scope="repo",
             runner="cargo",
             confidence=0.55,
-            detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
+            detection=("detected" if _is_file_with_receipt(root / "Cargo.toml") else "heuristic"),
         )
 
     return plan
@@ -8211,7 +8103,7 @@ def _navigation_pack(
     prefetched_reads: list[dict[str, Any]] = []
     if primary_file:
         try:
-            primary_parent = Path(primary_file).resolve().parent
+            primary_parent = _self._resolved_input_path(primary_file).parent
         except (OSError, ValueError):
             primary_parent = None
         if primary_parent is not None:
@@ -8220,7 +8112,7 @@ def _navigation_pack(
                 for current in grouped_reads[role]:
                     current_file = str(current.get("file", "") or "")
                     try:
-                        current_parent = Path(current_file).resolve().parent
+                        current_parent = _self._resolved_input_path(current_file).parent
                     except (OSError, ValueError):
                         current_parent = None
                     if current_parent is not None and current_parent == primary_parent:
@@ -9096,7 +8988,7 @@ def _build_edit_plan_seed(
         else None
     )
     validation_root = (
-        _validation_repo_root(Path(str(primary_file)).expanduser().resolve().parent)
+        _validation_repo_root(_self._resolved_input_path(str(primary_file)).parent)
         if primary_file is not None
         else None
     )
@@ -9255,7 +9147,7 @@ def _build_edit_plan_seed(
             primary_symbol=suggested_edit_primary_symbol,
             definitions=suggested_edit_definitions,
             callers=list(radius_payload.get("callers", [])) if radius_payload is not None else [],
-            repo_root=Path(str(repo_map["path"])).resolve(),
+            repo_root=_self._resolved_input_path(str(repo_map["path"])),
             # Opt-in only (audit B9/A18 fix scope, broadened by #212): `suggested_edits_max` defaults
             # to `None` (unbounded, byte-identical to every UNNAMED caller's pre-fix behavior) unless
             # the caller of `_build_edit_plan_seed` explicitly requests a bound. `tg edit-plan`'s own
@@ -9553,7 +9445,7 @@ def _attach_lightweight_navigation_metadata(
         precomputed_file_paths=_repo_map_validation_file_paths(
             repo_map,
             validation_root=(
-                _validation_repo_root(Path(str(primary_file)).expanduser().resolve().parent)
+                _validation_repo_root(_self._resolved_input_path(str(primary_file)).parent)
                 if primary_file
                 else None
             ),
@@ -9943,7 +9835,7 @@ def _fallback_file_source(
     if path.suffix.lower() not in source_suffixes:
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        text = _self._read_text_with_receipt(path)
     except (OSError, UnicodeDecodeError):
         return None
     lines = text.splitlines()
@@ -11000,7 +10892,7 @@ def _path_from_lsp_file_uri(uri: str) -> Path | None:
         path = f"//{parsed.netloc}{path}"
     if len(path) >= 3 and path[0] == "/" and path[2] == ":":
         path = path[1:]
-    return Path(path).expanduser().resolve()
+    return _self._resolved_input_path(path)
 
 
 def _lsp_symbol_kind_name(value: object) -> str:
@@ -11023,7 +10915,7 @@ def _lsp_symbol_kind_name(value: object) -> str:
 
 def _symbol_character_in_file(path: Path, line_number: int, symbol: str) -> int:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _self._read_text_with_receipt(path).splitlines()
     except (FileNotFoundError, OSError, UnicodeDecodeError):
         return 0
     if line_number <= 0 or line_number > len(lines):
@@ -11401,7 +11293,7 @@ def _definition_file_display_path(file_value: Any) -> str:
             file_raw = path
 
     try:
-        return str(Path(file_raw).resolve())
+        return str(_self._resolved_input_path(file_raw))
     except (OSError, ValueError):
         return file_raw
 
@@ -11476,8 +11368,8 @@ def _external_definitions(
     for native_definition in native_definitions:
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
             break
-        current_path = Path(str(native_definition.get("file", ""))).expanduser().resolve()
-        if not current_path.exists():
+        current_path = _self._resolved_input_path(str(native_definition.get("file", "")))
+        if not _is_file_with_receipt(current_path):
             continue
         language = _provider_language_for_path(current_path) or _language_for_path(current_path)
         try:
@@ -11485,7 +11377,7 @@ def _external_definitions(
                 language=language, workspace_root=repo_root
             )
             document_uri = current_path.as_uri()
-            document_text = current_path.read_text(encoding="utf-8")
+            document_text = _self._read_text_with_receipt(current_path)
             definition_line = int(
                 native_definition.get(
                     "line",
@@ -11573,14 +11465,14 @@ def _external_references(
     for definition in definitions:
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
             break
-        current_path = Path(str(definition["file"])).resolve()
+        current_path = _self._resolved_input_path(str(definition["file"]))
         language = _provider_language_for_path(current_path) or _language_for_path(current_path)
         try:
             client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(
                 language=language, workspace_root=repo_root
             )
             document_uri = current_path.as_uri()
-            document_text = current_path.read_text(encoding="utf-8")
+            document_text = _self._read_text_with_receipt(current_path)
             definition_line = int(definition.get("line", 1))
             definition_character = _symbol_character_in_file(current_path, definition_line, symbol)
 
@@ -11665,7 +11557,7 @@ def _external_references(
             if resolved_path is None:
                 continue
             try:
-                lines = resolved_path.read_text(encoding="utf-8").splitlines()
+                lines = _self._read_text_with_receipt(resolved_path).splitlines()
             except (FileNotFoundError, OSError, UnicodeDecodeError):
                 lines = []
             line_number = int(start.get("line", 0)) + 1
@@ -11931,6 +11823,7 @@ def build_symbol_defs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
     if not definitions:
         payload["no_match"] = True
         payload["message"] = f"No exact definition found for symbol {symbol!r}."
@@ -11961,7 +11854,10 @@ def build_symbol_defs_from_map(
         # the same honesty-floor gap here so a defs-only caller gets the hint too.
         gap_files, gap_tests = _repo_map_file_and_test_universe(repo_map)
         resolution_gaps = _language_coverage_gaps_for_universe(
-            [*gap_files, *gap_tests], _repo_map_root_dir(repo_map)
+            [*gap_files, *gap_tests],
+            _repo_map_root_dir(repo_map),
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=coverage_gap_deadline_hit,
         )
         payload["resolution_gaps"] = resolution_gaps
         apply_coverage_gap_incompleteness(payload, resolution_gaps, answer_empty=True)
@@ -11982,7 +11878,16 @@ def build_symbol_defs_from_map(
         payload["related_paths"] = []
         payload["graph_completeness"] = "empty"
     else:
-        attach_found_answer_gaps(payload, repo_map)
+        attach_found_answer_gaps(
+            payload,
+            repo_map,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=coverage_gap_deadline_hit,
+        )
+    if coverage_gap_deadline_hit.hit:
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
     return payload
 
 
@@ -12639,7 +12544,7 @@ def build_symbol_refs_from_map(
     # happens to resolve to SOME directory (which used to give two unrelated same-named exports
     # identical fabricated confidence). Computed once, outside the per-file loop.
     go_definition_dirs = frozenset(
-        str(Path(str(current_definition["file"])).resolve().parent)
+        str(_self._resolved_input_path(str(current_definition["file"])).parent)
         for current_definition in payload.get("definitions", [])
     )
     references: list[dict[str, Any]] = []
@@ -12742,7 +12647,7 @@ def build_symbol_refs_from_map(
             for current in _self._external_references(
                 repo_root, symbol, [dict(current) for current in payload["definitions"]]
             )
-            if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
+            if str(_self._resolved_input_path(str(current.get("file", "")))) in bounded_file_set
         ]
         # Merge (union) native + external refs for BOTH lsp and hybrid. A partial / under-indexed
         # LSP result must NEVER discard the correct native answer: the old `references = proof_refs
@@ -12819,7 +12724,13 @@ def build_symbol_refs_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(
+        bounded_files,
+        repo_root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=coverage_gap_deadline_hit,
+    )
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(references)
     if normalized_provider != "native" and lsp_proof_count == 0 and references:
@@ -12843,7 +12754,7 @@ def build_symbol_refs_from_map(
         lsp_count=lsp_proof_count,
         fallback_used=fallback_used,
     )
-    if refs_scan_deadline_hit or context_pack_deadline_hit.hit:
+    if refs_scan_deadline_hit or context_pack_deadline_hit.hit or coverage_gap_deadline_hit.hit:
         payload["partial"] = True
         payload["deadline_limit"] = {
             "deadline_exceeded": True,
@@ -12910,9 +12821,18 @@ def _infer_project_root(file_path: Path) -> Path:
     a plausible root inferred from the file's own location rather than passed explicitly.
     """
     current = file_path.parent
+    authenticated_root = authenticated_content_root()
     for candidate in [current, *current.parents]:
         try:
-            if any((candidate / marker).exists() for marker in _PROJECT_ROOT_MARKERS):
+            if any(
+                _is_file_with_receipt(candidate / marker)
+                for marker in _PROJECT_ROOT_MARKERS
+                if marker != ".git"
+            ):
+                return candidate
+            if authenticated_root is not None and candidate == authenticated_root:
+                return candidate
+            if authenticated_root is None and (candidate / ".git").exists():
                 return candidate
         except OSError:
             continue
@@ -12969,7 +12889,11 @@ def _resolve_raw_import_entry(
         is_relative = module.startswith(".")
         has_candidates = bool(candidate_info["paths"])
         resolved = next(
-            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            (
+                str(current)
+                for current in candidate_info["paths"]
+                if _is_file_with_receipt(Path(current))
+            ),
             None,
         )
         external = (not is_relative) and not has_candidates
@@ -12978,7 +12902,11 @@ def _resolve_raw_import_entry(
     elif language_id == "rust":
         candidates = _rust_module_candidates(importer_path, module, repo_root)
         resolved_candidate = next(
-            (current for current in candidates if Path(str(current["path"])).is_file()),
+            (
+                current
+                for current in candidates
+                if _is_file_with_receipt(Path(str(current["path"])))
+            ),
             None,
         )
         parts = [part.strip() for part in module.split("::") if part.strip()]
@@ -12995,7 +12923,11 @@ def _resolve_raw_import_entry(
         level = int(entry.get("level", 0) or 0)
         candidate_info = _python_module_candidates(importer_path, module, repo_root, level=level)
         resolved = next(
-            (str(current) for current in candidate_info["paths"] if Path(current).is_file()),
+            (
+                str(current)
+                for current in candidate_info["paths"]
+                if _is_file_with_receipt(Path(current))
+            ),
             None,
         )
         external = resolved is None
@@ -13065,11 +12997,11 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
     workspace lookups) -- no repo scan, no scan cap, no ``--deadline``. See ``build_file_importers``
     for the reverse (who imports this file) primitive, which does need a bounded repo scan.
     """
-    resolved_file = Path(file_path).expanduser().resolve()
-    if not resolved_file.exists():
-        raise FileNotFoundError(f"File not found: {resolved_file}")
+    resolved_file = _self._resolved_input_path(file_path)
     if resolved_file.is_dir():
         raise ValueError(f"tg imports expects a FILE, not a directory: {resolved_file}")
+    if not _is_file_with_receipt(resolved_file):
+        raise FileNotFoundError(f"File not found: {resolved_file}")
 
     payload = _envelope(resolved_file)
     payload["routing_reason"] = "file-imports"
@@ -13215,7 +13147,7 @@ def _tier_reverse_importer_candidates(
     current = target_dir
     while True:
         try:
-            ancestor_dirs.add(current.resolve())
+            ancestor_dirs.add(_self._resolved_input_path(current))
         except OSError:
             ancestor_dirs.add(current)
         if current == project_root:
@@ -13237,14 +13169,14 @@ def _tier_reverse_importer_candidates(
     # relative_to instead of calling _path_is_relative_to (which would re-resolve both sides
     # again) -- net one resolve per candidate, zero per-candidate project-root resolves.
     try:
-        project_root_resolved = project_root.resolve()
+        project_root_resolved = _self._resolved_input_path(project_root)
     except OSError:
         project_root_resolved = project_root
 
     def _tier(candidate: str) -> int:
         candidate_path = Path(candidate)
         try:
-            resolved_candidate = candidate_path.resolve()
+            resolved_candidate = _self._resolved_input_path(candidate_path)
         except OSError:
             resolved_candidate = candidate_path
         if resolved_candidate.parent in ancestor_dirs:
@@ -13277,12 +13209,12 @@ def build_file_importers_from_map(
     # entry point, dogfood #104) instead pre-resolves FILE to an absolute cwd-anchored path
     # BEFORE calling here, so this join is a no-op for that caller -- do not "fix" this function
     # to resolve against cwd instead, that would silently break the session/daemon contract.
-    repo_root = Path(str(repo_map["path"])).resolve()
+    repo_root = _self._resolved_input_path(str(repo_map["path"]))
     resolved_file = Path(file_path).expanduser()
     if not resolved_file.is_absolute():
         resolved_file = repo_root / resolved_file
-    resolved_file = resolved_file.resolve()
-    if not resolved_file.exists():
+    resolved_file = _self._resolved_input_path(resolved_file)
+    if not _is_file_with_receipt(resolved_file):
         raise FileNotFoundError(f"File not found: {resolved_file}")
     target_file = str(resolved_file)
     # Honesty fix (dogfood, published v1.69.2 wheel): a purely lexical containment check --
@@ -13450,7 +13382,7 @@ def build_file_importers(
     ``_confine_read_path``) -- only the previously-buggy cwd-relative case changes.
     """
     deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
-    resolved_file_path = Path(file_path).expanduser().resolve()
+    resolved_file_path = _self._resolved_input_path(file_path)
     repo_map = _self.build_repo_map(
         root,
         max_repo_files=max_repo_files,
@@ -13554,7 +13486,7 @@ def build_symbol_callers_from_map(
     # package-alias resolution as high-confidence when it resolves to a directory that actually
     # owns this symbol.
     go_definition_dirs = frozenset(
-        str(Path(current_file).resolve().parent) for current_file in definition_files
+        str(_self._resolved_input_path(current_file).parent) for current_file in definition_files
     )
     calls: list[dict[str, Any]] = []
     python_files: set[str] = set()
@@ -13642,7 +13574,7 @@ def build_symbol_callers_from_map(
             for current in _self._external_references(
                 repo_root, symbol, [dict(current) for current in defs_payload["definitions"]]
             )
-            if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
+            if str(_self._resolved_input_path(str(current.get("file", "")))) in bounded_file_set
         ]
         python_external_provenance = {
             str(current["file"]): str(
@@ -13913,12 +13845,9 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
-    # task #61 / #52 fix (loop B): fold ALL sibling loops' early-break signal in alongside the main
-    # caller-scan loop's own flag -- a central symbol can finish the bounded main scan inside budget
-    # while any sibling loop (import-graph-consumers, preferred-definition-file scoring,
-    # related-test matching, context-pack symbol scoring) pushes wall-clock well past --deadline.
-    # Any one of the five breaking early makes this result partial.
-    # task #103 Fix 2: context_pack_deadline_hit joins the same fold-in.
+    # Fold every sibling deadline signal into the main caller scan: import graph, preferred
+    # definition, related tests, context pack, and coverage gaps all make the answer partial.
+    coverage_gap_deadline_hit = _DeadlineBreakFlag()
     if (
         caller_scan_deadline_hit
         or import_graph_consumers_deadline_hit.hit
@@ -13950,7 +13879,16 @@ def build_symbol_callers_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(
+        bounded_files,
+        repo_root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=coverage_gap_deadline_hit,
+    )
+    if coverage_gap_deadline_hit.hit:
+        payload["partial"] = True
+        payload["graph_completeness"] = "partial"
+        payload.setdefault("deadline_limit", {})["deadline_exceeded"] = True
     callers_uncertain_paths = _repo_map_graph.uncertain_paths(
         context_payload.get("file_matches", []), related_graph_uncertainty
     )
@@ -14080,7 +14018,7 @@ def build_symbol_blast_radius(
     )
     if _blast_radius_no_match_is_possibly_truncated(payload):
         seed_files = _literal_symbol_seed_files(
-            Path(path).expanduser().resolve(),
+            _self._resolved_input_path(path),
             symbol,
             existing_files=_repo_map_file_universe(repo_map),
         )

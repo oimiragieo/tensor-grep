@@ -603,6 +603,7 @@ def test_upgrade_refreshes_stale_tensor_grep_com_bridge_after_native_update(monk
     monkeypatch.setattr("platform.machine", lambda: "AMD64")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_doctor_capture_probe(monkeypatch, _fake_run)
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
@@ -791,6 +792,7 @@ def test_upgrade_refreshes_stale_com_bridge_when_native_frontdoor_is_current(mon
     monkeypatch.setenv("PATH", str(bridge_tg.parent))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_doctor_capture_probe(monkeypatch, _fake_run)
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
     monkeypatch.setattr(
@@ -961,6 +963,7 @@ def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
     monkeypatch.setenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", "nvidia")
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
     monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_doctor_capture_probe(monkeypatch, _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     _allow_native_frontdoor_checksum(monkeypatch)
@@ -1335,6 +1338,7 @@ def test_upgrade_scheduled_windows_helper_refreshes_stale_com_bridge(monkeypatch
             popen_calls.append([str(part) for part in cmd])
 
     monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_doctor_capture_probe(monkeypatch, _fake_run)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
@@ -1466,6 +1470,7 @@ def test_schedule_windows_self_upgrade_helper_verifies_checksum(monkeypatch, tmp
             popen_calls.append([str(a) for a in cmd])
 
     monkeypatch.setattr("subprocess.run", _fake_run)
+    _patch_doctor_capture_probe(monkeypatch)
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
     monkeypatch.setattr("sys.executable", str(python_executable))
     monkeypatch.setattr("importlib.metadata.version", lambda _name: "1.1.0")
