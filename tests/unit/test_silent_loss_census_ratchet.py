@@ -89,7 +89,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # FALLBACK-ASSIGN: uncertainty_gaps retains the original POSIX display path when resolve
     # fails, then appends/counts that same input. No entry is dropped. Live/error controls:
     # test_graph_failure_boundaries::test_uncertainty_display_resolve_failure_preserves_count_and_sample.
-    "repo_map_graph.py": 1,
+    "repo_map_graph.py": 0,
     # 18 -> 15 by TWO INDEPENDENT fixes that landed in parallel; this file has been burned once
     # already by a hand count, so the arithmetic is spelled out:
     #   -2 by #299 -- the regex-ruleset read loop now records into the scan payload. It counts for
@@ -173,7 +173,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # failed `read_text` degrades the SNIPPET to the symbol name but still appends the reference,
     # so nothing is lost. CAVEAT: this verdict is from reading the code, not from a test that
     # observes the stamp flip -- proving it needs a live LSP server or heavy mocking.
-    "repo_map.py": 8,
+    "repo_map.py": 0,
     # AUDITED #292, all 5 accepted. These gate the broad-scan REFUSAL heuristic, not an answer:
     # an OSError only means a huge scan is not refused, and the scan that follows discloses its
     # own incompleteness. main.py carries its own copies of the same family (#154/#158 siblings).
@@ -230,7 +230,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     #     (do not elevate) rather than claiming the include graph is complete.
     # No `_UnreadablePathFlag` path: this module deliberately does not import `repo_map`
     # (cycle), and a boolean confirmation surface has no `unreadable_paths` consumer.
-    "lang_c_cpp_include.py": 2,
+    "lang_c_cpp_include.py": 0,
 }
 
 

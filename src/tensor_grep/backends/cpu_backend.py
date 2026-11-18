@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import stat
+import sys
 import time
 import warnings
 from collections import OrderedDict, deque
@@ -48,9 +49,7 @@ _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
 @contextmanager
 def _open_search_file(path: Path) -> Iterator[BinaryIO]:
     """Open one regular file without following any path component."""
-    if os.name != "nt":
-        descriptor = _open_search_file_posix(path)
-    else:
+    if sys.platform == "win32":
         if _native_open_search_file_handle is None:
             raise OSError("safe search-file opening requires the native extension on Windows")
         import msvcrt
@@ -69,6 +68,8 @@ def _open_search_file(path: Path) -> Iterator[BinaryIO]:
             close_handle.restype = ctypes.c_int
             close_handle(ctypes.c_void_p(handle))
             raise
+    else:
+        descriptor = _open_search_file_posix(path)
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode) or getattr(opened, "st_file_attributes", 0) & 0x400:
