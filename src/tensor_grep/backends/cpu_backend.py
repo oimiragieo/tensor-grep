@@ -86,6 +86,8 @@ def _open_search_file_posix(path: Path) -> int:
     if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")):
         raise OSError("safe parent-directory search opening is unsupported on this platform")
     target = path if path.is_absolute() else Path.cwd() / path
+    if sys.platform == "darwin" and target.parts[1:2] in {("var",), ("tmp",), ("etc",)}:
+        target = Path("/private", *target.parts[1:])
     directory_flags = (
         os.O_RDONLY
         | os.__dict__["O_DIRECTORY"]

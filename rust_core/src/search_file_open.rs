@@ -105,7 +105,11 @@ fn absolute_path(path: &Path) -> anyhow::Result<PathBuf> {
 fn open_parent_directory_nofollow(parent: &Path) -> anyhow::Result<AnchoredDirectory> {
     #[cfg(unix)]
     {
-        // Unix AnchoredDirectory::open walks from `/` with openat(O_NOFOLLOW).
+        // Darwin exposes these system directories through aliases under /private.
+        #[cfg(target_os = "macos")]
+        if parent.starts_with("/var") || parent.starts_with("/tmp") || parent.starts_with("/etc") {
+            return AnchoredDirectory::open(&Path::new("/private").join(parent.strip_prefix("/")?));
+        }
         AnchoredDirectory::open(parent)
     }
     #[cfg(windows)]
