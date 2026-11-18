@@ -1773,8 +1773,6 @@ def _read_source_cached(path_str: str) -> bytes:
     except OSError:
         size = -1
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
-        # Either stat failed (let read_bytes() raise/propagate the real error below) or the
-        # file is too large to be worth caching -- read it directly, uncached (Guard 4).
         return _self.read_content_bytes(path_str)
     return _read_source_cached_bounded(path_str)
 
