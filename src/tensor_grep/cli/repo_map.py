@@ -441,9 +441,11 @@ from tensor_grep.cli.symbols_cache import (
     SymbolGeneration,
     authenticated_content_root,
     content_receipts_active,
-    read_content_bytes,
     record_content_absence,
     record_content_receipt_digest,
+)
+from tensor_grep.cli.symbols_cache import (
+    read_content_bytes as read_content_bytes,
 )
 from tensor_grep.core.config import configured_positive_int
 from tensor_grep.core.python_parse import parse_python
@@ -1773,13 +1775,13 @@ def _read_source_cached(path_str: str) -> bytes:
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
         # Either stat failed (let read_bytes() raise/propagate the real error below) or the
         # file is too large to be worth caching -- read it directly, uncached (Guard 4).
-        return read_content_bytes(path_str)
+        return _self.read_content_bytes(path_str)
     return _read_source_cached_bounded(path_str)
 
 
 @_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
 def _read_source_cached_bounded(path_str: str) -> bytes:
-    return read_content_bytes(path_str)
+    return _self.read_content_bytes(path_str)
 
 
 # PERF increment 1 : every JS/TS/Rust symbol/ref/caller

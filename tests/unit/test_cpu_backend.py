@@ -1465,7 +1465,7 @@ def test_search_refuses_leaf_link_substituted_after_scan(
         raise OSError("simulated native no-follow refusal")
 
     monkeypatch.setattr(CPUBackend, "_rust_match_set", refused_native_search)
-    with pytest.raises(RuntimeError, match=r"search target|non-regular"):
+    with pytest.raises(RuntimeError, match=r"search target|non-regular|symbolic links"):
         CPUBackend().search(
             candidates[0],
             "SECRET_BOUNDARY_MARKER",
