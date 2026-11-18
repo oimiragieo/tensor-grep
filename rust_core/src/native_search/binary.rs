@@ -12,7 +12,7 @@ use std::path::Path;
 const MAX_BINARY_PROBE_BYTES: u64 = 64 * 1024 * 1024;
 
 fn open_binary_candidate(path: &Path) -> Result<std::fs::File> {
-    crate::search_file_open::open_search_file_nofollow(path)
+    crate::search_file_open::open_native_search_file(path)
         .with_context(|| format!("failed to open binary candidate {}", path.display()))
 }
 
@@ -135,4 +135,16 @@ pub fn emit_index_binary_match_warning(
         false,
         with_filename,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_binary_candidate_keeps_anchored_open_error() {
+        let root = tempfile::tempdir().unwrap();
+        let error = open_binary_candidate(&root.path().join("missing")).unwrap_err();
+        assert!(super::super::is_native_search_open_failure(&error));
+    }
 }
