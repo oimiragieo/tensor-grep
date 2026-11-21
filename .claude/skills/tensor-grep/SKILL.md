@@ -64,7 +64,10 @@ output, not semantic-model execution.
 Use `tg context-render REPO_PATH 'query' --render-profile focused --json` for
 shorter declaration excerpts. Inspect `omitted_sections`, `truncated`, and line
 maps, then read the full source before editing. Focused excerpts do not establish
-data-flow completeness; `tg agent` does not accept `--render-profile`.
+data-flow completeness; `tg agent` does not accept `--render-profile`. For JSON
+token reduction on `agent`, `defs`, `impact`, `refs`, `callers`, and `blast-radius`,
+pass `--detail compact` (omits verbose diagnostic/telemetry blocks while preserving
+`result_incomplete`, `resolution_gaps`, and primary results).
 
 A command deadline may stop new work without imposing a hard process timeout.
 Automation should impose its own external timeout.
