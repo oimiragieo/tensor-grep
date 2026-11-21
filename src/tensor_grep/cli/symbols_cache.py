@@ -230,6 +230,9 @@ class SymbolGeneration:
         self.cache_status = "ready"
         self.signing_key: bytes | None = None
         self.versions: dict[str, str] = {"python": sys.version.split()[0]}
+        self._dir_ignore_cache: dict[Path, tuple[str, str] | None] = {}
+        self._parser_available_cache: dict[str, bool] = {}
+        self._options_cache: dict[tuple[Path, str], dict[str, Any]] = {}
         if deadline is not None and time.monotonic() >= deadline:
             self.cache_status = "not-persisted: deadline exceeded"
             return
@@ -249,34 +252,54 @@ class SymbolGeneration:
                     self.versions[module] = "unavailable"
 
     def _options(self, path: Path) -> dict[str, Any]:
-        ignores = []
+        suffix = path.suffix.lower()
+        cache_key = (path.parent, suffix)
+        cached_options = self._options_cache.get(cache_key)
+        if cached_options is not None:
+            return cached_options
+        ignores: list[tuple[str, str]] = []
         directory = path.parent
         while True:
-            ignore_file = directory / ".gitignore"
-            if ignore_file.exists():
-                ignores.append((
-                    str(ignore_file.relative_to(self.root)),
-                    _digest(read_confined(self.root, ignore_file, 128 * 1024)),
-                ))
-            if directory == self.root:
+            if directory in self._dir_ignore_cache:
+                entry = self._dir_ignore_cache[directory]
+            else:
+                ignore_file = directory / ".gitignore"
+                if ignore_file.exists():
+                    entry = (
+                        str(ignore_file.relative_to(self.root)),
+                        _digest(read_confined(self.root, ignore_file, 128 * 1024)),
+                    )
+                else:
+                    entry = None
+                self._dir_ignore_cache[directory] = entry
+            if entry is not None:
+                ignores.append(entry)
+            if directory == self.root or directory == directory.parent:
                 break
             directory = directory.parent
         spec = lang_registry.spec_for_path(path)
-        available = (
-            spec.parser_for_path(path) is not None
-            if spec is not None and spec.parser_for_path is not None
-            else True
-        )
-        return {
+        parser_key = f"{spec.language_id}:{suffix}" if spec is not None else suffix
+        if parser_key in self._parser_available_cache:
+            available = self._parser_available_cache[parser_key]
+        else:
+            available = (
+                spec.parser_for_path(path) is not None
+                if spec is not None and spec.parser_for_path is not None
+                else True
+            )
+            self._parser_available_cache[parser_key] = available
+        options: dict[str, Any] = {
             "schema": _SCHEMA,
             "parser_versions": self.versions,
             "scope": self.scope,
-            "suffix": path.suffix.lower(),
+            "suffix": suffix,
             "max_parse_bytes": self.max_bytes,
             "ignore_policy": self.ignore_policy,
             "ignore_configuration": ignores,
             "parser_available": available,
         }
+        self._options_cache[cache_key] = options
+        return options
 
     def product(self, path: Path, producer: Callable[[], Product]) -> Product:
         try:
