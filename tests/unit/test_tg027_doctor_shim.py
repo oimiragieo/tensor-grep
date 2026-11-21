@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -167,14 +168,74 @@ def test_doctor_rejects_invalid_managed_metadata_and_oversized_shim(
 ) -> None:
     _home, managed, _target = _managed_layout(tmp_path, monkeypatch)
     metadata = managed.with_name("tg-native-metadata.json")
+    valid_metadata = metadata.read_text(encoding="utf-8")
     metadata.write_text('{"artifact":"foreign"}', encoding="utf-8")
     assert doctor_report.powershell_shim_target(managed) is None
     metadata.write_bytes(b"x" * (16 * 1024 + 1))
     assert doctor_report.powershell_shim_target(managed) is None
 
-    oversized = managed.with_name("oversized.ps1")
-    oversized.write_bytes(b"#" * 4097)
-    assert doctor_report.powershell_shim_target(oversized) is None
+    metadata.write_text(valid_metadata, encoding="utf-8")
+    managed.write_bytes(b"#" * 4097)
+    assert doctor_report.powershell_shim_target(managed) is None
+
+
+def test_doctor_rejects_out_of_root_shim_before_reading_and_preserves_ps1_suffix_in_path_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _home, _managed, target = _managed_layout(tmp_path, monkeypatch)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_shim = outside_dir / "tg.ps1"
+    outside_shim.write_text(f'& "{target}" @args\nexit $LASTEXITCODE\n', encoding="ascii")
+
+    opened_paths: list[str] = []
+    original_open = Path.open
+
+    def tracking_open(self: Path, *args, **kwargs):
+        opened_paths.append(str(self))
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    assert doctor_report.powershell_shim_target(outside_shim) is None
+    assert str(outside_shim) not in opened_paths
+
+    # Even if Path.resolve() maps tg.ps1 -> tg.exe, PATH discovery must preserve the .ps1 suffix
+    # into _doctor_tg_candidate_version so powershell_shim_target rejects the unowned shim.
+    original_resolve = Path.resolve
+
+    def fake_resolve(self: Path, *args, **kwargs) -> Path:
+        if self == outside_shim:
+            return target
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fake_resolve)
+    monkeypatch.setattr(
+        doctor_report,
+        "capture_probe",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not spawn")),
+        raising=False,
+    )
+    candidates = doctor_report._doctor_path_tg_candidates(str(outside_dir))
+    assert candidates == [{"path": str(target), "version": None}]
+
+
+def test_doctor_candidate_version_rejects_target_swap_during_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    candidate = tmp_path / "tg.exe"
+    candidate.write_bytes(b"original-binary")
+
+    def swapping_capture(_argv, _timeout_seconds, *, env=None, require_success=False):
+        # Simulate a concurrent replacement if the OS allows it or via lstat metadata change.
+        monkeypatch.setattr(
+            Path,
+            "lstat",
+            lambda _self: os.stat_result((0o100644, 999999, 1, 1, 0, 0, 99, 0, 0, 0)),
+        )
+        return b"tensor-grep 9.9.9\n", b""
+
+    monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
+    assert doctor_report._doctor_tg_candidate_version(candidate) is None
 
 
 def test_doctor_candidate_version_uses_contained_bounded_probe(

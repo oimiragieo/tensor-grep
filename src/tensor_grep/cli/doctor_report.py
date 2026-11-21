@@ -809,6 +809,7 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
+    from tensor_grep.cli.doctor_launcher_probe import verified_probe_target
     from tensor_grep.cli.frontdoor_hops import probe_env
 
     if candidate.suffix.lower() == ".ps1":
@@ -823,15 +824,20 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
         return None
     for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
         env.pop(key, None)
-    try:
-        stdout_bytes, _stderr_bytes = capture_probe(
-            [str(probe_candidate), "--version"],
-            timeout_seconds=2,
-            env=env,
-            require_success=True,
-        )
-    except Exception:
-        return None
+    with verified_probe_target(probe_candidate) as verify_unchanged:
+        if verify_unchanged is None:
+            return None
+        try:
+            stdout_bytes, _stderr_bytes = capture_probe(
+                [str(probe_candidate), "--version"],
+                timeout_seconds=2,
+                env=env,
+                require_success=True,
+            )
+        except Exception:
+            return None
+        if not verify_unchanged():
+            return None
     try:
         stdout = decode_protocol_output(stdout_bytes)
     except UnicodeDecodeError:
@@ -974,9 +980,10 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             if key in seen:
                 continue
             seen.add(key)
+            probe_input = candidate if candidate.suffix.lower() == ".ps1" else resolved
             candidates.append({
                 "path": str(resolved),
-                "version": _self._doctor_tg_candidate_version(resolved),
+                "version": _self._doctor_tg_candidate_version(probe_input),
             })
     return candidates
 

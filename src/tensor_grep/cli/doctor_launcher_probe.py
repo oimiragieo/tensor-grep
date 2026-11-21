@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import stat
+import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 _MAX_SHIM_BYTES = 4096
@@ -246,6 +249,17 @@ def _managed_shim_target(candidate: Path, lines: list[str], managed_bin: Path) -
 
 def powershell_shim_target(candidate: Path) -> Path | None:
     """Resolve only an installer-owned PowerShell shim to its marked native target."""
+    if candidate.name.casefold() != "tg.ps1":
+        return None
+    is_managed = any(
+        _same_path(candidate, managed_bin / "tg.ps1") for managed_bin in _managed_bin_directories()
+    )
+    is_compat = any(
+        _same_path(candidate.parent, compatibility_dir)
+        for compatibility_dir in _compatibility_directories()
+    )
+    if not (is_managed or is_compat):
+        return None
     resolved_candidate = _resolve_file(candidate)
     if resolved_candidate is None or resolved_candidate.name.casefold() != "tg.ps1":
         return None
@@ -258,11 +272,6 @@ def powershell_shim_target(candidate: Path) -> Path | None:
         if _same_path(candidate, managed_bin / "tg.ps1"):
             return _managed_shim_target(candidate, lines, managed_bin)
 
-    if not any(
-        _same_path(candidate.parent, compatibility_dir)
-        for compatibility_dir in _compatibility_directories()
-    ):
-        return None
     target = _simple_delegate_target(lines, candidate)
     if target is None:
         return None
@@ -280,3 +289,105 @@ def powershell_shim_target(candidate: Path) -> Path | None:
                 return None
             return _managed_shim_target(managed_shim, managed_lines, managed_bin)
     return None
+
+
+def _file_identity(st: os.stat_result) -> tuple[int, int, int, int]:
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+@contextlib.contextmanager
+def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
+    """Hold a read-only handle on ``target`` across spawn and verify identity did not change."""
+    resolved = _resolve_file(target)
+    if resolved is None:
+        yield None
+        return
+
+    fd: int | None = None
+    win_handle: object | None = None
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            create_file = kernel32.CreateFileW
+            create_file.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                ctypes.c_void_p,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            create_file.restype = wintypes.HANDLE
+            invalid_handle = ctypes.c_void_p(-1).value
+            generic_read = 0x80000000
+            file_share_read = 0x00000001
+            open_existing = 3
+            file_attribute_normal = 0x00000080
+            handle = create_file(
+                str(resolved),
+                generic_read,
+                file_share_read,
+                None,
+                open_existing,
+                file_attribute_normal,
+                None,
+            )
+            if handle == invalid_handle or handle is None:
+                yield None
+                return
+            win_handle = handle
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+            win_handle = None  # owned by fd now
+        else:
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(resolved), flags)
+
+        opened_stat = os.fstat(fd)
+        if not stat.S_ISREG(opened_stat.st_mode):
+            yield None
+            return
+        lstat_before = resolved.lstat()
+        if getattr(lstat_before, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            yield None
+            return
+        expected_id = _file_identity(opened_stat)
+        if _file_identity(lstat_before) != expected_id:
+            yield None
+            return
+
+        def _unchanged() -> bool:
+            try:
+                current_lstat = resolved.lstat()
+                if (
+                    getattr(current_lstat, "st_file_attributes", 0)
+                    & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    return False
+                if _file_identity(current_lstat) != expected_id:
+                    return False
+                current_resolved = resolved.resolve(strict=True)
+                return _lexical_path_key(current_resolved) == _lexical_path_key(resolved)
+            except OSError:
+                return False
+
+        yield _unchanged
+    except OSError:
+        yield None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        elif win_handle is not None:
+            try:
+                import ctypes
+
+                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(win_handle)
+            except OSError:
+                pass
