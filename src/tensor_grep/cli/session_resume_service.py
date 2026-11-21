@@ -7,7 +7,12 @@ from typing import Any, cast
 
 import typer
 
-from tensor_grep.cli._index_lock import index_lock
+from tensor_grep.cli._index_lock import (
+    atomic_write_bytes_confined,
+    dir_identity,
+    file_identity,
+    index_lock,
+)
 from tensor_grep.cli.prepare_service import build_prepare_snapshot
 from tensor_grep.cli.session_provenance import seal_session
 from tensor_grep.cli.session_root import (
@@ -19,9 +24,28 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_store import (
     SessionStaleError,
     _load_session_payload,
-    _write_json_atomic,
     get_session,
 )
+
+
+def _session_store_identity(session_path: Path) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Bind a prepare request to the session directory and payload it initially observed."""
+    try:
+        parent_identity = dir_identity(session_path.parent)
+        payload_identity = file_identity(session_path)[:2]
+    except OSError as exc:
+        raise SessionStaleError(
+            "session store changed while preparing; retry the prepare request"
+        ) from exc
+    return parent_identity, payload_identity
+
+
+def _require_session_store_identity(
+    session_path: Path,
+    expected: tuple[tuple[int, int], tuple[int, int]],
+) -> None:
+    if _session_store_identity(session_path) != expected:
+        raise SessionStaleError("session store changed while preparing; retry the prepare request")
 
 
 def session_prepare(
@@ -33,7 +57,9 @@ def session_prepare(
     root = _session_root_for_payload(session_id, path)
     session_path = _session_payload_path(root, session_id)
 
+    initial_store_identity = _session_store_identity(session_path)
     payload = _load_session_payload(session_id, path)
+    _require_session_store_identity(session_path, initial_store_identity)
     initial_provenance = payload.get("session_provenance")
 
     # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
@@ -62,15 +88,25 @@ def session_prepare(
     snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"
 
     # Publish under the same lock as refresh, but keep freshness hashing and the cold build out
-    # of the store-wide critical section. The provenance tag covers every mutable session field.
+    # of the store-wide critical section. The provenance tag covers every mutable session field;
+    # the directory/payload identities prevent a byte-identical copied store from winning that
+    # content CAS after a parent swap.
     with index_lock(_index_path(root)):
+        _require_session_store_identity(session_path, initial_store_identity)
         current_payload = get_session(session_id, path)
+        _require_session_store_identity(session_path, initial_store_identity)
         if current_payload.get("session_provenance") != initial_provenance:
             raise SessionStaleError("session changed while preparing; retry the prepare request")
         current_payload["current_generation"] = current_generation
         current_payload["last_prepare"] = snap_dict
         seal_session(current_payload, root)
-        _write_json_atomic(session_path, current_payload)
+        atomic_write_bytes_confined(
+            root,
+            session_path,
+            json.dumps(current_payload, indent=2).encode("utf-8"),
+            expected_parent_identity=initial_store_identity[0],
+            expected_file_identity=initial_store_identity[1],
+        )
 
     res = dict(snap_dict)
     res["session_id"] = session_id
