@@ -12889,12 +12889,7 @@ def _resolve_raw_import_entry(
         is_relative = module.startswith(".")
         has_candidates = bool(candidate_info["paths"])
         resolved = next(
-            (
-                str(current)
-                for current in candidate_info["paths"]
-                if _is_file_with_receipt(Path(current))
-            ),
-            None,
+            (str(p) for p in candidate_info["paths"] if _is_file_with_receipt(Path(p))), None
         )
         external = (not is_relative) and not has_candidates
         provenance = list(candidate_info["provenance"]) or (["relative"] if is_relative else [])
@@ -12923,12 +12918,7 @@ def _resolve_raw_import_entry(
         level = int(entry.get("level", 0) or 0)
         candidate_info = _python_module_candidates(importer_path, module, repo_root, level=level)
         resolved = next(
-            (
-                str(current)
-                for current in candidate_info["paths"]
-                if _is_file_with_receipt(Path(current))
-            ),
-            None,
+            (str(p) for p in candidate_info["paths"] if _is_file_with_receipt(Path(p))), None
         )
         external = resolved is None
         provenance = list(candidate_info["provenance"])
