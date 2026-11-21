@@ -18,6 +18,7 @@ this emits a `resolution_gaps` entry naming the real cause instead.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +62,11 @@ def _unresolved_gap(js_ts_files: list[Path], scope: Path, exc: OSError) -> dict[
 
 
 def js_ts_scope_gap(
-    bounded_files: list[Path], scan_root: Path | None = None
+    bounded_files: list[Path],
+    scan_root: Path | None = None,
+    *,
+    deadline_monotonic: float | None = None,
+    deadline_hit: Any | None = None,
 ) -> dict[str, Any] | None:
     """Return a ``resolution_gaps`` entry when JS/TS files were scanned from below a
     ``tsconfig.json``, else ``None``.
@@ -70,7 +75,14 @@ def js_ts_scope_gap(
     when no ancestor holds one (a project that genuinely has no tsconfig has no alias map to
     miss) -- so a correctly-scoped scan keeps byte-identical output.
     """
-    js_ts_files = [p for p in bounded_files if p.suffix.lower() in _JS_TS_SUFFIXES]
+    js_ts_files: list[Path] = []
+    for p in bounded_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            return None
+        if p.suffix.lower() in _JS_TS_SUFFIXES:
+            js_ts_files.append(p)
     if not js_ts_files:
         return None
 
@@ -87,6 +99,10 @@ def js_ts_scope_gap(
     if scope is None:
         return None
 
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        if deadline_hit is not None:
+            deadline_hit.hit = True
+        return None
     try:
         if (scope / _TSCONFIG).is_file():
             return None  # correctly scoped; aliases resolve
@@ -98,6 +114,10 @@ def js_ts_scope_gap(
 
     ancestor = scope
     for _ in range(_MAX_ANCESTORS):
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            if deadline_hit is not None:
+                deadline_hit.hit = True
+            return None
         parent = ancestor.parent
         if parent == ancestor:
             break
