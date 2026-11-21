@@ -2,7 +2,8 @@
 #![cfg(windows)]
 
 use crate::managed_runtime_acl_policy::{
-    ancestor_is_trusted, integrity_file_is_trusted, parent_is_trusted, selector_is_trusted,
+    ancestor_is_trusted, describe_untrusted_grants, integrity_file_is_trusted, parent_is_trusted,
+    selector_is_trusted,
 };
 use crate::managed_runtime_acl_reader::read_handle_acl;
 use crate::managed_runtime_selection::{decode_selection, ManagedRuntimeSelection};
@@ -109,14 +110,28 @@ pub fn read_managed_runtime_at(root: &Path) -> io::Result<Option<ManagedRuntime>
             "selector is not below its pinned managed root",
         ));
     }
-    let selector_acl = read_handle_acl(selector.as_handle())?;
+    let selector_acl = read_handle_acl(selector.as_handle()).map_err(|err| {
+        invalid_root(format!(
+            "selector ACL is untrusted for {}: {err}. Reset inherited/foreign write ACEs on the selector file or reinstall the managed launcher",
+            selector_path.display()
+        ))
+    })?;
     if !selector_is_trusted(
         &selector_acl.owner,
         Some(&selector_acl.allow_grants),
         user_sid,
         Some(identity.default_owner_sid()),
     ) {
-        return Err(invalid_root("selector ACL is untrusted"));
+        let detail = describe_untrusted_grants(
+            &selector_acl.owner,
+            Some(&selector_acl.allow_grants),
+            user_sid,
+            Some(identity.default_owner_sid()),
+        );
+        return Err(invalid_root(format!(
+            "selector ACL is untrusted for {}: {detail}. Reset inherited/foreign write ACEs on the selector file or reinstall the managed launcher",
+            selector_path.display()
+        )));
     }
     let record = selector.read_record()?;
     let selection = decode_selection(&record)
@@ -307,8 +322,8 @@ fn is_direct_child(child: &Path, parent: &Path, name: &Path) -> bool {
     path_key(child) == expected
 }
 
-fn invalid_root(message: &'static str) -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, message)
+fn invalid_root(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message.into())
 }
 
 #[cfg(test)]

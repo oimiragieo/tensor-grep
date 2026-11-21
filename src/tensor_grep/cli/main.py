@@ -237,7 +237,7 @@ _doctor_shadow_launchers = _doctor_report._doctor_shadow_launchers
 _doctor_shell_escaping_guidance = _doctor_report._doctor_shell_escaping_guidance
 _doctor_skipped_native_tg_binaries = _doctor_report._doctor_skipped_native_tg_binaries
 _doctor_tg_candidate_version = _doctor_report._doctor_tg_candidate_version
-_doctor_tg_foreign_remediation = _doctor_report._doctor_tg_foreign_remediation
+_doctor_tg_foreign_remediation = _doctor_payload._doctor_tg_foreign_remediation
 _doctor_tg_foreign_warning = _doctor_report._doctor_tg_foreign_warning
 _doctor_tg_launcher_kind = _doctor_report._doctor_tg_launcher_kind
 _doctor_tg_version_looks_like_tensor_grep = _doctor_report._doctor_tg_version_looks_like_tensor_grep
@@ -10599,21 +10599,19 @@ def doctor(
     with_lsp: bool = typer.Option(
         True,
         "--with-lsp/--no-lsp",
-        help=(
-            "Include external LSP provider diagnostics. Provider availability is "
-            "not navigation proof; inspect health_status and health_check."
-        ),
+        help="Include external LSP provider diagnostics; inspect health_status and health_check.",
+    ),
+    fast: bool = typer.Option(
+        False, "--fast", help="Skip slow external LSP and PyPI freshness probes."
     ),
 ) -> None:
-    """Print system, GPU, cache, AST, daemon, shell-escaping, and provider-proof diagnostics.
-
-    Reports Windows shell guidance for PowerShell literal patterns and cmd.exe metacharacters.
-    """
-    payload = _self._build_doctor_payload(path, config=config, with_lsp=with_lsp)
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-        return
-    typer.echo(_render_doctor_payload(payload))
+    """Print system, GPU, cache, AST, daemon, shell-escaping, and provider-proof diagnostics."""
+    payload = (
+        _self._build_doctor_payload(path, config=config, with_lsp=False, fast=True)
+        if fast
+        else _self._build_doctor_payload(path, config=config, with_lsp=with_lsp)
+    )
+    typer.echo(json.dumps(payload, indent=2) if json_output else _render_doctor_payload(payload))
 
 
 def _is_uv_tool_managed_python(executable: str) -> bool:

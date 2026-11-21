@@ -83,9 +83,6 @@ from tensor_grep.cli.doctor_report import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
 from tensor_grep.cli.doctor_report import (
-    _doctor_tg_foreign_remediation as _doctor_tg_foreign_remediation,
-)
-from tensor_grep.cli.doctor_report import (
     _doctor_tg_foreign_warning as _doctor_tg_foreign_warning,
 )
 from tensor_grep.cli.doctor_report import (
@@ -93,8 +90,47 @@ from tensor_grep.cli.doctor_report import (
 )
 
 
+def _doctor_tg_foreign_remediation(
+    *,
+    foreign_path: str | None,
+    candidates: list[dict[str, str | None]],
+) -> str | None:
+    if not foreign_path:
+        return None
+    managed_path = next(
+        (
+            c.get("path")
+            for c in candidates
+            if _doctor_tg_launcher_kind(c.get("path"), c.get("version"))
+            in {"managed-native", "managed-native-broken"}
+        ),
+        None,
+    )
+    managed_dir = Path(managed_path).parent if managed_path else Path("~/.tensor-grep/bin")
+    foreign_dir = Path(foreign_path).parent
+    try:
+        m_s, f_s = str(managed_dir.expanduser().resolve()), str(foreign_dir.expanduser().resolve())
+    except OSError:
+        m_s, f_s = str(managed_dir.expanduser()), str(foreign_dir.expanduser())
+    same_dir = (m_s.lower() == f_s.lower()) if sys.platform.startswith("win") else (m_s == f_s)
+    if same_dir or _doctor_tg_launcher_kind(foreign_path, None) == "managed-native-broken":
+        return (
+            f"Managed native launcher at {foreign_path} failed `--version` verification. "
+            f"Run '{foreign_path} --version' to inspect stderr (such as selector ACL errors) "
+            "and reset ACLs or reinstall the managed launcher."
+        )
+    return (
+        f"Move {managed_dir} earlier in PATH than {foreign_dir}, or rename the foreign tg "
+        "command outside tensor-grep. If the foreign directory comes from Machine PATH, "
+        "User PATH repair cannot outrank it. If you own the foreign command, run "
+        "tg repair-launcher --allow-foreign-rename to back it up before installing the "
+        "managed native tg.exe into that PATH slot. Do not remove unrelated launchers "
+        "unless you own them."
+    )
+
+
 def _build_doctor_payload(
-    path: str, config: str | None = None, *, with_lsp: bool
+    path: str, config: str | None = None, *, with_lsp: bool, fast: bool = False
 ) -> dict[str, Any]:
     root = Path(path).resolve()
     from tensor_grep.cli.checkout_environment import diagnose_checkout_environment
@@ -220,23 +256,35 @@ def _build_doctor_payload(
         python_subprocess_path_tg_first_path,
         python_subprocess_path_tg_first_version,
     )
-    path_tg_foreign_warning = _doctor_tg_foreign_warning(
-        label="PATH",
-        path=path_tg_first_path,
-        version=path_tg_first_version,
-        expected_version=installed_version,
+    path_tg_foreign_warning = (
+        None
+        if path_tg_first_launcher_kind == "managed-native-broken"
+        else _doctor_tg_foreign_warning(
+            label="PATH",
+            path=path_tg_first_path,
+            version=path_tg_first_version,
+            expected_version=installed_version,
+        )
     )
-    fresh_shell_path_tg_foreign_warning = _doctor_tg_foreign_warning(
-        label="fresh-shell PATH",
-        path=fresh_shell_path_tg_first_path,
-        version=fresh_shell_path_tg_first_version,
-        expected_version=installed_version,
+    fresh_shell_path_tg_foreign_warning = (
+        None
+        if fresh_shell_path_tg_first_launcher_kind == "managed-native-broken"
+        else _doctor_tg_foreign_warning(
+            label="fresh-shell PATH",
+            path=fresh_shell_path_tg_first_path,
+            version=fresh_shell_path_tg_first_version,
+            expected_version=installed_version,
+        )
     )
-    python_subprocess_path_tg_foreign_warning = _doctor_tg_foreign_warning(
-        label="Python subprocess PATH",
-        path=python_subprocess_path_tg_first_path,
-        version=python_subprocess_path_tg_first_version,
-        expected_version=installed_version,
+    python_subprocess_path_tg_foreign_warning = (
+        None
+        if python_subprocess_path_tg_first_launcher_kind == "managed-native-broken"
+        else _doctor_tg_foreign_warning(
+            label="Python subprocess PATH",
+            path=python_subprocess_path_tg_first_path,
+            version=python_subprocess_path_tg_first_version,
+            expected_version=installed_version,
+        )
     )
     python_subprocess_remediation_candidates: list[dict[str, str | None]] = []
     if python_subprocess_path_tg_first is not None:
@@ -268,6 +316,34 @@ def _build_doctor_payload(
                 _doctor_tg_launcher_kind(candidate_path, candidate_version),
                 candidate_path,
             ))
+    path_tg_launcher_warning = _doctor_path_tg_launcher_warning(
+        current_kind=path_tg_first_launcher_kind,
+        current_path=path_tg_first_path,
+        fresh_kind=fresh_shell_path_tg_first_launcher_kind,
+        fresh_path=fresh_shell_path_tg_first_path,
+    )
+    if path_tg_launcher_warning is None:
+        broken_managed = next(
+            (
+                p
+                for k, p in (
+                    (path_tg_first_launcher_kind, path_tg_first_path),
+                    (fresh_shell_path_tg_first_launcher_kind, fresh_shell_path_tg_first_path),
+                    (
+                        python_subprocess_path_tg_first_launcher_kind,
+                        python_subprocess_path_tg_first_path,
+                    ),
+                )
+                if k == "managed-native-broken" and p
+            ),
+            None,
+        )
+        if broken_managed:
+            path_tg_launcher_warning = (
+                f"managed native launcher at {broken_managed} failed `--version` verification. "
+                f"Run '{broken_managed} --version' to inspect stderr (such as selector ACL errors) "
+                "and reset ACLs or reinstall the managed launcher."
+            )
     gpu_status = _doctor_gpu_status()
     gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(native_tg_binary)
     # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
@@ -394,12 +470,7 @@ def _build_doctor_payload(
             ),
             candidates=python_subprocess_remediation_candidates,
         ),
-        "path_tg_launcher_warning": _doctor_path_tg_launcher_warning(
-            current_kind=path_tg_first_launcher_kind,
-            current_path=path_tg_first_path,
-            fresh_kind=fresh_shell_path_tg_first_launcher_kind,
-            fresh_path=fresh_shell_path_tg_first_path,
-        ),
+        "path_tg_launcher_warning": path_tg_launcher_warning,
         "mcp_stdio_launcher_warning": _doctor_mcp_stdio_launcher_warning(
             native_tg_binary=native_tg_binary,
             launchers=mcp_stdio_launchers,
@@ -418,7 +489,7 @@ def _build_doctor_payload(
     # A90 PATH-honesty (docs/plans/2026-08-11-doctor-path-honesty.md): surface the resolved
     # `tg`-vs-expected-wheel mismatch and the wheel-vs-PyPI drift as an aggregate health signal
     # so a foreign 0.32.0 shadow or a stale install is UNMISSABLE, not just scattered booleans.
-    pypi_latest = _self._latest_pypi_tensor_grep_version()
+    pypi_latest = None if fast else _self._latest_pypi_tensor_grep_version()
     payload["pypi_latest"] = pypi_latest
     installed_behind_pypi = _doctor_installed_behind_pypi(installed_version, pypi_latest)
     payload["installed_behind_pypi"] = installed_behind_pypi
@@ -463,7 +534,7 @@ def _build_doctor_payload(
         pypi_unavailable=pypi_latest is None,
         pypi_latest=pypi_latest,
     )
-    if with_lsp:
+    if with_lsp and not fast:
         lsp_providers = _doctor_apply_lsp_missing_component_remediation(
             _doctor_apply_lsp_workspace_warnings(_self._doctor_lsp_provider_statuses(str(root)))
         )
@@ -510,6 +581,11 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
                 "  one or more resolved `tg` launchers are foreign or not the installed wheel "
                 "version (see shadow_launchers); pin the wheel: uvx --from "
                 f"tensor-grep=={payload['version']} tg ..."
+            )
+        elif health == "managed_launcher_broken":
+            lines.append(
+                "  the managed native `tg` launcher failed `--version` verification; "
+                "run `tg repair-launcher` or check `~/.tensor-grep/bin/tg.exe --version` stderr"
             )
         elif health == "stale_install":
             lines.append(
