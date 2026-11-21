@@ -73,7 +73,7 @@ pub fn integrity_file_is_trusted(
     managed_grants_are_safe(grants, user_sid)
 }
 
-/// Trust the selector file; only the user, SYSTEM, or Administrators may have an allow grant.
+/// Trust the selector file; owner must match user/token owner and foreign grants must be read-only.
 /// A NULL, unavailable, or unparsed DACL must be passed as `None` and is rejected.
 pub fn selector_is_trusted(
     owner: &str,
@@ -87,9 +87,38 @@ pub fn selector_is_trusted(
     let Some(grants) = grants else {
         return false;
     };
-    grants
-        .iter()
-        .all(|(sid, _)| sid == user_sid || sid == SID_SYSTEM || sid == SID_ADMINISTRATORS)
+    managed_grants_are_safe(grants, user_sid)
+}
+
+/// Describe why an ACL is untrusted (untrusted owner, NULL/unavailable DACL, or offending foreign grants).
+pub fn describe_untrusted_grants(
+    owner: &str,
+    grants: Option<&[(String, u32)]>,
+    user_sid: &str,
+    token_owner_sid: Option<&str>,
+) -> String {
+    let mut reasons = Vec::new();
+    if !valid_owner(owner, user_sid, token_owner_sid) {
+        reasons.push(format!("untrusted owner {owner} (expected {user_sid})"));
+    }
+    match grants {
+        None => reasons.push("DACL is NULL or unavailable".to_owned()),
+        Some(grants) => {
+            let offending: Vec<String> = grants
+                .iter()
+                .filter(|(sid, mask)| !grant_is_safe(sid, *mask, user_sid))
+                .map(|(sid, mask)| format!("{sid}=0x{mask:08x}"))
+                .collect();
+            if !offending.is_empty() {
+                reasons.push(format!("untrusted grants: {}", offending.join(", ")));
+            }
+        }
+    }
+    if reasons.is_empty() {
+        "trusted".to_owned()
+    } else {
+        reasons.join("; ")
+    }
 }
 
 fn valid_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str>) -> bool {
@@ -107,10 +136,14 @@ fn valid_managed_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str
         || owner == SID_TRUSTED_INSTALLER
 }
 
+fn grant_is_safe(sid: &str, mask: u32, user_sid: &str) -> bool {
+    sid == user_sid || is_trusted_grant_sid(sid) || mask & WIN_WRITE_MASK == 0
+}
+
 fn managed_grants_are_safe(grants: &[(String, u32)], user_sid: &str) -> bool {
-    grants.iter().all(|(sid, mask)| {
-        sid == user_sid || is_trusted_grant_sid(sid) || mask & WIN_WRITE_MASK == 0
-    })
+    grants
+        .iter()
+        .all(|(sid, mask)| grant_is_safe(sid, *mask, user_sid))
 }
 
 fn is_trusted_grant_sid(sid: &str) -> bool {
@@ -127,8 +160,9 @@ fn is_broad_sid(sid: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        ancestor_is_trusted, integrity_file_is_trusted, parent_grants_are_trusted,
-        parent_is_trusted, selector_is_trusted,
+        ancestor_is_trusted, describe_untrusted_grants, integrity_file_is_trusted,
+        parent_grants_are_trusted, parent_is_trusted, selector_is_trusted, WIN_REPLACE_MASK,
+        WIN_WRITE_MASK,
     };
 
     const USER: &str = "S-1-5-21-111-222-333-1001";
@@ -242,20 +276,20 @@ mod tests {
     }
 
     #[test]
-    fn selector_foreign_read_grant_is_refused() {
+    fn selector_foreign_read_grant_is_allowed() {
         let grants = [(OTHER.to_owned(), 0x1)];
 
         let trusted = selector_is_trusted(USER, Some(&grants), USER, None);
 
-        assert!(!trusted);
+        assert!(trusted);
     }
 
     #[test]
-    fn integrity_file_foreign_read_execute_grant_is_allowed_but_selector_stays_strict() {
+    fn integrity_file_and_selector_allow_foreign_read_execute_grant() {
         let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), 0x001200A9)];
 
         assert!(integrity_file_is_trusted(USER, Some(&grants), USER, None));
-        assert!(!selector_is_trusted(USER, Some(&grants), USER, None));
+        assert!(selector_is_trusted(USER, Some(&grants), USER, None));
     }
 
     #[test]
@@ -266,12 +300,50 @@ mod tests {
     }
 
     #[test]
-    fn selector_creator_owner_grant_is_refused() {
+    fn selector_creator_owner_grant_is_allowed() {
         let grants = [(CREATOR_OWNER.to_owned(), 0x2)];
 
         let trusted = selector_is_trusted(USER, Some(&grants), USER, None);
 
-        assert!(!trusted);
+        assert!(trusted);
+    }
+
+    #[test]
+    fn selector_rejects_foreign_write_and_control_masks() {
+        const WRITE_DAC: u32 = 0x0004_0000;
+        const WRITE_OWNER: u32 = 0x0008_0000;
+        const GENERIC_WRITE: u32 = 0x4000_0000;
+        const GENERIC_ALL: u32 = 0x1000_0000;
+
+        for (label, mask) in [
+            ("WIN_WRITE_MASK", WIN_WRITE_MASK),
+            ("WIN_REPLACE_MASK", WIN_REPLACE_MASK),
+            ("WRITE_DAC", WRITE_DAC),
+            ("WRITE_OWNER", WRITE_OWNER),
+            ("GENERIC_WRITE", GENERIC_WRITE),
+            ("GENERIC_ALL", GENERIC_ALL),
+        ] {
+            let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), mask)];
+            assert!(
+                !selector_is_trusted(USER, Some(&grants), USER, None),
+                "selector_is_trusted must reject foreign {label} (0x{mask:08x})"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_untrusted_grants_reports_owner_null_dacl_and_foreign_masks() {
+        let owner_msg = describe_untrusted_grants(OTHER, Some(&[]), USER, None);
+        assert!(owner_msg.contains("untrusted owner"));
+        assert!(owner_msg.contains(OTHER));
+
+        let null_msg = describe_untrusted_grants(USER, None, USER, None);
+        assert!(null_msg.contains("DACL is NULL or unavailable"));
+
+        let grants = [(USER.to_owned(), 0x1F01FF), (OTHER.to_owned(), 0x0004_0000)];
+        let grant_msg = describe_untrusted_grants(USER, Some(&grants), USER, None);
+        assert!(grant_msg.contains(OTHER));
+        assert!(grant_msg.contains("0x00040000"));
     }
 
     #[test]

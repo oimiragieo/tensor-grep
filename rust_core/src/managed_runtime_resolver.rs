@@ -2,7 +2,8 @@
 #![cfg(windows)]
 
 use crate::managed_runtime_acl_policy::{
-    ancestor_is_trusted, integrity_file_is_trusted, parent_is_trusted, selector_is_trusted,
+    ancestor_is_trusted, describe_untrusted_grants, integrity_file_is_trusted, parent_is_trusted,
+    selector_is_trusted,
 };
 use crate::managed_runtime_acl_reader::read_handle_acl;
 use crate::managed_runtime_selection::{decode_selection, ManagedRuntimeSelection};
@@ -116,7 +117,16 @@ pub fn read_managed_runtime_at(root: &Path) -> io::Result<Option<ManagedRuntime>
         user_sid,
         Some(identity.default_owner_sid()),
     ) {
-        return Err(invalid_root("selector ACL is untrusted"));
+        let detail = describe_untrusted_grants(
+            &selector_acl.owner,
+            Some(&selector_acl.allow_grants),
+            user_sid,
+            Some(identity.default_owner_sid()),
+        );
+        return Err(invalid_root(format!(
+            "selector ACL is untrusted for {}: {detail}. Run 'tg repair-launcher' or reset ACLs on the selector file",
+            selector_path.display()
+        )));
     }
     let record = selector.read_record()?;
     let selection = decode_selection(&record)
@@ -307,8 +317,8 @@ fn is_direct_child(child: &Path, parent: &Path, name: &Path) -> bool {
     path_key(child) == expected
 }
 
-fn invalid_root(message: &'static str) -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, message)
+fn invalid_root(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message.into())
 }
 
 #[cfg(test)]
