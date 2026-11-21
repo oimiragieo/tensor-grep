@@ -1,4 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from tensor_grep.cli import repo_map_coverage_gaps as gaps
 
@@ -137,3 +140,28 @@ def test_language_gap_scan_rechecks_deadline_after_scope_probe(tmp_path, monkeyp
         [source], tmp_path, deadline_monotonic=1.0, deadline_hit=deadline
     )
     assert deadline.hit is True
+
+
+def test_js_ts_scope_gap_stops_mid_pass_on_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from tensor_grep.cli import js_ts_scope_gap as gap_mod
+    from tensor_grep.cli.repo_map_coverage_gaps import _language_coverage_gaps_for_universe
+
+    deadline = time.monotonic() + 60.0
+    monkeypatch.setattr(gap_mod.time, "monotonic", lambda: deadline + 1.0)
+    ts_file = tmp_path / "a" / "b" / "c" / "app.ts"
+    ts_file.parent.mkdir(parents=True)
+    ts_file.write_text("export const x = 1;\n", encoding="utf-8")
+
+    hit = SimpleNamespace(hit=False)
+    gaps_list = _language_coverage_gaps_for_universe(
+        [ts_file],
+        ts_file.parent,
+        deadline_monotonic=deadline,
+        deadline_hit=hit,
+    )
+    assert hit.hit is True
+    assert gaps_list == []
