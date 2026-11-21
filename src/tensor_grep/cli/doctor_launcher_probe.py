@@ -297,7 +297,11 @@ def _file_identity(st: os.stat_result) -> tuple[int, int, int, int]:
 
 @contextlib.contextmanager
 def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
-    """Hold a read-only handle on ``target`` across spawn and verify identity did not change."""
+    """Hold a read-only handle on ``target`` across spawn and verify identity did not change.
+
+    On Windows, holding a ``FILE_SHARE_READ``-only handle locks both ``target`` and its
+    ancestor directories against modification, rename, or deletion while ``capture_probe`` spawns.
+    """
     resolved = _resolve_file(target)
     if resolved is None:
         yield None

@@ -98,8 +98,10 @@ def test_pip_freshness_child_is_noninteractive(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("probe", ["_doctor_rust_binary_version", "_doctor_tg_candidate_version"])
-def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
+def test_doctor_version_children_are_noninteractive(tmp_path: Path, monkeypatch, probe) -> None:
     calls = []
+    candidate = tmp_path / "tg.exe"
+    candidate.write_bytes(b"fake")
 
     if probe == "_doctor_tg_candidate_version":
 
@@ -115,7 +117,7 @@ def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
             return subprocess.CompletedProcess(args, 0, b"tensor-grep 1.0.0", b"")
 
         monkeypatch.setattr(main.subprocess, "run", run)
-    assert getattr(doctor_report, probe)(Path("tg.exe")) == "tensor-grep 1.0.0"
+    assert getattr(doctor_report, probe)(candidate) == "tensor-grep 1.0.0"
     if probe == "_doctor_tg_candidate_version":
         assert calls[0]["timeout_seconds"] == 2
         assert calls[0]["require_success"] is True

@@ -230,8 +230,7 @@ def test_doctor_rejects_out_of_root_shim_before_reading_and_preserves_ps1_suffix
 def test_doctor_candidate_version_rejects_target_swap_during_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    candidate = tmp_path / "tg.exe"
-    candidate.write_bytes(b"original-binary")
+    _home, managed, _target = _managed_layout(tmp_path, monkeypatch)
     capture_calls = 0
 
     def swapping_capture(_argv, timeout_seconds, *, env=None, require_success=False):
@@ -246,7 +245,7 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
         return b"tensor-grep 9.9.9\n", b""
 
     monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
-    assert doctor_report._doctor_tg_candidate_version(candidate) is None
+    assert doctor_report._doctor_tg_candidate_version(managed) is None
     assert capture_calls == 1
 
 
