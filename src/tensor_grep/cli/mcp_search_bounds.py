@@ -255,7 +255,7 @@ def _cap_output_lines(lines: list[str]) -> list[str]:
     reserved = (
         len(_MCP_OUTPUT_TRUNCATED_NOTICE.encode("utf-8"))
         + 1
-        + (len(omission_line.encode("utf-8")) + 1 if omission_line is not None else 0)
+        + (len(omission_line.encode("utf-8")) + 16 if omission_line is not None else 0)
     )
     used = 0
     for index, line in enumerate(lines):
@@ -267,7 +267,16 @@ def _cap_output_lines(lines: list[str]) -> list[str]:
                 used -= len(lines[cut].encode("utf-8")) + 1
             capped = [*lines[:cut], _MCP_OUTPUT_TRUNCATED_NOTICE]
             if omission_line is not None:
-                capped.append(omission_line)
+                try:
+                    base_omitted = int(omission_line.rsplit(" ", 2)[1])
+                except (IndexError, ValueError):
+                    base_omitted = 0
+                extra_dropped = sum(
+                    1 for dropped in lines[cut:] if dropped.startswith("  ") and ": " in dropped
+                )
+                capped.append(
+                    f"\n... output truncated; omitted {base_omitted + extra_dropped} matches."
+                )
             return capped
         used += line_cost
     return lines
