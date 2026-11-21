@@ -889,6 +889,7 @@ def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
         seen["timeout_seconds"] = timeout_seconds
         seen["env"] = kwargs.get("env")
         seen["require_success"] = kwargs.get("require_success")
+        seen["pass_fds"] = kwargs.get("pass_fds")
         return b"2.12.0\n", b""
 
     monkeypatch.setenv("PYTHONHOME", r"C:\managed-sidecar-python")
@@ -904,7 +905,9 @@ def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
         assert isinstance(seen["command"], list)
         assert seen["command"][1:] == ["--version"]
         assert str(seen["command"][0]).startswith(("/proc/self/fd/", "/dev/fd/"))
-        assert "pass_fds" in seen
+        pass_fds = seen["pass_fds"]
+        assert isinstance(pass_fds, tuple) and len(pass_fds) == 1
+        assert str(seen["command"][0]).endswith(f"/{pass_fds[0]}")
     assert seen["timeout_seconds"] == 2
     assert seen["require_success"] is True
     env = seen["env"]

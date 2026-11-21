@@ -490,7 +490,6 @@ def verified_probe_target(
             if not os.path.exists(fd_path):
                 yield None
                 return
-            os.set_inheritable(fd, True)
             launch_arg = fd_path
             pass_fds = (fd,)
 

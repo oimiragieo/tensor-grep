@@ -134,7 +134,6 @@ def test_doctor_candidate_version_binds_linux_proc_fd_and_fails_closed(
     candidate = tmp_path / "tg"
     candidate.write_bytes(b"#!/bin/sh\necho 1.0.0\n")
     fake_fd = 42
-    inheritable_calls: list[tuple[int, bool]] = []
     seen_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(doctor_launcher_probe.sys, "platform", "linux")
@@ -155,11 +154,6 @@ def test_doctor_candidate_version_binds_linux_proc_fd_and_fails_closed(
     monkeypatch.setattr(Path, "resolve", lambda self, strict=False: self)
     monkeypatch.setattr(doctor_launcher_probe.os, "close", lambda _fd: None)
     monkeypatch.setattr(
-        doctor_launcher_probe.os,
-        "set_inheritable",
-        lambda fd, val: inheritable_calls.append((fd, val)),
-    )
-    monkeypatch.setattr(
         doctor_report,
         "capture_probe",
         lambda argv, timeout_seconds, **kwargs: (
@@ -174,7 +168,6 @@ def test_doctor_candidate_version_binds_linux_proc_fd_and_fails_closed(
         lambda p: p == f"/proc/self/fd/{fake_fd}",
     )
     assert doctor_report._doctor_tg_candidate_version(candidate) == "tensor-grep 1.0.0"
-    assert inheritable_calls == [(fake_fd, True)]
     assert seen_calls[0]["argv"] == [f"/proc/self/fd/{fake_fd}", "--version"]
     assert seen_calls[0]["pass_fds"] == (fake_fd,)
 
