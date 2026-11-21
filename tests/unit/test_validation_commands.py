@@ -101,7 +101,7 @@ def test_validation_commands_without_precomputed_paths_uses_cold_file_walk(
         precomputed_file_paths=None,
     )
 
-    assert commands == ["uv run pytest -q"]
+    assert commands == ["pytest -q"]
     assert calls
     assert all(root == project.resolve() for root, _max_files in calls)
     assert any(max_files == repo_map._VALIDATION_RUNNER_SCAN_LIMIT for _root, max_files in calls)
@@ -152,9 +152,9 @@ def test_python_target_resolution_patterns(
     )
 
     assert commands == [
-        f"uv run pytest tests/test_payments.py -k {expected_filter} -q",
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        f"pytest tests/test_payments.py -k {expected_filter} -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
 
 
@@ -182,8 +182,8 @@ def test_python_primary_test_without_match_skips_k_command(tmp_path: Path) -> No
     )
 
     assert commands == [
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
 
 
@@ -215,7 +215,7 @@ def test_python_commands_use_relative_paths(
 
     assert (
         commands[0]
-        == f"uv run pytest {relative_test_path.replace(chr(92), '/')} -k test_create_invoice -q"
+        == f"pytest {relative_test_path.replace(chr(92), '/')} -k test_create_invoice -q"
     )
     assert not any(str(project.resolve()) in command for command in commands)
 
@@ -466,7 +466,9 @@ def test_rust_target_resolution_patterns(
     ("setup_kind", "tests", "expected"),
     [
         ("python-source-only", [], []),
-        ("python-project-marker", [], ["uv run pytest -q"]),
+        ("python-project-marker", [], ["pytest -q"]),
+        ("python-uv-lock", [], ["uv run pytest -q"]),
+        ("python-tool-uv", [], ["uv run pytest -q"]),
         ("bare-tests-dir", [], []),
         ("rust", [], ["cargo test"]),
         ("jest-unknown", ["notes/validation.txt"], ["npx jest"]),
@@ -481,7 +483,12 @@ def test_repo_wide_fallback_detection(
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    if setup_kind in {"python-source-only", "python-project-marker"}:
+    if setup_kind in {
+        "python-source-only",
+        "python-project-marker",
+        "python-uv-lock",
+        "python-tool-uv",
+    }:
         src_dir = project / "src"
         src_dir.mkdir()
         (src_dir / "payments.py").write_text(
@@ -490,6 +497,17 @@ def test_repo_wide_fallback_detection(
         if setup_kind == "python-project-marker":
             (project / "pyproject.toml").write_text(
                 '[project]\nname = "sample"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+        elif setup_kind == "python-uv-lock":
+            (project / "pyproject.toml").write_text(
+                '[project]\nname = "sample"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (project / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        elif setup_kind == "python-tool-uv":
+            (project / "pyproject.toml").write_text(
+                '[project]\nname = "sample"\nversion = "0.1.0"\n\n[tool.uv]\nmanaged = true\n',
                 encoding="utf-8",
             )
     elif setup_kind == "bare-tests-dir":
@@ -568,10 +586,10 @@ def test_multi_language_repo_includes_commands_for_all_detected_languages(tmp_pa
     )
 
     assert commands == [
-        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
-        "uv run pytest tests/test_payments.py -q",
+        "pytest tests/test_payments.py -k test_create_invoice -q",
+        "pytest tests/test_payments.py -q",
         "npx vitest run tests/payments.spec.ts",
-        "uv run pytest -q",
+        "pytest -q",
         "npx vitest run",
     ]
 
@@ -677,7 +695,7 @@ def test_python_primary_uses_detected_repo_pytest_fallback_with_rust_present(
 
     assert plan == [
         {
-            "command": "uv run pytest -q",
+            "command": "pytest -q",
             "scope": "repo",
             "runner": "pytest",
             "confidence": 0.55,
@@ -775,9 +793,9 @@ def test_build_context_render_uses_relative_python_validation_commands(tmp_path:
     payload = repo_map.build_context_render("create invoice", project)
 
     assert payload["edit_plan_seed"]["validation_commands"] == [
-        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_payments.py -k test_create_invoice -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
 
 

@@ -1208,9 +1208,9 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path, monkeypatch):
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     assert payload["edit_plan_seed"]["validation_tests"] == [str(test_path.resolve())]
     assert payload["edit_plan_seed"]["validation_commands"] == [
-        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_payments.py -k test_create_invoice -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],

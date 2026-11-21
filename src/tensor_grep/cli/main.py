@@ -10001,17 +10001,20 @@ def scan(
     from tensor_grep.backends.ast_backend import normalize_ast_language
     from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 
+    def _scan_err(error: str, detail: str, code: int = 1) -> None:
+        _exit_search_error(error, detail, json_mode=bool(json_output), exit_code=code)
+
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
     if inline_source_count > 1:
-        typer.echo("Error: --rule, --inline-rules, and --ruleset are mutually exclusive.", err=True)
-        sys.exit(1)
+        _scan_err(
+            "invalid_argument",
+            "--rule, --inline-rules, and --ruleset are mutually exclusive.",
+        )
     if rule_file is not None and filter_regex is not None:
-        typer.echo("Error: --filter is incompatible with --rule.", err=True)
-        sys.exit(1)
+        _scan_err("invalid_argument", "--filter is incompatible with --rule.")
     scan_paths = list(paths or [])
     if scan_paths and path != ".":
-        typer.echo("Error: positional PATHS are incompatible with --path.", err=True)
-        sys.exit(1)
+        _scan_err("invalid_argument", "positional PATHS are incompatible with --path.")
     effective_scan_paths = scan_paths or [path]
 
     # FAIL CLOSED on a scan root that does not exist. Rationale, and the `tg search` precedent
@@ -10044,11 +10047,9 @@ def scan(
                 filter_regex=filter_regex,
             )
         except BroadScanRefusedError as exc:
-            typer.echo(str(exc), err=True)
-            sys.exit(2)
+            _scan_err("broad_scan_refused", str(exc), 2)
         except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("invalid_ruleset", str(exc))
         scan_banner = f"Scanning project using built-in ruleset {project_cfg['name']} ({project_cfg['public_language']})"
         routing_reason = "builtin-ruleset-scan"
     elif rule_file is not None:
@@ -10059,14 +10060,11 @@ def scan(
                 default_language=language,
             )
         except OSError as exc:
-            typer.echo(f"Error: failed to read rule file {rule_path}: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("rule_file_error", f"failed to read rule file {rule_path}: {exc}")
         except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("invalid_rule", str(exc))
         if not rules:
-            typer.echo(f"Error: No valid rule was found in {rule_path}.", err=True)
-            sys.exit(1)
+            _scan_err("invalid_rule", f"No valid rule was found in {rule_path}.")
         inferred_language = (
             normalize_ast_language(language) if language else str(rules[0]["language"])
         )
@@ -10083,19 +10081,16 @@ def scan(
         try:
             rules = _load_inline_rule_specs(inline_rules, default_language=language)
         except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("invalid_rule", str(exc))
         try:
             # Same uniform --filter application as --ruleset above (audit #22): previously silently
             # ignored here, so a --inline-rules run always scanned every parsed rule regardless of
             # --filter.
             rules = _filter_ast_rule_specs(rules, filter_regex)
         except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("invalid_filter", str(exc))
         if not rules:
-            typer.echo("Error: No valid inline rules were found.", err=True)
-            sys.exit(1)
+            _scan_err("invalid_rule", "No valid inline rules were found.")
         inferred_language = (
             normalize_ast_language(language) if language else str(rules[0]["language"])
         )
@@ -10113,21 +10108,18 @@ def scan(
 
         try:
             project_cfg, rules, candidate_files, _test_data, _hints = _load_ast_project_data(config)
-        except (FileNotFoundError, ValueError) as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            _scan_err("scan_config_error", str(exc))
         try:
             rules = _filter_ast_rule_specs(rules, filter_regex)
         except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            sys.exit(1)
+            _scan_err("invalid_filter", str(exc))
 
         if not rules:
-            typer.echo(
-                "Error: No valid rules found after applying configuration and filters.",
-                err=True,
+            _scan_err(
+                "invalid_rule",
+                "No valid rules found after applying configuration and filters.",
             )
-            sys.exit(1)
         scan_banner = "Scanning project using adaptive AST routing"
         routing_reason = "ast-project-scan"
         project_scan_fast_path = True
@@ -10160,11 +10152,9 @@ def scan(
             max_evidence_snippet_chars=max_evidence_snippet_chars,
         )
     except BroadScanRefusedError as exc:
-        typer.echo(str(exc), err=True)
-        sys.exit(2)
+        _scan_err("broad_scan_refused", str(exc), 2)
     except (ValueError, RuntimeError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
+        _scan_err("scan_error", str(exc))
     if sarif:
         # #310. Rendered from the SAME payload `--json` emits, deliberately: a second extraction
         # path would be a second place for the completeness fields to be forgotten, which is the
