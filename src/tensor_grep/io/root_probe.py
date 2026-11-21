@@ -23,12 +23,15 @@ from pathlib import Path
 _RG_SHORT_OPTIONS_WITH_VALUES = frozenset("ABCEMdefgjmrtT")
 
 
-def _ripgrep_config_follow_policy() -> bool:
-    """Return ripgrep's last follow setting from its environment config, if readable.
+_MAX_RG_CONFIG_BYTES = 1024 * 1024
 
-    Ripgrep prepends one argument per non-comment config line to the real command line. An
-    unreadable or malformed config makes ripgrep refuse before scanning, so it cannot enable a
-    traversal that this guard needs to predict.
+
+def _ripgrep_config_follow_policy() -> bool:
+    """Return ripgrep's last follow setting from its environment config.
+
+    If ``RIPGREP_CONFIG_PATH`` is set but unreadable, non-regular, a symlink/reparse point,
+    oversized (>1 MiB), or undecodable, conservatively return ``True`` so guarded roots are
+    protected against an indeterminate config.
     """
     config_path = os.environ.get("RIPGREP_CONFIG_PATH")
     if not config_path:
@@ -39,15 +42,17 @@ def _ripgrep_config_follow_policy() -> bool:
         cfg = Path(config_path)
         st_link = cfg.lstat()
         if not stat.S_ISREG(st_link.st_mode) or (getattr(st_link, "st_file_attributes", 0) & 0x400):
-            return False
+            return True
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
         fd = os.open(str(cfg), flags)
         st_fd = os.fstat(fd)
         if not stat.S_ISREG(st_fd.st_mode):
-            return False
+            return True
         with os.fdopen(fd, "rb") as handle:
             fd = None
-            raw = handle.read(1024 * 1024)
+            raw = handle.read(_MAX_RG_CONFIG_BYTES + 1)
+        if len(raw) > _MAX_RG_CONFIG_BYTES:
+            return True
         for raw_line in raw.decode("utf-8").splitlines():
             argument = raw_line.strip()
             if not argument or argument.startswith("#"):
@@ -63,7 +68,7 @@ def _ripgrep_config_follow_policy() -> bool:
                     if option in _RG_SHORT_OPTIONS_WITH_VALUES:
                         break
     except (OSError, UnicodeError):
-        return False
+        return True
     finally:
         if fd is not None:
             try:

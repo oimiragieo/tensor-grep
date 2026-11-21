@@ -168,13 +168,15 @@ def effective_rg_follow(search_args: Sequence[str]) -> bool:
     """Return rg's effective follow state after config arguments and raw CLI overrides."""
     from tensor_grep.io.root_probe import effective_rg_follow_policy
 
-    follow = effective_rg_follow_policy(no_config=flag_present(search_args, {"--no-config"}))
+    explicit_follow: bool | None = None
     for spelling, _ in _flags(search_args):
         if spelling in {"-L", "--follow"}:
-            follow = True
+            explicit_follow = True
         elif spelling == "--no-follow":
-            follow = False
-    return follow
+            explicit_follow = False
+    if explicit_follow is not None:
+        return explicit_follow
+    return effective_rg_follow_policy(no_config=flag_present(search_args, {"--no-config"}))
 
 
 def request_quiet(search_args: Sequence[str]) -> bool:

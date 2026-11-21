@@ -247,17 +247,29 @@ def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
 def _cap_output_lines(lines: list[str]) -> list[str]:
     """Cumulative byte budget for the plain-text branches (UTF-8 bytes + 1 per newline); the
     first line that would cross it is dropped together with everything after, and an ASCII
-    notice is appended while preserving any trailing AST omission summary."""
+    notice is appended while fitting any trailing AST omission summary within the budget."""
+    omission_line = next(
+        (line for line in reversed(lines) if line.startswith("\n... output truncated; omitted ")),
+        None,
+    )
+    reserved = (
+        len(_MCP_OUTPUT_TRUNCATED_NOTICE.encode("utf-8"))
+        + 1
+        + (len(omission_line.encode("utf-8")) + 1 if omission_line is not None else 0)
+    )
     used = 0
     for index, line in enumerate(lines):
-        used += len(line.encode("utf-8")) + 1
-        if used > _MCP_MATCHES_MAX_BYTES:
-            capped = [*lines[:index], _MCP_OUTPUT_TRUNCATED_NOTICE]
-            for tail in lines[index:]:
-                if tail.startswith("\n... output truncated; omitted "):
-                    capped.append(tail)
-                    break
+        line_cost = len(line.encode("utf-8")) + 1
+        if used + line_cost > _MCP_MATCHES_MAX_BYTES:
+            cut = index
+            while cut > 0 and used + reserved > _MCP_MATCHES_MAX_BYTES:
+                cut -= 1
+                used -= len(lines[cut].encode("utf-8")) + 1
+            capped = [*lines[:cut], _MCP_OUTPUT_TRUNCATED_NOTICE]
+            if omission_line is not None:
+                capped.append(omission_line)
             return capped
+        used += line_cost
     return lines
 
 
