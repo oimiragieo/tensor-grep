@@ -89,6 +89,9 @@ def language_coverage_gap_remediation(
     )
 
 
+_language_coverage_gap_remediation = language_coverage_gap_remediation
+
+
 def _language_coverage_gaps_for_universe(
     bounded_files: list[Path],
     scan_root: Path | None = None,
@@ -257,6 +260,12 @@ def _classify(
         deadline_monotonic=deadline_monotonic,
         deadline_hit=local_deadline,
     )
+    if (
+        not local_deadline.hit
+        and deadline_monotonic is not None
+        and time.monotonic() >= deadline_monotonic
+    ):
+        local_deadline.hit = True
     if local_deadline.hit:
         if deadline_hit is not None:
             deadline_hit.hit = True

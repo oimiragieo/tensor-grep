@@ -49,6 +49,9 @@ from tensor_grep.cli.repo_map_cache import (
     _resolved_path_str as _resolved_path_str,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import (
+    _language_coverage_gap_remediation as _language_coverage_gap_remediation,
+)
+from tensor_grep.cli.repo_map_coverage_gaps import (
     _language_coverage_gaps_for_universe,
     answer_empty,
     apply_answer_gaps,
@@ -13841,12 +13844,8 @@ def build_symbol_callers_from_map(
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
-    # task #61 / #52 fix (loop B): fold ALL sibling loops' early-break signal in alongside the main
-    # caller-scan loop's own flag -- a central symbol can finish the bounded main scan inside budget
-    # while any sibling loop (import-graph-consumers, preferred-definition-file scoring,
-    # related-test matching, context-pack symbol scoring) pushes wall-clock well past --deadline.
-    # Any one of the five breaking early makes this result partial.
-    # task #103 Fix 2: context_pack_deadline_hit joins the same fold-in.
+    # Fold every sibling deadline signal into the main caller scan: import graph, preferred
+    # definition, related tests, context pack, and coverage gaps all make the answer partial.
     coverage_gap_deadline_hit = _DeadlineBreakFlag()
     if (
         caller_scan_deadline_hit
