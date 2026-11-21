@@ -32,7 +32,6 @@ _PROBE_ENV_ALLOWLIST = (
     "TEMP",
     "TMP",
     "PATHEXT",
-    "PATH",
     "LANG",
     "LC_ALL",
     "LC_CTYPE",
@@ -144,7 +143,8 @@ def _open_regular_nontraversing(path: Path, *, share_read_only: bool = False) ->
                 kernel32.CloseHandle(handle)
 
     try:
-        fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(str(path), flags)
     except OSError:
         return None
     try:
@@ -455,11 +455,14 @@ def _file_identity(st: os.stat_result) -> tuple[int, int, int, int]:
 
 
 @contextlib.contextmanager
-def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
+def verified_probe_target(
+    target: Path,
+) -> Iterator[tuple[str, tuple[int, ...], Callable[[], bool]] | None]:
     """Hold a read-only handle on ``target`` across spawn and verify identity did not change.
 
     On Windows, holding a ``FILE_SHARE_READ``-only handle locks both ``target`` and its
     ancestor directories against modification, rename, or deletion while ``capture_probe`` spawns.
+    On Linux, binds execution to ``/proc/self/fd/<fd>`` via ``pass_fds``.
     """
     resolved = _resolve_file(target)
     if resolved is None:
@@ -476,6 +479,14 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
             yield None
             return
         expected_id = _file_identity(opened_stat)
+        launch_arg = str(resolved)
+        pass_fds: tuple[int, ...] = ()
+        if sys.platform.startswith("linux"):
+            proc_fd = f"/proc/self/fd/{fd}"
+            if os.path.exists(proc_fd):
+                os.set_inheritable(fd, True)
+                launch_arg = proc_fd
+                pass_fds = (fd,)
 
         def _unchanged() -> bool:
             try:
@@ -491,7 +502,7 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
             except OSError:
                 return False
 
-        yield _unchanged
+        yield (launch_arg, pass_fds, _unchanged)
     except OSError:
         yield None
     finally:
@@ -535,16 +546,17 @@ def _lexical_shim_target(candidate: Path) -> Path | None:
 @contextlib.contextmanager
 def verified_powershell_shim_probe(
     candidate: Path,
-) -> Iterator[tuple[Path, Callable[[], bool]] | None]:
+) -> Iterator[tuple[Path, str, tuple[int, ...], Callable[[], bool]] | None]:
     """Acquire the target handle first, then verify shim authority under that held lease."""
     lexical_target = _lexical_shim_target(candidate)
     if lexical_target is None:
         yield None
         return
-    with verified_probe_target(lexical_target) as verify_unchanged:
-        if verify_unchanged is None:
+    with verified_probe_target(lexical_target) as leased:
+        if leased is None:
             yield None
             return
+        launch_arg, pass_fds, verify_unchanged = leased
         authorized_target = powershell_shim_target(candidate)
         if authorized_target is None or not _same_path(authorized_target, lexical_target):
             yield None
@@ -552,4 +564,4 @@ def verified_powershell_shim_probe(
         if not verify_unchanged():
             yield None
             return
-        yield (authorized_target, verify_unchanged)
+        yield (authorized_target, launch_arg, pass_fds, verify_unchanged)

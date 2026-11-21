@@ -64,6 +64,8 @@ def capture_probe(
     *,
     env: dict[str, str] | None = None,
     require_success: bool = False,
+    cwd: str | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> tuple[bytes, bytes]:
     """Capture capped output and tear down the contained process tree before returning.
 
@@ -71,9 +73,17 @@ def capture_probe(
     """
     deadline = time.monotonic() + timeout_seconds
     work_deadline = deadline - min(0.5, timeout_seconds / 5)
-    process, containment = process_containment.spawn_contained(
-        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
-    )
+    popen_kwargs: dict[str, object] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "env": env,
+    }
+    if cwd is not None:
+        popen_kwargs["cwd"] = cwd
+    if pass_fds and sys.platform != "win32":
+        popen_kwargs["pass_fds"] = pass_fds
+    process, containment = process_containment.spawn_contained(argv, **popen_kwargs)
     assert process.stdout is not None and process.stderr is not None
     stdout = bytearray()
     stderr = bytearray()

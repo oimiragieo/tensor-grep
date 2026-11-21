@@ -811,6 +811,8 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
+    import inspect
+
     from tensor_grep.cli.doctor_launcher_probe import (
         sanitized_probe_env,
         verified_powershell_shim_probe,
@@ -823,27 +825,33 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
         return None
 
     @contextlib.contextmanager
-    def _lease() -> Iterator[tuple[Path, Callable[[], bool]] | None]:
+    def _lease() -> Iterator[tuple[Path, str, tuple[int, ...], Callable[[], bool]] | None]:
         if candidate.suffix.lower() == ".ps1":
             with verified_powershell_shim_probe(candidate) as leased:
                 yield leased
         else:
-            with verified_probe_target(candidate) as verify_unchanged:
-                if verify_unchanged is None:
+            with verified_probe_target(candidate) as leased_target:
+                if leased_target is None:
                     yield None
                 else:
-                    yield (candidate, verify_unchanged)
+                    launch_arg, pass_fds, verify_unchanged = leased_target
+                    yield (candidate, launch_arg, pass_fds, verify_unchanged)
 
     with _lease() as leased:
         if leased is None:
             return None
-        probe_candidate, verify_unchanged = leased
+        probe_candidate, launch_arg, pass_fds, verify_unchanged = leased
+        probe_kwargs: dict[str, Any] = {"env": env, "require_success": True}
+        sig_params = inspect.signature(capture_probe).parameters
+        if "cwd" in sig_params:
+            probe_kwargs["cwd"] = str(probe_candidate.parent)
+        if pass_fds and "pass_fds" in sig_params:
+            probe_kwargs["pass_fds"] = pass_fds
         try:
             stdout_bytes, _stderr_bytes = capture_probe(
-                [str(probe_candidate), "--version"],
+                [launch_arg, "--version"],
                 timeout_seconds=2,
-                env=env,
-                require_success=True,
+                **probe_kwargs,
             )
         except Exception:
             return None

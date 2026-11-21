@@ -173,6 +173,8 @@ def test_doctor_rejects_invalid_managed_metadata_and_oversized_shim(
     assert doctor_report.powershell_shim_target(managed) is None
     metadata.write_bytes(b"x" * (16 * 1024 + 1))
     assert doctor_report.powershell_shim_target(managed) is None
+    metadata.write_bytes(b"[" * 2000 + b"]" * 2000)
+    assert doctor_report.powershell_shim_target(managed) is None
 
     metadata.write_text(valid_metadata, encoding="utf-8")
     valid_shim = managed.read_text(encoding="utf-8")
@@ -236,9 +238,11 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     def swapping_capture(_argv, timeout_seconds, *, env=None, require_success=False):
         nonlocal capture_calls
         capture_calls += 1
-        # Verify the held FILE_SHARE_READ lease blocks real NTFS rename while active.
+        # Verify the held FILE_SHARE_READ lease blocks real NTFS leaf and ancestor renames while active.
         with pytest.raises(PermissionError):
             _target.rename(_target.with_name("tg-swapped.exe"))
+        with pytest.raises(PermissionError):
+            _target.parent.rename(_target.parent.with_name("bin-swapped"))
         # Simulate a concurrent metadata change to also exercise the post-probe identity guard.
         monkeypatch.setattr(
             Path,
@@ -250,10 +254,10 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
     assert doctor_report._doctor_tg_candidate_version(managed) is None
     assert capture_calls == 1
-    # Positive control: once the lease is released, rename succeeds.
-    renamed = _target.with_name("tg-released.exe")
-    _target.rename(renamed)
-    assert renamed.exists()
+    # Positive control: once the lease is released, both leaf and ancestor renames succeed.
+    renamed_bin = _target.parent.with_name("bin-released")
+    _target.parent.rename(renamed_bin)
+    assert (renamed_bin / "tg.exe").exists()
 
 
 def test_doctor_candidate_version_uses_contained_bounded_probe(
@@ -263,12 +267,13 @@ def test_doctor_candidate_version_uses_contained_bounded_probe(
     candidate.write_bytes(b"not executable")
     seen: dict[str, object] = {}
 
-    def fake_capture(argv, timeout_seconds, *, env=None, require_success=False):
+    def fake_capture(argv, timeout_seconds, *, env=None, require_success=False, cwd=None):
         seen.update({
             "argv": argv,
             "timeout_seconds": timeout_seconds,
             "env": env,
             "require_success": require_success,
+            "cwd": cwd,
         })
         return b"tensor-grep 1.2.3\n", b""
 
@@ -277,13 +282,20 @@ def test_doctor_candidate_version_uses_contained_bounded_probe(
     monkeypatch.setenv("PYTHONPATH", r"C:\caller-python\Lib")
     monkeypatch.setenv("VIRTUAL_ENV", r"C:\caller-venv")
     monkeypatch.setenv("__PYVENV_LAUNCHER__", r"C:\caller-python\python.exe")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-secret")
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("PATH", r"C:\untrusted-dir")
 
     assert doctor_report._doctor_tg_candidate_version(candidate) == "tensor-grep 1.2.3"
     assert seen["argv"] == [str(candidate), "--version"]
     assert seen["timeout_seconds"] == 2
     assert seen["require_success"] is True
+    assert seen["cwd"] == str(candidate.parent)
     env = seen["env"]
     assert isinstance(env, dict)
+    assert env.get("SYSTEMROOT") == r"C:\Windows"
+    assert "PATH" not in env
+    assert "OPENAI_API_KEY" not in env
     assert "PYTHONHOME" not in env
     assert "PYTHONPATH" not in env
     assert "VIRTUAL_ENV" not in env
