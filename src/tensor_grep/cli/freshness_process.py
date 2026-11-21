@@ -59,13 +59,31 @@ def _drain(stream: object, output: bytearray) -> bool:
 
 
 def capture_probe(
-    argv: list[str], timeout_seconds: float, *, env: dict[str, str] | None = None
+    argv: list[str],
+    timeout_seconds: float,
+    *,
+    env: dict[str, str] | None = None,
+    require_success: bool = False,
+    cwd: str | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> tuple[bytes, bytes]:
+    """Capture capped output and tear down the contained process tree before returning.
+
+    ``require_success`` additionally discards evidence from a nonzero exit or unverified cleanup.
+    """
     deadline = time.monotonic() + timeout_seconds
     work_deadline = deadline - min(0.5, timeout_seconds / 5)
-    process, containment = process_containment.spawn_contained(
-        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
-    )
+    popen_kwargs: dict[str, object] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "env": env,
+    }
+    if cwd is not None:
+        popen_kwargs["cwd"] = cwd
+    if pass_fds and sys.platform != "win32":
+        popen_kwargs["pass_fds"] = pass_fds
+    process, containment = process_containment.spawn_contained(argv, **popen_kwargs)
     assert process.stdout is not None and process.stderr is not None
     stdout = bytearray()
     stderr = bytearray()
@@ -95,7 +113,11 @@ def capture_probe(
             process.stderr.close()
     if cleanup_errors:
         _LOGGER.warning("doctor freshness process cleanup failed: %s", cleanup_errors)
+        if require_success:
+            return b"", b""
     if overflow:
         _LOGGER.warning("doctor freshness child exceeded its output limit")
+        return b"", b""
+    if require_success and process.returncode != 0:
         return b"", b""
     return bytes(stdout), bytes(stderr)

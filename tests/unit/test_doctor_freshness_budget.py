@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -98,16 +99,83 @@ def test_pip_freshness_child_is_noninteractive(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("probe", ["_doctor_rust_binary_version", "_doctor_tg_candidate_version"])
-def test_doctor_version_children_are_noninteractive(monkeypatch, probe) -> None:
+def test_doctor_version_children_are_noninteractive(tmp_path: Path, monkeypatch, probe) -> None:
     calls = []
+    candidate = tmp_path / "tg.exe"
+    candidate.write_bytes(b"fake")
 
-    def run(args, **kwargs):
-        calls.append(kwargs)
-        return subprocess.CompletedProcess(args, 0, b"tensor-grep 1.0.0", b"")
+    if probe == "_doctor_tg_candidate_version":
 
-    monkeypatch.setattr(main.subprocess, "run", run)
-    assert getattr(doctor_report, probe)(Path("tg.exe")) == "tensor-grep 1.0.0"
-    assert calls[0]["stdin"] == subprocess.DEVNULL
+        def capture(_args, *, timeout_seconds, **kwargs):
+            calls.append({"timeout_seconds": timeout_seconds, **kwargs})
+            return b"tensor-grep 1.0.0", b""
+
+        monkeypatch.setattr(doctor_report, "capture_probe", capture)
+    else:
+
+        def run(args, **kwargs):
+            calls.append(kwargs)
+            return subprocess.CompletedProcess(args, 0, b"tensor-grep 1.0.0", b"")
+
+        monkeypatch.setattr(main.subprocess, "run", run)
+    assert getattr(doctor_report, probe)(candidate) == "tensor-grep 1.0.0"
+    if probe == "_doctor_tg_candidate_version":
+        assert calls[0]["timeout_seconds"] == 2
+        assert calls[0]["require_success"] is True
+    else:
+        assert calls[0]["stdin"] == subprocess.DEVNULL
+
+
+def test_doctor_candidate_version_binds_linux_proc_fd_and_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tensor_grep.cli import doctor_launcher_probe
+
+    candidate = tmp_path / "tg"
+    candidate.write_bytes(b"#!/bin/sh\necho 1.0.0\n")
+    fake_fd = 42
+    seen_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(doctor_launcher_probe.sys, "platform", "linux")
+    monkeypatch.setattr(doctor_launcher_probe, "_resolve_file", lambda p: p, raising=True)
+    monkeypatch.setattr(
+        doctor_launcher_probe, "_open_regular_nontraversing", lambda *_a, **_k: fake_fd
+    )
+    monkeypatch.setattr(
+        doctor_launcher_probe.os,
+        "fstat",
+        lambda _fd: os.stat_result((0o100755, 10, 1, 1, 0, 0, 19, 0, 0, 0)),
+    )
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda _self: os.stat_result((0o100755, 10, 1, 1, 0, 0, 19, 0, 0, 0)),
+    )
+    monkeypatch.setattr(Path, "resolve", lambda self, strict=False: self)
+    monkeypatch.setattr(doctor_launcher_probe.os, "close", lambda _fd: None)
+    monkeypatch.setattr(
+        doctor_report,
+        "capture_probe",
+        lambda argv, timeout_seconds, **kwargs: (
+            seen_calls.append({"argv": argv, **kwargs}) or (b"tensor-grep 1.0.0\n", b"")
+        ),
+    )
+
+    # Case 1: /proc/self/fd/<fd> exists -> binds argv[0] and pass_fds=(fd,)
+    monkeypatch.setattr(
+        doctor_launcher_probe.os.path,
+        "exists",
+        lambda p: p == f"/proc/self/fd/{fake_fd}",
+    )
+    assert doctor_report._doctor_tg_candidate_version(candidate) == "tensor-grep 1.0.0"
+    assert seen_calls[0]["argv"] == [f"/proc/self/fd/{fake_fd}", "--version"]
+    assert seen_calls[0]["pass_fds"] == (fake_fd,)
+
+    # Case 2: /proc/self/fd/<fd> unavailable -> fail closed, never call capture_probe
+    seen_calls.clear()
+    monkeypatch.setattr(doctor_launcher_probe.os.path, "exists", lambda _p: False)
+    assert doctor_report._doctor_tg_candidate_version(candidate) is None
+    assert seen_calls == []
 
 
 def test_nested_native_version_probe_is_noninteractive(monkeypatch) -> None:

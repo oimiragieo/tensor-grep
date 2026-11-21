@@ -7,9 +7,9 @@ ast-grep provider probes, GPU tier and runtime probes, cache and daemon status -
 `main.py`; only its evidence gathering moved.
 
 `_self` is `cli/main.py`'s module object, imported from `cli/_main_binding`. Every reference
-here to a symbol that still lives in `main.py` goes through it -- including `_self.subprocess`,
-which the test suite patches on `main` to stub out `tg --version` probes. Read that module's
-docstring before adding a bare cross-module reference.
+here to a symbol that still lives in `main.py` goes through it. Read that module's docstring before
+adding a bare cross-module reference. Candidate `tg --version` probes use the contained, byte-capped
+freshness helper directly; its tests patch this module's `capture_probe` binding.
 
 One exception is deliberate: `_doctor_rust_binary_version` keeps its FUNCTION-LOCAL
 `import subprocess` and a bare `subprocess.run`. A local import shadows the module global, so
@@ -20,6 +20,7 @@ rewriting it to `_self.subprocess` would have newly exposed it to the patch.
 This module sits in the same directory as `main.py`, so the depth is unchanged by the move.
 """
 
+import contextlib
 import json
 import math
 import os
@@ -27,14 +28,17 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target as powershell_shim_target
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
+from tensor_grep.cli.freshness_process import capture_probe
 from tensor_grep.cli.runtime_paths import (
     gpu_probe_timeout_s,
     iter_in_tree_native_tg_binaries,
@@ -807,28 +811,57 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
+    import inspect
+
+    from tensor_grep.cli.doctor_launcher_probe import (
+        sanitized_probe_env,
+        verified_powershell_shim_probe,
+        verified_probe_target,
+    )
     from tensor_grep.cli.frontdoor_hops import probe_env
 
-    env = probe_env()
+    env = sanitized_probe_env(probe_env())
     if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
-    for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
-        env.pop(key, None)
-    try:
-        res = _self.subprocess.run(
-            [str(candidate), "--version"],
-            capture_output=True,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            text=False,
-            timeout=2,
+
+    @contextlib.contextmanager
+    def _lease() -> Iterator[tuple[Path, str, tuple[int, ...], Callable[[], bool]] | None]:
+        if candidate.suffix.lower() == ".ps1":
+            with verified_powershell_shim_probe(candidate) as leased:
+                yield leased
+        else:
+            with verified_probe_target(candidate) as leased_target:
+                if leased_target is None:
+                    yield None
+                else:
+                    launch_arg, pass_fds, verify_unchanged = leased_target
+                    yield (candidate, launch_arg, pass_fds, verify_unchanged)
+
+    with _lease() as leased:
+        if leased is None:
+            return None
+        probe_candidate, launch_arg, pass_fds, verify_unchanged = leased
+        probe_kwargs: dict[str, Any] = {"env": env, "require_success": True}
+        sig_params = inspect.signature(capture_probe).parameters
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig_params.values()
         )
-    except Exception:
-        return None
-    if res.returncode != 0:
-        return None
+        if accepts_kwargs or "cwd" in sig_params:
+            probe_kwargs["cwd"] = str(probe_candidate.parent)
+        if pass_fds and (accepts_kwargs or "pass_fds" in sig_params):
+            probe_kwargs["pass_fds"] = pass_fds
+        try:
+            stdout_bytes, _stderr_bytes = capture_probe(
+                [launch_arg, "--version"],
+                timeout_seconds=2,
+                **probe_kwargs,
+            )
+        except Exception:
+            return None
+        if not verify_unchanged():
+            return None
     try:
-        stdout = decode_protocol_output(res.stdout)
+        stdout = decode_protocol_output(stdout_bytes)
     except UnicodeDecodeError:
         return None
     for line in stdout.splitlines():
@@ -969,9 +1002,10 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             if key in seen:
                 continue
             seen.add(key)
+            probe_input = candidate if candidate.suffix.lower() == ".ps1" else resolved
             candidates.append({
                 "path": str(resolved),
-                "version": _self._doctor_tg_candidate_version(resolved),
+                "version": _self._doctor_tg_candidate_version(probe_input),
             })
     return candidates
 

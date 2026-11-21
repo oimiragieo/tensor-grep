@@ -877,25 +877,39 @@ def test_doctor_json_reports_foreign_first_path_tg_remediation(monkeypatch, tmp_
 def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
     monkeypatch, tmp_path: Path
 ) -> None:
+    from tensor_grep.cli import doctor_report
 
     candidate = tmp_path / "Python314" / "Scripts" / "tg.exe"
     candidate.parent.mkdir(parents=True)
     candidate.write_text("foreign\n", encoding="utf-8")
     seen: dict[str, object] = {}
 
-    def _fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+    def _fake_capture(command, timeout_seconds, **kwargs):  # type: ignore[no-untyped-def]
         seen["command"] = command
+        seen["timeout_seconds"] = timeout_seconds
         seen["env"] = kwargs.get("env")
-        return subprocess.CompletedProcess(command, 0, stdout="2.12.0\n", stderr="")
+        seen["require_success"] = kwargs.get("require_success")
+        seen["pass_fds"] = kwargs.get("pass_fds")
+        return b"2.12.0\n", b""
 
     monkeypatch.setenv("PYTHONHOME", r"C:\managed-sidecar-python")
     monkeypatch.setenv("PYTHONPATH", r"C:\managed-sidecar-python\Lib")
     monkeypatch.setenv("VIRTUAL_ENV", r"C:\managed-sidecar")
     monkeypatch.setenv("__PYVENV_LAUNCHER__", r"C:\managed-sidecar\python.exe")
-    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+    monkeypatch.setattr(doctor_report, "capture_probe", _fake_capture)
 
     assert cli_main._doctor_tg_candidate_version(candidate) == "2.12.0"
-    assert seen["command"] == [str(candidate), "--version"]
+    if sys.platform == "win32":
+        assert seen["command"] == [str(candidate), "--version"]
+    else:
+        assert isinstance(seen["command"], list)
+        assert seen["command"][1:] == ["--version"]
+        assert str(seen["command"][0]).startswith(("/proc/self/fd/", "/dev/fd/"))
+        pass_fds = seen["pass_fds"]
+        assert isinstance(pass_fds, tuple) and len(pass_fds) == 1
+        assert str(seen["command"][0]).endswith(f"/{pass_fds[0]}")
+    assert seen["timeout_seconds"] == 2
+    assert seen["require_success"] is True
     env = seen["env"]
     assert isinstance(env, dict)
     assert "PYTHONHOME" not in env

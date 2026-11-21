@@ -464,7 +464,12 @@ class CPUBackend(ComputeBackend):
                 rust_results = rust_results[: config.max_count]
 
             matches = [
-                MatchLine(line_number=r[0], text=strip_line_terminator(str(r[1])), file=file_path)
+                MatchLine(
+                    line_number=r[0],
+                    text=strip_line_terminator(str(r[1])),
+                    file=file_path,
+                    citation_matched=True,
+                )
                 for r in rust_results
             ]
 
@@ -709,7 +714,12 @@ class CPUBackend(ComputeBackend):
 
                     if matched:
                         matches.append(
-                            MatchLine(line_number=line_idx, text=line_text, file=file_path)
+                            MatchLine(
+                                line_number=line_idx,
+                                text=line_text,
+                                file=file_path,
+                                citation_matched=True,
+                            )
                         )
                         total_matches_count += 1
 
@@ -769,7 +779,12 @@ class CPUBackend(ComputeBackend):
 
                         if matched:
                             matches.append(
-                                MatchLine(line_number=line_idx, text=line_text, file=file_path)
+                                MatchLine(
+                                    line_number=line_idx,
+                                    text=line_text,
+                                    file=file_path,
+                                    citation_matched=True,
+                                )
                             )
                             total_matches_count += 1
 
@@ -915,7 +930,12 @@ class CPUBackend(ComputeBackend):
             if config.max_count is not None:
                 rust_results = rust_results[: config.max_count]
             matches = [
-                MatchLine(line_number=r[0], text=strip_line_terminator(str(r[1])), file=file_path)
+                MatchLine(
+                    line_number=r[0],
+                    text=strip_line_terminator(str(r[1])),
+                    file=file_path,
+                    citation_matched=True,
+                )
                 for r in rust_results
             ]
             return SearchResult(
@@ -962,15 +982,36 @@ class CPUBackend(ComputeBackend):
                 if matched:
                     while before_queue:
                         b_idx, b_text = before_queue.popleft()
-                        matches.append(MatchLine(line_number=b_idx, text=b_text, file=file_path))
-                    matches.append(MatchLine(line_number=line_idx, text=line_text, file=file_path))
+                        matches.append(
+                            MatchLine(
+                                line_number=b_idx,
+                                text=b_text,
+                                file=file_path,
+                                citation_matched=False,
+                            )
+                        )
+                    matches.append(
+                        MatchLine(
+                            line_number=line_idx,
+                            text=line_text,
+                            file=file_path,
+                            citation_matched=True,
+                        )
+                    )
                     total_matches_count += 1
                     context_after_remaining = after_lines
 
                     if config.max_count and total_matches_count >= config.max_count:
                         break
                 elif context_after_remaining > 0:
-                    matches.append(MatchLine(line_number=line_idx, text=line_text, file=file_path))
+                    matches.append(
+                        MatchLine(
+                            line_number=line_idx,
+                            text=line_text,
+                            file=file_path,
+                            citation_matched=False,
+                        )
+                    )
                     context_after_remaining -= 1
                 else:
                     if before_lines > 0:
@@ -1065,8 +1106,22 @@ class CPUBackend(ComputeBackend):
                 continue
 
             right_line_no, right_text = lines[right_match_idx]
-            matches.append(MatchLine(line_number=left_line_no, text=left_text, file=str(path)))
-            matches.append(MatchLine(line_number=right_line_no, text=right_text, file=str(path)))
+            matches.append(
+                MatchLine(
+                    line_number=left_line_no,
+                    text=left_text,
+                    file=str(path),
+                    citation_matched=True,
+                )
+            )
+            matches.append(
+                MatchLine(
+                    line_number=right_line_no,
+                    text=right_text,
+                    file=str(path),
+                    citation_matched=True,
+                )
+            )
             sequence_count += 1
 
             if config.max_count and sequence_count >= config.max_count:
