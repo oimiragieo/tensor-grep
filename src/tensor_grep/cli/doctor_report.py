@@ -731,13 +731,14 @@ def _doctor_installation_health(
     pypi_latest: str | None = None,
 ) -> str:
     """Aggregate installation health (A90 PATH-honesty). Precedence:
-    foreign_launcher > unverifiable_version > launcher_version_mismatch > stale_install >
-    unknown_pypi > ok. ANY unverifiable version (invalid installed, invalid pypi_latest, or
-    invalid present-route version) lands on unverifiable_version, never ok (codex must-fix
-    REV-4: an invalid NON-NULL pypi_latest must not fall through to ok — hence pypi_latest is
-    parsed here when provided)."""
+    foreign_launcher > managed_launcher_broken > unverifiable_version >
+    launcher_version_mismatch > stale_install > unknown_pypi > ok. ANY unverifiable version
+    (invalid installed/pypi_latest/route) lands on unverifiable_version, never ok (codex
+    REV-4: an invalid NON-NULL pypi_latest must not fall through to ok)."""
     if any(bool(entry.get("foreign")) for entry in shadow_launchers):
         return "foreign_launcher"
+    if any(entry.get("kind") == "managed-native-broken" for entry in shadow_launchers):
+        return "managed_launcher_broken"
     if _doctor_version_tuple(installed_version) is None or _any_route_unverifiable(
         shadow_launchers
     ):
@@ -846,22 +847,26 @@ def _doctor_tg_launcher_kind(
 ) -> str | None:
     if not path:
         return None
-    if version_text is not _DOCTOR_VERSION_NOT_PROVIDED and not isinstance(version_text, str):
-        return "foreign"
-    if isinstance(version_text, str) and not _doctor_tg_version_looks_like_tensor_grep(
-        version_text
-    ):
-        return "foreign"
-
     candidate = Path(path)
-    suffix = candidate.suffix.lower()
     parts = tuple(part.lower() for part in candidate.parts)
+    is_managed = (
+        len(parts) >= 3
+        and parts[-3:-1] == (".tensor-grep", "bin")
+        and candidate.name.lower() in {"tg", "tg.exe"}
+    )
+    if version_text is not _DOCTOR_VERSION_NOT_PROVIDED and (
+        not isinstance(version_text, str)
+        or not _doctor_tg_version_looks_like_tensor_grep(version_text)
+    ):
+        return "managed-native-broken" if is_managed else "foreign"
+
+    suffix = candidate.suffix.lower()
     if suffix in {".cmd", ".bat"}:
         return "cmd-shim"
     if suffix == ".ps1":
         return "powershell-shim"
     if suffix in {".com", ".exe"}:
-        if ".tensor-grep" in parts and "bin" in parts:
+        if is_managed:
             return "managed-native"
         if suffix == ".exe" and isinstance(version_text, str) and version_text.startswith("tg "):
             return "native-exe"
@@ -876,7 +881,7 @@ def _doctor_tg_launcher_kind(
             return "python-entrypoint"
         return "native-exe"
     if candidate.name.lower() == "tg":
-        if ".tensor-grep" in parts and "bin" in parts:
+        if is_managed:
             return "managed-native"
         if sys.platform.startswith("win"):
             return "bash-shim"
@@ -1099,35 +1104,6 @@ def _doctor_tg_foreign_warning(
     return (
         f"first {label} tg is not tensor-grep: {path} reports "
         f"{version or 'no recognizable --version output'}; expected tg {expected_version}."
-    )
-
-
-def _doctor_tg_foreign_remediation(
-    *,
-    foreign_path: str | None,
-    candidates: list[dict[str, str | None]],
-) -> str | None:
-    if not foreign_path:
-        return None
-    managed_candidate = next(
-        (
-            candidate
-            for candidate in candidates
-            if _doctor_tg_launcher_kind(candidate.get("path"), candidate.get("version"))
-            == "managed-native"
-        ),
-        None,
-    )
-    managed_path = managed_candidate.get("path") if managed_candidate else None
-    managed_dir = str(Path(managed_path).parent) if managed_path else "~/.tensor-grep/bin"
-    foreign_dir = str(Path(foreign_path).parent)
-    return (
-        f"Move {managed_dir} earlier in PATH than {foreign_dir}, or rename the foreign tg "
-        "command outside tensor-grep. If the foreign directory comes from Machine PATH, "
-        "User PATH repair cannot outrank it. If you own the foreign command, run "
-        "tg repair-launcher --allow-foreign-rename to back it up before installing the "
-        "managed native tg.exe into that PATH slot. Do not remove unrelated launchers "
-        "unless you own them."
     )
 
 
