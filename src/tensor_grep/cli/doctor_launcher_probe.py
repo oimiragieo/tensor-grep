@@ -24,14 +24,155 @@ _SIMPLE_DELEGATE_RE = re.compile(
 )
 
 
-def _bounded_bytes(path: Path, limit: int) -> bytes | None:
-    try:
-        metadata = path.lstat()
-        if getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+_PROBE_ENV_ALLOWLIST = (
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "COMSPEC",
+    "TEMP",
+    "TMP",
+    "PATHEXT",
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "HOME",
+    "USERPROFILE",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "COMMONPROGRAMFILES",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "TG_FRONTDOOR_HOPS",
+)
+
+
+def sanitized_probe_env(raw_env: dict[str, str] | None) -> dict[str, str] | None:
+    """Return a minimal allowlisted environment for doctor version probes."""
+    if raw_env is None:
+        return None
+    return {key: raw_env[key] for key in _PROBE_ENV_ALLOWLIST if key in raw_env}
+
+
+def _strip_win32_device_prefix(path_str: str) -> str:
+    if path_str.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path_str[8:]
+    if path_str.startswith("\\\\?\\"):
+        return path_str[4:]
+    return path_str
+
+
+def _open_regular_nontraversing(path: Path, *, share_read_only: bool = False) -> int | None:
+    """Open ``path`` without following leaf reparse points/symlinks and verify final identity."""
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        class _ByHandleFileInfo(ctypes.Structure):
+            _fields_ = [
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime", wintypes.FILETIME),
+                ("ftLastAccessTime", wintypes.FILETIME),
+                ("ftLastWriteTime", wintypes.FILETIME),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        create_file.restype = wintypes.HANDLE
+        get_info = kernel32.GetFileInformationByHandle
+        get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ByHandleFileInfo)]
+        get_info.restype = wintypes.BOOL
+        get_final_path = kernel32.GetFinalPathNameByHandleW
+        get_final_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+        get_final_path.restype = wintypes.DWORD
+
+        invalid_handle = ctypes.c_void_p(-1).value
+        generic_read = 0x80000000
+        file_share_read = 0x00000001
+        file_share_all = 0x00000007
+        open_existing = 3
+        file_flag_open_reparse_point = 0x00200000
+        handle = create_file(
+            os.path.abspath(path),
+            generic_read,
+            file_share_read if share_read_only else file_share_all,
+            None,
+            open_existing,
+            file_flag_open_reparse_point,
+            None,
+        )
+        if handle == invalid_handle or handle is None:
             return None
-        with path.open("rb") as stream:
+        try:
+            info = _ByHandleFileInfo()
+            if not get_info(handle, ctypes.byref(info)):
+                return None
+            if info.dwFileAttributes & (
+                stat.FILE_ATTRIBUTE_REPARSE_POINT | stat.FILE_ATTRIBUTE_DIRECTORY
+            ):
+                return None
+            buf = ctypes.create_unicode_buffer(1024)
+            length = get_final_path(handle, buf, len(buf), 0)
+            if length == 0 or length >= len(buf):
+                return None
+            final_lexical = _strip_win32_device_prefix(buf.value).replace("/", "\\").casefold()
+            if final_lexical != _lexical_path_key(path):
+                return None
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+            handle = None
+            return fd
+        finally:
+            if handle is not None:
+                kernel32.CloseHandle(handle)
+
+    try:
+        fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            os.close(fd)
+            return None
+        resolved = path.resolve(strict=True)
+        if _lexical_path_key(path) != _lexical_path_key(resolved):
+            os.close(fd)
+            return None
+        return fd
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def _bounded_bytes(path: Path, limit: int) -> bytes | None:
+    fd = _open_regular_nontraversing(path)
+    if fd is None:
+        return None
+    try:
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1
             contents = stream.read(limit + 1)
     except OSError:
+        if fd >= 0:
+            os.close(fd)
         return None
     return contents if len(contents) <= limit else None
 
@@ -131,7 +272,7 @@ def _managed_target(target: Path) -> Path | None:
         return None
     try:
         payload = json.loads(metadata.decode("utf-8-sig"))
-    except (UnicodeError, ValueError):
+    except (UnicodeError, ValueError, RecursionError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -166,12 +307,23 @@ def _marked_bridge_target(target: Path) -> Path | None:
 
 
 def _same_file_content(left: Path, right: Path) -> bool:
+    left_fd = _open_regular_nontraversing(left)
+    if left_fd is None:
+        return False
+    right_fd = _open_regular_nontraversing(right)
+    if right_fd is None:
+        os.close(left_fd)
+        return False
     try:
-        left_size = left.stat().st_size
-        right_size = right.stat().st_size
-        if left_size != right_size or left_size > _MAX_NATIVE_BYTES:
-            return False
-        with left.open("rb") as left_stream, right.open("rb") as right_stream:
+        with (
+            os.fdopen(left_fd, "rb") as left_stream,
+            os.fdopen(right_fd, "rb") as right_stream,
+        ):
+            left_fd = right_fd = -1
+            left_size = os.fstat(left_stream.fileno()).st_size
+            right_size = os.fstat(right_stream.fileno()).st_size
+            if left_size != right_size or left_size > _MAX_NATIVE_BYTES:
+                return False
             while True:
                 left_chunk = left_stream.read(1024 * 1024)
                 right_chunk = right_stream.read(1024 * 1024)
@@ -181,6 +333,13 @@ def _same_file_content(left: Path, right: Path) -> bool:
                     return True
     except OSError:
         return False
+    finally:
+        for fd in (left_fd, right_fd):
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def _simple_delegate_target(lines: list[str], candidate: Path) -> Path | None:
@@ -307,64 +466,16 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
         yield None
         return
 
-    fd: int | None = None
-    win_handle: object | None = None
+    fd = _open_regular_nontraversing(resolved, share_read_only=True)
+    if fd is None:
+        yield None
+        return
     try:
-        if sys.platform == "win32":
-            import ctypes
-            import msvcrt
-            from ctypes import wintypes
-
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            create_file = kernel32.CreateFileW
-            create_file.argtypes = [
-                wintypes.LPCWSTR,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                ctypes.c_void_p,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                wintypes.HANDLE,
-            ]
-            create_file.restype = wintypes.HANDLE
-            invalid_handle = ctypes.c_void_p(-1).value
-            generic_read = 0x80000000
-            file_share_read = 0x00000001
-            open_existing = 3
-            file_attribute_normal = 0x00000080
-            handle = create_file(
-                str(resolved),
-                generic_read,
-                file_share_read,
-                None,
-                open_existing,
-                file_attribute_normal,
-                None,
-            )
-            if handle == invalid_handle or handle is None:
-                yield None
-                return
-            win_handle = handle
-            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
-            win_handle = None  # owned by fd now
-        else:
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(str(resolved), flags)
-
         opened_stat = os.fstat(fd)
         if not stat.S_ISREG(opened_stat.st_mode):
             yield None
             return
-        lstat_before = resolved.lstat()
-        if (
-            getattr(lstat_before, "st_file_attributes", 0) or 0
-        ) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-            yield None
-            return
         expected_id = _file_identity(opened_stat)
-        if _file_identity(lstat_before) != expected_id:
-            yield None
-            return
 
         def _unchanged() -> bool:
             try:
@@ -384,38 +495,61 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
     except OSError:
         yield None
     finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        elif win_handle is not None:
-            try:
-                import ctypes
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
-                ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(win_handle)
-            except OSError:
-                pass
+
+def _lexical_shim_target(candidate: Path) -> Path | None:
+    """Derive the candidate target path lexically without trusting authority yet."""
+    if candidate.name.casefold() != "tg.ps1":
+        return None
+    is_managed = any(
+        _same_path(candidate, managed_bin / "tg.ps1") for managed_bin in _managed_bin_directories()
+    )
+    is_compat = any(
+        _same_path(candidate.parent, compatibility_dir)
+        for compatibility_dir in _compatibility_directories()
+    )
+    if not (is_managed or is_compat):
+        return None
+    resolved_candidate = _resolve_file(candidate)
+    if resolved_candidate is None or resolved_candidate.name.casefold() != "tg.ps1":
+        return None
+    lines = _shim_lines(resolved_candidate)
+    if lines is None:
+        return None
+    for managed_bin in _managed_bin_directories():
+        if _same_path(resolved_candidate, managed_bin / "tg.ps1"):
+            return managed_bin / "tg.exe"
+    target = _simple_delegate_target(lines, resolved_candidate)
+    if target is None:
+        return None
+    for managed_bin in _managed_bin_directories():
+        if _same_path(target, managed_bin / "tg.ps1"):
+            return managed_bin / "tg.exe"
+    return target
 
 
 @contextlib.contextmanager
 def verified_powershell_shim_probe(
     candidate: Path,
 ) -> Iterator[tuple[Path, Callable[[], bool]] | None]:
-    """Hold the target handle across shim authority verification and subprocess probe."""
-    initial_target = powershell_shim_target(candidate)
-    if initial_target is None:
+    """Acquire the target handle first, then verify shim authority under that held lease."""
+    lexical_target = _lexical_shim_target(candidate)
+    if lexical_target is None:
         yield None
         return
-    with verified_probe_target(initial_target) as verify_unchanged:
+    with verified_probe_target(lexical_target) as verify_unchanged:
         if verify_unchanged is None:
             yield None
             return
-        reverified_target = powershell_shim_target(candidate)
-        if reverified_target is None or not _same_path(reverified_target, initial_target):
+        authorized_target = powershell_shim_target(candidate)
+        if authorized_target is None or not _same_path(authorized_target, lexical_target):
             yield None
             return
         if not verify_unchanged():
             yield None
             return
-        yield (initial_target, verify_unchanged)
+        yield (authorized_target, verify_unchanged)

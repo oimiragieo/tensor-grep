@@ -236,7 +236,10 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     def swapping_capture(_argv, timeout_seconds, *, env=None, require_success=False):
         nonlocal capture_calls
         capture_calls += 1
-        # Simulate a concurrent replacement if the OS allows it or via lstat metadata change.
+        # Verify the held FILE_SHARE_READ lease blocks real NTFS rename while active.
+        with pytest.raises(PermissionError):
+            _target.rename(_target.with_name("tg-swapped.exe"))
+        # Simulate a concurrent metadata change to also exercise the post-probe identity guard.
         monkeypatch.setattr(
             Path,
             "lstat",
@@ -247,6 +250,10 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
     assert doctor_report._doctor_tg_candidate_version(managed) is None
     assert capture_calls == 1
+    # Positive control: once the lease is released, rename succeeds.
+    renamed = _target.with_name("tg-released.exe")
+    _target.rename(renamed)
+    assert renamed.exists()
 
 
 def test_doctor_candidate_version_uses_contained_bounded_probe(

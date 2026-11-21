@@ -812,16 +812,15 @@ def _doctor_rust_binary_warning(
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     from tensor_grep.cli.doctor_launcher_probe import (
+        sanitized_probe_env,
         verified_powershell_shim_probe,
         verified_probe_target,
     )
     from tensor_grep.cli.frontdoor_hops import probe_env
 
-    env = probe_env()
+    env = sanitized_probe_env(probe_env())
     if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
-    for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
-        env.pop(key, None)
 
     @contextlib.contextmanager
     def _lease() -> Iterator[tuple[Path, Callable[[], bool]] | None]:
