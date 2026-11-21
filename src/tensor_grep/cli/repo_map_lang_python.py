@@ -14,10 +14,14 @@ from __future__ import annotations
 import ast
 import importlib
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tensor_grep.cli import lang_registry
+from tensor_grep.cli.repo_map_cache import (
+    _MTIME_CACHE_CLEAR_REGISTRY as _MTIME_CACHE_CLEAR_REGISTRY,
+)
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 from tensor_grep.core.python_parse import parse_python
@@ -937,20 +941,16 @@ def _python_sys_path_hack_roots(
     return tuple(validated)
 
 
-def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -> list[Path]:
-    """Plausible absolute-import search roots for a Python file.
-
-    Unlike JS/TS (tsconfig baseUrl/paths) or Rust (Cargo.toml workspace members), tensor-grep
-    has no primed "project context" for Python module resolution -- this is the net-new
-    resolution seam the #74 design flagged as the highest-risk part of `tg imports`. Tries, in
-    order: any directory the file itself adds via a statically-resolvable
-    `sys.path.insert`/`.append` call (#152 fix -- see `_python_sys_path_hack_roots`), the repo
-    root, a `src/` layout root, the importer's own directory, and each ancestor directory up to
-    the repo root (covers same-package absolute imports without a full `sys.path` simulation). A
-    bare specifier that is a local workspace package NOT reachable via one of these roots is
-    honestly misclassified as external -- see the module docstring risk note; recall gaps here
-    are disclosed via ``external``/``unresolved``, never silently hidden.
-    """
+@lru_cache(maxsize=4096)
+def _cached_python_candidate_roots(
+    importer_str: str,
+    mtime_key: Any,
+    parent_mtime_key: Any,
+    repo_root_str: str | None,
+) -> tuple[Path, ...]:
+    _ = (mtime_key, parent_mtime_key)
+    importer_path = Path(importer_str)
+    repo_root: Path | str | None = repo_root_str
     roots: list[Path] = []
     seen: set[str] = set()
 
@@ -991,7 +991,34 @@ def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -
             break
         package_top = parent
     _add(package_top)
-    return roots
+    return tuple(roots)
+
+
+_MTIME_CACHE_CLEAR_REGISTRY.append(_cached_python_candidate_roots.cache_clear)
+
+
+def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -> list[Path]:
+    """Plausible absolute-import search roots for a Python file.
+
+    Unlike JS/TS (tsconfig baseUrl/paths) or Rust (Cargo.toml workspace members), tensor-grep
+    has no primed "project context" for Python module resolution -- this is the net-new
+    resolution seam the #74 design flagged as the highest-risk part of `tg imports`. Tries, in
+    order: any directory the file itself adds via a statically-resolvable
+    `sys.path.insert`/`.append` call (#152 fix -- see `_python_sys_path_hack_roots`), the repo
+    root, a `src/` layout root, the importer's own directory, and each ancestor directory up to
+    the repo root (covers same-package absolute imports without a full `sys.path` simulation). A
+    bare specifier that is a local workspace package NOT reachable via one of these roots is
+    honestly misclassified as external -- see the module docstring risk note; recall gaps here
+    are disclosed via ``external``/``unresolved``, never silently hidden.
+    """
+    return list(
+        _cached_python_candidate_roots(
+            str(importer_path),
+            _self._mtime_key(str(importer_path)),
+            _self._mtime_key(str(importer_path.parent)),
+            str(repo_root) if repo_root is not None else None,
+        )
+    )
 
 
 def _python_module_candidates(

@@ -37,7 +37,7 @@ def detail_option() -> Any:
         "standard",
         "--detail",
         callback=validate_detail_tier,
-        help="Output detail level: compact, standard, or full.",
+        help="JSON output detail level: compact, standard, or full (JSON mode only).",
     )
 
 

@@ -40,6 +40,7 @@ from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
+from tensor_grep.cli.detail_tier import apply_detail_tier as _apply_detail_tier
 from tensor_grep.cli.detail_tier import detail_option as _detail_option
 from tensor_grep.cli.detail_tier import dump_detail_json as _dump_detail_json
 from tensor_grep.cli.formatters.base import OutputFormatter
@@ -5906,7 +5907,11 @@ def agent(
 
     # Emit the full capsule before applying the scan-truncation exit contract.
     if citations:
-        _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
+        _citations.emit_payload_citations(
+            _apply_detail_tier(payload, detail) if json_output else payload,
+            resolved_path,
+            json_output=json_output,
+        )
     elif json_output:
         typer.echo(_dump_detail_json(payload, detail, ensure_ascii=False))
     else:
