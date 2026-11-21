@@ -898,7 +898,13 @@ def test_doctor_tg_candidate_version_sanitizes_sidecar_python_env(
     monkeypatch.setattr(doctor_report, "capture_probe", _fake_capture)
 
     assert cli_main._doctor_tg_candidate_version(candidate) == "2.12.0"
-    assert seen["command"] == [str(candidate), "--version"]
+    if sys.platform == "win32":
+        assert seen["command"] == [str(candidate), "--version"]
+    else:
+        assert isinstance(seen["command"], list)
+        assert seen["command"][1:] == ["--version"]
+        assert str(seen["command"][0]).startswith(("/proc/self/fd/", "/dev/fd/"))
+        assert "pass_fds" in seen
     assert seen["timeout_seconds"] == 2
     assert seen["require_success"] is True
     env = seen["env"]

@@ -102,6 +102,9 @@ def _open_regular_nontraversing(path: Path, *, share_read_only: bool = False) ->
         get_final_path = kernel32.GetFinalPathNameByHandleW
         get_final_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
         get_final_path.restype = wintypes.DWORD
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
 
         invalid_handle = ctypes.c_void_p(-1).value
         generic_read = 0x80000000
@@ -140,7 +143,7 @@ def _open_regular_nontraversing(path: Path, *, share_read_only: bool = False) ->
             return fd
         finally:
             if handle is not None:
-                kernel32.CloseHandle(handle)
+                close_handle(handle)
 
     try:
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
@@ -479,14 +482,17 @@ def verified_probe_target(
             yield None
             return
         expected_id = _file_identity(opened_stat)
-        launch_arg = str(resolved)
-        pass_fds: tuple[int, ...] = ()
-        if sys.platform.startswith("linux"):
-            proc_fd = f"/proc/self/fd/{fd}"
-            if os.path.exists(proc_fd):
-                os.set_inheritable(fd, True)
-                launch_arg = proc_fd
-                pass_fds = (fd,)
+        if sys.platform == "win32":
+            launch_arg = str(resolved)
+            pass_fds: tuple[int, ...] = ()
+        else:
+            fd_path = f"/proc/self/fd/{fd}" if sys.platform.startswith("linux") else f"/dev/fd/{fd}"
+            if not os.path.exists(fd_path):
+                yield None
+                return
+            os.set_inheritable(fd, True)
+            launch_arg = fd_path
+            pass_fds = (fd,)
 
         def _unchanged() -> bool:
             try:

@@ -843,9 +843,12 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
         probe_candidate, launch_arg, pass_fds, verify_unchanged = leased
         probe_kwargs: dict[str, Any] = {"env": env, "require_success": True}
         sig_params = inspect.signature(capture_probe).parameters
-        if "cwd" in sig_params:
+        accepts_kwargs = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig_params.values()
+        )
+        if accepts_kwargs or "cwd" in sig_params:
             probe_kwargs["cwd"] = str(probe_candidate.parent)
-        if pass_fds and "pass_fds" in sig_params:
+        if pass_fds and (accepts_kwargs or "pass_fds" in sig_params):
             probe_kwargs["pass_fds"] = pass_fds
         try:
             stdout_bytes, _stderr_bytes = capture_probe(

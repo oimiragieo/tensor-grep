@@ -254,10 +254,12 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
     assert doctor_report._doctor_tg_candidate_version(managed) is None
     assert capture_calls == 1
-    # Positive control: once the lease is released, both leaf and ancestor renames succeed.
+    # Positive control: once the lease is released, both ancestor and leaf renames succeed.
     renamed_bin = _target.parent.with_name("bin-released")
     _target.parent.rename(renamed_bin)
-    assert (renamed_bin / "tg.exe").exists()
+    released_leaf = renamed_bin / "tg-released.exe"
+    (renamed_bin / "tg.exe").rename(released_leaf)
+    assert released_leaf.exists()
 
 
 def test_doctor_candidate_version_uses_contained_bounded_probe(
