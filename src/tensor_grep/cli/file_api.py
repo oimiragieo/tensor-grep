@@ -27,7 +27,7 @@ from tensor_grep.cli.lang_registry import read_source_text, split_source_lines
 _MAX_SIGNATURE_LINES = 8
 
 # Characters that end a declaration and open a body across the parser-backed languages.
-_DECLARATION_TERMINATORS = (":", "{", "=>", ";")
+_DECLARATION_TERMINATORS = (":", "{", "}", "=>", ";")
 
 
 def _read_lines(path: Path) -> list[str] | None:

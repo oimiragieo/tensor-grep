@@ -652,12 +652,27 @@ def _js_ts_dynamic_import_hit(line: str) -> tuple[str, bool] | None:
     return None
 
 
+_JS_TS_SYMBOL_KIND_BY_NODE_TYPE: dict[str, str] = {
+    "function_declaration": "function",
+    "class_declaration": "class",
+    "method_definition": "method",
+    "interface_declaration": "interface",
+    "type_alias_declaration": "type",
+    "enum_declaration": "enum",
+}
+
+
 def _js_ts_symbol_name_node(node: Any) -> Any | None:
     name_node = node.child_by_field_name("name")
     if name_node is not None:
         return name_node
     for child in node.children:
-        if child.type in {"identifier", "property_identifier", "private_property_identifier"}:
+        if child.type in {
+            "identifier",
+            "type_identifier",
+            "property_identifier",
+            "private_property_identifier",
+        }:
             return child
     return None
 
@@ -675,14 +690,9 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
     def _node_text(node: Any) -> str:
         return _self._tree_sitter_node_text(source_bytes, node)
 
-    kind_by_node_type = {
-        "function_declaration": "function",
-        "class_declaration": "class",
-        "method_definition": "method",
-    }
-
     def _walk(node: Any) -> None:
-        if node.type in kind_by_node_type:
+        kind = _JS_TS_SYMBOL_KIND_BY_NODE_TYPE.get(node.type)
+        if kind is not None:
             name_node = _js_ts_symbol_name_node(node)
             if name_node is not None:
                 name = _node_text(name_node)
@@ -690,7 +700,7 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
                     symbols.append(
                         _self._symbol_record(
                             name=name,
-                            kind=kind_by_node_type[node.type],
+                            kind=kind,
                             file=path,
                             start_line=node.start_point[0] + 1,
                             end_line=node.end_point[0] + 1,
@@ -1073,14 +1083,9 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
     def _node_text(node: Any) -> str:
         return _self._tree_sitter_node_text(source_bytes, node)
 
-    kind_by_node_type = {
-        "function_declaration": "function",
-        "class_declaration": "class",
-        "method_definition": "method",
-    }
-
     def _walk(node: Any) -> None:
-        if node.type in kind_by_node_type:
+        kind = _JS_TS_SYMBOL_KIND_BY_NODE_TYPE.get(node.type)
+        if kind is not None:
             name_node = _js_ts_symbol_name_node(node)
             if name_node is not None and _node_text(name_node) == symbol:
                 block = _node_text(node)
@@ -1088,7 +1093,7 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
                     block = f"{block}\n"
                 sources.append({
                     "name": symbol,
-                    "kind": kind_by_node_type[node.type],
+                    "kind": kind,
                     "file": str(path),
                     "start_line": node.start_point[0] + 1,
                     "end_line": node.end_point[0] + 1,

@@ -878,9 +878,9 @@ def test_session_edit_plan_uses_cached_validation_evidence_after_open(
     assert payload["routing_reason"] == "session-context-edit-plan"
     assert payload["files"] == [str(module_path.resolve())]
     assert payload["validation_commands"] == [
-        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_payments.py -k test_create_invoice -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
 
 

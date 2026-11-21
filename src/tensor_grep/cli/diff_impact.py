@@ -714,7 +714,7 @@ def extract_diff_hunks_from_git(
         raise DiffError("git_diff_failed", str(exc)) from exc
 
     if proc.returncode != 0:
-        raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
+        raise DiffError("git_diff_failed", decode_diagnostic_output(proc.stderr).strip()[:500])
 
     raw = proc.stdout or b""
     output = raw if isinstance(raw, str) else raw.decode("utf-8", errors="surrogateescape")
@@ -1405,6 +1405,17 @@ def diff_impact_command(
         staged=staged,
         deadline_seconds=deadline,
     )
+    if ref is not None and payload.get("error"):
+        try:
+            is_dir_ref = Path(ref).exists() and Path(ref).is_dir()
+        except OSError:
+            is_dir_ref = False
+        if is_dir_ref:
+            payload["error"] = (
+                f"{payload['error']} "
+                f"(hint: {ref!r} is a directory path, not a git revision; "
+                "pass a git ref such as HEAD~1 or a branch name)"
+            )
 
     breached = False
     if (

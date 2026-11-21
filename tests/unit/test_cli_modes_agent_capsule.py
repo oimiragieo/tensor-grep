@@ -1556,7 +1556,7 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
     assert payload["primary_target"]["file"] == str(paths["python"].resolve())
     assert payload["primary_target"]["symbol"] == "create_invoice"
     assert any(
-        command.startswith("uv run pytest tests/test_payments.py")
+        command.startswith("pytest tests/test_payments.py")
         for command in payload["validation_commands"]
     )
     assert payload["ask_user_before_editing"]["required"] is False
@@ -1564,7 +1564,7 @@ def test_agent_capsule_change_invoice_tax_query_prefers_python_body_and_tests(tm
     assert ambiguity["status"] == "tie_resolved"
     assert ambiguity["resolved_by"] == "targeted-validation"
     assert any(
-        command.startswith("uv run pytest tests/test_payments.py")
+        command.startswith("pytest tests/test_payments.py")
         for command in ambiguity["resolution_evidence"]
     )
     assert ambiguity["requires_confirmation"] is False

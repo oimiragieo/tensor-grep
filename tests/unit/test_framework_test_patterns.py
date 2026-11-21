@@ -73,9 +73,9 @@ def test_context_render_associates_pytest_parametrize_tests_via_framework_patter
 
     assert payload["edit_plan_seed"]["validation_tests"] == [str(test_path.resolve())]
     assert payload["edit_plan_seed"]["validation_commands"] == [
-        "uv run pytest tests/test_cases.py -k test_create_invoice -q",
-        "uv run pytest tests/test_cases.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_cases.py -k test_create_invoice -q",
+        "pytest tests/test_cases.py -q",
+        "pytest -q",
     ]
     assert payload["test_matches"][0]["path"] == str(test_path.resolve())
     assert payload["test_matches"][0]["association"]["edge_kind"] == "framework-pattern"

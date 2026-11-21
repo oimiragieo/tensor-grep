@@ -378,7 +378,7 @@ def test_validation_plan_does_not_suggest_npm_without_package_json(
 
     assert all("npm test" not in command for command in commands)
     assert all("npx " not in command for command in commands)
-    assert any(command.startswith("uv run pytest") for command in commands)
+    assert any(command.startswith("pytest") for command in commands)
     assert {step["detection"] for step in validation_plan} <= {
         "detected",
         "heuristic",

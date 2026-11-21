@@ -20,5 +20,9 @@ class CsvFormatter(OutputFormatter):
         writer = csv.writer(output)
         writer.writerow(["file", "line_number", "text"])
         for match in result.matches:
-            writer.writerow([_safe_cell(match.file), match.line_number, _safe_cell(match.text)])
+            writer.writerow([
+                _safe_cell(match.file),
+                match.line_number,
+                _safe_cell(match.text.rstrip("\r\n")),
+            ])
         return output.getvalue().strip()

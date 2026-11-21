@@ -476,9 +476,9 @@ def test_existing_fields_remain_unchanged(tmp_path: Path, renderer: Renderer) ->
     assert seed["primary_test"] == str(paths["test"].resolve())
     assert seed["validation_tests"] == [str(paths["test"].resolve())]
     assert seed["validation_commands"] == [
-        "uv run pytest tests/test_payments.py -k test_create_invoice -q",
-        "uv run pytest tests/test_payments.py -q",
-        "uv run pytest -q",
+        "pytest tests/test_payments.py -k test_create_invoice -q",
+        "pytest tests/test_payments.py -q",
+        "pytest -q",
     ]
 
 

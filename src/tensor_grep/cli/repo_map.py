@@ -7034,7 +7034,7 @@ def _primary_language_fallback_validation_steps(
         )
         if detected.python_detection == "detected":
             steps.append({
-                "command": "uv run pytest -q",
+                "command": "uv run pytest -q" if _inert.repo_uses_uv(root) else "pytest -q",
                 "scope": "repo",
                 "runner": "pytest",
                 "confidence": 0.55,
@@ -7372,6 +7372,7 @@ def _raw_validation_plan_for_tests(
     requested_javascript_runners: list[str] = []
     include_python_fallback = False
     include_rust_fallback = False
+    uv_prefix: tuple[str, ...] = ("uv", "run") if _inert.repo_uses_uv(root) else ()
 
     def remember_runner(runner: str) -> None:
         if runner not in requested_javascript_runners:
@@ -7424,8 +7425,7 @@ def _raw_validation_plan_for_tests(
                 if test_filter:
                     add_step(
                         _inert.render_command(
-                            "uv",
-                            "run",
+                            *uv_prefix,
                             "pytest",
                             _inert.Derived(relative_path),
                             "-k",
@@ -7439,7 +7439,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
             add_step(
-                _inert.render_command("uv", "run", "pytest", _inert.Derived(relative_path), "-q"),
+                _inert.render_command(*uv_prefix, "pytest", _inert.Derived(relative_path), "-q"),
                 scope="file",
                 runner="pytest",
                 target=relative_path,
@@ -7592,7 +7592,7 @@ def _raw_validation_plan_for_tests(
 
     if include_python_fallback:
         add_step(
-            "uv run pytest -q",
+            "uv run pytest -q" if uv_prefix else "pytest -q",
             scope="repo",
             runner="pytest",
             confidence=0.55,
