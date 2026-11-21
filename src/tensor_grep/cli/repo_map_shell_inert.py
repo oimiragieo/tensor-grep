@@ -33,13 +33,18 @@ MANUAL_QUOTING_NOTE = "path requires manual quoting"
 
 def repo_uses_uv(root: Path) -> bool:
     """Return True when *root* declares uv usage via ``uv.lock`` or ``[tool.uv]``."""
-    if (root / "uv.lock").is_file():
+    from tensor_grep.cli.repo_map_input_provenance import (
+        is_file_with_receipt,
+        read_text_with_receipt,
+    )
+
+    if is_file_with_receipt(root / "uv.lock"):
         return True
     pyproject = root / "pyproject.toml"
-    if not pyproject.is_file():
+    if not is_file_with_receipt(pyproject):
         return False
     try:
-        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        data = tomllib.loads(read_text_with_receipt(pyproject))
     except (OSError, UnicodeDecodeError, ValueError):
         return False
     tool = data.get("tool")

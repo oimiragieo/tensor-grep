@@ -589,7 +589,7 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() != ".py":
         return []
     try:
-        file_size = path.stat().st_size
+        file_size = _self._file_size_with_receipt(path)
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -886,7 +886,7 @@ def _python_sys_path_hack_dirs(path_str: str) -> tuple[str, ...]:
     resolve to the same absolute dirs regardless of which root the caller is scanning from.
     """
     try:
-        file_size = Path(path_str).stat().st_size
+        file_size = _self._file_size_with_receipt(Path(path_str))
     except OSError:
         file_size = 0
     if file_size > _self._max_parse_bytes():
@@ -936,19 +936,17 @@ def _python_sys_path_hack_roots(
     validated: list[Path] = []
     for hacked_dir in _python_sys_path_hack_dirs(str(importer_path)):
         candidate_dir = Path(hacked_dir)
-        if candidate_dir.is_dir() and _self._path_is_relative_to(candidate_dir, normalized_root):
+        if _self._is_dir_with_receipt(candidate_dir) and _self._path_is_relative_to(
+            candidate_dir, normalized_root
+        ):
             validated.append(candidate_dir)
     return tuple(validated)
 
 
-@lru_cache(maxsize=4096)
-def _cached_python_candidate_roots(
+def _compute_python_candidate_roots(
     importer_str: str,
-    mtime_key: Any,
-    parent_mtime_key: Any,
     repo_root_str: str | None,
 ) -> tuple[Path, ...]:
-    _ = (mtime_key, parent_mtime_key)
     importer_path = Path(importer_str)
     repo_root: Path | str | None = repo_root_str
     roots: list[Path] = []
@@ -985,13 +983,24 @@ def _cached_python_candidate_roots(
     # written inside `pkg/main.py` resolves relative to pkg's PARENT, not pkg itself). This
     # covers the common case where no project-root marker file exists at all.
     package_top = importer_path.parent
-    while (package_top / "__init__.py").exists():
+    while _self._is_file_with_receipt(package_top / "__init__.py"):
         parent = package_top.parent
         if parent == package_top:
             break
         package_top = parent
     _add(package_top)
     return tuple(roots)
+
+
+@lru_cache(maxsize=4096)
+def _cached_python_candidate_roots(
+    importer_str: str,
+    mtime_key: Any,
+    parent_mtime_key: Any,
+    repo_root_str: str | None,
+) -> tuple[Path, ...]:
+    _ = (mtime_key, parent_mtime_key)
+    return _compute_python_candidate_roots(importer_str, repo_root_str)
 
 
 _MTIME_CACHE_CLEAR_REGISTRY.append(_cached_python_candidate_roots.cache_clear)
@@ -1011,12 +1020,17 @@ def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -
     honestly misclassified as external -- see the module docstring risk note; recall gaps here
     are disclosed via ``external``/``unresolved``, never silently hidden.
     """
+    from tensor_grep.cli.symbols_cache import content_receipts_active
+
+    repo_root_str = str(repo_root) if repo_root is not None else None
+    if content_receipts_active():
+        return list(_compute_python_candidate_roots(str(importer_path), repo_root_str))
     return list(
         _cached_python_candidate_roots(
             str(importer_path),
             _self._mtime_key(str(importer_path)),
             _self._mtime_key(str(importer_path.parent)),
-            str(repo_root) if repo_root is not None else None,
+            repo_root_str,
         )
     )
 
@@ -1073,7 +1087,9 @@ def _python_module_candidates(
         shadowed = False
         for root in _python_candidate_roots(importer_path, repo_root):
             try:
-                if (root / f"{name}.py").is_file() or (root / name).is_dir():
+                if _self._is_file_with_receipt(root / f"{name}.py") or _self._is_dir_with_receipt(
+                    root / name
+                ):
                     shadowed = True
                     break
             except OSError:

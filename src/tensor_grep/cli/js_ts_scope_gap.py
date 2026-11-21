@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli.lang_suffixes import JS_TS_SUFFIXES
+from tensor_grep.cli.repo_map_input_provenance import is_file_with_receipt
 
 _JS_TS_SUFFIXES = set(JS_TS_SUFFIXES)
 _TSCONFIG = "tsconfig.json"
@@ -104,7 +105,7 @@ def js_ts_scope_gap(
             deadline_hit.hit = True
         return None
     try:
-        if (scope / _TSCONFIG).is_file():
+        if is_file_with_receipt(scope / _TSCONFIG, raise_on_error=True):
             return None  # correctly scoped; aliases resolve
     except OSError as exc:
         # A probe that cannot READ is UNRESOLVED, never "no gap". Collapsing an OSError to
@@ -123,7 +124,7 @@ def js_ts_scope_gap(
             break
         ancestor = parent
         try:
-            if (ancestor / _TSCONFIG).is_file():
+            if is_file_with_receipt(ancestor / _TSCONFIG, raise_on_error=True):
                 break
         except OSError as exc:
             return _unresolved_gap(js_ts_files, scope, exc)
@@ -131,7 +132,7 @@ def js_ts_scope_gap(
         return None
 
     try:
-        if not (ancestor / _TSCONFIG).is_file():
+        if not is_file_with_receipt(ancestor / _TSCONFIG, raise_on_error=True):
             return None
     except OSError as exc:
         return _unresolved_gap(js_ts_files, scope, exc)

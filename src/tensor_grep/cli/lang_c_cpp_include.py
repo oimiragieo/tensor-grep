@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tensor_grep.cli.repo_map_input_provenance import is_file_with_receipt, resolved_input_path
+
 _INCLUDE_RE = re.compile(
     r'^[ \t]*#[ \t]*include[ \t]*(?:"([^"]+)"|<([^>]+)>)',
     re.MULTILINE,
@@ -184,8 +186,8 @@ def resolve_include_target(
         return None
 
     try:
-        importer = importer_path.expanduser().resolve()
-        root = Path(repo_root).expanduser().resolve() if repo_root is not None else None
+        importer = resolved_input_path(importer_path)
+        root = resolved_input_path(repo_root) if repo_root is not None else None
     except OSError:
         return None
 
@@ -197,19 +199,19 @@ def resolve_include_target(
     seen: set[Path] = set()
     for base in search:
         try:
-            base_resolved = base.resolve()
+            base_resolved = resolved_input_path(base)
         except OSError:
             continue
         if base_resolved in seen:
             continue
         seen.add(base_resolved)
-        candidate = (base_resolved / target).resolve()
+        candidate = resolved_input_path(base_resolved / target)
         if root is not None:
             try:
                 candidate.relative_to(root)
             except ValueError:
                 continue
-        if candidate.is_file():
+        if is_file_with_receipt(candidate):
             return candidate
     return None
 
@@ -231,16 +233,16 @@ def file_includes_definition(
 ) -> bool:
     """True iff *importer_path*'s includes resolve to *definition_path* (or its header sibling)."""
     try:
-        definition = Path(definition_path).expanduser().resolve()
-        importer = importer_path.expanduser().resolve()
+        definition = resolved_input_path(definition_path)
+        importer = resolved_input_path(importer_path)
     except OSError:
         return False
 
     acceptable: set[Path] = {definition}
     for sibling in definition_header_siblings(definition):
         try:
-            if sibling.is_file():
-                acceptable.add(sibling.resolve())
+            if is_file_with_receipt(sibling):
+                acceptable.add(resolved_input_path(sibling))
         except OSError:
             continue
 
@@ -268,7 +270,7 @@ def include_resolves_into_definition_dirs(
     if not definition_dirs:
         return False
     try:
-        resolved_dirs = {Path(directory).expanduser().resolve() for directory in definition_dirs}
+        resolved_dirs = {resolved_input_path(directory) for directory in definition_dirs}
     except OSError:
         return False
 

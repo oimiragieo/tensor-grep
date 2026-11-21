@@ -167,7 +167,7 @@ def _candidate_evidence(
     if _expired(owner, deadline_monotonic, deadline_hit):
         return {"status": "uncertain", "reason": "deadline", "raw": []}
     try:
-        if path.stat().st_size > owner._max_parse_bytes():
+        if owner._file_size_with_receipt(path) > owner._max_parse_bytes():
             return {"status": "uncertain", "reason": "over-cap", "raw": []}
         if _expired(owner, deadline_monotonic, deadline_hit):
             return {"status": "uncertain", "reason": "deadline", "raw": []}
@@ -370,7 +370,7 @@ def reverse_import_distances(
             if repo_root is not None
             else owner._infer_project_root(Path(seed_files[0]) if seed_files else Path.cwd())
         )
-        root = root.expanduser().resolve()
+        root = owner._resolved_input_path(root)
         reverse = owner._reverse_importers(
             all_files,
             imports_by_file,
@@ -556,7 +556,10 @@ def uncertainty_gaps(
         )
         try:
             sample = (
-                path.resolve().relative_to(repo_root.resolve()).as_posix()
+                owner
+                ._resolved_input_path(path)
+                .relative_to(owner._resolved_input_path(repo_root))
+                .as_posix()
                 if repo_root
                 else path.as_posix()
             )

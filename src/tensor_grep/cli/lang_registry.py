@@ -206,15 +206,22 @@ def read_source_text(path: Path) -> str:
 
     One read with utf-8-sig + errors="replace" (a two-step fallback to plain utf-8 kept the BOM
     as U+FEFF when the file also had an invalid byte)."""
+    from tensor_grep.cli.symbols_cache import (
+        read_content_bytes,
+        record_content_receipt_digest,
+    )
+
     snapshot = _SOURCE_SNAPSHOT.get()
     if snapshot is not None and snapshot[0] == str(path):
+        record_content_receipt_digest(path, snapshot[2])
         return (
             snapshot[1]
             .decode("utf-8-sig", errors="replace")
             .replace("\r\n", "\n")
             .replace("\r", "\n")
         )
-    return Path(path).read_text(encoding="utf-8-sig", errors="replace")
+    content = read_content_bytes(path)
+    return content.decode("utf-8-sig", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
 
 def split_source_lines(text: str) -> list[str]:
