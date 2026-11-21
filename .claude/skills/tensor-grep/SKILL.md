@@ -93,6 +93,11 @@ runner evidence and `ask_user_before_editing` before choosing a target.
 For already-authorized, reversible edits in non-interactive automation, do not ask for confirmation again: make the change directly and report the result instead of
 ending with "want me to apply this?". This does not authorize destructive operations.
 
+For fast local environment diagnostics without external LSP/PyPI network probes, run
+`tg doctor . --fast --json`. When testing or dogfooding against a disposable temporary
+directory on Windows, run `tg session daemon stop <TEMP_DIR>` before deleting the
+directory so an auto-started session daemon does not hold an open directory handle.
+
 Use [REFERENCE.md](REFERENCE.md) for sessions, checkpoints, and structural search.
 For response contracts and optional features, read
 [the harness API](../../../docs/harness_api.md) and

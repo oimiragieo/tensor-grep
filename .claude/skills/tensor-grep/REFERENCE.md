@@ -9,13 +9,14 @@ assume the command is available from your installation.
 tg search -F -n 'ERROR' REPO_PATH
 tg search 'pattern' REPO_PATH --rank --json
 tg source REPO_PATH SYMBOL
-tg defs REPO_PATH SYMBOL --json
+tg defs REPO_PATH SYMBOL --json --detail compact
 tg refs REPO_PATH SYMBOL --json
-tg callers REPO_PATH SYMBOL --json
+tg callers REPO_PATH SYMBOL --json --detail compact
 tg blast-radius REPO_PATH SYMBOL --json
 tg orient REPO_PATH --json
 tg prepare REPO_PATH 'task description' --json
 tg file-api REPO_PATH/src/example.py --json
+tg doctor REPO_PATH --fast --json
 tg find 'task description' REPO_PATH --why-ranked --json
 ```
 

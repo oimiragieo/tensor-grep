@@ -97,10 +97,10 @@ If `tg` is not found, open a new terminal so it reads updated `PATH` settings. O
 ```powershell
 where.exe tg
 Get-Command tg -All
-tg doctor --json
+tg doctor --fast --json
 ```
 
-If more than one launcher appears, the first one on `PATH` wins. Follow the install script's diagnostics before removing old launchers.
+`--fast` skips slow external LSP and PyPI network probes so local diagnostics return quickly. If more than one launcher appears, the first one on `PATH` wins. Follow the install script's diagnostics before removing old launchers. If `tg doctor` reports `installation_health: "managed_launcher_broken"` or `tg --version` reports `selector ACL is untrusted`, inspect the named `runtime-selection.json` path and owner/ACL details in the error message, then reset inherited/foreign write ACEs or reinstall the managed launcher.
 
 For a source checkout, `tg doctor PATH --json` inspects that checkout's `.venv` metadata without executing its interpreter. A `stale_editable` diagnosis includes the refresh command `uv run --refresh-package tensor-grep tg --version`; run it from that checkout, then use its environment interpreter for checkout scripts. Unrelated or ambiguous environments are reported separately.
 

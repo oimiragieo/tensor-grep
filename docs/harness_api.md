@@ -195,12 +195,13 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 
 ## Doctor JSON
 
-Emitted by `tg.exe doctor --json` and intended for operational automation.
+Emitted by `tg.exe doctor --json` (or `tg.exe doctor --fast --json` to skip external LSP and PyPI network probes) and intended for operational automation.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `schema_version` | `integer` | Doctor JSON schema version. Current value: `2`. |
+| `schema_version` | `integer` | Doctor JSON schema version. Current value: `3`. |
 | `doctor_schema_version` | `integer` | Alias for the doctor schema version for consumers that avoid generic `schema_version` names. |
+| `installation_health` | `string` | Aggregate launcher/install state (`ok`, `foreign_launcher`, `managed_launcher_broken`, `launcher_version_mismatch`, `stale_install`, `unknown_pypi`, `unverifiable_version`). |
 | `lsp` | `object` | LSP diagnostic envelope. Present even when LSP probing is disabled. |
 | `lsp.schema_version` | `integer` | LSP diagnostic sub-schema version. Current value: `2`. |
 | `lsp.providers` | `array<object>` | Provider status rows in deterministic provider order. |

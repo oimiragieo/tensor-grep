@@ -122,8 +122,11 @@ tg run -p 'print($VALUE)' --lang python ./src
 | Find text in a file tree | `tg search` | Matching lines, paths, and optional line numbers |
 | Find a code shape | `tg run` | Structural matches using a supported language parser |
 | Get a quick map of likely central files | `tg orient ./src --max-tokens 1000 --json` | A bounded orientation result; its ranking is a heuristic |
+| Inspect one file's public signatures | `tg file-api ./src/invoice.py --json` | Function, class, and TypeScript `interface`/`type`/`enum` signatures without reading file bodies |
+| Follow a symbol or its callers | `tg callers ./src invoice_total --json --detail compact` | Call sites and affected tests; `--detail compact` omits verbose diagnostics while keeping completeness flags |
 | Gather files relevant to a task | `tg context ./src 'calculate an invoice total' --max-tokens 1000 --json` | A bounded context result based on local project data |
 | Prepare an edit investigation | `tg prepare ./src 'add invoice tax field' --json` | Suggested target and supporting context for review, not approval to edit |
+| Check your local installation | `tg doctor . --fast --json` | Fast launcher, backend, and environment health report without slow network or LSP probes |
 
 **JSON** is a text format for structured data. The `--json` options make results easier for programs to read; a person can still inspect them. A **context capsule** is a bounded package of selected files and metadata for a task. Limits such as `--max-tokens` constrain output size, not correctness. Caller and impact reports may be partial when a scan reaches its configured bounds; inspect their completeness fields before treating missing results as proof.
 
