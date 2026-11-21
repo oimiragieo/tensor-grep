@@ -907,3 +907,24 @@ def test_require_authenticated_prepare_inputs_rejects_absent_receipt_when_file_e
             {content_receipt_key(uv_lock): CONTENT_ABSENT_RECEIPT},
             snapshot_complete=True,
         )
+
+
+def test_detect_validation_runners_bypasses_lru_cache_when_receipts_active(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli import repo_map
+    from tensor_grep.cli.symbols_cache import collect_content_receipts
+
+    repo_map._detect_validation_runners.cache_clear()
+    (tmp_path / "app.js").write_text("export const x = 1;\n", encoding="utf-8")
+    pkg = tmp_path / "package.json"
+    pkg.write_text('{"scripts": {"test": "vitest run"}}\n', encoding="utf-8")
+
+    with collect_content_receipts():
+        first = repo_map._detect_validation_runners(str(tmp_path))
+    assert first.js_test_script == "vitest run"
+
+    pkg.write_text('{"scripts": {"test": "jest"}}\n', encoding="utf-8")
+    with collect_content_receipts():
+        second = repo_map._detect_validation_runners(str(tmp_path))
+    assert second.js_test_script == "jest"

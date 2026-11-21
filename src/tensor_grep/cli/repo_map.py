@@ -6682,9 +6682,17 @@ def _detect_validation_runners_from_root(
 
 
 @lru_cache(maxsize=64)
+def _cached_detect_validation_runners(repo_root: str) -> _ValidationRunnerInfo:
+    return _detect_validation_runners_from_root(_validation_repo_root(repo_root))
+
+
 def _detect_validation_runners(repo_root: str) -> _ValidationRunnerInfo:
-    root = _validation_repo_root(repo_root)
-    return _detect_validation_runners_from_root(root)
+    if content_receipts_active():
+        return _detect_validation_runners_from_root(_validation_repo_root(repo_root))
+    return _cached_detect_validation_runners(repo_root)
+
+
+_detect_validation_runners.cache_clear = _cached_detect_validation_runners.cache_clear  # type: ignore[attr-defined]
 
 
 def _relative_validation_path(path: Path, repo_root: Path) -> str:
