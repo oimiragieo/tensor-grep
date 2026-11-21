@@ -352,7 +352,9 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
             yield None
             return
         lstat_before = resolved.lstat()
-        if getattr(lstat_before, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        if (
+            getattr(lstat_before, "st_file_attributes", 0) or 0
+        ) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             yield None
             return
         expected_id = _file_identity(opened_stat)
@@ -364,9 +366,8 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
             try:
                 current_lstat = resolved.lstat()
                 if (
-                    getattr(current_lstat, "st_file_attributes", 0)
-                    & stat.FILE_ATTRIBUTE_REPARSE_POINT
-                ):
+                    getattr(current_lstat, "st_file_attributes", 0) or 0
+                ) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
                     return False
                 if _file_identity(current_lstat) != expected_id:
                     return False
@@ -391,3 +392,26 @@ def verified_probe_target(target: Path) -> Iterator[Callable[[], bool] | None]:
                 ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(win_handle)
             except OSError:
                 pass
+
+
+@contextlib.contextmanager
+def verified_powershell_shim_probe(
+    candidate: Path,
+) -> Iterator[tuple[Path, Callable[[], bool]] | None]:
+    """Hold the target handle across shim authority verification and subprocess probe."""
+    initial_target = powershell_shim_target(candidate)
+    if initial_target is None:
+        yield None
+        return
+    with verified_probe_target(initial_target) as verify_unchanged:
+        if verify_unchanged is None:
+            yield None
+            return
+        reverified_target = powershell_shim_target(candidate)
+        if reverified_target is None or not _same_path(reverified_target, initial_target):
+            yield None
+            return
+        if not verify_unchanged():
+            yield None
+            return
+        yield (initial_target, verify_unchanged)

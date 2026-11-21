@@ -175,7 +175,13 @@ def test_doctor_rejects_invalid_managed_metadata_and_oversized_shim(
     assert doctor_report.powershell_shim_target(managed) is None
 
     metadata.write_text(valid_metadata, encoding="utf-8")
-    managed.write_bytes(b"#" * 4097)
+    valid_shim = managed.read_text(encoding="utf-8")
+    at_limit = valid_shim.encode("utf-8") + b"\n" * (4096 - len(valid_shim.encode("utf-8")))
+    assert len(at_limit) == 4096
+    managed.write_bytes(at_limit)
+    assert doctor_report.powershell_shim_target(managed) == _target
+
+    managed.write_bytes(at_limit + b"\n")
     assert doctor_report.powershell_shim_target(managed) is None
 
 
@@ -209,14 +215,16 @@ def test_doctor_rejects_out_of_root_shim_before_reading_and_preserves_ps1_suffix
         return original_resolve(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "resolve", fake_resolve)
+    spawn_calls: list[object] = []
     monkeypatch.setattr(
         doctor_report,
         "capture_probe",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not spawn")),
+        lambda *args, **kwargs: spawn_calls.append((args, kwargs)),
         raising=False,
     )
     candidates = doctor_report._doctor_path_tg_candidates(str(outside_dir))
     assert candidates == [{"path": str(target), "version": None}]
+    assert spawn_calls == []
 
 
 def test_doctor_candidate_version_rejects_target_swap_during_probe(
@@ -224,8 +232,11 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
 ) -> None:
     candidate = tmp_path / "tg.exe"
     candidate.write_bytes(b"original-binary")
+    capture_calls = 0
 
-    def swapping_capture(_argv, _timeout_seconds, *, env=None, require_success=False):
+    def swapping_capture(_argv, timeout_seconds, *, env=None, require_success=False):
+        nonlocal capture_calls
+        capture_calls += 1
         # Simulate a concurrent replacement if the OS allows it or via lstat metadata change.
         monkeypatch.setattr(
             Path,
@@ -236,6 +247,7 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
 
     monkeypatch.setattr(doctor_report, "capture_probe", swapping_capture, raising=False)
     assert doctor_report._doctor_tg_candidate_version(candidate) is None
+    assert capture_calls == 1
 
 
 def test_doctor_candidate_version_uses_contained_bounded_probe(

@@ -20,6 +20,7 @@ rewriting it to `_self.subprocess` would have newly exposed it to the patch.
 This module sits in the same directory as `main.py`, so the depth is unchanged by the move.
 """
 
+import contextlib
 import json
 import math
 import os
@@ -27,12 +28,13 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
-from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target
+from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target as powershell_shim_target
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
@@ -809,24 +811,34 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
-    from tensor_grep.cli.doctor_launcher_probe import verified_probe_target
+    from tensor_grep.cli.doctor_launcher_probe import (
+        verified_powershell_shim_probe,
+        verified_probe_target,
+    )
     from tensor_grep.cli.frontdoor_hops import probe_env
 
-    if candidate.suffix.lower() == ".ps1":
-        shim_target = powershell_shim_target(candidate)
-        if shim_target is None:
-            return None
-        probe_candidate = shim_target
-    else:
-        probe_candidate = candidate
     env = probe_env()
     if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
         return None
     for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
         env.pop(key, None)
-    with verified_probe_target(probe_candidate) as verify_unchanged:
-        if verify_unchanged is None:
+
+    @contextlib.contextmanager
+    def _lease() -> Iterator[tuple[Path, Callable[[], bool]] | None]:
+        if candidate.suffix.lower() == ".ps1":
+            with verified_powershell_shim_probe(candidate) as leased:
+                yield leased
+        else:
+            with verified_probe_target(candidate) as verify_unchanged:
+                if verify_unchanged is None:
+                    yield None
+                else:
+                    yield (candidate, verify_unchanged)
+
+    with _lease() as leased:
+        if leased is None:
             return None
+        probe_candidate, verify_unchanged = leased
         try:
             stdout_bytes, _stderr_bytes = capture_probe(
                 [str(probe_candidate), "--version"],
