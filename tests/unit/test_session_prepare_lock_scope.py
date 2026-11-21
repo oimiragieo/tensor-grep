@@ -873,3 +873,37 @@ def test_content_receipts_preserve_conflicts_and_merge_presence(tmp_path: Path) 
         assert read_content_bytes(source) == b"second\n"
 
     assert receipts[content_receipt_key(source)] == ""
+
+
+def test_read_content_bytes_rejects_oversized_authenticated_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import symbols_cache
+
+    target = tmp_path / "pyproject.toml"
+    target.write_bytes(b"a" * 1024)
+    key = symbols_cache.content_receipt_key(target)
+    monkeypatch.setattr(symbols_cache, "_MAX_AUTHENTICATED_INPUT_BYTES", 8)
+    with symbols_cache.collect_content_receipts(authenticated_sizes={key: 8}) as receipts:
+        with pytest.raises(OSError, match="exceeded 8 bytes"):
+            symbols_cache.read_content_bytes(target)
+    assert receipts[key] == ""
+
+
+def test_require_authenticated_prepare_inputs_rejects_absent_receipt_when_file_exists_on_disk(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.session_resume_service import (
+        SessionStaleError,
+        _require_authenticated_prepare_inputs,
+    )
+    from tensor_grep.cli.symbols_cache import CONTENT_ABSENT_RECEIPT, content_receipt_key
+
+    uv_lock = tmp_path / "uv.lock"
+    uv_lock.write_text("version = 1\n", encoding="utf-8")
+    with pytest.raises(SessionStaleError):
+        _require_authenticated_prepare_inputs(
+            [],
+            {content_receipt_key(uv_lock): CONTENT_ABSENT_RECEIPT},
+            snapshot_complete=True,
+        )

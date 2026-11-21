@@ -76,7 +76,16 @@ def _require_authenticated_prepare_inputs(
     invalid_receipt = False
     for path, digest in receipts.items():
         if digest == CONTENT_ABSENT_RECEIPT:
-            invalid_receipt = path in authenticated or not snapshot_complete
+            if path in authenticated or not snapshot_complete:
+                invalid_receipt = True
+            else:
+                try:
+                    Path(path).lstat()
+                    invalid_receipt = True
+                except (FileNotFoundError, NotADirectoryError):
+                    pass
+                except OSError:
+                    invalid_receipt = True
         elif digest == CONTENT_PRESENT_RECEIPT:
             invalid_receipt = path not in authenticated
         else:
@@ -201,6 +210,15 @@ def session_prepare(
     # that content CAS after a parent swap.
     with index_lock(_index_path(root)):
         _require_session_store_identity(root, session_path, initial_store_identity)
+        for absent_path, digest in build_receipts.items():
+            if digest == CONTENT_ABSENT_RECEIPT:
+                try:
+                    Path(absent_path).lstat()
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                raise SessionStaleError(
+                    "project contents changed while preparing; retry the prepare request"
+                )
         current_payload = get_session(session_id, path)
         _require_session_store_identity(root, session_path, initial_store_identity)
         if current_payload.get("session_provenance") != initial_provenance:

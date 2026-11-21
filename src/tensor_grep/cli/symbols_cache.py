@@ -165,11 +165,28 @@ def record_content_presence(path: str | Path) -> None:
     record_content_receipt_digest(path, CONTENT_PRESENT_RECEIPT)
 
 
+_MAX_AUTHENTICATED_INPUT_BYTES = 16 * 1024 * 1024
+
+
 def read_content_bytes(path: str | Path) -> bytes:
     """Read and receipt exact bytes, including a fail-closed missing-file observation."""
     source = Path(path)
     try:
-        content = source.read_bytes()
+        if content_receipts_active():
+            from tensor_grep.io.root_probe import open_regular_nontraversing_fd
+
+            fd = open_regular_nontraversing_fd(source)
+            if fd is None:
+                source.lstat()  # raises FileNotFoundError/NotADirectoryError if missing
+                raise OSError(f"untrusted or non-regular authenticated input: {source}")
+            with os.fdopen(fd, "rb") as handle:
+                content = handle.read(_MAX_AUTHENTICATED_INPUT_BYTES + 1)
+            if len(content) > _MAX_AUTHENTICATED_INPUT_BYTES:
+                raise OSError(
+                    f"authenticated input exceeded {_MAX_AUTHENTICATED_INPUT_BYTES} bytes: {source}"
+                )
+        else:
+            content = source.read_bytes()
     except (FileNotFoundError, NotADirectoryError):
         record_content_absence(source)
         raise
