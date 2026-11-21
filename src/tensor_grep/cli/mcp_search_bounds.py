@@ -247,12 +247,17 @@ def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
 def _cap_output_lines(lines: list[str]) -> list[str]:
     """Cumulative byte budget for the plain-text branches (UTF-8 bytes + 1 per newline); the
     first line that would cross it is dropped together with everything after, and an ASCII
-    notice is appended."""
+    notice is appended while preserving any trailing AST omission summary."""
     used = 0
     for index, line in enumerate(lines):
         used += len(line.encode("utf-8")) + 1
         if used > _MCP_MATCHES_MAX_BYTES:
-            return [*lines[:index], _MCP_OUTPUT_TRUNCATED_NOTICE]
+            capped = [*lines[:index], _MCP_OUTPUT_TRUNCATED_NOTICE]
+            for tail in lines[index:]:
+                if tail.startswith("\n... output truncated; omitted "):
+                    capped.append(tail)
+                    break
+            return capped
     return lines
 
 

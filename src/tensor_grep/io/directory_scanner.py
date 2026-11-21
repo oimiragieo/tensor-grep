@@ -1,5 +1,6 @@
 import fnmatch
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -114,15 +115,32 @@ class DirectoryScanner:
             return None
 
         gitignore = base_path / ".gitignore"
-        if not gitignore.is_file():
+        fd: int | None = None
+        try:
+            st_link = gitignore.lstat()
+            if not stat.S_ISREG(st_link.st_mode) or (
+                getattr(st_link, "st_file_attributes", 0) & 0x400
+            ):
+                return None
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd = os.open(str(gitignore), flags)
+            st_fd = os.fstat(fd)
+            if not stat.S_ISREG(st_fd.st_mode):
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                fd = None
+                raw = handle.read(self.gitignore_max_bytes + 1)
+        except OSError:
             return None
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
         import pathspec
 
-        # Byte-cap the read (Q15): request one extra byte so we can tell whether the file
-        # actually exceeded the cap without loading it whole.
-        with gitignore.open("rb") as handle:
-            raw = handle.read(self.gitignore_max_bytes + 1)
         if len(raw) > self.gitignore_max_bytes:
             raw = raw[: self.gitignore_max_bytes]
             self.gitignore_truncated = True

@@ -325,6 +325,7 @@ def tg_symbol_impact(
             payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
+        bounded_repo_files = min(max(1, int(max_repo_files)), 50_000)
         try:
             return _self._inject_mcp_contract_fields(
                 json.dumps(
@@ -332,7 +333,7 @@ def tg_symbol_impact(
                         symbol,
                         path,
                         semantic_provider=provider,
-                        max_repo_files=max_repo_files,
+                        max_repo_files=bounded_repo_files,
                         deadline_seconds=deadline,
                     ),
                     indent=2,

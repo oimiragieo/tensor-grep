@@ -466,3 +466,70 @@ def test_tg052_coverage_classifies_only_expected_path_errors_as_invalid_input(
         nested_payload = json.loads(mcp_server.tg_coverage(str(project)))
 
         assert nested_payload["error"]["code"] == "internal_error"
+
+
+def test_wave6_review_hardening_follow_policy_vendored_errors_table_cap_and_impact_ceiling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import mcp_search_bounds, mcp_server
+    from tensor_grep.cli.formatters.table_fmt import TableFormatter
+    from tensor_grep.core.result import MatchLine, SearchResult
+    from tensor_grep.io import root_probe
+
+    # 1. Explicit no_follow short-circuits before reading RIPGREP_CONFIG_PATH
+    missing_fifo_or_cfg = tmp_path / "unopened.rg"
+    monkeypatch.setenv("RIPGREP_CONFIG_PATH", str(missing_fifo_or_cfg))
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda self: (
+            (_ for _ in ()).throw(AssertionError("should not stat config"))
+            if self == missing_fifo_or_cfg
+            else os.lstat(self)
+        ),
+    )
+    assert root_probe.effective_rg_follow_policy(no_follow=True) is False
+    assert root_probe.effective_rg_follow_policy(follow=True) is True
+
+    # 2. Per-entry OSError on one vendored child does not hide a later vendored child
+    root = tmp_path / "repo"
+    (root / "build").mkdir(parents=True)
+    (root / "node_modules").mkdir(parents=True)
+    orig_lstat = Path.lstat
+
+    def flaky_lstat(self: Path):
+        if self.name == "build":
+            raise PermissionError("access denied")
+        return orig_lstat(self)
+
+    monkeypatch.setattr(Path, "lstat", flaky_lstat)
+    found = list(
+        root_probe.iter_top_level_vendored_dirs([str(root)], frozenset({"build", "node_modules"}))
+    )
+    assert "build" in found
+    assert "node_modules" in found
+
+    # 3. _cap_output_lines preserves trailing AST omission count
+    big_line = "x" * (mcp_search_bounds._MCP_MATCHES_MAX_BYTES + 100)
+    omission_line = "\n... output truncated; omitted 42 matches."
+    capped = mcp_search_bounds._cap_output_lines(["header", big_line, omission_line])
+    assert omission_line in capped
+
+    # 4. TableFormatter escapes CR and LF in filenames and text
+    table = TableFormatter().format(
+        SearchResult(matches=[MatchLine(file="a\nb\rc.py", line_number=3, text="x\ty\nz")])
+    )
+    assert len(table.splitlines()) == 2
+    assert r"a\nb\rc.py" in table
+    assert r"x\ty\nz" in table
+
+    # 5. tg_symbol_impact clamps absurd caller max_repo_files to 50_000
+    seen_limits: list[int] = []
+    monkeypatch.setenv("TG_MCP_ROOT", str(root))
+    monkeypatch.setattr(
+        mcp_server,
+        "build_symbol_impact",
+        lambda *_a, **kw: seen_limits.append(kw["max_repo_files"]) or {"ok": True},
+    )
+    mcp_server.tg_symbol_impact("sym", str(root), max_repo_files=9_999_999)
+    assert seen_limits == [50_000]

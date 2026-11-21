@@ -233,8 +233,9 @@ def _download(url: str, destination: Path) -> None:
                 destination.parent,
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
             )
-            staging_name = f".tg-download-{uuid4().hex}"
-            os.mkdir(staging_name, 0o700, dir_fd=parent_fd)
+            candidate_staging = f".tg-download-{uuid4().hex}"
+            os.mkdir(candidate_staging, 0o700, dir_fd=parent_fd)
+            staging_name = candidate_staging
             staging_fd = os.open(
                 staging_name,
                 os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),

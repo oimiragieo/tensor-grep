@@ -34,24 +34,42 @@ def _ripgrep_config_follow_policy() -> bool:
     if not config_path:
         return False
     follow = False
+    fd: int | None = None
     try:
-        with Path(config_path).open(encoding="utf-8") as handle:
-            for raw_line in handle:
-                argument = raw_line.strip()
-                if not argument or argument.startswith("#"):
-                    continue
-                if argument in {"-L", "--follow"}:
-                    follow = True
-                elif argument == "--no-follow":
-                    follow = False
-                elif argument.startswith("-") and not argument.startswith("--"):
-                    for option in argument[1:]:
-                        if option == "L":
-                            follow = True
-                        if option in _RG_SHORT_OPTIONS_WITH_VALUES:
-                            break
+        cfg = Path(config_path)
+        st_link = cfg.lstat()
+        if not stat.S_ISREG(st_link.st_mode) or (getattr(st_link, "st_file_attributes", 0) & 0x400):
+            return False
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        fd = os.open(str(cfg), flags)
+        st_fd = os.fstat(fd)
+        if not stat.S_ISREG(st_fd.st_mode):
+            return False
+        with os.fdopen(fd, "rb") as handle:
+            fd = None
+            raw = handle.read(1024 * 1024)
+        for raw_line in raw.decode("utf-8").splitlines():
+            argument = raw_line.strip()
+            if not argument or argument.startswith("#"):
+                continue
+            if argument in {"-L", "--follow"}:
+                follow = True
+            elif argument == "--no-follow":
+                follow = False
+            elif argument.startswith("-") and not argument.startswith("--"):
+                for option in argument[1:]:
+                    if option == "L":
+                        follow = True
+                    if option in _RG_SHORT_OPTIONS_WITH_VALUES:
+                        break
     except (OSError, UnicodeError):
         return False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     return follow
 
 
@@ -63,12 +81,11 @@ def effective_rg_follow_policy(
     The backend appends ``--follow`` and then ``--no-follow`` when both parsed flags are set, so
     ``no_follow`` deliberately wins here too.
     """
-    enabled = False if no_config else _ripgrep_config_follow_policy()
-    if follow:
-        enabled = True
     if no_follow:
-        enabled = False
-    return enabled
+        return False
+    if follow:
+        return True
+    return False if no_config else _ripgrep_config_follow_policy()
 
 
 def iter_top_level_vendored_dirs(
@@ -98,15 +115,17 @@ def iter_top_level_vendored_dirs(
             if not path.is_dir():
                 continue
             for child in path.iterdir():
-                child_info = child.lstat()
-                is_link = stat.S_ISLNK(child_info.st_mode) or bool(
-                    getattr(child_info, "st_file_attributes", 0) & 0x400
-                )
-                if (
-                    (follow_symlinks or not is_link)
-                    and child.is_dir()
-                    and child.name.lower() in lower_names
-                ):
+                if child.name.lower() not in lower_names:
+                    continue
+                try:
+                    child_info = child.lstat()
+                    is_link = stat.S_ISLNK(child_info.st_mode) or bool(
+                        getattr(child_info, "st_file_attributes", 0) & 0x400
+                    )
+                    if (follow_symlinks or not is_link) and child.is_dir():
+                        yield child.name
+                except OSError:
+                    # Conservatively report matching vendored names that fail classification.
                     yield child.name
         except OSError:
             continue
