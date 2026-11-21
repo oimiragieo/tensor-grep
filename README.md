@@ -62,7 +62,8 @@ packages are not published yet.
 | Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; optional word-based relevance ranking with `--rank` |
 | Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
 | Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
-| Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits |
+| Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits (`--detail compact` for compact JSON) |
+| Inspect environment health | `tg doctor --fast`, `tg file-api PATH` | Fast local/launcher diagnostics without slow network probes, and single-file API signatures |
 | Prepare a change | `tg context`, `tg agent`, `tg prepare` | Relevant code, possible edit targets, confidence information, and suggested validation commands |
 | Repeat a workflow | `tg search --index`, `tg session`, `tg checkpoint` | Native search indexes, reusable repository context, and scoped snapshots restored by ID |
 | Connect your tools | `tg mcp`, JSON/NDJSON output | Structured results for coding assistants, scripts, and editor integrations |
