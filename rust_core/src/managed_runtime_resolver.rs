@@ -110,7 +110,12 @@ pub fn read_managed_runtime_at(root: &Path) -> io::Result<Option<ManagedRuntime>
             "selector is not below its pinned managed root",
         ));
     }
-    let selector_acl = read_handle_acl(selector.as_handle())?;
+    let selector_acl = read_handle_acl(selector.as_handle()).map_err(|err| {
+        invalid_root(format!(
+            "selector ACL is untrusted for {}: {err}. Reset inherited/foreign write ACEs on the selector file or reinstall the managed launcher",
+            selector_path.display()
+        ))
+    })?;
     if !selector_is_trusted(
         &selector_acl.owner,
         Some(&selector_acl.allow_grants),
@@ -124,7 +129,7 @@ pub fn read_managed_runtime_at(root: &Path) -> io::Result<Option<ManagedRuntime>
             Some(identity.default_owner_sid()),
         );
         return Err(invalid_root(format!(
-            "selector ACL is untrusted for {}: {detail}. Run 'tg repair-launcher' or reset ACLs on the selector file",
+            "selector ACL is untrusted for {}: {detail}. Reset inherited/foreign write ACEs on the selector file or reinstall the managed launcher",
             selector_path.display()
         )));
     }
