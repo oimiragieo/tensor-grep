@@ -30,7 +30,7 @@ def coverage_tool(path: str) -> str:
 
     try:
         try:
-            path = str(server._confine_mcp_path(path, label="path"))
+            confined_path = server._confine_mcp_path(path, label="path")
         except server.PathConfinementError as exc:
             payload = server._envelope_base(
                 routing_backend="Coverage",
@@ -39,6 +39,20 @@ def coverage_tool(path: str) -> str:
             )
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+        path = str(confined_path)
+        if not confined_path.exists():
+            payload = server._envelope_base(
+                routing_backend="Coverage",
+                routing_reason="coverage-inventory",
+                include_schema_version=False,
+            )
+            payload["path"] = path
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": "tg_coverage requires an existing file or directory.",
+                "retryable": False,
+            }
             return json.dumps(payload, indent=2)
         from tensor_grep.cli.coverage import check_coverage
 
@@ -58,7 +72,6 @@ def coverage_tool(path: str) -> str:
             }
         return server._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:
-        server._log_tool_exception("tg_coverage", exc)
         payload = server._envelope_base(
             routing_backend="Coverage",
             routing_reason="coverage-inventory",

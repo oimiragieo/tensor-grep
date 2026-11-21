@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 
@@ -212,36 +213,113 @@ def _node_archive_name() -> str:
 
 
 def _download(url: str, destination: Path) -> None:
-    # H2 (#859 class ratchet): `destination` is a caller-supplied PARAMETER (every current caller
-    # happens to pass a path inside its own TemporaryDirectory, but that confinement is not
-    # statically provable from the signature alone -- same "no implicit leniency" reasoning as
-    # ast_workflows._batch_search_snippets). A plain `destination.open("wb")` follows a
-    # pre-existing destination symlink; `atomic_write_bytes_anchored` requires the full payload
-    # in memory (unsuited to a size-capped streaming download), so this claims the destination
-    # name exclusively FIRST -- O_CREAT|O_EXCL|O_NOFOLLOW, mirroring the reviewed
-    # `_download_native_frontdoor_asset` (main.py) pattern -- and then writes through that SAME
-    # held fd for the whole streamed transfer, which is strictly tighter than that precedent: no
-    # close-then-reopen gap exists here for a symlink to be swapped in between the claim and the
-    # first byte written.
+    # Stream through one held descriptor. Windows claims DESTINATION directly and deletes by
+    # opened-object identity on failure. POSIX writes inside a private anchored staging directory
+    # and hard-links the completed file into place, so a failed transfer never needs a racy
+    # stat-then-unlink of the public destination name.
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(destination, flags, 0o644)
-    total = 0
+    parent_fd: int | None = None
+    staging_fd: int | None = None
+    staging_name: str | None = None
+    staging_leaf = "payload"
+    raw_fd = -1
+    owned: os.stat_result | None = None
+    failure: BaseException | None = None
     try:
-        with urllib.request.urlopen(url, timeout=60) as response, os.fdopen(fd, "wb") as output:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
-                    raise RuntimeError(
-                        f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
-                        f"(possible oversized or malicious response): {url}"
-                    )
-                output.write(chunk)
-    except BaseException:
-        destination.unlink(missing_ok=True)  # don't leave a partial/unsafe temp behind
+        if is_windows():
+            raw_fd = os.open(destination, flags, 0o644)
+        else:
+            parent_fd = os.open(
+                destination.parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+            )
+            candidate_staging = f".tg-download-{uuid4().hex}"
+            os.mkdir(candidate_staging, 0o700, dir_fd=parent_fd)
+            staging_name = candidate_staging
+            staging_fd = os.open(
+                staging_name,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=parent_fd,
+            )
+            raw_fd = os.open(staging_leaf, flags, 0o600, dir_fd=staging_fd)
+        owned = os.fstat(raw_fd)
+        total = 0
+        with urllib.request.urlopen(url, timeout=60) as response:
+            # Keep descriptor ownership here so failure cleanup can validate the opened object.
+            with os.fdopen(raw_fd, "wb", closefd=False) as output:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _MAX_TOOLCHAIN_DOWNLOAD_BYTES:
+                        raise RuntimeError(
+                            f"Toolchain download exceeded {_MAX_TOOLCHAIN_DOWNLOAD_BYTES} bytes "
+                            f"(possible oversized or malicious response): {url}"
+                        )
+                    output.write(chunk)
+        if staging_fd is not None:
+            assert parent_fd is not None
+            os.link(
+                staging_leaf,
+                destination.name,
+                src_dir_fd=staging_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+    except BaseException as error:
+        failure = error
+        if is_windows() and owned is not None:
+            # Windows can only reopen/delete the exact identity after releasing this writer.
+            try:
+                os.close(raw_fd)
+            except OSError as cleanup_error:
+                error.add_note(f"Failed to close partial download: {cleanup_error}")
+            else:
+                raw_fd = -1
+                try:
+                    from tensor_grep.io.windows_publication import unlink_open
+
+                    unlink_open(destination, (owned.st_dev, owned.st_ino))
+                except OSError as cleanup_error:
+                    error.add_note(f"Failed to remove owned partial download: {cleanup_error}")
         raise
+    finally:
+        close_errors: list[OSError] = []
+        if raw_fd >= 0:
+            try:
+                os.close(raw_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if staging_fd is not None:
+            try:
+                os.unlink(staging_leaf, dir_fd=staging_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                close_errors.append(exc)
+            try:
+                os.close(staging_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if parent_fd is not None and staging_name is not None:
+            try:
+                os.rmdir(staging_name, dir_fd=parent_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if parent_fd is not None:
+            try:
+                os.close(parent_fd)
+            except OSError as exc:
+                close_errors.append(exc)
+        if close_errors:
+            if failure is not None:
+                for item in close_errors:
+                    failure.add_note(f"Failed to close partial download handle: {item}")
+            else:
+                for item in close_errors[1:]:
+                    close_errors[0].add_note(f"Additional close failure: {item}")
+                raise close_errors[0]
 
 
 def _allow_unverified_toolchain() -> bool:

@@ -1,5 +1,6 @@
 import fnmatch
 import os
+import stat
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -114,15 +115,70 @@ class DirectoryScanner:
             return None
 
         gitignore = base_path / ".gitignore"
-        if not gitignore.exists():
+        fd: int | None = None
+        try:
+            st_link = gitignore.lstat()
+            if not stat.S_ISREG(st_link.st_mode) or (
+                getattr(st_link, "st_file_attributes", 0) & 0x400
+            ):
+                return None
+            if os.name == "nt":
+                import ctypes
+                import msvcrt
+                from ctypes import wintypes
+
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                create_file = kernel32.CreateFileW
+                create_file.argtypes = [
+                    wintypes.LPCWSTR,
+                    wintypes.DWORD,
+                    wintypes.DWORD,
+                    ctypes.c_void_p,
+                    wintypes.DWORD,
+                    wintypes.DWORD,
+                    wintypes.HANDLE,
+                ]
+                create_file.restype = wintypes.HANDLE
+                close_handle = kernel32.CloseHandle
+                close_handle.argtypes = [wintypes.HANDLE]
+                close_handle.restype = wintypes.BOOL
+                handle = create_file(
+                    os.path.abspath(gitignore),
+                    0x80000000,
+                    0x00000007,
+                    None,
+                    3,
+                    0x00200000,
+                    None,
+                )
+                if handle in (None, ctypes.c_void_p(-1).value):
+                    return None
+                try:
+                    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+                    handle = None
+                finally:
+                    if handle is not None:
+                        close_handle(handle)
+            else:
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+                fd = os.open(str(gitignore), flags)
+            st_fd = os.fstat(fd)
+            if not stat.S_ISREG(st_fd.st_mode) or (getattr(st_fd, "st_file_attributes", 0) & 0x400):
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                fd = None
+                raw = handle.read(self.gitignore_max_bytes + 1)
+        except OSError:
             return None
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
         import pathspec
 
-        # Byte-cap the read (Q15): request one extra byte so we can tell whether the file
-        # actually exceeded the cap without loading it whole.
-        with gitignore.open("rb") as handle:
-            raw = handle.read(self.gitignore_max_bytes + 1)
         if len(raw) > self.gitignore_max_bytes:
             raw = raw[: self.gitignore_max_bytes]
             self.gitignore_truncated = True

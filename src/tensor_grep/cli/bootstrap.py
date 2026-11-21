@@ -880,7 +880,7 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 # Node/React repo. Imported (not hardcoded) from `io/scan_limits.py` (campaign #6 / F2.4; was
 # `io/directory_scanner.py`, which still re-exports it) so this set and cli/main.py's equivalent
 # guard can never drift out of sync.
-def _search_paths_include_vendored_root(paths: list[str]) -> bool:
+def _search_paths_include_vendored_root(paths: list[str], follow_symlinks: bool = False) -> bool:
     """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep.
 
     AGT-06 (Task 08): shares its directory-iteration policy with cli/main.py's
@@ -892,7 +892,9 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
     # any() short-circuits on first hit, same as the original loop, with no discarded var.
-    return any(iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
+    return any(
+        iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES, follow_symlinks)
+    )
 
 
 # Item #105 : neither
@@ -961,6 +963,8 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
 
 
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
+    from tensor_grep.cli.bootstrap_search_guards import effective_rg_follow
+
     if _flag_present(search_args, {"--allow-broad-generated-scan"}):  # (P) not as a pattern/value
         return False
     paths_defaulted = _search_args_paths_defaulted(search_args)
@@ -969,7 +973,7 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
     paths = _search_path_args(search_args)
     if _search_paths_include_workspace_root(paths):
         return True
-    if _search_paths_include_vendored_root(paths):
+    if _search_paths_include_vendored_root(paths, effective_rg_follow(search_args)):
         return True
     if paths_defaulted and _search_paths_include_oversized_implicit_root(paths, search_args):
         return True

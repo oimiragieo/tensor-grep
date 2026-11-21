@@ -49,6 +49,12 @@ from tensor_grep.cli.mcp_server import (
     _sanitized_tool_error_text as _sanitized_tool_error_text,
 )
 
+_PATH_REFUSAL_INCOMPLETE = {
+    "status": True,
+    "cause": "error",
+    "budget_remediable": False,
+}
+
 
 @_register_legacy_tool  # type: ignore
 def tg_symbol_blast_radius_plan(
@@ -89,6 +95,7 @@ def tg_symbol_blast_radius_plan(
             payload["max_depth"] = max(0, int(max_depth))
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
         try:
@@ -169,6 +176,7 @@ def tg_symbol_defs(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:
@@ -239,6 +247,7 @@ def tg_symbol_source(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:
@@ -281,7 +290,11 @@ def tg_symbol_source(
 
 @_register_legacy_tool  # type: ignore
 def tg_symbol_impact(
-    symbol: str, path: str = ".", provider: str = "native", deadline: float | None = None
+    symbol: str,
+    path: str = ".",
+    provider: str = "native",
+    deadline: float | None = None,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
 ) -> str:
     """
     Return likely impacted files and tests for a symbol change.
@@ -293,6 +306,7 @@ def tg_symbol_impact(
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
             unbounded.
+        max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -308,8 +322,10 @@ def tg_symbol_impact(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
+        bounded_repo_files = min(max(1, int(max_repo_files)), 50_000)
         try:
             return _self._inject_mcp_contract_fields(
                 json.dumps(
@@ -317,7 +333,7 @@ def tg_symbol_impact(
                         symbol,
                         path,
                         semantic_provider=provider,
-                        max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
+                        max_repo_files=bounded_repo_files,
                         deadline_seconds=deadline,
                     ),
                     indent=2,
@@ -390,6 +406,7 @@ def tg_symbol_refs(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:
@@ -472,6 +489,7 @@ def tg_symbol_callers(
             payload["symbol"] = symbol
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:
@@ -706,6 +724,7 @@ def tg_symbol_blast_radius(
             payload["max_depth"] = max(0, int(max_depth))
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:
@@ -798,6 +817,7 @@ def tg_symbol_blast_radius_render(
             payload["max_depth"] = max(0, int(max_depth))
             payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            payload["incomplete"] = _PATH_REFUSAL_INCOMPLETE
             return json.dumps(payload, indent=2)
 
         try:

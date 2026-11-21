@@ -224,6 +224,17 @@ def _render_plain(
     return rendered_matches, rendered_files, False
 
 
+def _render_ast_plain(output: list[str], by_file: dict[str, list[Any]], total_matches: int) -> None:
+    rendered, _, _ = _render_plain(
+        output, {filepath: matches[:10] for filepath, matches in list(by_file.items())[:15]}
+    )
+    omitted = max(0, total_matches - rendered)
+    if omitted:
+        output.append(f"\n... output truncated; omitted {omitted} matches.")
+    if len(by_file) > 15:
+        output.append(f"\n... and {len(by_file) - 15} more files.")
+
+
 def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
     """True when the caller asked for more rows than the fixed ceiling AND more exist."""
     return (
@@ -236,12 +247,38 @@ def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
 def _cap_output_lines(lines: list[str]) -> list[str]:
     """Cumulative byte budget for the plain-text branches (UTF-8 bytes + 1 per newline); the
     first line that would cross it is dropped together with everything after, and an ASCII
-    notice is appended."""
+    notice is appended while fitting any trailing AST omission summary within the budget."""
+    omission_line = next(
+        (line for line in reversed(lines) if line.startswith("\n... output truncated; omitted ")),
+        None,
+    )
+    reserved = (
+        len(_MCP_OUTPUT_TRUNCATED_NOTICE.encode("utf-8"))
+        + 1
+        + (len(omission_line.encode("utf-8")) + 16 if omission_line is not None else 0)
+    )
     used = 0
     for index, line in enumerate(lines):
-        used += len(line.encode("utf-8")) + 1
-        if used > _MCP_MATCHES_MAX_BYTES:
-            return [*lines[:index], _MCP_OUTPUT_TRUNCATED_NOTICE]
+        line_cost = len(line.encode("utf-8")) + 1
+        if used + line_cost > _MCP_MATCHES_MAX_BYTES:
+            cut = index
+            while cut > 0 and used + reserved > _MCP_MATCHES_MAX_BYTES:
+                cut -= 1
+                used -= len(lines[cut].encode("utf-8")) + 1
+            capped = [*lines[:cut], _MCP_OUTPUT_TRUNCATED_NOTICE]
+            if omission_line is not None:
+                try:
+                    base_omitted = int(omission_line.rsplit(" ", 2)[1])
+                except (IndexError, ValueError):
+                    base_omitted = 0
+                extra_dropped = sum(
+                    1 for dropped in lines[cut:] if dropped.startswith("  ") and ": " in dropped
+                )
+                capped.append(
+                    f"\n... output truncated; omitted {base_omitted + extra_dropped} matches."
+                )
+            return capped
+        used += line_cost
     return lines
 
 

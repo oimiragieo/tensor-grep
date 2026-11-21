@@ -48,6 +48,16 @@ def test_the_live_constant_is_parseable() -> None:
     assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"implausible contract version: {version!r}"
 
 
+def test_batch_envelope_docs_cite_the_live_contract_version() -> None:
+    text = (_ROOT / "docs" / "CONTRACTS.md").read_text(encoding="utf-8")
+    match = re.search(
+        r'The top-level response is `\{version: 1, mcp_contract_version: "([^"]+)"', text
+    )
+
+    assert match, "could not find the documented tg_batch top-level response"
+    assert match.group(1) == _live_contract_version()
+
+
 @pytest.mark.parametrize("doc", _DOCS)
 def test_docs_do_not_cite_a_stale_contract_version(doc: str) -> None:
     """THE DEFECT: both docs asserted a version the code had long since passed.

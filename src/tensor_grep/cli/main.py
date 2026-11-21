@@ -36,6 +36,7 @@ from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
+from tensor_grep.cli import search_follow_options as _search_follow_options
 from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
@@ -2111,16 +2112,15 @@ def _should_refuse_unbounded_workspace_root_scan(
 _UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 
-def _root_top_level_vendored_dir_names(paths: list[str]) -> list[str]:
-    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep.
-
-    AGT-06 (Task 08): shares its directory-iteration policy with cli/bootstrap.py's
-    `_search_paths_include_vendored_root` via `io/root_probe.iter_top_level_vendored_dirs` so
-    the two can never drift out of sync.
-    """
+def _root_top_level_vendored_dir_names(
+    paths: list[str], follow_symlinks: bool = False
+) -> list[str]:
+    """One-level vendored-dir probe shared with bootstrap; follows only when search will."""
     from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
 
-    found = set(iter_top_level_vendored_dirs(paths, _UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
+    found = set(
+        iter_top_level_vendored_dirs(paths, _UNBOUNDED_VENDORED_ROOT_DIR_NAMES, follow_symlinks)
+    )
     return sorted(found, key=lambda item: item.lower())
 
 
@@ -2133,7 +2133,7 @@ def _should_refuse_unbounded_vendored_root_scan(
 ) -> tuple[bool, list[str]]:
     if allow_broad_generated_scan or _has_walk_scope_bound(config, paths_defaulted=paths_defaulted):
         return False, []
-    vendored_dirs = _root_top_level_vendored_dir_names(paths)
+    vendored_dirs = _root_top_level_vendored_dir_names(paths, config.effective_rg_follow)
     return bool(vendored_dirs), vendored_dirs
 
 
@@ -2792,10 +2792,7 @@ def search_command(
     no_binary: bool = typer.Option(
         False, "--no-binary", help="Do not search binary files unless --text is set."
     ),
-    follow: bool = typer.Option(False, "-L", "--follow", help="Follow symbolic links."),
-    no_follow: bool = typer.Option(
-        False, "--no-follow", help="Do not follow symbolic links; useful for config overrides."
-    ),
+    follow: bool | None = _search_follow_options.follow_option(),
     glob: list[str] | None = typer.Option(
         None, "-g", "--glob", help="Include/exclude files matching glob."
     ),
@@ -3278,6 +3275,8 @@ def search_command(
         line_number = sys.stdout.isatty()
 
     from tensor_grep.core.config import SearchConfig
+
+    follow, no_follow = _search_follow_options.resolve_flags(follow)
 
     parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
     _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)

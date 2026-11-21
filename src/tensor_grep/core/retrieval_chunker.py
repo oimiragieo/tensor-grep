@@ -34,6 +34,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.core.lang_suffixes import JS_TS_SUFFIXES, TS_SUFFIXES
+
 MAX_CHUNKS: int = 100_000
 
 # The env var that opts a caller into cAST structural chunking. Anything other than this exact
@@ -50,7 +52,7 @@ FIXED_WINDOW_CHUNKER_MODE = "fixed-window"
 _STRUCTURAL_CHARS_PER_LINE = 40
 DEFAULT_STRUCTURAL_BUDGET = 30 * _STRUCTURAL_CHARS_PER_LINE  # 1200
 
-_STRUCTURAL_JS_SUFFIXES = {".js", ".jsx", ".mjs", ".cjs"}
+_STRUCTURAL_JS_SUFFIXES = JS_TS_SUFFIXES - TS_SUFFIXES
 
 
 @dataclass(frozen=True)
@@ -229,10 +231,8 @@ def _structural_parser_for_path(file_path: str) -> Any | None:
         return _structural_python_parser()
     if suffix in _STRUCTURAL_JS_SUFFIXES:
         return _structural_javascript_parser()
-    if suffix == ".ts":
-        return _structural_typescript_parser(tsx=False)
-    if suffix == ".tsx":
-        return _structural_typescript_parser(tsx=True)
+    if suffix in TS_SUFFIXES:
+        return _structural_typescript_parser(tsx=suffix == ".tsx")
     if suffix == ".rs":
         return _structural_rust_parser()
     if suffix == ".go":
