@@ -41,3 +41,16 @@ def test_unterminated_raw_literal_masking_is_bounded() -> None:
     assert iter_include_directives(source) == []
 
     assert time.perf_counter() - started < 0.75
+
+
+def test_c_cpp_digit_separator_before_raw_string_masks_decoy_include() -> None:
+    from tensor_grep.cli.lang_c_cpp_include import iter_include_directives
+
+    src = """
+    int x = 1'000;
+    const char* s = R"raw(
+    #include "decoy.h"
+    )raw";
+    #include "real.h"
+    """
+    assert iter_include_directives(src) == [("real.h", False)]

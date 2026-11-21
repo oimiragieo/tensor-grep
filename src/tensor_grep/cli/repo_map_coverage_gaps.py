@@ -164,7 +164,12 @@ def _language_coverage_gaps_for_universe(
             gaps_by_language.values(),
             key=lambda item: (-int(item["files_affected"]), str(item["language"])),
         )
-    scope_gap = js_ts_scope_gap(bounded_files, scan_root)
+    scope_gap = js_ts_scope_gap(
+        bounded_files,
+        scan_root,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
     if scope_gap is not None:
         gaps_by_language.setdefault(
             str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}

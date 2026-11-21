@@ -131,6 +131,16 @@ def _mask_comments_and_raw_literals(source: str) -> str:
             _mask_span(masked, source, cursor, end, " ")
             cursor = end
             continue
+        if (
+            source[cursor] == "'"
+            and cursor > 0
+            and cursor + 1 < size
+            and source[cursor - 1] in "0123456789abcdefABCDEF"
+            and source[cursor + 1] in "0123456789abcdefABCDEF"
+            and not (cursor >= 2 and source[cursor - 2 : cursor] == "u8")
+        ):
+            cursor += 1
+            continue
         if source[cursor] in "\"'":
             cursor = _quoted_literal_end(source, cursor, source[cursor])
             continue
