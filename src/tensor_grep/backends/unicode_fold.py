@@ -14,6 +14,7 @@ refused when rg is unavailable.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tensor_grep.backends.base import BackendExecutionError
@@ -26,9 +27,11 @@ _CHUNK = 1 << 16
 
 
 def file_is_ascii(path: str) -> bool:
-    """Chunked scan; an unreadable file raises (fail closed) instead of reading as ASCII."""
+    """Chunked scan; an unreadable or link-swapped file raises (fail closed)."""
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
     try:
-        with open(path, "rb") as handle:
+        with _open_search_file(Path(path)) as handle:
             while chunk := handle.read(_CHUNK):
                 if not chunk.isascii():
                     return False
@@ -44,8 +47,11 @@ def ascii_fold_exact(pattern: str, path: str) -> bool:
 
 def delegate_to_rg(path: str, pattern: str, config: SearchConfig | None) -> SearchResult:
     """Run the search on rg, the only engine whose Unicode case folding is authoritative."""
+    from tensor_grep.backends.cpu_backend import _verify_no_link_ancestry
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 
+    if not (config and getattr(config, "follow", False)):
+        _verify_no_link_ancestry(Path(path))
     rg = RipgrepBackend()
     if not rg.is_available():
         raise BackendExecutionError(

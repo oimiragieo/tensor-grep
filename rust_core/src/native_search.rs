@@ -18,13 +18,17 @@ use regex::RegexBuilder as OutputRegexBuilder;
 use serde::Serialize;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::routing::gpu_proof_fields;
+use crate::search_file_open::{
+    open_native_search_file as open_search_file, resolve_explicit_search_root, search_opened_path,
+    sink_io_error,
+};
 #[path = "native_search_binary_summary.rs"]
 mod binary_summary;
 use binary_summary::emit_ndjson_binary_summary;
@@ -281,30 +285,6 @@ impl Default for NativeSearchConfig {
             output_target: NativeOutputTarget::Stdout,
         }
     }
-}
-
-/// Converts an `anyhow::Error` into the `io::Error` that `grep_searcher::Sink::Error` requires,
-/// PRESERVING the original `ErrorKind` when the chain contains one.
-///
-/// `io::Error::other(...)` — what every one of these call sites used before — always produces kind
-/// `Other`, which silently discards `BrokenPipe`. That mattered: a consumer closing the pipe
-/// (`tg ... | head -1`) surfaced as a generic failure, so
-/// `run_native_search_with_optional_rg_fallback`'s broken-pipe guard could not recognise it, and a
-/// normal early termination was reported as a search error (and, with a fallback configured, was
-/// followed by a `warning: ...` line and a full re-run into the already-closed pipe). CI proved the
-/// typed chain walk alone was not enough; this fixes it at the source rather than pattern-matching
-/// error text downstream.
-///
-/// Only the error's KIND is affected. No output byte, no rendering, and no success path changes.
-fn sink_io_error(err: anyhow::Error) -> io::Error {
-    for cause in err.chain() {
-        if let Some(io_err) = cause.downcast_ref::<io::Error>() {
-            // `err.to_string()`, not `{err:#}`: `io::Error::other(err)` rendered exactly this, so
-            // the message stays byte-identical and ONLY the kind changes.
-            return io::Error::new(io_err.kind(), err.to_string());
-        }
-    }
-    io::Error::other(err)
 }
 
 /// Does this error chain carry a typed `io::ErrorKind::BrokenPipe`? Used by
@@ -645,14 +625,13 @@ impl ParallelWalkWorker {
             Ok(true)
         }));
 
-        self.searcher_with_line_numbers
-            .search_path(&self.matcher, path, &mut sink)
-            .with_context(|| {
-                format!(
-                    "native standard output search failed for {}",
-                    path.display()
-                )
-            })?;
+        search_opened_path(
+            &mut self.searcher_with_line_numbers,
+            &self.matcher,
+            path,
+            &mut sink,
+            "native standard output search failed",
+        )?;
 
         let binary_detected = sink.saw_binary();
         let binary_byte_offset = sink.binary_byte_offset();
@@ -693,9 +672,13 @@ impl ParallelWalkWorker {
             Ok(true)
         }));
 
-        self.searcher_with_line_numbers
-            .search_path(&self.matcher, path, &mut sink)
-            .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+        search_opened_path(
+            &mut self.searcher_with_line_numbers,
+            &self.matcher,
+            path,
+            &mut sink,
+            "native NDJSON search failed",
+        )?;
 
         let binary_detected = sink.saw_binary();
         let binary_byte_offset = sink.binary_byte_offset();
@@ -967,6 +950,11 @@ struct NativeNdjsonMatch<'a> {
     bytes: Option<String>,
 }
 
+/// Whether retrying through another engine would bypass a failed anchored file open.
+pub fn is_native_search_open_failure(error: &anyhow::Error) -> bool {
+    error.is::<crate::search_file_open::NativeSearchOpenFailure>()
+}
+
 pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     if config.json && config.ndjson {
         return Err(anyhow!(
@@ -1053,9 +1041,7 @@ pub fn run_native_fixed_multi_pattern_search(
         .context("failed to build native fixed multi-pattern matcher")?;
     let mut matches = Vec::new();
     for file_path in files {
-        let file = fs::File::open(&file_path).with_context(|| {
-            format!("failed to open native search path {}", file_path.display())
-        })?;
+        let file = open_search_file(&file_path)?;
         let mmap = unsafe { MmapOptions::new().map(&file) }.with_context(|| {
             format!("failed to mmap native search path {}", file_path.display())
         })?;
@@ -1291,16 +1277,15 @@ fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
     let mut inputs = SearchInputs::default();
 
     for path in &config.paths {
-        if !path.exists() {
-            return Err(anyhow!(
-                "native search path does not exist: {}",
-                path.display()
-            ));
-        }
-        if path.is_file() {
-            inputs.files.push(path.clone());
+        let selected_root = resolve_explicit_search_root(path)?;
+        let selected_meta = selected_root.metadata().with_context(|| {
+            crate::search_file_open::NativeSearchOpenFailure(path.to_path_buf())
+        })?;
+        if selected_meta.is_file() {
+            inputs.files.push(selected_root);
         } else {
-            inputs.roots.push(path.clone());
+            crate::search_file_open::verify_directory_ancestry_nofollow(&selected_root)?;
+            inputs.roots.push(selected_root);
         }
     }
 
@@ -1478,7 +1463,10 @@ fn search_walk_roots_parallel(
                 // `incomplete_reason_class: "unreadable_path"` for a file it had read perfectly.
                 // Wrong in the direction that matters: it sends the reader to check permissions on
                 // an input that was fine, and hides that the OUTPUT is the thing that failed.
-                if search_path_error_is_broken_pipe(&err) || worker.output_write_failed {
+                if search_path_error_is_broken_pipe(&err)
+                    || worker.output_write_failed
+                    || is_native_search_open_failure(&err)
+                {
                     should_quit.store(true, Ordering::Relaxed);
                     if let Ok(mut guard) = shared_error.lock() {
                         if guard.is_none() {
@@ -1574,14 +1562,13 @@ fn search_file_streaming_standard_sequential(
     let (matches, binary_detected, binary_byte_offset) = {
         let sink = CollectingSink::new(printer.sink_with_path(matcher, path), path.to_path_buf());
         let mut sink = BinaryAwareSink::new(sink);
-        searcher
-            .search_path(matcher, path, &mut sink)
-            .with_context(|| {
-                format!(
-                    "native standard output search failed for {}",
-                    path.display()
-                )
-            })?;
+        search_opened_path(
+            &mut searcher,
+            matcher,
+            path,
+            &mut sink,
+            "native standard output search failed",
+        )?;
         let binary_detected = sink.saw_binary();
         let binary_byte_offset = sink.binary_byte_offset();
         let matches = sink.into_inner().into_matches();
@@ -1663,14 +1650,13 @@ fn search_file_streaming_plain_sequential(
         }
         Ok(true)
     }));
-    searcher
-        .search_path(matcher, path, &mut sink)
-        .with_context(|| {
-            format!(
-                "native standard output search failed for {}",
-                path.display()
-            )
-        })?;
+    search_opened_path(
+        &mut searcher,
+        matcher,
+        path,
+        &mut sink,
+        "native standard output search failed",
+    )?;
 
     let binary_detected = sink.saw_binary();
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
@@ -1971,7 +1957,7 @@ fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<
                     continue;
                 }
                 let ignore_path = root.join(ignore_name);
-                if ignore_path.is_file() {
+                if std::fs::symlink_metadata(&ignore_path).is_ok_and(|meta| meta.is_file()) {
                     builder.add_ignore(ignore_path);
                 }
             }
@@ -2010,7 +1996,8 @@ fn should_use_chunk_parallel_search(config: &NativeSearchConfig, path: &Path) ->
         return Ok(false);
     }
 
-    let file_len = std::fs::metadata(path)
+    let file_len = open_search_file(path)?
+        .metadata()
         .with_context(|| {
             format!(
                 "failed to read native search metadata for {}",
@@ -2050,8 +2037,7 @@ fn search_file_chunk_parallel(
     matcher: &RegexMatcher,
     path: &Path,
 ) -> Result<FileSearchResult> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open native search path {}", path.display()))?;
+    let file = open_search_file(path)?;
     let mmap = {
         // SAFETY: The file handle remains alive for the lifetime of the mmap, and the mapping is read-only.
         unsafe { MmapOptions::new().map(&file) }
@@ -2317,9 +2303,7 @@ fn search_file_collect_matches_with_searcher(
         });
         Ok(true)
     }));
-    searcher
-        .search_path(matcher, path, &mut sink)
-        .with_context(|| format!("native search failed for {}", path.display()))?;
+    search_opened_path(searcher, matcher, path, &mut sink, "native search failed")?;
 
     let binary_detected = sink.saw_binary();
     let binary_byte_offset = sink.binary_byte_offset();
@@ -2359,9 +2343,13 @@ fn search_file_ndjson_with_searcher(
         matches.push(matched);
         Ok(true)
     }));
-    searcher
-        .search_path(matcher, path, &mut sink)
-        .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+    search_opened_path(
+        searcher,
+        matcher,
+        path,
+        &mut sink,
+        "native NDJSON search failed",
+    )?;
 
     let binary_detected = sink.saw_binary();
     let binary_byte_offset = sink.binary_byte_offset();
@@ -2398,9 +2386,13 @@ fn search_file_count_with_searcher(
         match_count = match_count.saturating_add(1);
         Ok(true)
     }));
-    searcher
-        .search_path(matcher, path, &mut sink)
-        .with_context(|| format!("native count output search failed for {}", path.display()))?;
+    search_opened_path(
+        searcher,
+        matcher,
+        path,
+        &mut sink,
+        "native count output search failed",
+    )?;
 
     let binary_detected = sink.saw_binary();
     let binary_byte_offset = sink.binary_byte_offset();

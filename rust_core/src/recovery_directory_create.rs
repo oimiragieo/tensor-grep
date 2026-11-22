@@ -60,9 +60,11 @@ fn file_api() -> Option<CreateFile3> {
     if handle.is_null() {
         return None;
     }
-    let function = unsafe { GetProcAddress(handle, b"CreateFile3\0".as_ptr()) }?;
+    let function = unsafe { GetProcAddress(handle, c"CreateFile3".as_ptr().cast()) }?;
     // SAFETY: the named export has the documented five-argument CreateFile3 ABI.
-    Some(unsafe { std::mem::transmute(function) })
+    Some(unsafe {
+        std::mem::transmute::<unsafe extern "system" fn() -> isize, CreateFile3>(function)
+    })
 }
 
 /// The caller must independently pin and trust the whole parent ancestry.
@@ -105,9 +107,11 @@ fn api() -> Option<CreateDirectory2> {
     if handle.is_null() {
         return None;
     }
-    let function = unsafe { GetProcAddress(handle, b"CreateDirectory2W\0".as_ptr()) }?;
+    let function = unsafe { GetProcAddress(handle, c"CreateDirectory2W".as_ptr().cast()) }?;
     // SAFETY: the named Kernel32 export has the five-argument CreateDirectory2W ABI.
-    Some(unsafe { std::mem::transmute(function) })
+    Some(unsafe {
+        std::mem::transmute::<unsafe extern "system" fn() -> isize, CreateDirectory2>(function)
+    })
 }
 
 pub(super) fn verified_dacl(
@@ -121,7 +125,7 @@ pub(super) fn verified_dacl(
         || acl.acl.allow_grants.len() != 1
         || acl.acl.allow_grants[0].0.as_str() != user
         || acl.acl.allow_grants[0].1 != FILE_ALL_ACCESS_MASK
-        || acl.allow_grant_flags.as_slice() != &[DIRECTORY_INHERIT_FLAGS]
+        || acl.allow_grant_flags.as_slice() != [DIRECTORY_INHERIT_FLAGS]
     {
         return Err(invalid(
             "DACL differs from the protected user-only descriptor",

@@ -72,6 +72,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
 
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
@@ -164,6 +166,8 @@ class TestCPUBackend:
             def search(self, **kwargs):
                 return []
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FakeRustBackend
 
         backend = CPUBackend()
@@ -185,6 +189,8 @@ class TestCPUBackend:
             def search(self, **kwargs):
                 assert kwargs["invert_match"] is True
                 return [(2, "FROM_RUST")]
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FakeRustBackend
 
@@ -233,6 +239,8 @@ class TestCPUBackend:
                 # The retry "succeeds" -- but this is the MATCHING set, not the inverted set.
                 return [(1, "apple")]
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FakeRustBackend
 
         backend = CPUBackend()
@@ -268,6 +276,8 @@ class TestCPUBackend:
                     raise TypeError("simulated internal TypeError unrelated to invert_match")
                 # The retry "succeeds" -- but this is the MATCHING set, not the inverted set.
                 return [(1, "cat")]
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FakeRustBackend
 
@@ -510,6 +520,8 @@ class TestCPUBackend:
             def search(self, **kwargs):
                 return [(1, "apple\n")]
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FakeRustBackend
 
         backend = CPUBackend()
@@ -537,6 +549,8 @@ class TestCPUBackend:
             def search(self, **kwargs):
                 return [(1, "apple\r\n")]
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FakeRustBackend
 
         backend = CPUBackend()
@@ -558,6 +572,8 @@ class TestCPUBackend:
         class FakeRustBackend:
             def search(self, **kwargs):
                 return [(1, "apple"), (2, "apple banana")]
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FakeRustBackend
 
@@ -588,6 +604,8 @@ class TestCPUBackend:
                 calls.append(kwargs["pattern"])
                 assert kwargs["pattern"] == "apple"
                 return [(2, "apple")]
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FakeRustBackend
 
@@ -624,6 +642,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("native panic")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -708,6 +728,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
 
         backend = CPUBackend()
@@ -735,6 +757,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -799,6 +823,8 @@ class TestCPUBackend:
                     return [(4, "DB_TIMEOUT after auth")]
                 return []
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FakeRustBackend
 
         backend = CPUBackend()
@@ -834,6 +860,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("native panic")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
 
         backend = CPUBackend()
@@ -858,6 +886,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -886,6 +916,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
 
         backend = CPUBackend()
@@ -910,6 +942,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -942,6 +976,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
 
         backend = CPUBackend()
@@ -971,6 +1007,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -1011,6 +1049,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
 
@@ -1056,6 +1096,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
@@ -1079,6 +1121,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
@@ -1100,6 +1144,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise ImportError("simulated rust_core absent")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
         backend = CPUBackend()
@@ -1127,6 +1173,8 @@ class TestCPUBackend:
                 # The Rust `regex` crate rejects look-around/backreferences at COMPILE time.
                 raise RuntimeError("regex parse error: look-around is not supported")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = RejectingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
             with pytest.raises(InvalidRegexError):
@@ -1146,6 +1194,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("native panic, unrelated to pattern syntax")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = FailingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
             with pytest.raises(BackendExecutionError):
@@ -1162,6 +1212,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("native panic, unrelated to pattern syntax")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
@@ -1183,6 +1235,8 @@ class TestCPUBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("regex parse error: backreferences are not supported")
 
+            search_nofollow = search
+
         rust_mod.RustBackend = RejectingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
             with pytest.raises(BackendExecutionError):
@@ -1199,6 +1253,8 @@ class TestCPUBackend:
         class FailingRustBackend:
             def search(self, **_kwargs):
                 raise RuntimeError("native panic, unrelated to pattern syntax")
+
+            search_nofollow = search
 
         rust_mod.RustBackend = FailingRustBackend
         with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
@@ -1441,6 +1497,64 @@ def test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fa
         CPUBackend().search(str(f), literal, config=SearchConfig())
 
 
+def test_search_refuses_leaf_link_substituted_after_scan(tmp_path) -> None:
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    candidate = root / "victim.txt"
+    candidate.write_text("ordinary content\n", encoding="utf-8")
+    outside = tmp_path / "secret.txt"
+    outside.write_text("SECRET_BOUNDARY_MARKER\n", encoding="utf-8")
+    candidates = list(DirectoryScanner(SearchConfig()).walk(str(root)))
+    assert candidates == [str(candidate)]
+
+    candidate.unlink()
+    try:
+        candidate.symlink_to(outside, target_is_directory=False)
+    except OSError as exc:
+        pytest.skip(f"this environment cannot create a file symlink: {exc}")
+
+    with pytest.raises(RuntimeError, match=r"search target|non-regular|symbolic links"):
+        CPUBackend().search(
+            candidates[0],
+            "SECRET_BOUNDARY_MARKER",
+            config=SearchConfig(fixed_strings=True),
+        )
+
+
+def test_python_file_fallback_refuses_parent_link(tmp_path):
+    import os
+
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("SECRET_BOUNDARY_MARKER\n", encoding="utf-8")
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if os.name != "nt":
+            pytest.skip(f"this environment cannot create a directory symlink: {exc}")
+        import subprocess
+
+        result = subprocess.run(
+            ["cmd", "/C", "mklink", "/J", str(linked_parent), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode:
+            pytest.skip(f"this environment cannot create a directory junction: {result.stderr}")
+
+    with pytest.raises(OSError):
+        with _open_search_file(linked_parent / sentinel.name):
+            pytest.fail("opened a file through a linked parent")
+    assert sentinel.read_text(encoding="utf-8") == "SECRET_BOUNDARY_MARKER\n"
+
+
 def test_python_fallback_regex_engine_failure_is_not_clean_no_match(tmp_path):
     """Sol FIX-FIRST (HANDLER-CENSUS-W2-a): regex_str.search failures must not look like no-match.
 
@@ -1462,6 +1576,8 @@ def test_python_fallback_regex_engine_failure_is_not_clean_no_match(tmp_path):
     class AbsentRustBackend:
         def search(self, **_kwargs):
             raise ImportError("simulated rust_core absent")
+
+        search_nofollow = search
 
     rust_mod.RustBackend = AbsentRustBackend
 

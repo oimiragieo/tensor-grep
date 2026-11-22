@@ -51,6 +51,7 @@ pub mod routing;
 pub mod runtime_paths;
 pub mod safe_write;
 pub mod search_error;
+mod search_file_open;
 
 use crate::backend_ast::AstBackend;
 use crate::backend_cpu::CpuBackend;
@@ -58,7 +59,31 @@ use arrow_array::Array;
 use arrow_array::StringArray;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
+use std::path::Path;
 use std::sync::Arc;
+
+#[pyfunction]
+fn _open_search_file_handle(path: &str) -> PyResult<usize> {
+    let file = crate::search_file_open::open_search_file_nofollow(Path::new(path))
+        .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::IntoRawFd;
+        Ok(file.into_raw_fd() as usize)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::IntoRawHandle;
+        Ok(file.into_raw_handle() as usize)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        drop(file);
+        Err(pyo3::exceptions::PyRuntimeError::new_err(
+            "no-follow search open is unsupported on this platform",
+        ))
+    }
+}
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
 #[pyfunction]
@@ -180,6 +205,16 @@ pub struct RustBackend {
     inner: CpuBackend,
 }
 
+fn rust_backend_py_err(prefix: &str, err: anyhow::Error) -> PyErr {
+    if crate::native_search::is_native_search_open_failure(&err) {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "{prefix}: [NativeSearchOpenFailure] {err}"
+        ))
+    } else {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("{prefix}: {err}"))
+    }
+}
+
 #[pymethods]
 impl RustBackend {
     #[new]
@@ -201,9 +236,22 @@ impl RustBackend {
     ) -> PyResult<Vec<(usize, String)>> {
         self.inner
             .search(pattern, path, ignore_case, fixed_strings, invert_match)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust search failed", e))
+    }
+
+    /// Search a file or directory without following explicit leaf symlinks
+    #[allow(clippy::useless_conversion)]
+    fn search_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> PyResult<Vec<(usize, String)>> {
+        self.inner
+            .search_nofollow(pattern, path, ignore_case, fixed_strings, invert_match)
+            .map_err(|e| rust_backend_py_err("Rust search failed", e))
     }
 
     /// Fast-path count implementation that only returns the number of matches
@@ -217,9 +265,21 @@ impl RustBackend {
     ) -> PyResult<usize> {
         self.inner
             .count_matches(pattern, path, ignore_case, fixed_strings, false)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust count failed", e))
+    }
+
+    /// Fast-path count implementation without following explicit leaf symlinks
+    #[allow(clippy::useless_conversion)]
+    fn count_matches_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> PyResult<usize> {
+        self.inner
+            .count_matches_nofollow(pattern, path, ignore_case, fixed_strings, false)
+            .map_err(|e| rust_backend_py_err("Rust count failed", e))
     }
 
     /// Passthrough to the system ripgrep binary with full flag support
@@ -388,6 +448,7 @@ impl RustBackend {
 #[pymodule(gil_used = true)]
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
+    m.add_function(wrap_pyfunction!(_open_search_file_handle, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     m.add_function(wrap_pyfunction!(ast_rewrite_plan_json, m)?)?;

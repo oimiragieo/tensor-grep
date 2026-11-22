@@ -56,6 +56,8 @@ def test_ltl_right_scan_is_linear_not_quadratic(tmp_path: Path) -> None:
                 return [(i, "A") for i in range(1, n + 1)]
             return []
 
+        search_nofollow = search
+
     rust_mod.RustBackend = CountingRustBackend
 
     with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):

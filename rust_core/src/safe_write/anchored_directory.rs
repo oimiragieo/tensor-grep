@@ -240,12 +240,42 @@ mod unix_impl {
         ))
         .context("refused recursive cleanup without directory ownership guarantees")
     }
+
+    pub fn open_regular_child_file(
+        parent: &AnchoredDirectory,
+        name: &OsStr,
+    ) -> anyhow::Result<std::fs::File> {
+        let name_c = c_name(name)?;
+        let fd = unsafe {
+            libc::openat(
+                parent.raw_fd(),
+                name_c.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error()).with_context(|| {
+                format!(
+                    "failed to open anchored regular file {}",
+                    parent.path.join(name).display()
+                )
+            });
+        }
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        if !file.metadata()?.is_file() {
+            anyhow::bail!(
+                "refusing non-regular search target {}",
+                parent.path.join(name).display()
+            );
+        }
+        Ok(file)
+    }
 }
 
 #[cfg(unix)]
 pub(super) use unix_impl::{
     child_for_removal, clone, create_child, open_child_directory, open_or_create_child,
-    read_link_child, remove_owned_tree, validate_current,
+    open_regular_child_file, read_link_child, remove_owned_tree, validate_current,
 };
 
 #[cfg(windows)]
@@ -272,8 +302,10 @@ mod windows_impl {
     const FILE_OPEN: u32 = 1;
     const FILE_CREATE: u32 = 2;
     const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+    const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
     const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
+    const FILE_READ_DATA: u32 = 0x0000_0001;
     const FILE_OPENED: usize = 1;
     const FILE_CREATED: usize = 2;
     const FILE_RENAME_INFORMATION_CLASS: i32 = 10;
@@ -636,6 +668,94 @@ mod windows_impl {
         name: &OsStr,
     ) -> anyhow::Result<AnchoredDirectory> {
         child_with_handle(parent, name, FILE_OPEN, false, false, false)
+    }
+
+    pub fn open_regular_child_file(
+        parent: &AnchoredDirectory,
+        name: &OsStr,
+    ) -> anyhow::Result<File> {
+        let mut name_wide: Vec<u16> = name.encode_wide().collect();
+        if name_wide.is_empty()
+            || name_wide.iter().any(|unit| {
+                *unit == 0 || *unit == b'/' as u16 || *unit == b'\\' as u16 || *unit == b':' as u16
+            })
+            || name_wide.as_slice() == [b'.' as u16]
+            || name_wide.as_slice() == [b'.' as u16, b'.' as u16]
+        {
+            anyhow::bail!(
+                "invalid anchored Windows search file name {}",
+                parent.path.join(name).display()
+            );
+        }
+        let name_bytes = name_wide
+            .len()
+            .checked_mul(std::mem::size_of::<u16>())
+            .filter(|size| *size <= u16::MAX as usize - std::mem::size_of::<u16>())
+            .ok_or_else(|| anyhow::anyhow!("child name too long"))?;
+        let mut object_name = UnicodeString {
+            length: name_bytes as u16,
+            maximum_length: (name_bytes + std::mem::size_of::<u16>()) as u16,
+            buffer: name_wide.as_mut_ptr(),
+        };
+        let mut attributes = ObjectAttributes {
+            length: std::mem::size_of::<ObjectAttributes>() as u32,
+            root_directory: parent.handles.last().unwrap().as_raw_handle(),
+            object_name: &mut object_name,
+            attributes: OBJ_CASE_INSENSITIVE,
+            security_descriptor: ptr::null_mut(),
+            security_quality_of_service: ptr::null_mut(),
+        };
+        let mut io_status = IoStatusBlock {
+            value: IoStatusValue { status: 0 },
+            information: 0,
+        };
+        let mut raw_handle = ptr::null_mut();
+        let status = unsafe {
+            NtCreateFile(
+                &mut raw_handle,
+                FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                &mut attributes,
+                &mut io_status,
+                ptr::null_mut(),
+                FILE_ATTRIBUTE_NORMAL,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_OPEN,
+                FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if status < 0 {
+            if !raw_handle.is_null() {
+                unsafe { NtClose(raw_handle) };
+            }
+            let win32_error = unsafe { RtlNtStatusToDosError(status) };
+            return Err(io::Error::from_raw_os_error(win32_error as i32)).with_context(|| {
+                format!(
+                    "failed to open anchored regular file {}",
+                    parent.path.join(name).display()
+                )
+            });
+        }
+        if raw_handle.is_null() || io_status.information != FILE_OPENED {
+            if !raw_handle.is_null() {
+                unsafe { NtClose(raw_handle) };
+            }
+            anyhow::bail!(
+                "NtCreateFile returned an unexpected search file disposition for {}",
+                parent.path.join(name).display()
+            );
+        }
+        let file = unsafe { File::from_raw_handle(raw_handle) };
+        let metadata = file.metadata()?;
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 || !metadata.is_file() {
+            anyhow::bail!(
+                "refusing non-regular search target {}",
+                parent.path.join(name).display()
+            );
+        }
+        Ok(file)
     }
 
     pub fn read_link_child(
@@ -1161,7 +1281,7 @@ mod windows_impl {
 #[cfg(windows)]
 pub(super) use windows_impl::{
     child_for_removal, clone, create_child, open_child_directory, open_or_create_child,
-    read_link_child, remove_owned_tree, validate_current,
+    open_regular_child_file, read_link_child, remove_owned_tree, validate_current,
 };
 
 #[cfg(not(any(unix, windows)))]
@@ -1186,6 +1306,12 @@ mod unsupported_impl {
         _: &AnchoredDirectory,
         _: &OsStr,
     ) -> anyhow::Result<AnchoredDirectory> {
+        unsupported()
+    }
+    pub fn open_regular_child_file(
+        _: &AnchoredDirectory,
+        _: &OsStr,
+    ) -> anyhow::Result<std::fs::File> {
         unsupported()
     }
     pub fn read_link_child(
@@ -1217,7 +1343,7 @@ mod unsupported_impl {
 #[cfg(not(any(unix, windows)))]
 pub(super) use unsupported_impl::{
     child_for_removal, clone, create_child, open_child_directory, open_or_create_child,
-    read_link_child, remove_owned_tree, validate_current,
+    open_regular_child_file, read_link_child, remove_owned_tree, validate_current,
 };
 
 #[cfg(all(test, unix))]

@@ -3,11 +3,15 @@ import json
 import logging
 import os
 import re
+import stat
+import sys
 import time
 import warnings
 from collections import OrderedDict, deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import ClassVar
+from typing import BinaryIO, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
@@ -20,6 +24,11 @@ from tensor_grep.core.result import (
     split_source_lines,
     strip_line_terminator,
 )
+
+try:
+    from tensor_grep.rust_core import _open_search_file_handle as _native_open_search_file_handle
+except ImportError:
+    _native_open_search_file_handle = None
 
 logger = logging.getLogger(__name__)
 _CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES"
@@ -35,6 +44,127 @@ _DEFAULT_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES = 512
 # rejects any payload whose `format_version` does not match, forcing a transparent
 # recompute (and on-disk overwrite) on first use after upgrade.
 _CPU_LITERAL_INDEX_CACHE_FORMAT_VERSION = 2
+
+
+@contextmanager
+def _open_search_file(path: Path) -> Iterator[BinaryIO]:
+    """Open one regular file without following any path component."""
+    if sys.platform == "win32":
+        if _native_open_search_file_handle is None:
+            raise OSError("safe search-file opening requires the native extension on Windows")
+        import msvcrt
+
+        try:
+            handle = _native_open_search_file_handle(str(path))
+        except RuntimeError as exc:
+            raise OSError(str(exc)) from exc
+        try:
+            descriptor = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except OSError:
+            import ctypes
+
+            close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+            close_handle.argtypes = [ctypes.c_void_p]
+            close_handle.restype = ctypes.c_int
+            close_handle(ctypes.c_void_p(handle))
+            raise
+    else:
+        descriptor = _open_search_file_posix(path)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or getattr(opened, "st_file_attributes", 0) & 0x400:
+            raise OSError(f"refusing non-regular search target: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = -1
+            yield stream
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _open_search_file_posix(path: Path) -> int:
+    if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")):
+        raise OSError("safe parent-directory search opening is unsupported on this platform")
+    target = path if path.is_absolute() else Path.cwd() / path
+    if sys.platform == "darwin" and target.parts[1:2] in {("var",), ("tmp",), ("etc",)}:
+        target = Path("/private", *target.parts[1:])
+    directory_flags = (
+        os.O_RDONLY
+        | os.__dict__["O_DIRECTORY"]
+        | os.__dict__["O_NOFOLLOW"]
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    dir_fds = [os.open(target.anchor, directory_flags)]
+    try:
+        for component in target.parent.parts[1:]:
+            if component == ".":
+                continue
+            if component == "..":
+                if len(dir_fds) > 1:
+                    os.close(dir_fds.pop())
+                continue
+            child_fd = os.open(component, directory_flags, dir_fd=dir_fds[-1])
+            dir_fds.append(child_fd)
+        return os.open(
+            target.name,
+            os.O_RDONLY
+            | os.__dict__["O_NOFOLLOW"]
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=dir_fds[-1],
+        )
+    finally:
+        for fd in reversed(dir_fds):
+            os.close(fd)
+
+
+def _verify_no_link_ancestry(path: Path) -> None:
+    """Verify neither ``path`` nor any parent component is a symlink/reparse point."""
+    try:
+        lstat_res = os.lstat(path)
+    except OSError as exc:
+        raise BackendExecutionError(f"cannot inspect {str(path)!r}: {exc}") from exc
+    if stat.S_ISREG(lstat_res.st_mode) and not (
+        getattr(lstat_res, "st_file_attributes", 0) & 0x400
+    ):
+        try:
+            with _open_search_file(path):
+                return
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"refusing symbolic link or unreadable search target {str(path)!r}: {exc}"
+            ) from exc
+    target = path if path.is_absolute() else Path.cwd() / path
+    current = Path(target.anchor) if target.anchor else Path(".")
+    for part in target.parts[1:] if target.anchor else target.parts:
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except OSError as exc:
+            raise BackendExecutionError(f"cannot inspect {str(current)!r}: {exc}") from exc
+        if stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400):
+            raise BackendExecutionError(f"refusing symbolic link search target: {current}")
+
+
+def _is_anchored_open_failure(exc: BaseException) -> bool:
+    if isinstance(exc, OSError):
+        return True
+    msg = str(exc)
+    if "[NativeSearchOpenFailure]" in msg:
+        return True
+    lowered = msg.lower()
+    return any(
+        needle in lowered
+        for needle in (
+            "failed to open native search path",
+            "refusing non-regular search target",
+            "refusing symbolic",
+            "symbolic links",
+            "reparse",
+            "no-follow",
+        )
+    )
 
 
 def compute_native_walk_deadline() -> float:
@@ -120,10 +250,12 @@ class CPUBackend(ComputeBackend):
     @staticmethod
     def _is_binary_file(path: Path) -> bool:
         try:
-            with open(path, "rb") as file_obj:
+            with _open_search_file(path) as file_obj:
                 return b"\x00" in file_obj.read(4096)
-        except OSError:
-            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {str(path)!r} to check for binary content: {exc}"
+            ) from exc
 
     @staticmethod
     def _is_persistent_prefilter_enabled() -> bool:
@@ -371,7 +503,29 @@ class CPUBackend(ComputeBackend):
             )
 
         path = Path(file_path)
-        if not path.exists() or not path.is_file():
+        follow_symlinks = bool(getattr(config, "follow", False))
+        try:
+            lstat_res = os.lstat(file_path)
+        except FileNotFoundError:
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CPUBackend",
+                routing_reason="cpu_missing_file",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot inspect search target {file_path!r}: {exc}"
+            ) from exc
+        if not follow_symlinks and (
+            stat.S_ISLNK(lstat_res.st_mode)
+            or bool(getattr(lstat_res, "st_file_attributes", 0) & 0x400)
+        ):
+            raise BackendExecutionError(f"refusing symbolic link search target: {file_path}")
+        if not stat.S_ISREG(lstat_res.st_mode) and not (follow_symlinks and path.is_file()):
             return SearchResult(
                 matches=[],
                 total_files=0,
@@ -446,6 +600,7 @@ class CPUBackend(ComputeBackend):
                     effective_ignore_case(config, pattern),
                     config.fixed_strings,
                     config.invert_match,
+                    follow_symlinks=follow_symlinks,
                 )
             except TypeError as exc:
                 raise _NativeAdapterTypeError(str(exc)) from exc
@@ -454,10 +609,15 @@ class CPUBackend(ComputeBackend):
             # decoding path (latin-1/replace) for compatibility.
             if not rust_results:
                 try:
-                    Path(file_path).read_text(encoding="utf-8")
+                    with _open_search_file(Path(file_path)) as file_obj:
+                        file_obj.read().decode("utf-8")
                 except UnicodeDecodeError as exc:
                     raise _RustUtf8DecodeMismatch(
                         "Rust backend UTF-8 decode mismatch, using Python fallback"
+                    ) from exc
+                except OSError as exc:
+                    raise BackendExecutionError(
+                        f"cannot read {file_path!r} after native search: {exc}"
                     ) from exc
 
             if config.max_count is not None:
@@ -499,6 +659,12 @@ class CPUBackend(ComputeBackend):
             # closed a legit non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) --
             # the correct security-over-availability trade; such users can pass --fixed-strings
             # or use ripgrep (a genuine byte-safe engine).
+            if isinstance(exc, BackendExecutionError):
+                raise
+            if _is_anchored_open_failure(exc):
+                raise BackendExecutionError(
+                    f"native search open failed (refusing fallback): {exc}"
+                ) from exc
             if not self._fallback_pattern_is_provably_linear(config):
                 raise BackendExecutionError(
                     "cannot safely evaluate this non-fixed-strings pattern through CPUBackend's "
@@ -586,6 +752,12 @@ class CPUBackend(ComputeBackend):
             # all fail closed on ANY Rust failure. (Genuine Rust ABSENCE is handled by the
             # ImportError branch above, which still falls open -- Python is then the only engine,
             # a dev/broken-install condition, not the shipped MCP-reachable binary.)
+            if isinstance(exc, BackendExecutionError):
+                raise
+            if _is_anchored_open_failure(exc):
+                raise BackendExecutionError(
+                    f"native search open failed (refusing fallback): {exc}"
+                ) from exc
             if not self._fallback_pattern_is_provably_linear(config):
                 raise BackendExecutionError(
                     "cannot safely evaluate this non-fixed-strings pattern through CPUBackend "
@@ -637,7 +809,8 @@ class CPUBackend(ComputeBackend):
                     # stdout-writing layer (task #262). Read raw bytes and split on a bare `\n`
                     # only (never `str.splitlines()`, same reasoning) so a genuine trailing `\r`
                     # survives, matching how the Rust engine and real `rg` both treat it.
-                    decoded = path.read_bytes().decode("utf-8", errors="replace")
+                    with _open_search_file(path) as file_obj:
+                        decoded = file_obj.read().decode("utf-8", errors="replace")
                     source_lines = split_source_lines(decoded)
                     normalized_lines = (
                         [line.lower() for line in source_lines] if ignore_case else source_lines
@@ -726,7 +899,7 @@ class CPUBackend(ComputeBackend):
                         if config.max_count and total_matches_count >= config.max_count:
                             break
             else:
-                with open(path, "rb") as f:
+                with _open_search_file(path) as f:
                     for line_idx, line_bytes in enumerate(f, 1):
                         if (
                             candidate_line_indexes is not None
@@ -842,6 +1015,7 @@ class CPUBackend(ComputeBackend):
         ignore_case: bool,
         fixed_strings: bool,
         invert_match: bool,
+        follow_symlinks: bool = False,
     ) -> list[tuple[int, str]]:
         """Run ONE pattern through the linear-time Rust engine and return its raw
         ``(line_number, text)`` matches (Rust applies ``invert_match`` itself, so the returned
@@ -870,6 +1044,19 @@ class CPUBackend(ComputeBackend):
         # its result directly trips mypy's `no-any-return` against this method's declared
         # `list[tuple[int, str]]`. The sibling adapter in `backends/rust_backend.py` avoids it the
         # same way (it binds `results` and iterates rather than returning the call).
+        if not follow_symlinks:
+            if not hasattr(rust_backend, "search_nofollow"):
+                raise BackendExecutionError(
+                    "Rust extension lacks search_nofollow(); refusing link-following fallback"
+                )
+            nofollow_results: list[tuple[int, str]] = rust_backend.search_nofollow(
+                pattern=rust_pattern,
+                path=file_path,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                invert_match=invert_match,
+            )
+            return nofollow_results
         results: list[tuple[int, str]] = rust_backend.search(
             pattern=rust_pattern,
             path=file_path,
@@ -912,6 +1099,7 @@ class CPUBackend(ComputeBackend):
                 ignore_case,
                 rust_query_fixed_strings,
                 config.invert_match,
+                follow_symlinks=bool(getattr(config, "follow", False)),
             )
         except Exception as exc:
             raise BackendExecutionError(
@@ -974,7 +1162,7 @@ class CPUBackend(ComputeBackend):
         before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
         context_after_remaining = 0
 
-        with open(path, "rb") as file_obj:
+        with _open_search_file(path) as file_obj:
             for line_idx, line_bytes in enumerate(file_obj, 1):
                 line_text = self._decode_line(line_bytes)
                 matched = line_idx in matched_line_numbers
@@ -1077,7 +1265,7 @@ class CPUBackend(ComputeBackend):
             ) from exc
 
         lines: list[tuple[int, str]] = []
-        with open(path, "rb") as file_obj:
+        with _open_search_file(path) as file_obj:
             for line_idx, line_bytes in enumerate(file_obj, 1):
                 lines.append((line_idx, self._decode_line(line_bytes)))
 

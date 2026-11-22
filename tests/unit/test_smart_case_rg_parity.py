@@ -202,6 +202,8 @@ def test_cpu_backend_native_core_answers_titlecase_itself_without_refusing(tmp_p
             calls.append((pattern, ignore_case))
             return [(1, "ǆABC")] if ignore_case else []
 
+        search_nofollow = search
+
     fake = types.ModuleType("tensor_grep.rust_core")
     fake.RustBackend = _FakeRustBackend  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "tensor_grep.rust_core", fake)

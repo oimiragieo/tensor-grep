@@ -144,6 +144,18 @@ def effective_rg_follow_policy(
     return False if no_config else _ripgrep_config_follow_policy()
 
 
+def _is_vendored_child_dir(child: Path, follow_symlinks: bool) -> bool:
+    try:
+        child_info = child.lstat()
+        is_link = stat.S_ISLNK(child_info.st_mode) or bool(
+            getattr(child_info, "st_file_attributes", 0) & 0x400
+        )
+        return (follow_symlinks or not is_link) and child.is_dir()
+    except OSError:
+        # Conservatively report matching vendored names that fail classification.
+        return True
+
+
 def iter_top_level_vendored_dirs(
     paths: list[str],
     vendored_names: frozenset[str],
@@ -173,15 +185,7 @@ def iter_top_level_vendored_dirs(
             for child in path.iterdir():
                 if child.name.lower() not in lower_names:
                     continue
-                try:
-                    child_info = child.lstat()
-                    is_link = stat.S_ISLNK(child_info.st_mode) or bool(
-                        getattr(child_info, "st_file_attributes", 0) & 0x400
-                    )
-                    if (follow_symlinks or not is_link) and child.is_dir():
-                        yield child.name
-                except OSError:
-                    # Conservatively report matching vendored names that fail classification.
+                if _is_vendored_child_dir(child, follow_symlinks):
                     yield child.name
         except OSError:
             continue

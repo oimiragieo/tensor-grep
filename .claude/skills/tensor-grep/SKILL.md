@@ -9,9 +9,9 @@ Use `tg` to find relevant files and inspect the evidence before editing. Start w
 `tg --version` and `tg --help`; installed entry points and optional dependencies
 affect available features.
 
-This guidance was checked against v1.125.0. Native `--version` prints `tg X.Y.Z`;
+This guidance was checked against v1.138.20. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package
-origins separately. MCP's `serverInfo.version` is its contract version (1.16.0),
+origins separately. MCP's `serverInfo.version` is its contract version (1.23.0),
 not the installed CLI version; call `tg_mcp_capabilities` for both values.
 
 ## Choose a command

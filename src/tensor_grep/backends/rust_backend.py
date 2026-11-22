@@ -1,4 +1,6 @@
+import os
 import re
+import stat
 from pathlib import Path
 
 from tensor_grep.backends.base import (
@@ -31,10 +33,32 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     )
 
 
+_MAX_BINARY_MATCH_BYTES = 64 * 1024 * 1024
+
+
+def _read_bounded_binary_bytes(file_path: str) -> bytes:
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
+    try:
+        with _open_search_file(Path(file_path)) as handle:
+            raw_bytes = handle.read(_MAX_BINARY_MATCH_BYTES + 1)
+    except OSError as exc:
+        raise BackendExecutionError(
+            f"cannot read {file_path!r} for the binary-file match check: {exc}"
+        ) from exc
+    if len(raw_bytes) > _MAX_BINARY_MATCH_BYTES:
+        raise BackendExecutionError(
+            f"binary file {file_path!r} exceeds the {_MAX_BINARY_MATCH_BYTES}-byte match probe limit"
+        )
+    return raw_bytes
+
+
 def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | None = None) -> int:
     """Offset of the first NUL byte, scanning in bounded chunks (-1 when none)."""
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
     offset = 0
-    with open(path, "rb") as handle:
+    with _open_search_file(Path(path)) as handle:
         while max_bytes is None or offset < max_bytes:
             chunk = handle.read(chunk_size)
             if not chunk:
@@ -48,9 +72,13 @@ def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | No
 
 def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536) -> bool:
     """Bounded-memory exact byte search; carries len(needle)-1 bytes across chunk boundaries."""
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
     keep = max(len(needle) - 1, 0)
     tail = b""
-    with open(path, "rb") as handle:  # open FIRST: an empty needle must not hide an OSError
+    with _open_search_file(
+        Path(path)
+    ) as handle:  # open FIRST: an empty needle must not hide an OSError
         if not needle:
             return True
         while chunk := handle.read(chunk_size):
@@ -115,21 +143,36 @@ class RustCoreBackend(ComputeBackend):
 
     @staticmethod
     def _is_binary_file(file_path: str) -> bool:
-        path = Path(file_path)
-        if not path.is_file():
+        from tensor_grep.backends.cpu_backend import _open_search_file
+
+        try:
+            lstat_res = os.lstat(file_path)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to check for binary content: {exc}"
+            ) from exc
+        if stat.S_ISDIR(lstat_res.st_mode) and not (
+            getattr(lstat_res, "st_file_attributes", 0) & 0x400
+        ):
             return False
         try:
-            with path.open("rb") as handle:
+            with _open_search_file(Path(file_path)) as handle:
                 return b"\0" in handle.read(8192)
-        except OSError:
-            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to check for binary content: {exc}"
+            ) from exc
 
     @staticmethod
     def _binary_notice_text(file_path: str) -> str:
         try:
             offset = _first_nul_offset(file_path)
-        except OSError:
-            offset = -1
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to locate binary NUL offset: {exc}"
+            ) from exc
         if offset < 0:
             offset = 0
         # ripgrep prints the NUL escape as "\0", not "/0" -- mirrors
@@ -174,10 +217,7 @@ class RustCoreBackend(ComputeBackend):
         if rg is None:
             # No rg: keep main's route (Python re over the bytes) rather than turning a request
             # main served into an error; the semantics differ only for exotic regex syntax.
-            try:
-                haystack = Path(file_path).read_bytes()
-            except OSError:
-                return False
+            haystack = _read_bounded_binary_bytes(file_path)
             ignore_case = effective_ignore_case(config, pattern)
             try:
                 return (
@@ -192,10 +232,12 @@ class RustCoreBackend(ComputeBackend):
                 )
             except re.error as exc:
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+        raw_bytes = _read_bounded_binary_bytes(file_path)
         cmd = [str(rg), "-a", "-q", "--no-config", *flags]
-        cmd += ["-e", pattern, "--", file_path]
+        cmd += ["-e", pattern, "-"]
         proc = run_subprocess(
             cmd,
+            input=raw_bytes,
             capture_output=True,
             text=False,
             check=False,
@@ -279,9 +321,14 @@ class RustCoreBackend(ComputeBackend):
                 routing_worker_count=1,
             )
 
+        follow_symlinks = bool(config and getattr(config, "follow", False))
         # PCRE2 or advanced limits always route to ripgrep passthrough via Rust
         bridge_fallback_reason: str | None = None
         if pcre2 or max_filesize or no_ignore_vcs:
+            if not follow_symlinks:
+                from tensor_grep.backends.cpu_backend import _verify_no_link_ancestry
+
+                _verify_no_link_ancestry(Path(file_path))
             try:
                 # Every argument is passed by KEYWORD (matching the exact parameter names of
                 # `execute_ripgrep` in rust_core/src/lib.rs) so that any future Rust-side signature
@@ -378,7 +425,15 @@ class RustCoreBackend(ComputeBackend):
         try:
             if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path
-                total_count = self.inner.count_matches(
+                if not follow_symlinks:
+                    if not hasattr(self.inner, "count_matches_nofollow"):
+                        raise BackendExecutionError(
+                            "Rust extension lacks count_matches_nofollow(); refusing link-following fallback"
+                        )
+                    count_fn = self.inner.count_matches_nofollow
+                else:
+                    count_fn = self.inner.count_matches
+                total_count = count_fn(
                     pattern=pattern,
                     path=str(file_path),
                     ignore_case=ignore_case,
@@ -401,7 +456,15 @@ class RustCoreBackend(ComputeBackend):
             # that no longer exists and — worse — swallowed a real TypeError raised *inside* the
             # Rust function under the same exception type, which would silently drop
             # invert_match and return wrong results instead of surfacing the failure.
-            results = self.inner.search(
+            if not follow_symlinks:
+                if not hasattr(self.inner, "search_nofollow"):
+                    raise BackendExecutionError(
+                        "Rust extension lacks search_nofollow(); refusing link-following fallback"
+                    )
+                search_fn = self.inner.search_nofollow
+            else:
+                search_fn = self.inner.search
+            results = search_fn(
                 pattern=pattern,
                 path=str(file_path),
                 ignore_case=ignore_case,

@@ -74,9 +74,13 @@ def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp
         def count_matches(self, pattern, path, ignore_case, fixed_strings):
             raise AssertionError("count fast-path should be bypassed for invert_match")
 
+        count_matches_nofollow = count_matches
+
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             assert invert_match is True
             return [(7, "FROM_RUST_WRAPPER")]
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -105,6 +109,8 @@ def test_rust_backend_honors_max_count(monkeypatch, tmp_path: Path):
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             return [(1, "apple"), (2, "apple banana")]
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
 
@@ -130,6 +136,8 @@ def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
 
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise AssertionError("oversized file should be skipped before Rust search")
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -204,6 +212,7 @@ def test_rust_passthrough_error_status_never_retries(
         def search(self, *args, **kwargs):
             pytest.fail("must not retry a completed passthrough")
 
+        search_nofollow = search
         count_matches = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
@@ -285,6 +294,8 @@ def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
         def search(self, *args, **kwargs):
             return []
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
     backend = rb.RustCoreBackend()
@@ -294,7 +305,7 @@ def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
         backend.search(str(log_file), "ERROR", config=SearchConfig(pcre2=True))
 
 
-def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
+def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch, tmp_path: Path):
     import subprocess
 
     from tensor_grep.backends import ripgrep_backend as rg_backend
@@ -302,6 +313,8 @@ def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
     from tensor_grep.backends.cpu_backend import InvalidRegexError
     from tensor_grep.core.config import SearchConfig
 
+    sample = tmp_path / "sample.txt"
+    sample.write_bytes(b"data\x00")
     monkeypatch.setattr(rg_backend.RipgrepBackend, "_get_binary_name", lambda _self: "rg")
     monkeypatch.setattr(
         rg_backend,
@@ -311,7 +324,7 @@ def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
         ),
     )
     with pytest.raises(InvalidRegexError, match="bad pattern ") as captured:
-        rb.RustCoreBackend._binary_file_matches_pattern("sample.txt", "[", SearchConfig(pcre2=True))
+        rb.RustCoreBackend._binary_file_matches_pattern(str(sample), "[", SearchConfig(pcre2=True))
     assert "\ufffd" in str(captured.value)
 
 
@@ -327,6 +340,8 @@ def test_rust_limit_bridge_failure_records_fallback_reason(monkeypatch, tmp_path
 
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match=False):
             return [(1, "ERROR line")]
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -349,6 +364,8 @@ def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     class FakeNativeRustBackend:
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             return [(1, "ERROR\0hidden")]
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -388,6 +405,8 @@ def test_rust_backend_invalid_regex_in_binary_notice_does_not_become_literal(
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise AssertionError("binary notice path should validate before native search")
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
 
@@ -406,6 +425,8 @@ def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_
     class FakeNativeRustBackend:
         def count_matches(self, pattern, path, ignore_case, fixed_strings):
             return 4
+
+        count_matches_nofollow = count_matches
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -452,6 +473,8 @@ def test_rust_backend_exception_should_raise_backend_execution_error(monkeypatch
     class FailingNativeRustBackend:
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise RuntimeError("boom")
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FailingNativeRustBackend)
@@ -572,12 +595,9 @@ def test_first_nul_offset_is_chunked(tmp_path):
 
 def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
     # council round 13: offset correctness alone would pass with read_bytes().find(); record reads
-    import builtins
-
     from tensor_grep.backends import rust_backend as rb
 
     sizes: list[int | None] = []
-    real_open = builtins.open
 
     class _Rec:
         def __init__(self, handle):
@@ -593,12 +613,18 @@ def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
         def __exit__(self, *exc):
             self._h.close()
 
-    monkeypatch.setattr(
-        rb,
-        "open",
-        lambda p, mode="r", *a, **k: _Rec(real_open(p, mode, *a, **k)),
-        raising=False,
-    )
+    from contextlib import contextmanager
+
+    from tensor_grep.backends import cpu_backend as cb
+
+    real_open_search_file = cb._open_search_file
+
+    @contextmanager
+    def _rec_open(p):
+        with real_open_search_file(p) as handle:
+            yield _Rec(handle)
+
+    monkeypatch.setattr(cb, "_open_search_file", _rec_open)
     f = tmp_path / "late.bin"
     f.write_bytes(b"a" * 70000 + b"\x00")
     assert rb._first_nul_offset(str(f), chunk_size=4096) == 70000  # crosses many chunk boundaries

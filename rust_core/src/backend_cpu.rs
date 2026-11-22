@@ -1,3 +1,4 @@
+use crate::search_file_open::{build_cpu_regex, collect_search_targets};
 use memchr::{memchr, memchr_iter, memmem};
 use memmap2::{MmapMut, MmapOptions};
 use rayon::prelude::*;
@@ -392,61 +393,60 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let path_obj = Path::new(path);
-        let mut results = Vec::new();
+        self.search_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            true,
+        )
+    }
 
+    pub fn search_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
+        Ok(self
+            .search_policy(
+                pattern,
+                path,
+                ignore_case,
+                fixed_strings,
+                invert_match,
+                false,
+            )?
+            .into_iter()
+            .map(|r| (r.line, r.text))
+            .collect())
+    }
+
+    fn search_policy(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+        follow_explicit_leaf_link: bool,
+    ) -> anyhow::Result<Vec<CpuMatch>> {
+        let mut results = Vec::new();
+        let target_path = Path::new(path);
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
-            if path_obj.metadata()?.is_file() {
-                results.extend(self.search_file_memmem(
-                    pat_bytes,
-                    &path_obj.to_path_buf(),
-                    invert_match,
-                )?);
-            } else if path_obj.metadata()?.is_dir() {
-                for entry in WalkDir::new(path_obj)
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                {
-                    if entry.file_type().is_file() {
-                        results.extend(self.search_file_memmem(
-                            pat_bytes,
-                            &entry.path().to_path_buf(),
-                            invert_match,
-                        )?);
-                    }
-                }
+            for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
+                results.extend(self.search_file_memmem(pat_bytes, &target, invert_match)?);
             }
             return Ok(results);
         }
-
-        let re = if fixed_strings {
-            RegexBuilder::new(&regex::escape(pattern))
-                .case_insensitive(ignore_case)
-                .build()?
-        } else {
-            RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build()?
-        };
-
-        if path_obj.metadata()?.is_file() {
-            results.extend(self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)?);
-        } else if path_obj.metadata()?.is_dir() {
-            for entry in WalkDir::new(path_obj)
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?
-            {
-                if entry.file_type().is_file() {
-                    results.extend(self.search_file_regex(
-                        &re,
-                        &entry.path().to_path_buf(),
-                        invert_match,
-                    )?);
-                }
-            }
+        let re = build_cpu_regex(pattern, ignore_case, fixed_strings)?;
+        for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
+            results.extend(self.search_file_regex(&re, &target, invert_match)?);
         }
-
         Ok(results)
     }
 
@@ -468,10 +468,10 @@ impl CpuBackend {
     fn search_file_memmem(
         &self,
         pattern: &[u8],
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_memmem_maybe_parallel(
@@ -485,10 +485,10 @@ impl CpuBackend {
     fn search_file_regex(
         &self,
         re: &regex::bytes::Regex,
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_regex_maybe_parallel(
@@ -626,11 +626,7 @@ impl CpuBackend {
 
         if fixed_strings && !ignore_case && !pattern.is_empty() {
             if path_obj.is_file() {
-                self.replace_file_literal(
-                    pattern.as_bytes(),
-                    replacement.as_bytes(),
-                    &path_obj.to_path_buf(),
-                )?;
+                self.replace_file_literal(pattern.as_bytes(), replacement.as_bytes(), path_obj)?;
             } else if path_obj.is_dir() {
                 self.replace_directory_literal(
                     path_obj,
@@ -653,7 +649,7 @@ impl CpuBackend {
         };
 
         if path_obj.is_file() {
-            self.replace_file_regex(&re, replacement, &path_obj.to_path_buf())?;
+            self.replace_file_regex(&re, replacement, path_obj)?;
         } else if path_obj.is_dir() {
             self.replace_directory_regex(path_obj, &re, replacement)?;
         }
@@ -749,7 +745,7 @@ impl CpuBackend {
         &self,
         pattern: &[u8],
         replacement: &[u8],
-        path: &PathBuf,
+        path: &Path,
     ) -> anyhow::Result<()> {
         #[cfg(test)]
         if self
@@ -806,7 +802,7 @@ impl CpuBackend {
         &self,
         re: &regex::bytes::Regex,
         replacement: &str,
-        path: &PathBuf,
+        path: &Path,
     ) -> anyhow::Result<()> {
         #[cfg(test)]
         if self
@@ -960,66 +956,66 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let path_obj = Path::new(path);
-        let mut total_count = 0;
+        self.count_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            true,
+        )
+    }
 
-        // Extreme fast path: fixed strings, case sensitive, use memmem
+    pub fn count_matches_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<usize> {
+        self.count_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            false,
+        )
+    }
+
+    fn count_policy(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+        follow_explicit_leaf_link: bool,
+    ) -> anyhow::Result<usize> {
+        let mut total_count = 0;
+        let target_path = Path::new(path);
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
-            if path_obj.metadata()?.is_file() {
-                total_count +=
-                    self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)?;
-            } else if path_obj.metadata()?.is_dir() {
-                for entry in WalkDir::new(path_obj)
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                {
-                    if entry.file_type().is_file() {
-                        total_count += self.count_file_memmem(
-                            pat_bytes,
-                            &entry.path().to_path_buf(),
-                            invert_match,
-                        )?;
-                    }
-                }
+            for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
+                total_count += self.count_file_memmem(pat_bytes, &target, invert_match)?;
             }
             return Ok(total_count);
         }
-
-        let re = if fixed_strings {
-            RegexBuilder::new(&regex::escape(pattern))
-                .case_insensitive(ignore_case)
-                .build()?
-        } else {
-            RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build()?
-        };
-
-        if path_obj.metadata()?.is_file() {
-            total_count += self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match)?;
-        } else if path_obj.metadata()?.is_dir() {
-            for entry in WalkDir::new(path_obj)
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?
-            {
-                if entry.file_type().is_file() {
-                    total_count +=
-                        self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)?;
-                }
-            }
+        let re = build_cpu_regex(pattern, ignore_case, fixed_strings)?;
+        for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
+            total_count += self.count_file_regex(&re, &target, invert_match)?;
         }
-
         Ok(total_count)
     }
 
     fn count_file_memmem(
         &self,
         pattern: &[u8],
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // For ripgrep parity on count matches, we count MATCHING LINES, not total occurrences.
@@ -1053,10 +1049,10 @@ impl CpuBackend {
     fn count_file_regex(
         &self,
         re: &regex::bytes::Regex,
-        path: &PathBuf,
+        path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = File::open(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // See count_file_memmem: strip a single trailing '\n', keep interior empties so -v
