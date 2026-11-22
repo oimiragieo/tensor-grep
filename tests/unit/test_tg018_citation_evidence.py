@@ -44,6 +44,8 @@ def test_rust_regex_match_is_citable(tmp_path: Path, monkeypatch: pytest.MonkeyP
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             return [(1, "foo_here")]
 
+        search_nofollow = search
+
     source = tmp_path / "sample.py"
     source.write_text("foo_here\n", encoding="utf-8")
     monkeypatch.setattr(rust_backend, "HAVE_RUST", True)

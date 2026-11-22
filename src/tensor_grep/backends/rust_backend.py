@@ -149,8 +149,10 @@ class RustCoreBackend(ComputeBackend):
     def _binary_notice_text(file_path: str) -> str:
         try:
             offset = _first_nul_offset(file_path)
-        except OSError:
-            offset = -1
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to locate binary NUL offset: {exc}"
+            ) from exc
         if offset < 0:
             offset = 0
         # ripgrep prints the NUL escape as "\0", not "/0" -- mirrors
@@ -415,11 +417,14 @@ class RustCoreBackend(ComputeBackend):
         try:
             if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path
-                count_fn = (
-                    self.inner.count_matches_nofollow
-                    if (not follow_symlinks and hasattr(self.inner, "count_matches_nofollow"))
-                    else self.inner.count_matches
-                )
+                if not follow_symlinks:
+                    if not hasattr(self.inner, "count_matches_nofollow"):
+                        raise BackendExecutionError(
+                            "Rust extension lacks count_matches_nofollow(); refusing link-following fallback"
+                        )
+                    count_fn = self.inner.count_matches_nofollow
+                else:
+                    count_fn = self.inner.count_matches
                 total_count = count_fn(
                     pattern=pattern,
                     path=str(file_path),
@@ -443,11 +448,14 @@ class RustCoreBackend(ComputeBackend):
             # that no longer exists and — worse — swallowed a real TypeError raised *inside* the
             # Rust function under the same exception type, which would silently drop
             # invert_match and return wrong results instead of surfacing the failure.
-            search_fn = (
-                self.inner.search_nofollow
-                if (not follow_symlinks and hasattr(self.inner, "search_nofollow"))
-                else self.inner.search
-            )
+            if not follow_symlinks:
+                if not hasattr(self.inner, "search_nofollow"):
+                    raise BackendExecutionError(
+                        "Rust extension lacks search_nofollow(); refusing link-following fallback"
+                    )
+                search_fn = self.inner.search_nofollow
+            else:
+                search_fn = self.inner.search
             results = search_fn(
                 pattern=pattern,
                 path=str(file_path),

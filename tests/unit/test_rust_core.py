@@ -74,9 +74,13 @@ def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp
         def count_matches(self, pattern, path, ignore_case, fixed_strings):
             raise AssertionError("count fast-path should be bypassed for invert_match")
 
+        count_matches_nofollow = count_matches
+
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             assert invert_match is True
             return [(7, "FROM_RUST_WRAPPER")]
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -105,6 +109,8 @@ def test_rust_backend_honors_max_count(monkeypatch, tmp_path: Path):
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             return [(1, "apple"), (2, "apple banana")]
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
 
@@ -130,6 +136,8 @@ def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
 
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise AssertionError("oversized file should be skipped before Rust search")
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -204,6 +212,7 @@ def test_rust_passthrough_error_status_never_retries(
         def search(self, *args, **kwargs):
             pytest.fail("must not retry a completed passthrough")
 
+        search_nofollow = search
         count_matches = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
@@ -285,6 +294,8 @@ def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
         def search(self, *args, **kwargs):
             return []
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
     backend = rb.RustCoreBackend()
@@ -330,6 +341,8 @@ def test_rust_limit_bridge_failure_records_fallback_reason(monkeypatch, tmp_path
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match=False):
             return [(1, "ERROR line")]
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
     backend = rb.RustCoreBackend()
@@ -351,6 +364,8 @@ def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     class FakeNativeRustBackend:
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             return [(1, "ERROR\0hidden")]
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -390,6 +405,8 @@ def test_rust_backend_invalid_regex_in_binary_notice_does_not_become_literal(
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise AssertionError("binary notice path should validate before native search")
 
+        search_nofollow = search
+
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
 
@@ -408,6 +425,8 @@ def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_
     class FakeNativeRustBackend:
         def count_matches(self, pattern, path, ignore_case, fixed_strings):
             return 4
+
+        count_matches_nofollow = count_matches
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
@@ -454,6 +473,8 @@ def test_rust_backend_exception_should_raise_backend_execution_error(monkeypatch
     class FailingNativeRustBackend:
         def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
             raise RuntimeError("boom")
+
+        search_nofollow = search
 
     monkeypatch.setattr(rb, "HAVE_RUST", True)
     monkeypatch.setattr(rb, "NativeRustBackend", FailingNativeRustBackend)

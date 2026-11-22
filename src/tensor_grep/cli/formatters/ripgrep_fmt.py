@@ -1,6 +1,7 @@
 import sys
 from collections import defaultdict
 
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.backends.rust_backend import _first_nul_offset
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.json_fmt import _REGEX_META, _literal_column_index
@@ -18,8 +19,10 @@ class RipgrepFormatter(OutputFormatter):
     def _binary_notice(file_path: str) -> str:
         try:
             offset = _first_nul_offset(file_path)
-        except OSError:
-            offset = -1
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to locate binary NUL offset: {exc}"
+            ) from exc
         if offset < 0:
             offset = 0
         # ripgrep prints the NUL escape as "\0"; emit the same so byte-for-byte parity

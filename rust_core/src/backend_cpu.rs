@@ -471,7 +471,7 @@ impl CpuBackend {
         path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = crate::search_file_open::open_search_file_nofollow(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_memmem_maybe_parallel(
@@ -488,7 +488,7 @@ impl CpuBackend {
         path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        let file = crate::search_file_open::open_search_file_nofollow(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         Ok(search_contents_regex_maybe_parallel(
@@ -1015,7 +1015,7 @@ impl CpuBackend {
         path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = crate::search_file_open::open_search_file_nofollow(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // For ripgrep parity on count matches, we count MATCHING LINES, not total occurrences.
@@ -1052,7 +1052,7 @@ impl CpuBackend {
         path: &Path,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        let file = crate::search_file_open::open_search_file_nofollow(path)?;
+        let file = crate::search_file_open::open_native_search_file(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         // See count_file_memmem: strip a single trailing '\n', keep interior empties so -v

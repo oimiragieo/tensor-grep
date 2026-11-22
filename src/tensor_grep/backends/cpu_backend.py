@@ -122,9 +122,12 @@ def _open_search_file_posix(path: Path) -> int:
 def _is_anchored_open_failure(exc: BaseException) -> bool:
     if isinstance(exc, OSError):
         return True
-    msg = str(exc).lower()
+    msg = str(exc)
+    if "[NativeSearchOpenFailure]" in msg:
+        return True
+    lowered = msg.lower()
     return any(
-        needle in msg
+        needle in lowered
         for needle in (
             "failed to open native search path",
             "refusing non-regular search target",
@@ -628,6 +631,8 @@ class CPUBackend(ComputeBackend):
             # closed a legit non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) --
             # the correct security-over-availability trade; such users can pass --fixed-strings
             # or use ripgrep (a genuine byte-safe engine).
+            if isinstance(exc, BackendExecutionError):
+                raise
             if _is_anchored_open_failure(exc):
                 raise BackendExecutionError(
                     f"native search open failed (refusing fallback): {exc}"
@@ -719,6 +724,8 @@ class CPUBackend(ComputeBackend):
             # all fail closed on ANY Rust failure. (Genuine Rust ABSENCE is handled by the
             # ImportError branch above, which still falls open -- Python is then the only engine,
             # a dev/broken-install condition, not the shipped MCP-reachable binary.)
+            if isinstance(exc, BackendExecutionError):
+                raise
             if _is_anchored_open_failure(exc):
                 raise BackendExecutionError(
                     f"native search open failed (refusing fallback): {exc}"
@@ -1009,7 +1016,11 @@ class CPUBackend(ComputeBackend):
         # its result directly trips mypy's `no-any-return` against this method's declared
         # `list[tuple[int, str]]`. The sibling adapter in `backends/rust_backend.py` avoids it the
         # same way (it binds `results` and iterates rather than returning the call).
-        if not follow_symlinks and hasattr(rust_backend, "search_nofollow"):
+        if not follow_symlinks:
+            if not hasattr(rust_backend, "search_nofollow"):
+                raise BackendExecutionError(
+                    "Rust extension lacks search_nofollow(); refusing link-following fallback"
+                )
             nofollow_results: list[tuple[int, str]] = rust_backend.search_nofollow(
                 pattern=rust_pattern,
                 path=file_path,

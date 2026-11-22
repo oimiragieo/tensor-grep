@@ -1277,12 +1277,6 @@ fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
     let mut inputs = SearchInputs::default();
 
     for path in &config.paths {
-        if !path.exists() {
-            return Err(anyhow!(
-                "native search path does not exist: {}",
-                path.display()
-            ));
-        }
         let selected_root = resolve_explicit_search_root(path)?;
         let selected_meta = selected_root.metadata().with_context(|| {
             crate::search_file_open::NativeSearchOpenFailure(path.to_path_buf())
@@ -1965,7 +1959,7 @@ fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<
                     continue;
                 }
                 let ignore_path = root.join(ignore_name);
-                if ignore_path.is_file() {
+                if std::fs::symlink_metadata(&ignore_path).is_ok_and(|meta| meta.is_file()) {
                     builder.add_ignore(ignore_path);
                 }
             }

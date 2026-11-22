@@ -205,6 +205,19 @@ pub struct RustBackend {
     inner: CpuBackend,
 }
 
+fn rust_backend_py_err(prefix: &str, err: anyhow::Error) -> PyErr {
+    if err
+        .chain()
+        .any(|cause| cause.is::<crate::search_file_open::NativeSearchOpenFailure>())
+    {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "{prefix} [NativeSearchOpenFailure]: {err}"
+        ))
+    } else {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("{prefix}: {err}"))
+    }
+}
+
 #[pymethods]
 impl RustBackend {
     #[new]
@@ -226,9 +239,7 @@ impl RustBackend {
     ) -> PyResult<Vec<(usize, String)>> {
         self.inner
             .search(pattern, path, ignore_case, fixed_strings, invert_match)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust search failed", e))
     }
 
     /// Search a file or directory without following explicit leaf symlinks
@@ -243,9 +254,7 @@ impl RustBackend {
     ) -> PyResult<Vec<(usize, String)>> {
         self.inner
             .search_nofollow(pattern, path, ignore_case, fixed_strings, invert_match)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust search failed", e))
     }
 
     /// Fast-path count implementation that only returns the number of matches
@@ -259,9 +268,7 @@ impl RustBackend {
     ) -> PyResult<usize> {
         self.inner
             .count_matches(pattern, path, ignore_case, fixed_strings, false)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust count failed", e))
     }
 
     /// Fast-path count implementation without following explicit leaf symlinks
@@ -275,9 +282,7 @@ impl RustBackend {
     ) -> PyResult<usize> {
         self.inner
             .count_matches_nofollow(pattern, path, ignore_case, fixed_strings, false)
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
-            })
+            .map_err(|e| rust_backend_py_err("Rust count failed", e))
     }
 
     /// Passthrough to the system ripgrep binary with full flag support
