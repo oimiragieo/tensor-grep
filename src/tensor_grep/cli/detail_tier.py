@@ -23,12 +23,14 @@ _COMPACT_OMITTED_KEYS: frozenset[str] = frozenset({
 })
 
 
-def validate_detail_tier(detail: str) -> str:
+def validate_detail_tier(detail: Any) -> str:
     """Validate `--detail` value and raise `typer.BadParameter` on unknown tiers."""
+    if isinstance(detail, typer.models.OptionInfo):
+        detail = detail.default
     if detail not in VALID_DETAIL_TIERS:
         allowed = ", ".join(VALID_DETAIL_TIERS)
         raise typer.BadParameter(f"Invalid --detail '{detail}'. Choose one of: {allowed}.")
-    return detail
+    return str(detail)
 
 
 def detail_option() -> Any:

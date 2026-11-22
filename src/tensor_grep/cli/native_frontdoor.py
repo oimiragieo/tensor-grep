@@ -1022,7 +1022,7 @@ def _publish_managed_generation(
     finally:
         if descriptor is not None:
             discard_temporary = not replacement_attempted
-            if replacement_attempted:
+            if replacement_attempted and sys.platform == "win32":
                 try:
                     import msvcrt
 

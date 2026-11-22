@@ -5857,6 +5857,7 @@ def agent(
             if json_output:
                 typer.echo(_dump_detail_json(daemon_payload, detail, ensure_ascii=False))
             else:
+                _emit_scan_incompleteness_banner(daemon_payload)
                 _emit_agent_text(daemon_payload, gpu_device_ids)
             if _scan_incomplete(daemon_payload):
                 deadline_partial_note = _agent_trustworthy_deadline_partial_note(daemon_payload)
@@ -5892,7 +5893,6 @@ def agent(
     except (FileNotFoundError, ValueError, ConfigurationError, BackendExecutionError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
-
     # Emit the full capsule before applying the scan-truncation exit contract.
     if citations:
         _citations.emit_payload_citations(
@@ -5903,8 +5903,8 @@ def agent(
     elif json_output:
         typer.echo(_dump_detail_json(payload, detail, ensure_ascii=False))
     else:
+        _emit_scan_incompleteness_banner(payload)
         _emit_agent_text(payload, gpu_device_ids)
-
     if _scan_incomplete(payload):
         deadline_partial_note = _agent_trustworthy_deadline_partial_note(payload)
         if deadline_partial_note is not None:
@@ -10579,7 +10579,7 @@ def doctor(
         False, "--fast", help="Skip slow external LSP and PyPI freshness probes."
     ),
 ) -> None:
-    """Print system, GPU, cache, AST, daemon, shell-escaping, and provider-proof diagnostics."""
+    """Print system, GPU, cache, AST, daemon, shell-escaping (PowerShell/cmd.exe literal patterns), and provider-proof diagnostics. Provider availability is not navigation proof."""
     payload = (
         _self._build_doctor_payload(path, config=config, with_lsp=False, fast=True)
         if fast

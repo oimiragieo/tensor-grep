@@ -53,7 +53,7 @@ def _commands_and_plan(project: Path, name: str) -> tuple[list[str], dict]:
     return [str(step["command"]) for step in plan], alignment
 
 
-_PREFIXES = ("uv run pytest", "cargo", "npx", "node")
+_PREFIXES = ("uv run pytest", "pytest", "cargo", "npx", "node")
 
 
 def _split_prefix(cmd: str) -> tuple[str, str]:

@@ -403,6 +403,8 @@ def _patch_doctor_capture_probe(monkeypatch, fake_run=None):
         *,
         env=None,
         require_success=False,
+        cwd=None,
+        pass_fds=(),
     ):
         if fake_run is None:
             return b"", b""

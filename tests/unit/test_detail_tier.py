@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -116,7 +117,8 @@ def test_apply_detail_tier_compact_omits_telemetry_and_preserves_contracts() -> 
 def test_invalid_detail_flag_fails_fast_with_nonzero_exit(args: list[str]) -> None:
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 2
-    assert "Invalid --detail" in result.output
+    clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "Invalid --detail" in clean_output
 
 
 def test_cli_compact_json_reduces_defs_and_callers_by_over_half(tmp_path: Path) -> None:

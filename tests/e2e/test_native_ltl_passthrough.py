@@ -94,7 +94,10 @@ def test_native_binary_routes_ltl_query_to_python_sidecar(tmp_path: Path) -> Non
         f"stderr={result.stderr!r}"
     )
 
-    engine_present = "without the linear-time Rust engine" not in result.stderr
+    engine_present = (
+        "without the linear-time Rust engine" not in result.stderr
+        and "requires the native extension on Windows" not in result.stderr
+    )
     if engine_present:
         # Full end-to-end arm -- runs anywhere the extension exists (real installs, and any
         # CI job that builds it). This is the arm that would catch a routing regression that
@@ -112,8 +115,10 @@ def test_native_binary_routes_ltl_query_to_python_sidecar(tmp_path: Path) -> Non
         # and why this arm is evidence of routing rather than a hole in the test.
         assert result.returncode == 2, "a fail-closed refusal must be an execution error"
         assert result.stdout == "", "a refused query must not emit search results"
-        assert "cannot safely evaluate this --ltl query through CPUBackend" in result.stderr
-        assert "without the linear-time Rust engine" in result.stderr
+        if "without the linear-time Rust engine" in result.stderr:
+            assert "cannot safely evaluate this --ltl query through CPUBackend" in result.stderr
+        else:
+            assert "requires the native extension on Windows" in result.stderr
         assert "Traceback" not in result.stderr
         assert "retried on the CPU backend" not in result.stderr
 

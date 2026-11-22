@@ -7,6 +7,7 @@ import errno
 import json
 import os
 import stat
+import sys
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
@@ -152,7 +153,7 @@ class CheckpointDirectoryOwner:
     @staticmethod
     def _key(path: Path) -> str:
         value = str(path.absolute())
-        if os.name == "nt":
+        if sys.platform == "win32":
             folded = value.casefold()
             if folded.startswith("\\\\?\\unc\\"):
                 value = "\\\\" + value[8:]
@@ -238,7 +239,7 @@ class CheckpointDirectoryOwner:
         key = self._key(path)
         if key in self._handles:
             return
-        if os.name == "nt":
+        if sys.platform == "win32":
             try:
                 chain = self._ancestor_chain(path)
                 aliases: list[tuple[str, tuple[int, tuple[int, int]]]] = []
@@ -486,7 +487,7 @@ class CheckpointDirectoryOwner:
         source_fd = self._handles[self._key(source_parent)][0]
         destination_fd = self._handles[self._key(destination_parent)][0]
         leaf = relative.parts[-1]
-        if os.name == "nt":
+        if sys.platform == "win32":
             source_path = source_parent / leaf
             initial = source_path.lstat()
             if stat.S_ISLNK(initial.st_mode):

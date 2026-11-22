@@ -235,7 +235,9 @@ def test_doctor_candidate_version_rejects_target_swap_during_probe(
     _home, managed, _target = _managed_layout(tmp_path, monkeypatch)
     capture_calls = 0
 
-    def swapping_capture(_argv, timeout_seconds, *, env=None, require_success=False):
+    def swapping_capture(
+        _argv, timeout_seconds, *, env=None, require_success=False, cwd=None, pass_fds=()
+    ):
         nonlocal capture_calls
         capture_calls += 1
         # Verify the held FILE_SHARE_READ lease blocks real NTFS leaf and ancestor renames while active.
@@ -269,7 +271,9 @@ def test_doctor_candidate_version_uses_contained_bounded_probe(
     candidate.write_bytes(b"not executable")
     seen: dict[str, object] = {}
 
-    def fake_capture(argv, timeout_seconds, *, env=None, require_success=False, cwd=None):
+    def fake_capture(
+        argv, timeout_seconds, *, env=None, require_success=False, cwd=None, pass_fds=()
+    ):
         seen.update({
             "argv": argv,
             "timeout_seconds": timeout_seconds,

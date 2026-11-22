@@ -811,8 +811,6 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
-    import inspect
-
     from tensor_grep.cli.doctor_launcher_probe import (
         sanitized_probe_env,
         verified_powershell_shim_probe,
@@ -841,20 +839,14 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
         if leased is None:
             return None
         probe_candidate, launch_arg, pass_fds, verify_unchanged = leased
-        probe_kwargs: dict[str, Any] = {"env": env, "require_success": True}
-        sig_params = inspect.signature(capture_probe).parameters
-        accepts_kwargs = any(
-            param.kind == inspect.Parameter.VAR_KEYWORD for param in sig_params.values()
-        )
-        if accepts_kwargs or "cwd" in sig_params:
-            probe_kwargs["cwd"] = str(probe_candidate.parent)
-        if pass_fds and (accepts_kwargs or "pass_fds" in sig_params):
-            probe_kwargs["pass_fds"] = pass_fds
         try:
             stdout_bytes, _stderr_bytes = capture_probe(
                 [launch_arg, "--version"],
                 timeout_seconds=2,
-                **probe_kwargs,
+                env=env,
+                require_success=True,
+                cwd=str(probe_candidate.parent),
+                pass_fds=pass_fds,
             )
         except Exception:
             return None
