@@ -119,6 +119,34 @@ def _open_search_file_posix(path: Path) -> int:
             os.close(fd)
 
 
+def _verify_no_link_ancestry(path: Path) -> None:
+    """Verify neither ``path`` nor any parent component is a symlink/reparse point."""
+    try:
+        lstat_res = os.lstat(path)
+    except OSError as exc:
+        raise BackendExecutionError(f"cannot inspect {str(path)!r}: {exc}") from exc
+    if stat.S_ISREG(lstat_res.st_mode) and not (
+        getattr(lstat_res, "st_file_attributes", 0) & 0x400
+    ):
+        try:
+            with _open_search_file(path):
+                return
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"refusing symbolic link or unreadable search target {str(path)!r}: {exc}"
+            ) from exc
+    target = path if path.is_absolute() else Path.cwd() / path
+    current = Path(target.anchor) if target.anchor else Path(".")
+    for part in target.parts[1:] if target.anchor else target.parts:
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except OSError as exc:
+            raise BackendExecutionError(f"cannot inspect {str(current)!r}: {exc}") from exc
+        if stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400):
+            raise BackendExecutionError(f"refusing symbolic link search target: {current}")
+
+
 def _is_anchored_open_failure(exc: BaseException) -> bool:
     if isinstance(exc, OSError):
         return True

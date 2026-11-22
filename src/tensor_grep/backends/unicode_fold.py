@@ -47,8 +47,11 @@ def ascii_fold_exact(pattern: str, path: str) -> bool:
 
 def delegate_to_rg(path: str, pattern: str, config: SearchConfig | None) -> SearchResult:
     """Run the search on rg, the only engine whose Unicode case folding is authoritative."""
+    from tensor_grep.backends.cpu_backend import _verify_no_link_ancestry
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 
+    if not (config and getattr(config, "follow", False)):
+        _verify_no_link_ancestry(Path(path))
     rg = RipgrepBackend()
     if not rg.is_available():
         raise BackendExecutionError(

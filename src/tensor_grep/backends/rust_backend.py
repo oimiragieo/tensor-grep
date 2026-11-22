@@ -326,18 +326,9 @@ class RustCoreBackend(ComputeBackend):
         bridge_fallback_reason: str | None = None
         if pcre2 or max_filesize or no_ignore_vcs:
             if not follow_symlinks:
-                try:
-                    lstat_res = os.lstat(file_path)
-                except OSError as exc:
-                    raise BackendExecutionError(
-                        f"cannot inspect {file_path!r} before native ripgrep passthrough: {exc}"
-                    ) from exc
-                if stat.S_ISLNK(lstat_res.st_mode) or bool(
-                    getattr(lstat_res, "st_file_attributes", 0) & 0x400
-                ):
-                    raise BackendExecutionError(
-                        f"refusing symbolic link search target in passthrough: {file_path}"
-                    )
+                from tensor_grep.backends.cpu_backend import _verify_no_link_ancestry
+
+                _verify_no_link_ancestry(Path(file_path))
             try:
                 # Every argument is passed by KEYWORD (matching the exact parameter names of
                 # `execute_ripgrep` in rust_core/src/lib.rs) so that any future Rust-side signature
