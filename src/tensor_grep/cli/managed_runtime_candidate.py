@@ -111,7 +111,7 @@ def _managed_candidate_profile(executable: Path | str) -> ManagedCandidateProfil
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=60,
+            timeout=180,
         )
     except Exception as exc:
         raise RuntimeError(f"managed source Python profile could not be verified: {exc}") from exc
@@ -299,7 +299,7 @@ def _managed_cuda_profile(executable: str) -> str | None:
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=60,
+            timeout=180,
         )
     except Exception as exc:
         raise RuntimeError(f"managed CUDA profile could not be verified: {exc}") from exc
@@ -330,7 +330,7 @@ def _verify_managed_candidate_python(
             encoding="utf-8",
             errors="replace",
             check=True,
-            timeout=60,
+            timeout=180,
         )
     except Exception as exc:
         raise RuntimeError(f"candidate Python verification failed: {exc}") from exc

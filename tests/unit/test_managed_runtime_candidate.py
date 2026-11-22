@@ -49,7 +49,7 @@ def test_CandidateVerification_WhenOriginsAreInsideEnvironment_AcceptsPinnedVers
         "run",
         lambda command, **kwargs: (
             pytest.fail(f"unexpected probe timeout: {kwargs.get('timeout')}")
-            if kwargs.get("timeout") != 60
+            if kwargs.get("timeout") != 180
             else subprocess.CompletedProcess(command, 0, json.dumps(evidence), "")
         ),
     )
@@ -391,7 +391,7 @@ def test_CudaProfile_WhenTorchHasNoCudaBuild_ReturnsNone(monkeypatch):
 
 def test_CudaProfile_WhenTorchImportExceedsBound_RefusesWithTimeout(monkeypatch):
     def run(command, **kwargs):
-        assert kwargs["timeout"] == 60
+        assert kwargs["timeout"] == 180
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(candidate._self.subprocess, "run", run)
@@ -404,7 +404,7 @@ def test_CudaProfile_WhenTorchImportExceedsBound_RefusesWithTimeout(monkeypatch)
 
 def test_CandidateVerification_WhenTorchImportExceedsBound_RejectsCandidate(monkeypatch, tmp_path):
     def run(command, **kwargs):
-        assert kwargs["timeout"] == 60
+        assert kwargs["timeout"] == 180
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(candidate._self.subprocess, "run", run)
