@@ -1291,7 +1291,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 548,
+    "lineno": 662,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -1301,7 +1301,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 670,
+    "lineno": 789,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1311,7 +1311,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 685,
+    "lineno": 804,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1321,7 +1321,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 688,
+    "lineno": 807,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1331,7 +1331,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 705,
+    "lineno": 824,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 4,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1341,7 +1341,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 740,
+    "lineno": 859,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 5,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1351,7 +1351,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 750,
+    "lineno": 869,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 6,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1361,7 +1361,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 753,
+    "lineno": 872,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 7,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1371,7 +1371,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 770,
+    "lineno": 889,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 8,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1381,7 +1381,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 793,
+    "lineno": 912,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 9,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1391,7 +1391,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 813,
+    "lineno": 932,
     "enclosing_symbol": "_decode_line",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1401,7 +1401,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 916,
+    "lineno": 1046,
     "enclosing_symbol": "_search_word_line_context_via_rust",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1411,7 +1411,7 @@
   },
   {
     "module": "backends/cpu_backend.py",
-    "lineno": 1068,
+    "lineno": 1198,
     "enclosing_symbol": "_search_ltl",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1511,7 +1511,7 @@
   },
   {
     "module": "backends/rust_backend.py",
-    "lineno": 358,
+    "lineno": 378,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -1521,7 +1521,7 @@
   },
   {
     "module": "backends/rust_backend.py",
-    "lineno": 411,
+    "lineno": 442,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
