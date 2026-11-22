@@ -12,11 +12,30 @@ environment before running tests.
 ## Local checks
 
 ```text
+cargo fmt --manifest-path rust_core/Cargo.toml --all -- --check
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check --preview .
 uv run --no-sync mypy src/tensor_grep
 uv run --no-sync python scripts/file_size_budget.py --report
+uv run --no-sync python scripts/bare_call_ratchet.py --report
 ```
+
+After rebuilding the Rust extension (`uv pip install --no-deps --reinstall .`),
+ensure no stale `src/tensor_grep/rust_core*.pyd` / `.so` shadows `.venv`
+`site-packages` when `pytest` runs with `pythonpath = ["src"]` (copy the newly
+built extension into `src/tensor_grep/` or remove the stale copy).
+
+When touching `except Exception` blocks, loop `try/except OSError:` handlers, or
+PyO3 error formatting, also run:
+
+```text
+pytest -q tests/unit/test_handler_dispositions.py tests/unit/test_silent_loss_census_ratchet.py
+```
+
+In Rust `anyhow` error checks, use `err.is::<T>()` (not `err.chain().any(|c| c.is::<T>())`)
+to match `.with_context(|| T(...))` wrappers, and place diagnostic tags after
+canonical error prefixes (e.g., `"Rust search failed: [Tag] ..."`) so prefix
+assertions keep matching.
 
 Run focused pytest files for the changed behavior with an external process
 timeout. On systems providing GNU timeout, for example:
