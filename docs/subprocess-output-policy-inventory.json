@@ -909,7 +909,7 @@
     "identity": "cli/main.py:upgrade._schedule_windows_self_upgrade:subprocess.Popen:e862be6d1f3a7a1864a9301529bab495e504a2e5fcc02b2af0d6365187ee88cb:0",
     "path": "cli/main.py",
     "function": "upgrade._schedule_windows_self_upgrade",
-    "line": 11225,
+    "line": 11220,
     "column": 8,
     "target": "subprocess.Popen",
     "policy": "no-capture",
@@ -1129,7 +1129,7 @@
     "identity": "cli/main.py:worker:subprocess.run:afc512bdb4209f4b15c0d5273b705c520140035c6724e6568e7b5dfed9849991:0",
     "path": "cli/main.py",
     "function": "worker",
-    "line": 13202,
+    "line": 13197,
     "column": 16,
     "target": "subprocess.run",
     "policy": "stream-forwarder",
@@ -1149,7 +1149,7 @@
     "identity": "cli/main.py:main_entry:subprocess.run:0241cf601f399a9ed8a04ae2868b61175a97c1679f09154b8867bb0f07204951:0",
     "path": "cli/main.py",
     "function": "main_entry",
-    "line": 13236,
+    "line": 13231,
     "column": 28,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -1166,7 +1166,7 @@
     "producer_fingerprint": "29f5d9ef77734e7fbc4f4f9c440c747f5bdb138a65c09ef611e3926a9e54f8e4"
   },
   {
-    "identity": "cli/managed_runtime_candidate.py:_managed_candidate_profile:injected.subprocess.run:4fa1a3f70853ac437da5c73f0fda0d7612c154d0784a4fd6b356b1ef441fdcbf:0",
+    "identity": "cli/managed_runtime_candidate.py:_managed_candidate_profile:injected.subprocess.run:4d1968d9d51ddbb21ffa2f1b91ee0d38a4cacb5efc030b77f00b6aa53b38f0a4:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_managed_candidate_profile",
     "line": 107,
@@ -1182,8 +1182,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "4fa1a3f70853ac437da5c73f0fda0d7612c154d0784a4fd6b356b1ef441fdcbf",
-    "producer_fingerprint": "900bf90ccb4228b84d97471700d9d881594c789546235a79917b9772ecf42c3a"
+    "call_fingerprint": "4d1968d9d51ddbb21ffa2f1b91ee0d38a4cacb5efc030b77f00b6aa53b38f0a4",
+    "producer_fingerprint": "e315575a91083c49384977fbbeaaa7688835de0d140df60eee4154b128938dd1"
   },
   {
     "identity": "cli/managed_runtime_candidate.py:_run_managed_candidate_install:injected.subprocess.run:99dcb9e93c8afcee753fedcbca9f91847df7828ece1f226fe0b3e9ce3405c96d:0",
@@ -1246,7 +1246,7 @@
     "producer_fingerprint": "5b43fa82fca31ebd37cd2e1ff06b329492b5b9fde4c9869933fbb1217ef828fc"
   },
   {
-    "identity": "cli/managed_runtime_candidate.py:_managed_cuda_profile:injected.subprocess.run:af437808bc55b7b05a74fb781dfc3c146a9e2dc8bbdf631fab1cf2c1584a0bdd:0",
+    "identity": "cli/managed_runtime_candidate.py:_managed_cuda_profile:injected.subprocess.run:3c370d57592a1d6dc4a8c8351cda45a70db8f92d6c4ddd95f2043ec979d26887:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_managed_cuda_profile",
     "line": 295,
@@ -1262,11 +1262,11 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "af437808bc55b7b05a74fb781dfc3c146a9e2dc8bbdf631fab1cf2c1584a0bdd",
-    "producer_fingerprint": "1d74dda3dbf2779a0cd11982547076075a37dde555f2532ab0ba6f2e0eb7abcc"
+    "call_fingerprint": "3c370d57592a1d6dc4a8c8351cda45a70db8f92d6c4ddd95f2043ec979d26887",
+    "producer_fingerprint": "127c23437b25023982150d4d3b7edecb50015038e6b1105c0f711e5bdb65305b"
   },
   {
-    "identity": "cli/managed_runtime_candidate.py:_verify_managed_candidate_python:injected.subprocess.run:33f5d41455886bff3c8e0fdedfdde4676954858367f7cf0041cb1855cb0f1d67:0",
+    "identity": "cli/managed_runtime_candidate.py:_verify_managed_candidate_python:injected.subprocess.run:66bf8554d0bad96d461003a40d91b36eac6c3f553c0c52aa6eab154a7ba047e4:0",
     "path": "cli/managed_runtime_candidate.py",
     "function": "_verify_managed_candidate_python",
     "line": 326,
@@ -1282,8 +1282,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "33f5d41455886bff3c8e0fdedfdde4676954858367f7cf0041cb1855cb0f1d67",
-    "producer_fingerprint": "bc70fbbc5ddee2bada90cd3fb981e565e69d9abb98d81bfbf96f375dc3f4351d"
+    "call_fingerprint": "66bf8554d0bad96d461003a40d91b36eac6c3f553c0c52aa6eab154a7ba047e4",
+    "producer_fingerprint": "66f5f5346a7aa493aea8729f274ce9243b415a053e832f8d6c71cf87d8990ce3"
   },
   {
     "identity": "cli/managed_runtime_upgrade.py:run_upgrade:injected.subprocess.run:d12f7e247dc7ac006850813e9d173256126b4f8cf537b3c1f8935b3b1e6d89a6:0",
