@@ -791,10 +791,16 @@ def _unlock_and_close(fd: int) -> None:
     """Unlock and close ``fd``; never raises and never touches the registry lock."""
     try:
         if sys.platform == "win32":
-            import msvcrt
+            if os.name == "nt":
+                import msvcrt
 
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import importlib
+
+                fcntl = importlib.import_module("fcntl")
+                fcntl.flock(fd, fcntl.LOCK_UN)
         else:
             import fcntl
 
@@ -840,10 +846,16 @@ def _try_os_file_lock_with_opener(
         try:
             try:
                 if sys.platform == "win32":
-                    import msvcrt
+                    if os.name == "nt":
+                        import msvcrt
 
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    else:
+                        import importlib
+
+                        fcntl = importlib.import_module("fcntl")
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 else:
                     import fcntl
 
