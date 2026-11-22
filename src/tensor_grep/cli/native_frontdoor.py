@@ -438,7 +438,7 @@ def _download_native_frontdoor_asset(
     )
 
     # Create exclusively with a private Windows DACL and stream through the held descriptor.
-    if sys.platform == "win32" and retain_guard:
+    if sys.platform == "win32" and os.name == "nt" and retain_guard:
         from tensor_grep.cli import session_daemon_winsec as winsec
         from tensor_grep.io import windows_publication
 
@@ -681,7 +681,7 @@ def _install_release_native_frontdoor_impl(
         publication_attempted = False
         try:
             try:
-                if sys.platform == "win32":
+                if sys.platform == "win32" and os.name == "nt":
                     candidate_guard = _self._download_native_frontdoor_asset(
                         url, temp_path, retain_guard=True
                     )
@@ -1022,7 +1022,7 @@ def _publish_managed_generation(
     finally:
         if descriptor is not None:
             discard_temporary = not replacement_attempted
-            if replacement_attempted and sys.platform == "win32":
+            if replacement_attempted and sys.platform == "win32" and os.name == "nt":
                 try:
                     import msvcrt
 
