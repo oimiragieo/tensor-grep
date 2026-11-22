@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def open_regular_nontraversing_fd(path: Path) -> int | None:
         st_link = path.lstat()
         if not stat.S_ISREG(st_link.st_mode) or (getattr(st_link, "st_file_attributes", 0) & 0x400):
             return None
-        if os.name == "nt":
+        if sys.platform == "win32":
             import ctypes
             import msvcrt
             from ctypes import wintypes

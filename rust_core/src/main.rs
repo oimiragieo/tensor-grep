@@ -7553,10 +7553,17 @@ fn try_resident_execution(
     stream.write_all(req_json.as_bytes())?;
     stream.flush()?;
 
-    // Read response header
+    const MAX_WORKER_RESPONSE_HEADER_BYTES: usize = 64 * 1024;
+
+    // Read response header with an explicit size bound before deserializing
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    let bytes_read =
+        std::io::Read::take(&mut reader, (MAX_WORKER_RESPONSE_HEADER_BYTES + 1) as u64)
+            .read_line(&mut line)?;
+    if bytes_read > MAX_WORKER_RESPONSE_HEADER_BYTES || !line.ends_with('\n') {
+        return Ok(None);
+    }
 
     use tensor_grep_rs::backend_ast_workflow::SessionResponse;
     let resp: SessionResponse = match serde_json::from_str(&line) {

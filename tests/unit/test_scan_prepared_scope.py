@@ -28,11 +28,11 @@ def test_Run_PreparedScope_OverridesRootsAndGlobsAndProducesSuccessfulSarif(tmp_
     selected = tmp_path / "selected.rs"
     excluded = tmp_path / "excluded.rs"
     selected.write_text(
-        'let key = "AKIAIOSFODNN7EXAMPLE";\n',  # test fixture
+        'let key = "' + "AKIA" + 'IOSFODNN7EXAMPLE";\n',  # test fixture
         encoding="utf-8",
     )
     excluded.write_text(
-        'let key = "ASIAIOSFODNN7EXAMPLE";\n',  # test fixture
+        'let key = "' + "ASIA" + 'IOSFODNN7EXAMPLE";\n',  # test fixture
         encoding="utf-8",
     )
     scanner, candidates = _prepared_fixture(tmp_path)

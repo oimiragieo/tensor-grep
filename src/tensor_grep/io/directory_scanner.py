@@ -1,6 +1,7 @@
 import fnmatch
 import os
 import stat
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -122,7 +123,7 @@ class DirectoryScanner:
                 getattr(st_link, "st_file_attributes", 0) & 0x400
             ):
                 return None
-            if os.name == "nt":
+            if sys.platform == "win32":
                 import ctypes
                 import msvcrt
                 from ctypes import wintypes

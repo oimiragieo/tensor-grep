@@ -8,8 +8,12 @@ targets = [
 all-features = true
 
 [advisories]
-# No advisory ignores: pyo3 was bumped to 0.29 (with pyo3-arrow 0.19 + arrow 59 + numpy 0.29),
-# which clears RUSTSEC-2026-0176 and RUSTSEC-2026-0177. Keep this gate strict for all findings.
+# Keep this gate strict for security vulnerabilities.
+# Transitive `unmaintained` notices from arrow / pyo3-arrow 0.19.0:
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a transitive dependency of arrow / pyo3-arrow 0.19.0 (unmaintained notice, not a vulnerability)" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz is a transitive dependency of arrow / pyo3-arrow 0.19.0 (unmaintained notice, not a vulnerability)" },
+]
 
 [licenses]
 confidence-threshold = 0.93

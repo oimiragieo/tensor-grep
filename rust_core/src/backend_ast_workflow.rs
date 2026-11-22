@@ -137,6 +137,7 @@ pub enum SessionRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SessionResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -150,7 +151,6 @@ pub struct ResidentAstWorker {
     pub backend: AstBackend,
     pub lang_to_files: HashMap<String, Vec<PathBuf>>,
 }
-
 impl Default for ResidentAstWorker {
     fn default() -> Self {
         Self::new()
