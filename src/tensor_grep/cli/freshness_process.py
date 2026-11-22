@@ -19,7 +19,7 @@ _READ_CHUNK = 4096
 def _available(stream: object) -> int:
     """Return readable pipe bytes without starting a reader thread or blocking."""
     fd = stream.fileno()  # type: ignore[attr-defined]
-    if sys.platform != "win32":
+    if sys.platform != "win32" or os.name != "nt":
         return _READ_CHUNK if select.select([fd], [], [], 0)[0] else 0
     import ctypes
     import msvcrt

@@ -65,7 +65,7 @@ def _strip_win32_device_prefix(path_str: str) -> str:
 
 def _open_regular_nontraversing(path: Path, *, share_read_only: bool = False) -> int | None:
     """Open ``path`` without following leaf reparse points/symlinks and verify final identity."""
-    if sys.platform == "win32":
+    if sys.platform == "win32" and os.name == "nt":
         import ctypes
         import msvcrt
         from ctypes import wintypes
