@@ -9,7 +9,7 @@ use grep_searcher::{Searcher, Sink};
 use crate::safe_write::AnchoredDirectory;
 
 #[derive(Debug)]
-pub(crate) struct NativeSearchOpenFailure(PathBuf);
+pub(crate) struct NativeSearchOpenFailure(pub(crate) PathBuf);
 
 impl std::fmt::Display for NativeSearchOpenFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -21,12 +21,15 @@ impl std::fmt::Display for NativeSearchOpenFailure {
     }
 }
 
+impl std::error::Error for NativeSearchOpenFailure {}
+
 pub(crate) fn open_native_search_file(path: &Path) -> Result<File> {
     open_search_file_nofollow(path).with_context(|| NativeSearchOpenFailure(path.to_path_buf()))
 }
 
 pub(crate) fn resolve_explicit_search_root(path: &Path) -> Result<PathBuf> {
-    let metadata = fs::symlink_metadata(path)?;
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?;
     let link = metadata.file_type().is_symlink();
     #[cfg(windows)]
     let link = {
@@ -34,10 +37,17 @@ pub(crate) fn resolve_explicit_search_root(path: &Path) -> Result<PathBuf> {
         link || metadata.file_attributes() & 0x400 != 0
     };
     if link {
-        Ok(fs::canonicalize(path)?)
+        Ok(fs::canonicalize(path).with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?)
     } else {
         Ok(path.to_path_buf())
     }
+}
+
+pub(crate) fn verify_directory_ancestry_nofollow(dir: &Path) -> Result<()> {
+    let abs = absolute_path(dir).with_context(|| NativeSearchOpenFailure(dir.to_path_buf()))?;
+    open_parent_directory_nofollow(&abs)
+        .map(|_| ())
+        .with_context(|| NativeSearchOpenFailure(dir.to_path_buf()))
 }
 
 pub(crate) fn resolve_search_target_with_policy(
@@ -45,12 +55,32 @@ pub(crate) fn resolve_search_target_with_policy(
     follow_explicit_leaf_link: bool,
 ) -> Result<(PathBuf, fs::Metadata)> {
     if follow_explicit_leaf_link {
-        let resolved = resolve_explicit_search_root(path)?;
-        let meta = resolved.metadata()?;
+        let resolved = resolve_explicit_search_root(path)
+            .with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?;
+        let meta = resolved
+            .metadata()
+            .with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?;
         Ok((resolved, meta))
     } else {
-        Ok((path.to_path_buf(), fs::symlink_metadata(path)?))
+        let meta = fs::symlink_metadata(path)
+            .with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?;
+        Ok((path.to_path_buf(), meta))
     }
+}
+
+pub(crate) fn build_cpu_regex(
+    pattern: &str,
+    ignore_case: bool,
+    fixed_strings: bool,
+) -> Result<regex::bytes::Regex> {
+    let source = if fixed_strings {
+        regex::escape(pattern)
+    } else {
+        pattern.to_string()
+    };
+    Ok(regex::bytes::RegexBuilder::new(&source)
+        .case_insensitive(ignore_case)
+        .build()?)
 }
 
 pub(crate) fn collect_search_targets(
@@ -62,16 +92,21 @@ pub(crate) fn collect_search_targets(
         return Ok(vec![path_obj]);
     }
     if meta.is_dir() {
+        verify_directory_ancestry_nofollow(&path_obj)?;
         let mut files = Vec::new();
         for entry in walkdir::WalkDir::new(path_obj) {
-            let entry = entry?;
+            let entry = entry.with_context(|| NativeSearchOpenFailure(path.to_path_buf()))?;
             if entry.file_type().is_file() {
                 files.push(entry.into_path());
             }
         }
         return Ok(files);
     }
-    anyhow::bail!("refusing non-regular search target: {}", path.display());
+    Err(anyhow::anyhow!(
+        "refusing non-regular search target: {}",
+        path.display()
+    ))
+    .with_context(|| NativeSearchOpenFailure(path.to_path_buf()))
 }
 
 pub(crate) fn search_opened_path<M, S>(

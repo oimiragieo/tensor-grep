@@ -1284,9 +1284,13 @@ fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
             ));
         }
         let selected_root = resolve_explicit_search_root(path)?;
-        if selected_root.is_file() {
+        let selected_meta = selected_root.metadata().with_context(|| {
+            crate::search_file_open::NativeSearchOpenFailure(path.to_path_buf())
+        })?;
+        if selected_meta.is_file() {
             inputs.files.push(selected_root);
         } else {
+            crate::search_file_open::verify_directory_ancestry_nofollow(&selected_root)?;
             inputs.roots.push(selected_root);
         }
     }
@@ -1465,7 +1469,12 @@ fn search_walk_roots_parallel(
                 // `incomplete_reason_class: "unreadable_path"` for a file it had read perfectly.
                 // Wrong in the direction that matters: it sends the reader to check permissions on
                 // an input that was fine, and hides that the OUTPUT is the thing that failed.
-                if search_path_error_is_broken_pipe(&err) || worker.output_write_failed {
+                if search_path_error_is_broken_pipe(&err)
+                    || worker.output_write_failed
+                    || err
+                        .chain()
+                        .any(|cause| cause.is::<crate::search_file_open::NativeSearchOpenFailure>())
+                {
                     should_quit.store(true, Ordering::Relaxed);
                     if let Ok(mut guard) = shared_error.lock() {
                         if guard.is_none() {

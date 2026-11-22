@@ -1,3 +1,4 @@
+use crate::search_file_open::{build_cpu_regex, collect_search_targets};
 use memchr::{memchr, memchr_iter, memmem};
 use memmap2::{MmapMut, MmapOptions};
 use rayon::prelude::*;
@@ -392,7 +393,14 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
-        self.search_with_paths_policy(pattern, path, ignore_case, fixed_strings, invert_match, true)
+        self.search_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            true,
+        )
     }
 
     pub fn search_nofollow(
@@ -404,13 +412,20 @@ impl CpuBackend {
         invert_match: bool,
     ) -> anyhow::Result<Vec<(usize, String)>> {
         Ok(self
-            .search_with_paths_policy(pattern, path, ignore_case, fixed_strings, invert_match, false)?
+            .search_policy(
+                pattern,
+                path,
+                ignore_case,
+                fixed_strings,
+                invert_match,
+                false,
+            )?
             .into_iter()
-            .map(|result| (result.line, result.text))
+            .map(|r| (r.line, r.text))
             .collect())
     }
 
-    fn search_with_paths_policy(
+    fn search_policy(
         &self,
         pattern: &str,
         path: &str,
@@ -420,28 +435,18 @@ impl CpuBackend {
         follow_explicit_leaf_link: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
         let mut results = Vec::new();
-
+        let target_path = Path::new(path);
         if fixed_strings && !ignore_case {
-            let targets = crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)?;
             let pat_bytes = pattern.as_bytes();
-            for target in targets {
+            for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
                 results.extend(self.search_file_memmem(pat_bytes, &target, invert_match)?);
             }
             return Ok(results);
         }
-
-        let re = RegexBuilder::new(&if fixed_strings {
-            regex::escape(pattern)
-        } else {
-            pattern.to_string()
-        })
-        .case_insensitive(ignore_case)
-        .build()?;
-
-        for target in crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)? {
+        let re = build_cpu_regex(pattern, ignore_case, fixed_strings)?;
+        for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
             results.extend(self.search_file_regex(&re, &target, invert_match)?);
         }
-
         Ok(results)
     }
 
@@ -951,7 +956,14 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        self.count_matches_policy(pattern, path, ignore_case, fixed_strings, invert_match, true)
+        self.count_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            true,
+        )
     }
 
     pub fn count_matches_nofollow(
@@ -962,10 +974,17 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
-        self.count_matches_policy(pattern, path, ignore_case, fixed_strings, invert_match, false)
+        self.count_policy(
+            pattern,
+            path,
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            false,
+        )
     }
 
-    fn count_matches_policy(
+    fn count_policy(
         &self,
         pattern: &str,
         path: &str,
@@ -975,28 +994,18 @@ impl CpuBackend {
         follow_explicit_leaf_link: bool,
     ) -> anyhow::Result<usize> {
         let mut total_count = 0;
-
+        let target_path = Path::new(path);
         if fixed_strings && !ignore_case {
-            let targets = crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)?;
             let pat_bytes = pattern.as_bytes();
-            for target in targets {
+            for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
                 total_count += self.count_file_memmem(pat_bytes, &target, invert_match)?;
             }
             return Ok(total_count);
         }
-
-        let re = RegexBuilder::new(&if fixed_strings {
-            regex::escape(pattern)
-        } else {
-            pattern.to_string()
-        })
-        .case_insensitive(ignore_case)
-        .build()?;
-
-        for target in crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)? {
+        let re = build_cpu_regex(pattern, ignore_case, fixed_strings)?;
+        for target in collect_search_targets(target_path, follow_explicit_leaf_link)? {
             total_count += self.count_file_regex(&re, &target, invert_match)?;
         }
-
         Ok(total_count)
     }
 

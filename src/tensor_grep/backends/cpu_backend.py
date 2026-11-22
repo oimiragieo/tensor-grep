@@ -473,9 +473,28 @@ class CPUBackend(ComputeBackend):
 
         path = Path(file_path)
         follow_symlinks = bool(getattr(config, "follow", False))
-        if not follow_symlinks and path.is_symlink():
+        try:
+            lstat_res = os.lstat(file_path)
+        except FileNotFoundError:
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CPUBackend",
+                routing_reason="cpu_missing_file",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot inspect search target {file_path!r}: {exc}"
+            ) from exc
+        if not follow_symlinks and (
+            stat.S_ISLNK(lstat_res.st_mode)
+            or bool(getattr(lstat_res, "st_file_attributes", 0) & 0x400)
+        ):
             raise BackendExecutionError(f"refusing symbolic link search target: {file_path}")
-        if not path.exists() or not path.is_file():
+        if not stat.S_ISREG(lstat_res.st_mode) and not (follow_symlinks and path.is_file()):
             return SearchResult(
                 matches=[],
                 total_files=0,

@@ -294,7 +294,7 @@ def test_rust_pcre2_bridge_failure_fails_closed(monkeypatch, tmp_path: Path):
         backend.search(str(log_file), "ERROR", config=SearchConfig(pcre2=True))
 
 
-def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
+def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch, tmp_path: Path):
     import subprocess
 
     from tensor_grep.backends import ripgrep_backend as rg_backend
@@ -302,6 +302,8 @@ def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
     from tensor_grep.backends.cpu_backend import InvalidRegexError
     from tensor_grep.core.config import SearchConfig
 
+    sample = tmp_path / "sample.txt"
+    sample.write_bytes(b"data\x00")
     monkeypatch.setattr(rg_backend.RipgrepBackend, "_get_binary_name", lambda _self: "rg")
     monkeypatch.setattr(
         rg_backend,
@@ -311,7 +313,7 @@ def test_rust_regex_error_decodes_malformed_stderr_for_diagnostics(monkeypatch):
         ),
     )
     with pytest.raises(InvalidRegexError, match="bad pattern ") as captured:
-        rb.RustCoreBackend._binary_file_matches_pattern("sample.txt", "[", SearchConfig(pcre2=True))
+        rb.RustCoreBackend._binary_file_matches_pattern(str(sample), "[", SearchConfig(pcre2=True))
     assert "\ufffd" in str(captured.value)
 
 
@@ -572,12 +574,9 @@ def test_first_nul_offset_is_chunked(tmp_path):
 
 def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
     # council round 13: offset correctness alone would pass with read_bytes().find(); record reads
-    import builtins
-
     from tensor_grep.backends import rust_backend as rb
 
     sizes: list[int | None] = []
-    real_open = builtins.open
 
     class _Rec:
         def __init__(self, handle):
@@ -593,12 +592,18 @@ def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
         def __exit__(self, *exc):
             self._h.close()
 
-    monkeypatch.setattr(
-        rb,
-        "open",
-        lambda p, mode="r", *a, **k: _Rec(real_open(p, mode, *a, **k)),
-        raising=False,
-    )
+    from contextlib import contextmanager
+
+    from tensor_grep.backends import cpu_backend as cb
+
+    real_open_search_file = cb._open_search_file
+
+    @contextmanager
+    def _rec_open(p):
+        with real_open_search_file(p) as handle:
+            yield _Rec(handle)
+
+    monkeypatch.setattr(cb, "_open_search_file", _rec_open)
     f = tmp_path / "late.bin"
     f.write_bytes(b"a" * 70000 + b"\x00")
     assert rb._first_nul_offset(str(f), chunk_size=4096) == 70000  # crosses many chunk boundaries

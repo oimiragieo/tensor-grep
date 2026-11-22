@@ -35,8 +35,10 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
 
 def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | None = None) -> int:
     """Offset of the first NUL byte, scanning in bounded chunks (-1 when none)."""
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
     offset = 0
-    with open(path, "rb") as handle:
+    with _open_search_file(Path(path)) as handle:
         while max_bytes is None or offset < max_bytes:
             chunk = handle.read(chunk_size)
             if not chunk:
@@ -50,9 +52,13 @@ def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | No
 
 def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536) -> bool:
     """Bounded-memory exact byte search; carries len(needle)-1 bytes across chunk boundaries."""
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
     keep = max(len(needle) - 1, 0)
     tail = b""
-    with open(path, "rb") as handle:  # open FIRST: an empty needle must not hide an OSError
+    with _open_search_file(
+        Path(path)
+    ) as handle:  # open FIRST: an empty needle must not hide an OSError
         if not needle:
             return True
         while chunk := handle.read(chunk_size):
@@ -212,10 +218,20 @@ class RustCoreBackend(ComputeBackend):
                 )
             except re.error as exc:
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+        from tensor_grep.backends.cpu_backend import _open_search_file
+
+        try:
+            with _open_search_file(Path(file_path)) as handle:
+                raw_bytes = handle.read()
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} for the binary-file match check: {exc}"
+            ) from exc
         cmd = [str(rg), "-a", "-q", "--no-config", *flags]
-        cmd += ["-e", pattern, "--", file_path]
+        cmd += ["-e", pattern, "-"]
         proc = run_subprocess(
             cmd,
+            input=raw_bytes,
             capture_output=True,
             text=False,
             check=False,
