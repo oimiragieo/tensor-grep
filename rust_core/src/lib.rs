@@ -206,10 +206,7 @@ pub struct RustBackend {
 }
 
 fn rust_backend_py_err(prefix: &str, err: anyhow::Error) -> PyErr {
-    if err
-        .chain()
-        .any(|cause| cause.is::<crate::search_file_open::NativeSearchOpenFailure>())
-    {
+    if crate::native_search::is_native_search_open_failure(&err) {
         pyo3::exceptions::PyRuntimeError::new_err(format!(
             "{prefix} [NativeSearchOpenFailure]: {err}"
         ))

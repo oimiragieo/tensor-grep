@@ -33,6 +33,26 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     )
 
 
+_MAX_BINARY_MATCH_BYTES = 64 * 1024 * 1024
+
+
+def _read_bounded_binary_bytes(file_path: str) -> bytes:
+    from tensor_grep.backends.cpu_backend import _open_search_file
+
+    try:
+        with _open_search_file(Path(file_path)) as handle:
+            raw_bytes = handle.read(_MAX_BINARY_MATCH_BYTES + 1)
+    except OSError as exc:
+        raise BackendExecutionError(
+            f"cannot read {file_path!r} for the binary-file match check: {exc}"
+        ) from exc
+    if len(raw_bytes) > _MAX_BINARY_MATCH_BYTES:
+        raise BackendExecutionError(
+            f"binary file {file_path!r} exceeds the {_MAX_BINARY_MATCH_BYTES}-byte match probe limit"
+        )
+    return raw_bytes
+
+
 def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | None = None) -> int:
     """Offset of the first NUL byte, scanning in bounded chunks (-1 when none)."""
     from tensor_grep.backends.cpu_backend import _open_search_file
@@ -197,15 +217,7 @@ class RustCoreBackend(ComputeBackend):
         if rg is None:
             # No rg: keep main's route (Python re over the bytes) rather than turning a request
             # main served into an error; the semantics differ only for exotic regex syntax.
-            from tensor_grep.backends.cpu_backend import _open_search_file
-
-            try:
-                with _open_search_file(Path(file_path)) as handle:
-                    haystack = handle.read()
-            except OSError as exc:
-                raise BackendExecutionError(
-                    f"cannot read {file_path!r} for the binary-file match check: {exc}"
-                ) from exc
+            haystack = _read_bounded_binary_bytes(file_path)
             ignore_case = effective_ignore_case(config, pattern)
             try:
                 return (
@@ -220,15 +232,7 @@ class RustCoreBackend(ComputeBackend):
                 )
             except re.error as exc:
                 raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
-        from tensor_grep.backends.cpu_backend import _open_search_file
-
-        try:
-            with _open_search_file(Path(file_path)) as handle:
-                raw_bytes = handle.read()
-        except OSError as exc:
-            raise BackendExecutionError(
-                f"cannot read {file_path!r} for the binary-file match check: {exc}"
-            ) from exc
+        raw_bytes = _read_bounded_binary_bytes(file_path)
         cmd = [str(rg), "-a", "-q", "--no-config", *flags]
         cmd += ["-e", pattern, "-"]
         proc = run_subprocess(
@@ -317,9 +321,23 @@ class RustCoreBackend(ComputeBackend):
                 routing_worker_count=1,
             )
 
+        follow_symlinks = bool(config and getattr(config, "follow", False))
         # PCRE2 or advanced limits always route to ripgrep passthrough via Rust
         bridge_fallback_reason: str | None = None
         if pcre2 or max_filesize or no_ignore_vcs:
+            if not follow_symlinks:
+                try:
+                    lstat_res = os.lstat(file_path)
+                except OSError as exc:
+                    raise BackendExecutionError(
+                        f"cannot inspect {file_path!r} before native ripgrep passthrough: {exc}"
+                    ) from exc
+                if stat.S_ISLNK(lstat_res.st_mode) or bool(
+                    getattr(lstat_res, "st_file_attributes", 0) & 0x400
+                ):
+                    raise BackendExecutionError(
+                        f"refusing symbolic link search target in passthrough: {file_path}"
+                    )
             try:
                 # Every argument is passed by KEYWORD (matching the exact parameter names of
                 # `execute_ripgrep` in rust_core/src/lib.rs) so that any future Rust-side signature
@@ -413,7 +431,6 @@ class RustCoreBackend(ComputeBackend):
                     "limit/sort flags may not be honored by the Python fallback"
                 )
 
-        follow_symlinks = bool(config and getattr(config, "follow", False))
         try:
             if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path

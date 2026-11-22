@@ -1465,9 +1465,7 @@ fn search_walk_roots_parallel(
                 // an input that was fine, and hides that the OUTPUT is the thing that failed.
                 if search_path_error_is_broken_pipe(&err)
                     || worker.output_write_failed
-                    || err
-                        .chain()
-                        .any(|cause| cause.is::<crate::search_file_open::NativeSearchOpenFailure>())
+                    || is_native_search_open_failure(&err)
                 {
                     should_quit.store(true, Ordering::Relaxed);
                     if let Ok(mut guard) = shared_error.lock() {
