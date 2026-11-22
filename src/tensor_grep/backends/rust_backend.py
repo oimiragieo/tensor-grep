@@ -1,4 +1,6 @@
+import os
 import re
+import stat
 from pathlib import Path
 
 from tensor_grep.backends.base import (
@@ -115,14 +117,27 @@ class RustCoreBackend(ComputeBackend):
 
     @staticmethod
     def _is_binary_file(file_path: str) -> bool:
-        path = Path(file_path)
-        if not path.is_file():
+        from tensor_grep.backends.cpu_backend import _open_search_file
+
+        try:
+            lstat_res = os.lstat(file_path)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to check for binary content: {exc}"
+            ) from exc
+        if stat.S_ISDIR(lstat_res.st_mode) and not (
+            getattr(lstat_res, "st_file_attributes", 0) & 0x400
+        ):
             return False
         try:
-            with path.open("rb") as handle:
+            with _open_search_file(Path(file_path)) as handle:
                 return b"\0" in handle.read(8192)
-        except OSError:
-            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {file_path!r} to check for binary content: {exc}"
+            ) from exc
 
     @staticmethod
     def _binary_notice_text(file_path: str) -> str:
@@ -174,10 +189,15 @@ class RustCoreBackend(ComputeBackend):
         if rg is None:
             # No rg: keep main's route (Python re over the bytes) rather than turning a request
             # main served into an error; the semantics differ only for exotic regex syntax.
+            from tensor_grep.backends.cpu_backend import _open_search_file
+
             try:
-                haystack = Path(file_path).read_bytes()
-            except OSError:
-                return False
+                with _open_search_file(Path(file_path)) as handle:
+                    haystack = handle.read()
+            except OSError as exc:
+                raise BackendExecutionError(
+                    f"cannot read {file_path!r} for the binary-file match check: {exc}"
+                ) from exc
             ignore_case = effective_ignore_case(config, pattern)
             try:
                 return (
@@ -375,10 +395,16 @@ class RustCoreBackend(ComputeBackend):
                     "limit/sort flags may not be honored by the Python fallback"
                 )
 
+        follow_symlinks = bool(config and getattr(config, "follow", False))
         try:
             if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path
-                total_count = self.inner.count_matches(
+                count_fn = (
+                    self.inner.count_matches_nofollow
+                    if (not follow_symlinks and hasattr(self.inner, "count_matches_nofollow"))
+                    else self.inner.count_matches
+                )
+                total_count = count_fn(
                     pattern=pattern,
                     path=str(file_path),
                     ignore_case=ignore_case,
@@ -401,7 +427,12 @@ class RustCoreBackend(ComputeBackend):
             # that no longer exists and — worse — swallowed a real TypeError raised *inside* the
             # Rust function under the same exception type, which would silently drop
             # invert_match and return wrong results instead of surfacing the failure.
-            results = self.inner.search(
+            search_fn = (
+                self.inner.search_nofollow
+                if (not follow_symlinks and hasattr(self.inner, "search_nofollow"))
+                else self.inner.search
+            )
+            results = search_fn(
                 pattern=pattern,
                 path=str(file_path),
                 ignore_case=ignore_case,

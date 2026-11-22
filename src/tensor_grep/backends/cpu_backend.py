@@ -94,12 +94,17 @@ def _open_search_file_posix(path: Path) -> int:
         | os.__dict__["O_NOFOLLOW"]
         | getattr(os, "O_CLOEXEC", 0)
     )
-    parent_fd = os.open(target.anchor, directory_flags)
+    dir_fds = [os.open(target.anchor, directory_flags)]
     try:
         for component in target.parent.parts[1:]:
-            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
-            os.close(parent_fd)
-            parent_fd = child_fd
+            if component == ".":
+                continue
+            if component == "..":
+                if len(dir_fds) > 1:
+                    os.close(dir_fds.pop())
+                continue
+            child_fd = os.open(component, directory_flags, dir_fd=dir_fds[-1])
+            dir_fds.append(child_fd)
         return os.open(
             target.name,
             os.O_RDONLY
@@ -107,10 +112,28 @@ def _open_search_file_posix(path: Path) -> int:
             | getattr(os, "O_BINARY", 0)
             | getattr(os, "O_NONBLOCK", 0)
             | getattr(os, "O_CLOEXEC", 0),
-            dir_fd=parent_fd,
+            dir_fd=dir_fds[-1],
         )
     finally:
-        os.close(parent_fd)
+        for fd in reversed(dir_fds):
+            os.close(fd)
+
+
+def _is_anchored_open_failure(exc: BaseException) -> bool:
+    if isinstance(exc, OSError):
+        return True
+    msg = str(exc).lower()
+    return any(
+        needle in msg
+        for needle in (
+            "failed to open native search path",
+            "refusing non-regular search target",
+            "refusing symbolic",
+            "symbolic links",
+            "reparse",
+            "no-follow",
+        )
+    )
 
 
 def compute_native_walk_deadline() -> float:
@@ -198,8 +221,10 @@ class CPUBackend(ComputeBackend):
         try:
             with _open_search_file(path) as file_obj:
                 return b"\x00" in file_obj.read(4096)
-        except OSError:
-            return False
+        except OSError as exc:
+            raise BackendExecutionError(
+                f"cannot read {str(path)!r} to check for binary content: {exc}"
+            ) from exc
 
     @staticmethod
     def _is_persistent_prefilter_enabled() -> bool:
@@ -447,6 +472,9 @@ class CPUBackend(ComputeBackend):
             )
 
         path = Path(file_path)
+        follow_symlinks = bool(getattr(config, "follow", False))
+        if not follow_symlinks and path.is_symlink():
+            raise BackendExecutionError(f"refusing symbolic link search target: {file_path}")
         if not path.exists() or not path.is_file():
             return SearchResult(
                 matches=[],
@@ -522,6 +550,7 @@ class CPUBackend(ComputeBackend):
                     effective_ignore_case(config, pattern),
                     config.fixed_strings,
                     config.invert_match,
+                    follow_symlinks=follow_symlinks,
                 )
             except TypeError as exc:
                 raise _NativeAdapterTypeError(str(exc)) from exc
@@ -535,6 +564,10 @@ class CPUBackend(ComputeBackend):
                 except UnicodeDecodeError as exc:
                     raise _RustUtf8DecodeMismatch(
                         "Rust backend UTF-8 decode mismatch, using Python fallback"
+                    ) from exc
+                except OSError as exc:
+                    raise BackendExecutionError(
+                        f"cannot read {file_path!r} after native search: {exc}"
                     ) from exc
 
             if config.max_count is not None:
@@ -576,6 +609,10 @@ class CPUBackend(ComputeBackend):
             # closed a legit non-ASCII regex on a non-UTF-8 file (e.g. `caf\xe9\d+` on latin-1) --
             # the correct security-over-availability trade; such users can pass --fixed-strings
             # or use ripgrep (a genuine byte-safe engine).
+            if _is_anchored_open_failure(exc):
+                raise BackendExecutionError(
+                    f"native search open failed (refusing fallback): {exc}"
+                ) from exc
             if not self._fallback_pattern_is_provably_linear(config):
                 raise BackendExecutionError(
                     "cannot safely evaluate this non-fixed-strings pattern through CPUBackend's "
@@ -663,6 +700,10 @@ class CPUBackend(ComputeBackend):
             # all fail closed on ANY Rust failure. (Genuine Rust ABSENCE is handled by the
             # ImportError branch above, which still falls open -- Python is then the only engine,
             # a dev/broken-install condition, not the shipped MCP-reachable binary.)
+            if _is_anchored_open_failure(exc):
+                raise BackendExecutionError(
+                    f"native search open failed (refusing fallback): {exc}"
+                ) from exc
             if not self._fallback_pattern_is_provably_linear(config):
                 raise BackendExecutionError(
                     "cannot safely evaluate this non-fixed-strings pattern through CPUBackend "
@@ -920,6 +961,7 @@ class CPUBackend(ComputeBackend):
         ignore_case: bool,
         fixed_strings: bool,
         invert_match: bool,
+        follow_symlinks: bool = False,
     ) -> list[tuple[int, str]]:
         """Run ONE pattern through the linear-time Rust engine and return its raw
         ``(line_number, text)`` matches (Rust applies ``invert_match`` itself, so the returned
@@ -948,6 +990,15 @@ class CPUBackend(ComputeBackend):
         # its result directly trips mypy's `no-any-return` against this method's declared
         # `list[tuple[int, str]]`. The sibling adapter in `backends/rust_backend.py` avoids it the
         # same way (it binds `results` and iterates rather than returning the call).
+        if not follow_symlinks and hasattr(rust_backend, "search_nofollow"):
+            nofollow_results: list[tuple[int, str]] = rust_backend.search_nofollow(
+                pattern=rust_pattern,
+                path=file_path,
+                ignore_case=ignore_case,
+                fixed_strings=fixed_strings,
+                invert_match=invert_match,
+            )
+            return nofollow_results
         results: list[tuple[int, str]] = rust_backend.search(
             pattern=rust_pattern,
             path=file_path,
@@ -990,6 +1041,7 @@ class CPUBackend(ComputeBackend):
                 ignore_case,
                 rust_query_fixed_strings,
                 config.invert_match,
+                follow_symlinks=bool(getattr(config, "follow", False)),
             )
         except Exception as exc:
             raise BackendExecutionError(

@@ -392,52 +392,54 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<Vec<CpuMatch>> {
+        self.search_with_paths_policy(pattern, path, ignore_case, fixed_strings, invert_match, true)
+    }
+
+    pub fn search_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
+        Ok(self
+            .search_with_paths_policy(pattern, path, ignore_case, fixed_strings, invert_match, false)?
+            .into_iter()
+            .map(|result| (result.line, result.text))
+            .collect())
+    }
+
+    fn search_with_paths_policy(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+        follow_explicit_leaf_link: bool,
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let mut results = Vec::new();
 
         if fixed_strings && !ignore_case {
-            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
+            let targets = crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)?;
             let pat_bytes = pattern.as_bytes();
-            if path_obj.metadata()?.is_file() {
-                results.extend(self.search_file_memmem(pat_bytes, &path_obj, invert_match)?);
-            } else if path_obj.metadata()?.is_dir() {
-                for entry in WalkDir::new(path_obj)
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                {
-                    if entry.file_type().is_file() {
-                        results.extend(self.search_file_memmem(
-                            pat_bytes,
-                            entry.path(),
-                            invert_match,
-                        )?);
-                    }
-                }
+            for target in targets {
+                results.extend(self.search_file_memmem(pat_bytes, &target, invert_match)?);
             }
             return Ok(results);
         }
 
-        let re = if fixed_strings {
-            RegexBuilder::new(&regex::escape(pattern))
-                .case_insensitive(ignore_case)
-                .build()?
+        let re = RegexBuilder::new(&if fixed_strings {
+            regex::escape(pattern)
         } else {
-            RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build()?
-        };
+            pattern.to_string()
+        })
+        .case_insensitive(ignore_case)
+        .build()?;
 
-        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
-        if path_obj.metadata()?.is_file() {
-            results.extend(self.search_file_regex(&re, &path_obj, invert_match)?);
-        } else if path_obj.metadata()?.is_dir() {
-            for entry in WalkDir::new(path_obj)
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?
-            {
-                if entry.file_type().is_file() {
-                    results.extend(self.search_file_regex(&re, entry.path(), invert_match)?);
-                }
-            }
+        for target in crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)? {
+            results.extend(self.search_file_regex(&re, &target, invert_match)?);
         }
 
         Ok(results)
@@ -949,50 +951,50 @@ impl CpuBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> anyhow::Result<usize> {
+        self.count_matches_policy(pattern, path, ignore_case, fixed_strings, invert_match, true)
+    }
+
+    pub fn count_matches_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<usize> {
+        self.count_matches_policy(pattern, path, ignore_case, fixed_strings, invert_match, false)
+    }
+
+    fn count_matches_policy(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+        follow_explicit_leaf_link: bool,
+    ) -> anyhow::Result<usize> {
         let mut total_count = 0;
 
-        // Extreme fast path: fixed strings, case sensitive, use memmem
         if fixed_strings && !ignore_case {
-            let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
+            let targets = crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)?;
             let pat_bytes = pattern.as_bytes();
-            if path_obj.metadata()?.is_file() {
-                total_count += self.count_file_memmem(pat_bytes, &path_obj, invert_match)?;
-            } else if path_obj.metadata()?.is_dir() {
-                for entry in WalkDir::new(path_obj)
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                {
-                    if entry.file_type().is_file() {
-                        total_count +=
-                            self.count_file_memmem(pat_bytes, entry.path(), invert_match)?;
-                    }
-                }
+            for target in targets {
+                total_count += self.count_file_memmem(pat_bytes, &target, invert_match)?;
             }
             return Ok(total_count);
         }
 
-        let re = if fixed_strings {
-            RegexBuilder::new(&regex::escape(pattern))
-                .case_insensitive(ignore_case)
-                .build()?
+        let re = RegexBuilder::new(&if fixed_strings {
+            regex::escape(pattern)
         } else {
-            RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build()?
-        };
+            pattern.to_string()
+        })
+        .case_insensitive(ignore_case)
+        .build()?;
 
-        let path_obj = crate::search_file_open::resolve_explicit_search_root(Path::new(path))?;
-        if path_obj.metadata()?.is_file() {
-            total_count += self.count_file_regex(&re, &path_obj, invert_match)?;
-        } else if path_obj.metadata()?.is_dir() {
-            for entry in WalkDir::new(path_obj)
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()?
-            {
-                if entry.file_type().is_file() {
-                    total_count += self.count_file_regex(&re, entry.path(), invert_match)?;
-                }
-            }
+        for target in crate::search_file_open::collect_search_targets(Path::new(path), follow_explicit_leaf_link)? {
+            total_count += self.count_file_regex(&re, &target, invert_match)?;
         }
 
         Ok(total_count)

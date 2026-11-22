@@ -1441,9 +1441,7 @@ def test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fa
         CPUBackend().search(str(f), literal, config=SearchConfig())
 
 
-def test_search_refuses_leaf_link_substituted_after_scan(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_search_refuses_leaf_link_substituted_after_scan(tmp_path) -> None:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     root = tmp_path / "repo"
@@ -1461,10 +1459,6 @@ def test_search_refuses_leaf_link_substituted_after_scan(
     except OSError as exc:
         pytest.skip(f"this environment cannot create a file symlink: {exc}")
 
-    def refused_native_search(*_args, **_kwargs):
-        raise OSError("simulated native no-follow refusal")
-
-    monkeypatch.setattr(CPUBackend, "_rust_match_set", refused_native_search)
     with pytest.raises(RuntimeError, match=r"search target|non-regular|symbolic links"):
         CPUBackend().search(
             candidates[0],

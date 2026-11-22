@@ -1,8 +1,6 @@
 use std::fs::{self, File};
 use std::io;
-#[cfg(windows)]
-use std::path::Component;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 use grep_matcher::Matcher;
@@ -40,6 +38,40 @@ pub(crate) fn resolve_explicit_search_root(path: &Path) -> Result<PathBuf> {
     } else {
         Ok(path.to_path_buf())
     }
+}
+
+pub(crate) fn resolve_search_target_with_policy(
+    path: &Path,
+    follow_explicit_leaf_link: bool,
+) -> Result<(PathBuf, fs::Metadata)> {
+    if follow_explicit_leaf_link {
+        let resolved = resolve_explicit_search_root(path)?;
+        let meta = resolved.metadata()?;
+        Ok((resolved, meta))
+    } else {
+        Ok((path.to_path_buf(), fs::symlink_metadata(path)?))
+    }
+}
+
+pub(crate) fn collect_search_targets(
+    path: &Path,
+    follow_explicit_leaf_link: bool,
+) -> Result<Vec<PathBuf>> {
+    let (path_obj, meta) = resolve_search_target_with_policy(path, follow_explicit_leaf_link)?;
+    if meta.is_file() {
+        return Ok(vec![path_obj]);
+    }
+    if meta.is_dir() {
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(path_obj) {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                files.push(entry.into_path());
+            }
+        }
+        return Ok(files);
+    }
+    anyhow::bail!("refusing non-regular search target: {}", path.display());
 }
 
 pub(crate) fn search_opened_path<M, S>(
@@ -107,10 +139,60 @@ fn open_parent_directory_nofollow(parent: &Path) -> anyhow::Result<AnchoredDirec
     {
         // Darwin exposes these system directories through aliases under /private.
         #[cfg(target_os = "macos")]
-        if parent.starts_with("/var") || parent.starts_with("/tmp") || parent.starts_with("/etc") {
-            return AnchoredDirectory::open(&Path::new("/private").join(parent.strip_prefix("/")?));
+        let normalized_parent;
+        #[cfg(target_os = "macos")]
+        let target = if parent.starts_with("/var")
+            || parent.starts_with("/tmp")
+            || parent.starts_with("/etc")
+        {
+            normalized_parent = Path::new("/private").join(parent.strip_prefix("/")?);
+            normalized_parent.as_path()
+        } else {
+            parent
+        };
+        #[cfg(not(target_os = "macos"))]
+        let target = parent;
+
+        // Walk every component with retained descriptors and pop on `..` so a
+        // concurrent parent rename cannot redirect `openat(current_fd, "..")`.
+        let mut stack: Vec<AnchoredDirectory> = Vec::new();
+        for component in target.components() {
+            match component {
+                Component::RootDir => {
+                    stack.clear();
+                    stack.push(AnchoredDirectory::open(Path::new("/"))?);
+                }
+                Component::Normal(name) => {
+                    let current = stack.last().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "refusing non-rooted search parent path {}",
+                            parent.display()
+                        )
+                    })?;
+                    stack.push(current.open_child(name)?);
+                }
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if stack.len() > 1 {
+                        stack.pop();
+                    } else if stack.is_empty() {
+                        anyhow::bail!(
+                            "refusing non-rooted search parent path {}",
+                            parent.display()
+                        );
+                    }
+                }
+                Component::Prefix(_) => {
+                    anyhow::bail!(
+                        "refusing unexpected prefix in Unix search path {}",
+                        parent.display()
+                    );
+                }
+            }
         }
-        AnchoredDirectory::open(parent)
+        stack.pop().ok_or_else(|| {
+            anyhow::anyhow!("refusing search parent without root {}", parent.display())
+        })
     }
     #[cfg(windows)]
     {

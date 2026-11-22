@@ -3,7 +3,6 @@ use anyhow::{Context, Result};
 use grep_regex::RegexMatcher;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
@@ -157,9 +156,7 @@ fn collect_matches(
 
     let candidate_lines: Option<HashSet<usize>> =
         candidate_lines.map(|lines| lines.iter().copied().collect());
-    let mut reader = BufReader::new(
-        File::open(file).with_context(|| format!("failed to read {}", file.display()))?,
-    );
+    let mut reader = BufReader::new(crate::search_file_open::open_native_search_file(file)?);
     let mut bytes = Vec::new();
     let mut line_number = 0usize;
     let mut results = Vec::new();

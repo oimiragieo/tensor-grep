@@ -231,6 +231,23 @@ impl RustBackend {
             })
     }
 
+    /// Search a file or directory without following explicit leaf symlinks
+    #[allow(clippy::useless_conversion)]
+    fn search_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> PyResult<Vec<(usize, String)>> {
+        self.inner
+            .search_nofollow(pattern, path, ignore_case, fixed_strings, invert_match)
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
+            })
+    }
+
     /// Fast-path count implementation that only returns the number of matches
     #[allow(clippy::useless_conversion)]
     fn count_matches(
@@ -242,6 +259,22 @@ impl RustBackend {
     ) -> PyResult<usize> {
         self.inner
             .count_matches(pattern, path, ignore_case, fixed_strings, false)
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
+            })
+    }
+
+    /// Fast-path count implementation without following explicit leaf symlinks
+    #[allow(clippy::useless_conversion)]
+    fn count_matches_nofollow(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> PyResult<usize> {
+        self.inner
+            .count_matches_nofollow(pattern, path, ignore_case, fixed_strings, false)
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
             })
