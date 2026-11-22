@@ -2981,7 +2981,7 @@
   },
   {
     "module": "cli/session_resume_service.py",
-    "lineno": 263,
+    "lineno": 281,
     "enclosing_symbol": "dispatch_session_prepare_cli",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2991,7 +2991,7 @@
   },
   {
     "module": "cli/session_resume_service.py",
-    "lineno": 280,
+    "lineno": 298,
     "enclosing_symbol": "dispatch_session_resume_cli",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
