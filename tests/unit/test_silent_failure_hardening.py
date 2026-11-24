@@ -213,7 +213,8 @@ _EXCLUDED_MODULES = frozenset({
 # Parser uncertainty and best-effort LRU cleanup add two reviewed boundaries: 354 + 2 = 356.
 # Both have ledger records and injected-failure/live controls in the graph and daemon cleanup
 # failure-boundary tests.
-TOTAL_BROAD_HANDLERS_CEILING = 356
+# +1 INTENTIONAL-BOUNDARY for cli/mcp_server.py::tg_discover_tools outer fail-closed boundary (handler-dispositions.json): 356 + 1 = 357.
+TOTAL_BROAD_HANDLERS_CEILING = 357
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
