@@ -31,8 +31,10 @@ from tensor_grep.cli import (
     lang_registry,
     lang_suffixes,
 )
+from tensor_grep.cli import predictive_test_selector as _predictive_test_selector
 from tensor_grep.cli import repo_map_graph as _repo_map_graph
 from tensor_grep.cli import repo_map_input_provenance as _input_provenance
+from tensor_grep.cli import repo_map_ranking as _repo_map_ranking
 from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
@@ -437,6 +439,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
+from tensor_grep.cli.symbol_blast_pruner import prune_symbol_unreachable_importers
 from tensor_grep.cli.symbols_cache import (
     SymbolGeneration,
     authenticated_content_root,
@@ -3198,96 +3201,18 @@ def _discover_validation_tests_for_primary_file(
     deadline_hit: _DeadlineBreakFlag | None = None,
     unreadable_hit: _UnreadablePathFlag | None = None,
 ) -> list[str]:
-    if not primary_file:
-        return []
-    source_path = _self._resolved_input_path(primary_file)
-    validation_root = _validation_repo_root(source_path.parent)
-    scoped_path = _self._resolved_input_path(scoped_root)
-    if _self._is_dir_with_receipt(scoped_path) and validation_root == scoped_path:
-        return []
-
-    terms: list[str] = []
-    for term in [
-        *_candidate_terms(primary_symbol_name),
-        *_candidate_terms(query),
-        *_source_tokens([str(source_path)]),
-    ]:
-        if term and term not in terms:
-            terms.append(term)
-
-    source_stem = source_path.stem.lower()
-    source_related_stem = _related_test_stem(source_stem)
-    scored_tests: list[tuple[int, str]] = []
-    candidate_files = _self._precomputed_validation_files_for_root(
-        validation_root,
-        precomputed_file_paths,
+    return _predictive_test_selector.discover_and_rank_tests_for_primary_file(
+        scoped_root,
+        primary_file,
+        primary_symbol_name=primary_symbol_name,
+        query=query,
+        limit=limit,
+        precomputed_file_paths=precomputed_file_paths,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=deadline_hit,
+        unreadable_hit=unreadable_hit,
+        repo_map_mod=_self,
     )
-    if candidate_files is None:
-        # #222 residual fix: this fallback (only reached when the caller has no `rm["files"]`
-        # list to reuse -- e.g. a bare `validation_root` outside the current repo map) did a
-        # FRESH, un-deadlined filesystem walk even though this function already has `deadline_
-        # monotonic`/`deadline_hit` in scope and threads them into the `_precomputed_validation_
-        # files_for_root` branch just above. `_iter_repo_files` already supports both kwargs
-        # (the main `build_repo_map` scan uses them) -- this was simply not wired here. Profiled
-        # contributing multiple seconds to `tg agent`'s post-deadline tail (via `_build_edit_
-        # plan_seed`'s validation-plan machinery) on a 6,000-file synthetic repo.
-        candidate_files = _self._iter_repo_files(
-            validation_root,
-            max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
-            deadline_monotonic=deadline_monotonic,
-            deadline_hit=deadline_hit,
-            # Task #291: this walk feeds the VALIDATION PLAN -- the answer to "what should I run
-            # to validate this edit?". Unwired, a permission-denied subtree simply yielded fewer
-            # discovered tests and the plan was emitted with no hint it was built over a partial
-            # scan, so an agent runs a shorter suite and believes it validated. Strictly worse
-            # than the search surfaces (#761/#767/#768): there the user sees fewer results and
-            # can notice; here they get a confident INSTRUCTION. Not budget-remediable -- raising
-            # _VALIDATION_RUNNER_SCAN_LIMIT cannot make a denied directory readable.
-            unreadable_hit=unreadable_hit,
-        )
-    for current in candidate_files:
-        # #639 review nit 1: the resolve loop above can be bounded and still hand back a
-        # partial `candidate_files` list -- also bound THIS scoring loop directly (test-file
-        # detection + node:test probe + path scoring below are each their own, non-trivial cost)
-        # so a large candidate set can't itself run the shared budget past zero.
-        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-            if deadline_hit is not None:
-                deadline_hit.hit = True
-            break
-        if not _is_test_file(current):
-            continue
-        resolved = _self._resolved_input_path(current)
-        if resolved == source_path:
-            continue
-        if (
-            current.suffix.lower() in _JS_TS_SUFFIXES
-            and not _self._javascript_test_file_uses_node_test(str(resolved))
-        ):
-            continue
-        # F84 Fix B: discovery used to be JS/TS-only -- every non-JS/TS candidate (including a
-        # `.py` test file that already passed the `_is_test_file` gate above) was silently
-        # dropped here, so a scoped python primary never got a targeted per-file validation
-        # step even once Fix A let the walk reach the real root. `.py` test files now fall
-        # through to the language-neutral scoring below; the JS/TS node:test gate above is
-        # unchanged, and every other language is still excluded.
-        if current.suffix.lower() not in _JS_TS_SUFFIXES and current.suffix.lower() != ".py":
-            continue
-        current_path = str(resolved)
-        score = _self._score_file_path(current_path, terms)
-        test_related_stem = _related_test_stem(current.stem)
-        if test_related_stem == source_related_stem:
-            score += 8
-        elif source_related_stem and source_related_stem in test_related_stem:
-            score += 4
-        score += _framework_test_pattern_bonus(current_path, terms, raw_query=query)
-        if score <= 0:
-            continue
-        scored_tests.append((score, current_path))
-
-    scored_tests.sort(key=lambda item: (-item[0], item[1]))
-    return [path for _, path in scored_tests[: max(1, limit)]]
 
 
 def _dedupe_symbol_records(symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5873,6 +5798,9 @@ def _build_context_pack_from_map(
 
         scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
         scored_files.sort(key=lambda item: (-item[0], item[1]))
+        _repo_map_ranking.promote_exact_declaration_files(
+            scored_files, scored_symbols, file_reasons
+        )
         _self._promote_filename_phrase(
             scored_files,
             scored_symbols,
@@ -7267,6 +7195,11 @@ def _raw_validation_plan_for_tests(
         if isinstance(primary_symbol, dict) and primary_symbol.get("name")
         else None
     )
+    primary_file_path = (
+        str(primary_symbol.get("file"))
+        if isinstance(primary_symbol, dict) and primary_symbol.get("file")
+        else None
+    )
     plan: list[dict[str, Any]] = []
     seen: set[str] = set()
     requested_javascript_runners: list[str] = []
@@ -7335,7 +7268,14 @@ def _raw_validation_plan_for_tests(
                         scope="symbol",
                         runner="pytest",
                         target=relative_path,
-                        confidence=0.95,
+                        confidence=_predictive_test_selector.calibrate_test_step_confidence(
+                            test_path=absolute_path,
+                            scope="symbol",
+                            primary_file=primary_file_path,
+                            primary_symbol_name=primary_symbol_name,
+                            query=query,
+                            repo_map_mod=_self,
+                        ),
                         detection="detected",
                     )
             add_step(
@@ -7343,7 +7283,14 @@ def _raw_validation_plan_for_tests(
                 scope="file",
                 runner="pytest",
                 target=relative_path,
-                confidence=0.82,
+                confidence=_predictive_test_selector.calibrate_test_step_confidence(
+                    test_path=absolute_path,
+                    scope="file",
+                    primary_file=primary_file_path,
+                    primary_symbol_name=primary_symbol_name,
+                    query=query,
+                    repo_map_mod=_self,
+                ),
                 detection="detected",
             )
             continue
@@ -12928,15 +12875,34 @@ def _resolve_raw_import_entry(
         resolved = next(
             (str(p) for p in candidate_info["paths"] if _is_file_with_receipt(Path(p))), None
         )
-        external = resolved is None
         provenance = list(candidate_info["provenance"])
+        if resolved is None or entry.get("names"):
+            from tensor_grep.cli.incremental_symbol_cache import resolve_python_import_target
+
+            target = resolve_python_import_target(
+                importer_path,
+                module,
+                repo_root,
+                level=level,
+                imported_names=entry.get("names") or (),
+            )
+            if target is not None and _is_file_with_receipt(target):
+                resolved = str(target)
+                provenance = ["relative"] if level > 0 else ["package-relative"]
+        external = resolved is None
         if resolved is not None:
             # #152 fix: report the specific "sys-path-insert" provenance when this candidate was
             # reached only via a sys.path-hacked root, instead of the generic heuristic tag.
             tagged_provenance = candidate_info.get("path_provenance", {}).get(resolved)
             if tagged_provenance is not None:
                 provenance = [tagged_provenance]
-        confidence = float(candidate_info["confidence"]) if resolved is not None else 0.0
+        confidence = (
+            float(candidate_info["confidence"])
+            if resolved is not None and candidate_info["confidence"]
+            else (1.0 if level > 0 else 0.9)
+            if resolved is not None
+            else 0.0
+        )
     elif language_id == "java":
         # Foundational tier (symbols+imports only): raw import statements are extracted and
         # reported with their line numbers (see _java_imports_with_lines), but resolving WHICH
@@ -14136,6 +14102,9 @@ def build_symbol_blast_radius_from_map(
         deadline_hit=preferred_definition_deadline_hit_blast,
     )
     preferred_definition_file_set = set(preferred_definition_files)
+    raw_defs = [
+        d for d in defs_payload["definitions"] if str(d["file"]) in preferred_definition_file_set
+    ] or defs_payload["definitions"]
     definitions = [
         {
             **dict(current),
@@ -14145,18 +14114,7 @@ def build_symbol_blast_radius_from_map(
                 )
             ),
         }
-        for current in defs_payload["definitions"]
-        if str(current["file"]) in preferred_definition_file_set
-    ] or [
-        {
-            **dict(current),
-            "provenance": str(
-                current.get(
-                    "provenance", _symbol_navigation_provenance_for_path(str(current["file"]))
-                )
-            ),
-        }
-        for current in defs_payload["definitions"]
+        for current in raw_defs
     ]
 
     normalized_depth = max(0, int(max_depth))
@@ -14194,17 +14152,36 @@ def build_symbol_blast_radius_from_map(
         _profiling_collector=_profiling_collector,
     )
     definition_files = [str(current["file"]) for current in definitions]
-    dependency_distances = _self._reverse_import_distances(
+    reverse_importers = prune_symbol_unreachable_importers(
+        symbol,
         definition_files,
+        reverse_importers,
         all_files,
-        imports_by_file,
-        repo_root=_repo_map_root_dir(repo_map),
-        uncertain_candidates=blast_uncertain,
-        candidate_statuses=blast_candidate_statuses,
+        imports_by_file=imports_by_file,
         deadline_monotonic=deadline_monotonic,
         deadline_hit=reverse_import_graph_deadline_hit_blast,
-        _profiling_collector=_profiling_collector,
     )
+    reachable_files = (
+        set(definition_files)
+        | set(reverse_importers)
+        | {imp for imps in reverse_importers.values() for imp in imps}
+    )
+    dependency_distances = {
+        path: dist
+        for path, dist in _self._reverse_import_distances(
+            definition_files,
+            all_files,
+            imports_by_file,
+            repo_root=_repo_map_root_dir(repo_map),
+            uncertain_candidates=blast_uncertain,
+            candidate_statuses=blast_candidate_statuses,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=reverse_import_graph_deadline_hit_blast,
+            _profiling_collector=_profiling_collector,
+        ).items()
+        if path in reachable_files
+    }
+    blast_uncertain = {k: v for k, v in blast_uncertain.items() if k in reachable_files}
     for target, importers in reverse_importers.items():
         reverse_importers[target] = {
             importer

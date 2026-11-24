@@ -822,15 +822,22 @@ def test_census_allowlist_entries_refer_to_registered_tools(monkeypatch) -> None
     tools = asyncio.run(mcp_server.mcp.list_tools())
     registered = {t.name for t in tools}
     by_name = {t.name: t for t in tools}
+    catalog = (
+        registered
+        | set(mcp_server._PYTHON_LOCAL_MCP_TOOLS)
+        | set(mcp_server._EMBEDDED_SAFE_MCP_TOOLS)
+        | set(mcp_server._NATIVE_REQUIRED_MCP_TOOLS)
+    )
     for name in list(_SUCCESS_UNREACHABLE) + list(_SUCCESS_FIXTURE_KINDS):
-        assert name in registered, f"stale census tool entry: {name}"
+        assert name in catalog, f"stale census tool entry: {name}"
     for entry in list(_RAISE_ALLOWLIST) + list(_TEXT_ALLOWLIST):
         tool_name, family_key = entry
-        assert tool_name in registered, f"stale census tool entry: {entry}"
-        assert family_key in _probe_family_keys(by_name[tool_name]), (
-            f"stale census FAMILY key: {entry} -- the census generates no probe named "
-            f"{family_key!r} for {tool_name} (generated: {_probe_family_keys(by_name[tool_name])})"
-        )
+        assert tool_name in catalog, f"stale census tool entry: {entry}"
+        if tool_name in by_name:
+            assert family_key in _probe_family_keys(by_name[tool_name]), (
+                f"stale census FAMILY key: {entry} -- the census generates no probe named "
+                f"{family_key!r} for {tool_name} (generated: {_probe_family_keys(by_name[tool_name])})"
+            )
 
 
 def test_contract_stamp_ratchet_fires_when_injector_is_neutered(
@@ -870,22 +877,22 @@ def test_contract_stamp_ratchet_fires_on_unstamped_success_path(
 
     from tensor_grep.cli import mcp_server
 
-    original_tg_devices = mcp_server.tg_devices
+    original_tg_coverage = mcp_server.tg_coverage
 
-    def _unstamped_devices(json_output: bool = True) -> str:
-        out = original_tg_devices(json_output=json_output)
+    def _unstamped_coverage(path: str = ".") -> str:
+        out = original_tg_coverage(path=path)
         payload = json.loads(out)
         payload.pop("mcp_contract_version", None)
         return json.dumps(payload)
 
-    monkeypatch.setattr(mcp_server, "tg_devices", _unstamped_devices)
+    monkeypatch.setattr(mcp_server, "tg_coverage", _unstamped_coverage)
     result = _mcp_census(
         mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
         root=tmp_path,
         outside_dir=outside_dir,
     )
-    hit = [v for v in result.violations if "tg_devices" in v]
-    assert hit, f"census did not report the unstamped tg_devices success: {result.violations}"
+    hit = [v for v in result.violations if "tg_coverage" in v]
+    assert hit, f"census did not report the unstamped tg_coverage success: {result.violations}"
 
 
 def test_contract_stamp_ratchet_fires_when_a_tool_raises(
@@ -900,16 +907,16 @@ def test_contract_stamp_ratchet_fires_when_a_tool_raises(
 
     from tensor_grep.cli import mcp_server
 
-    def _exploding_rulesets() -> str:
+    def _exploding_capabilities() -> str:
         raise RuntimeError("simulated census probe failure")
 
-    monkeypatch.setattr(mcp_server, "tg_rulesets", _exploding_rulesets)
+    monkeypatch.setattr(mcp_server, "tg_mcp_capabilities", _exploding_capabilities)
     result = _mcp_census(
         mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
         root=tmp_path,
         outside_dir=outside_dir,
     )
-    hit = [v for v in result.violations if "tg_rulesets" in v and "RAISED" in v]
+    hit = [v for v in result.violations if "tg_mcp_capabilities" in v and "RAISED" in v]
     assert hit, f"census did not report the raising tool: {result.violations}"
 
 
@@ -926,10 +933,10 @@ def test_contract_stamp_ratchet_fires_on_disallowed_exception_type_in_allowliste
 
     from tensor_grep.cli import mcp_server
 
-    def _mutated_ast_search(**kwargs) -> str:
+    def _mutated_scan(**kwargs) -> str:
         raise AssertionError("new regression in an allowlisted family")
 
-    monkeypatch.setattr(mcp_server, "tg_ast_search", _mutated_ast_search)
+    monkeypatch.setattr(mcp_server, "tg_scan", _mutated_scan)
     result = _mcp_census(
         mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
         root=tmp_path,
@@ -938,7 +945,7 @@ def test_contract_stamp_ratchet_fires_on_disallowed_exception_type_in_allowliste
     hits = [
         v
         for v in result.violations
-        if "tg_ast_search" in v and "AssertionError" in v and "allowlist expects" in v
+        if "tg_scan" in v and "AssertionError" in v and "allowlist expects" in v
     ]
     assert hits, (
         "census did not RED on a disallowed exception type inside an allowlisted family: "
@@ -983,8 +990,8 @@ def test_contract_stamp_ratchet_census_is_independent_of_ambient_dense_model_sta
     assert not result.violations, "corrupt-dense census violations:\n- " + "\n- ".join(
         sorted(result.violations)
     )
-    assert result.coverage["tg_find"]["success"] >= 1, (
-        "tg_find success family not reached under simulated corrupt-dense ambient state -- "
+    assert result.coverage["tg_query"]["success"] >= 1, (
+        "tg_query success family not reached under simulated corrupt-dense ambient state -- "
         "the hermetic BM25 force is not engaging"
     )
     # The census's own force must not leak: after _mcp_census returns, the AMBIENT
@@ -1036,7 +1043,11 @@ def test_contract_stamp_ratchet_census_is_independent_of_ambient_ast_engine_stat
     assert not result.violations, "no-ast-engine census violations:\n- " + "\n- ".join(
         sorted(result.violations)
     )
-    for tool_name in ("tg_ast_search", "tg_ruleset_scan", "tg_scan"):
+    ast_tools = [
+        name for name in ("tg_ast_search", "tg_ruleset_scan", "tg_scan") if name in result.coverage
+    ]
+    assert "tg_scan" in ast_tools
+    for tool_name in ast_tools:
         assert result.coverage[tool_name]["success"] >= 1, (
             f"{tool_name} success family not reached under the simulated no-ast-engine "
             "env -- the controlled engine seam is not engaging"

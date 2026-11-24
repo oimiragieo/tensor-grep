@@ -1317,8 +1317,9 @@ class CPUBackend(ComputeBackend):
 
         return SearchResult(
             matches=matches,
+            match_counts_by_file={str(path): len(matches)} if matches else {},
             total_files=1 if sequence_count > 0 else 0,
-            total_matches=sequence_count,
+            total_matches=len(matches),
             routing_backend="CPUBackend",
             routing_reason="cpu_ltl_python",
             routing_distributed=False,

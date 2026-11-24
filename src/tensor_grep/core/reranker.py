@@ -15,10 +15,11 @@ import os
 import sys
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Any, Literal
 
 from tensor_grep.core import retrieval_symbols
-from tensor_grep.core.result import SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS, Chunk, chunk_file
 from tensor_grep.core.retrieval_dense import DenseIndex
@@ -557,3 +558,39 @@ def build_why_ranked_reasons(
     reasons = [f"terms: {', '.join(sorted(matched_terms))}"] if matched_terms else []
     reasons.append(f"lines {chunk.start_line}-{chunk.end_line}")
     return reasons
+
+
+def select_deduplicated_find_matches(
+    chunks: list[Chunk],
+    fused_order: list[int],
+    query_terms: set[str],
+    *,
+    limit: int,
+    why_ranked: bool,
+    find_representative_line: Callable[[Chunk, set[str]], tuple[int, str]],
+) -> tuple[list[MatchLine], list[int]]:
+    """Select up to ``limit`` deduplicated ``tg find`` matches in ``fused_order``.
+
+    Overlapping chunks from the same file can resolve to the same representative line.
+    Deduplicate by canonical ``(normcase(abspath(file_path)), line_number)`` keeping the
+    highest-ranked (first-seen) entry, and return ``(matches, selected_chunk_indices)`` so
+    ``rerank_texts`` stays aligned with ``matches``.
+    """
+    if limit <= 0:
+        return [], []
+    matches: list[MatchLine] = []
+    selected_chunk_indices: list[int] = []
+    seen: set[tuple[str, int]] = set()
+    for chunk_index in fused_order:
+        chunk = chunks[chunk_index]
+        line_number, line_text = find_representative_line(chunk, query_terms)
+        dedup_key = (os.path.normcase(os.path.abspath(chunk.file_path)), line_number)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        why = build_why_ranked_reasons(chunk, query_terms, why_ranked)
+        matches.append(MatchLine(line_number, line_text, chunk.file_path, why_ranked=why))
+        selected_chunk_indices.append(chunk_index)
+        if len(matches) == limit:
+            break
+    return matches, selected_chunk_indices

@@ -22,7 +22,8 @@ def test_ltl_finds_eventually_sequence(tmp_path: Path) -> None:
     f = tmp_path / "seq.txt"
     f.write_text("has A here\nnothing\nhas B here\n", encoding="utf-8")
     result = CPUBackend()._search_ltl(f, "A -> eventually B", SearchConfig())
-    assert result.total_matches == 1
+    assert result.total_matches == 2
+    assert result.match_counts_by_file == {str(f): 2}
     assert result.matches[0].line_number == 1  # the A line
     assert result.matches[1].line_number == 3  # the first B strictly after it
 

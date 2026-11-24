@@ -948,6 +948,7 @@ FILESYSTEM_PATH_SITES = {
     ("cli/codemap.py", "_tracked_file_set"),
     ("cli/evidence_receipt.py", "_repo_revision_identity_excluding"),
     ("cli/diff_impact.py", "_git_toplevel"),
+    ("cli/predictive_test_selector.py", "_bounded_git_cochanges"),
 }
 MACHINE_PROTOCOL_SITES = {
     ("backends/ast_wrapper_backend.py", "_is_ast_grep_sg_binary"),
@@ -1165,9 +1166,9 @@ def check_repository(rows: list[Sink]) -> list[str]:
         problems.append(
             f"production callsite identity/fingerprint manifest changed; missing={missing}; added={added}; changed={changed}"
         )
-    if len(rows) != 89:
+    if len(rows) != 90:
         problems.append(
-            f"production output-capable sink population changed: expected 89, found {len(rows)}"
+            f"production output-capable sink population changed: expected 90, found {len(rows)}"
         )
     generated = [row for row in rows if row.generated_from is not None]
     if len(generated) != 12:

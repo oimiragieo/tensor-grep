@@ -1506,6 +1506,26 @@
     "producer_fingerprint": "72cd630d85e01c62aec665b86fa6603fec05651d450ef70912f26554dbbcf3a8"
   },
   {
+    "identity": "cli/predictive_test_selector.py:_bounded_git_cochanges:subprocess.run:af4ede0c6759065a1423bc710c6257eb12641974cc407b915080256eb359b64a:0",
+    "path": "cli/predictive_test_selector.py",
+    "function": "_bounded_git_cochanges",
+    "line": 51,
+    "column": 15,
+    "target": "subprocess.run",
+    "policy": "filesystem-path-bytes",
+    "rationale": "NUL/path records stay bytes through framing and each filename is decoded with os.fsdecode (surrogateescape on POSIX).",
+    "text": null,
+    "encoding": null,
+    "errors": null,
+    "universal_newlines": null,
+    "dynamic_kwargs": [],
+    "output_captured": true,
+    "positional_options": false,
+    "generated_from": null,
+    "call_fingerprint": "af4ede0c6759065a1423bc710c6257eb12641974cc407b915080256eb359b64a",
+    "producer_fingerprint": "0ba362b3e14897b6c76b7ea6991ef67921a17d45f00edaf01afc869112e38f04"
+  },
+  {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",
     "path": "cli/process_containment.py",
     "function": "_spawn_posix",

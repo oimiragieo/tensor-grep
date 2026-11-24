@@ -86,7 +86,7 @@ from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
-from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
+from tensor_grep.core.reranker import route_labels, select_deduplicated_find_matches
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 from tensor_grep.io.file_types import BUILTIN_TYPE_LIST as _BUILTIN_TYPE_LIST
 from tensor_grep.io.project_markers import path_has_project_marker as _path_has_project_marker
@@ -1625,14 +1625,14 @@ def _execute_find(
             else late_fallback_reason
         )
 
-    selected = fused_order[: max(0, limit)]
-    query_terms = set(split_terms(query))
-    matches: list[MatchLine] = []
-    for chunk_index in selected:
-        chunk = chunks[chunk_index]
-        line_number, line_text = _find_representative_line(chunk, query_terms)
-        why = build_why_ranked_reasons(chunk, query_terms, why_ranked)
-        matches.append(MatchLine(line_number, line_text, chunk.file_path, why_ranked=why))
+    matches, selected = select_deduplicated_find_matches(
+        chunks,
+        fused_order,
+        set(split_terms(query)),
+        limit=limit,
+        why_ranked=why_ranked,
+        find_representative_line=_find_representative_line,
+    )
 
     # Output-only budget fit (never touches result_incomplete -- see docstring): truncate the
     # LOWEST-ranked matches first (the tail of the already best-first `matches` list), floored at 1
@@ -12498,15 +12498,14 @@ def ledger_claim(
     files: str | None = typer.Option(
         None,
         "--files",
+        "--file",
         help="Comma-separated root-relative file paths to claim (e.g. --files a.py,b.py).",
     ),
     intent: str = typer.Option(
         "edit", "--intent", help='Caller-declared intent, e.g. "edit", "review".'
     ),
     ttl: int | None = typer.Option(
-        None,
-        "--ttl",
-        help="Claim TTL in seconds. Defaults to TG_LEDGER_CLAIM_TTL_SECONDS or 900.",
+        None, "--ttl", help="Claim TTL in seconds. Defaults to TG_LEDGER_CLAIM_TTL_SECONDS or 900."
     ),
     agent_id: str | None = typer.Option(
         None,

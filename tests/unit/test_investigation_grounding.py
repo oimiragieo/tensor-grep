@@ -349,7 +349,7 @@ def test_mcp_options_forward_and_contract_version(tmp_path: Path, monkeypatch) -
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
 
 
-_MCP_INVESTIGATION_TOOLS = ("tg_find", "tg_query", "tg_agent_capsule", "tg_context")
+_MCP_INVESTIGATION_TOOLS = ("tg_query", "tg_context")
 _MCP_INVESTIGATION_MODES = {
     "grounding": ("off", "local", "registry"),
     "rerank": ("off", "auto", "cross-encoder"),

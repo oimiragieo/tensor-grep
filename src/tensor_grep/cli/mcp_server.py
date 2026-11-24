@@ -175,10 +175,9 @@ def _mcp_server_version() -> str:
 
 # Bump the stable MCP contract for intentional tool/resource or tool-set shape changes.
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
-# Earlier contracts added primary path confinement, tools, and task-shaped meta-tools;
-# TG_MCP_LEGACY_TOOLS controls discovery of preserved legacy names.
+# Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.23.0"  # complete refusals and impact scan bounds
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.24.0"  # progressive MCP tool discovery & legacy default-off
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -192,20 +191,8 @@ _register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
-    """Whether the 47 legacy (pre-consolidation) MCP tool names stay individually registered
-    and advertised via `list_tools()`, on top of the 10 additive task-shaped meta-tools and the
-    3 always-on tools (MCP consolidation Phase-1, #98, plus `tg_batch`).
-
-    Default ON (unset, or any value other than the recognized "off" tokens below): this is an
-    ADDITIVE change, so every existing external client keeps working with zero action required.
-    Flipping OFF removes the 46 legacy names from the advertised tool surface -- the 10 meta
-    tools and the 3 always-on tools remain, since the meta tools' dispatch bodies call the legacy
-    Python functions directly regardless of flag state (`mcp.tool()(fn)` returns `fn`
-    unchanged, so a de-advertised legacy function stays fully callable in-process). Consciously
-    flipping this to OFF in production is a separate, deliberate, documented operator/decision (Enablement Discipline) -- never bundled into the default-ON Phase-1 PR.
-    """
-    value = os.environ.get("TG_MCP_LEGACY_TOOLS", "")
-    return value.strip().lower() not in {"0", "false", "no", "off"}
+    """Whether legacy per-function MCP tool names are individually advertised (default False; set TG_MCP_LEGACY_TOOLS=1 to opt in)."""
+    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
@@ -314,7 +301,13 @@ _NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
 # `TG_MCP_LEGACY_TOOLS` -- `tg_mcp_capabilities` is the discovery entrypoint an agent needs
 # even when every legacy name is de-advertised, and `tg_classify_logs` is a standalone-family
 # tool with no meta-tool home (niche, no sibling family to compose into).
-_SINGLETON_MCP_TOOLS = ("tg_mcp_capabilities", "tg_classify_logs", "tg_batch", "tg_coverage")
+_SINGLETON_MCP_TOOLS = (
+    "tg_mcp_capabilities",
+    "tg_classify_logs",
+    "tg_batch",
+    "tg_coverage",
+    "tg_discover_tools",
+)
 # The 10 additive task-shaped meta-tools (#98, Phase-1): ALWAYS registered/advertised
 # regardless of `TG_MCP_LEGACY_TOOLS`, since they are the additive surface this flag exists to
 # let an operator eventually rely on ALONE. Each composes several of the 47 legacy tools by an
@@ -1123,12 +1116,7 @@ _PLAN_DIGEST_VERSION = "tg-plan-digest-v1"
 
 @_register_tool  # type: ignore
 def tg_mcp_capabilities() -> str:
-    """
-    Report MCP tool availability for the current runtime.
-
-    The response lets clients distinguish tools that work without a standalone native
-    tg binary from tools that require one.
-    """
+    """Report MCP tool availability for the current runtime."""
     try:
         return _self._inject_mcp_contract_fields(
             json.dumps(_self._mcp_capabilities_payload(), indent=2)
@@ -1145,6 +1133,14 @@ def tg_mcp_capabilities() -> str:
             },
             indent=2,
         )
+
+
+@_register_tool  # type: ignore
+def tg_discover_tools(intent: str, limit: int = 5) -> str:
+    """Search the full MCP tool catalog by intent and return top matching tools."""
+    from tensor_grep.cli.mcp_tool_discovery import discover_mcp_tools
+
+    return _self._inject_mcp_contract_fields(discover_mcp_tools(intent, limit=limit))
 
 
 def _record_generated_audit_manifest(payload: object) -> None:

@@ -709,7 +709,8 @@ class TestCPUBackend:
         config = SearchConfig(ltl=True)
         result = backend.search(str(log), r"AUTH_FAIL -> eventually DB_TIMEOUT", config=config)
 
-        assert result.total_matches == 1
+        assert result.total_matches == 2
+        assert result.match_counts_by_file == {str(log): 2}
         assert [m.line_number for m in result.matches] == [2, 4]
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_ltl_python"
@@ -834,7 +835,8 @@ class TestCPUBackend:
             )
 
         assert seen_patterns == ["AUTH_FAIL", "DB_TIMEOUT"]  # Rust WAS invoked, twice
-        assert result.total_matches == 1
+        assert result.total_matches == 2
+        assert result.match_counts_by_file == {str(log): 2}
         assert [m.line_number for m in result.matches] == [2, 4]
 
     def test_should_fail_closed_when_ltl_search_cannot_use_rust(self, tmp_path):

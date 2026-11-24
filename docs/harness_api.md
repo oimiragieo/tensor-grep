@@ -1545,7 +1545,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.23.0`), which is distinct from the installed CLI/package version and
+`1.24.0`), which is distinct from the installed CLI/package version and
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,
@@ -1566,9 +1566,10 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set (60 tools by default -- 46 gated legacy tools + 3 always-on tools + 10 additive task-shaped meta-tools + `tg_coverage`; cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 gated legacy tools, leaving the 10 meta-tools + 3 always-on tools + `tg_coverage` (14 tools) -- see "Meta-Tools (Phase-1 consolidation)" below:
+Current tool set (15 tools by default -- 10 additive task-shaped meta-tools + 4 always-on tools + `tg_discover_tools`; cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry). Setting `TG_MCP_LEGACY_TOOLS` to `1`/`true`/`yes`/`on` opts into the 46 gated legacy tools (61 tools total) -- see "Meta-Tools (Phase-1 consolidation)" below:
 
 - `tg_mcp_capabilities()`
+- `tg_discover_tools(intent, limit=5)` -- searches the full 61-tool MCP catalog by natural-language intent using lightweight BM25 scoring and returns the top matching tools with `{name, summary, parameters, legacy_opt_in_env}` and `total_catalog_tools`.
 - `tg_batch(queries, path=".", citations=False, item_deadline=10.0, deadline=30.0)` -- runs up to 16 `search`/`find`/`defs`/`refs`/`callers`/`source` items, with at most four concurrent items. Each item may override `path`; its path is confined independently to the MCP root. Results preserve input order and contain the exact standalone tool JSON on success. Item failures use an `error` entry and set `result_incomplete=true`; top-level validation rejects the whole tool call as an MCP error. `item_deadline` and overall `deadline` are capped at 120 seconds. `citations` is accepted for compatibility; existing tool payloads retain their source locations.
 - `tg_rulesets()`
 - `tg_ruleset_scan(ruleset=None, inline_rules=None, path=".", language=None, glob=None, file_type=None, max_depth=None, allow_broad_generated_scan=False, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, justification=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)` -- exactly one of `ruleset`/`inline_rules` is required; see "Inline Rules" below.

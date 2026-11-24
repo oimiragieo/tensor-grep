@@ -56,6 +56,9 @@ def _try_acquire_daemon_start_lock(root: Path) -> bool:
     token = uuid4().hex  # computed BEFORE anything is acquired
     lock_path = _daemon_start_lock_path(root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    from tensor_grep.cli.git_exclude_hygiene import ensure_git_info_exclude
+
+    ensure_git_info_exclude(root)
     fd = try_os_file_lock(_daemon_start_sidecar_path(root))
     # Exception-safe two-stage acquisition: the resource is under cleanup in the statement after the
     # one that acquires it. On ANY unsuccessful outcome (a False return, an OSError such as ENOSPC
@@ -104,6 +107,9 @@ def _legacy_try_acquire_daemon_start_lock(root: Path, token: str = "") -> bool:
     content = f"{os.getpid()}\n{token or uuid4().hex}\n".encode()
     lock_path = _daemon_start_lock_path(root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    from tensor_grep.cli.git_exclude_hygiene import ensure_git_info_exclude
+
+    ensure_git_info_exclude(root)
     for _attempt in range(2):
         try:
             publish_new_lock_file(lock_path, content)

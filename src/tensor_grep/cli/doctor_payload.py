@@ -160,6 +160,10 @@ def _build_doctor_payload(
     from tensor_grep.cli.repair_env import editable_install_points_at
 
     source_version = runtime_paths._read_project_version_fallback()
+    if source_version == "0.0.0":
+        checkout_source_version = checkout_environment.get("source_version")
+        if isinstance(checkout_source_version, str) and checkout_source_version:
+            source_version = checkout_source_version
     python_package_version_status = "ok"
     if source_version != "0.0.0" and source_version != installed_version:
         # Fail-closed provenance: only an editable install of THIS checkout is "stale_editable".
@@ -585,7 +589,7 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         elif health == "managed_launcher_broken":
             lines.append(
                 "  the managed native `tg` launcher failed `--version` verification; "
-                "run `tg repair-launcher` or check `~/.tensor-grep/bin/tg.exe --version` stderr"
+                "run `python -m tensor_grep repair-launcher` or check `~/.tensor-grep/bin/tg.exe --version` stderr"
             )
         elif health == "stale_install":
             lines.append(

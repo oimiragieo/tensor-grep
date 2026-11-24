@@ -10,6 +10,24 @@ from typing import Any
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
 
 
+def _resolve_provenance(record: dict[str, Any], *, default: str = "unknown") -> str:
+    """Preserve non-'unknown' provenance, falling back to 'parser-backed' when supported."""
+    provenance = record.get("provenance")
+    if isinstance(provenance, str) and provenance and provenance != "unknown":
+        return provenance
+    evidence = record.get("evidence")
+    if isinstance(evidence, (list, tuple, set)):
+        for item in evidence:
+            if isinstance(item, str) and item in {
+                "python-ast",
+                "parser-backed",
+                "graph-derived",
+                "lsp-confirmed",
+            }:
+                return item
+    return default
+
+
 def investigation_hops(
     capsule: dict[str, Any],
     rm: dict[str, Any],
@@ -49,14 +67,17 @@ def investigation_hops(
         record: dict[str, Any],
         relation: str | None,
         parent: dict[str, Any] | None = None,
+        *,
+        default_provenance: str = "unknown",
     ) -> None:
         nonlocal chars, count
+        provenance = _resolve_provenance(record, default=default_provenance)
         node = {
             "id": f"{record['file']}#L{record.get('line', 1)}",
             "file": record["file"],
             "line": record.get("line", 1),
             "symbol": record.get("symbol"),
-            "provenance": record.get("provenance", "unknown"),
+            "provenance": provenance,
         }
         source = parent or target
         edge = {
@@ -83,30 +104,53 @@ def investigation_hops(
         if relation:
             graph["edges"].append(edge)
 
-    append(1, target, None)
+    append(1, target, None, default_provenance="parser-backed")
     # A connected graph must contain its declaration; don't leave dangling evidence edges.
     if not stages[0]["nodes"]:
         graph.update(status="partial", reason="token_budget")
         return graph
-    for record in sorted(
-        capsule.get("related_call_sites", []),
-        key=lambda row: (str(row.get("file", "")), int(row.get("line", 1))),
+    caller_candidates: list[tuple[dict[str, Any], str]] = [
+        (row, "related_call_sites")
+        for row in capsule.get("related_call_sites", [])
+        if isinstance(row, dict)
+    ]
+    call_site_evidence = capsule.get("call_site_evidence")
+    if isinstance(call_site_evidence, dict):
+        for row in call_site_evidence.get("callers", []) or []:
+            if isinstance(row, dict):
+                caller_candidates.append((row, "call_site_evidence"))
+    blast_radius_floor = capsule.get("blast_radius_floor")
+    if isinstance(blast_radius_floor, dict):
+        for row in blast_radius_floor.get("top_callers", []) or []:
+            if isinstance(row, dict):
+                caller_candidates.append((row, "blast_radius_floor"))
+
+    for record, origin in sorted(
+        caller_candidates,
+        key=lambda item: (str(item[0].get("file", "")), int(item[0].get("line", 1) or 1)),
     ):
         if time.monotonic() >= deadline:
             graph.update(status="partial", reason="shared_deadline")
             break
-        if not record.get("file") or record.get("ref_kind") not in {"call", "import"}:
+        ref_kind = record.get("ref_kind")
+        if ref_kind is None and origin in {"blast_radius_floor", "call_site_evidence"}:
+            ref_kind = "call"
+        if not record.get("file") or ref_kind not in {"call", "import"}:
             continue
+        provenance = _resolve_provenance(record)
         # Heuristics stay visible; unknown evidence cannot establish an edge.
-        if record.get("provenance") in {None, "unknown", "heuristic", "stale"}:
+        if provenance in {None, "unknown", "heuristic", "stale"}:
             continue
         is_test = _is_test_file(Path(str(record["file"])))
-        relation = (
-            "imports-declaration" if record.get("ref_kind") == "import" else "calls-declaration"
+        relation = "imports-declaration" if ref_kind == "import" else "calls-declaration"
+        normalized = (
+            record
+            if record.get("ref_kind") == ref_kind and record.get("provenance") == provenance
+            else {**record, "ref_kind": ref_kind, "provenance": provenance}
         )
         append(
             3 if is_test else 2,
-            record,
+            normalized,
             f"test-{relation}" if is_test else relation,
         )
     # Bind an existing test association to its specific declaration/caller import evidence.
@@ -158,6 +202,51 @@ def investigation_hops(
         # test caller already creates its stronger line-addressed edge above.
         if not any(node["file"] == record["file"] for node in stages[2]["nodes"]):
             append(3, record, "associated-test", supported_parent)
+
+    validation_steps = [
+        step for step in capsule.get("validation_plan", []) or [] if isinstance(step, dict)
+    ]
+    for step in sorted(
+        validation_steps,
+        key=lambda item: (
+            str(item.get("target") or item.get("file") or ""),
+            str(item.get("command") or ""),
+        ),
+    ):
+        if time.monotonic() >= deadline:
+            graph.update(status="partial", reason="shared_deadline")
+            break
+        scope = str(step.get("scope") or "").strip().lower()
+        test_file = str(step.get("target") or step.get("file") or "").strip()
+        if not test_file or scope == "repo":
+            continue
+        detection = str(step.get("detection") or "").strip().lower()
+        raw_provenance = step.get("provenance")
+        if raw_provenance in {"heuristic", "stale"} or (
+            not raw_provenance and detection == "heuristic"
+        ):
+            continue
+        if isinstance(raw_provenance, str) and raw_provenance.strip():
+            provenance = _resolve_provenance(step)
+        elif detection == "import-graph":
+            provenance = "graph-derived"
+        else:
+            continue
+        if provenance in {None, "unknown", "heuristic", "stale"}:
+            continue
+        if any(node["file"] == test_file for node in stages[2]["nodes"]):
+            continue
+        raw_line = step.get("line", 1)
+        line = int(raw_line) if isinstance(raw_line, int) or str(raw_line).isdigit() else 1
+        record = {
+            "file": test_file,
+            "line": max(1, line),
+            "symbol": step.get("symbol") or target.get("symbol"),
+            "provenance": provenance,
+            "ref_kind": "validation",
+        }
+        append(3, record, "validates-declaration")
+
     graph["stages"] = [stage for stage in stages if stage["nodes"]]
     graph["omitted_nodes"] += int(
         capsule.get("call_site_evidence", {}).get("omitted_call_sites", 0) or 0

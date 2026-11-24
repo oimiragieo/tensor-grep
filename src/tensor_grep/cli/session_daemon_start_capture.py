@@ -25,6 +25,9 @@ def spawn_daemon_subprocess(
     # run_session_daemon_server's shutdown path below.
     remove_metadata(root)
     sessions_dir.mkdir(parents=True, exist_ok=True)
+    from tensor_grep.cli.git_exclude_hygiene import ensure_git_info_exclude
+
+    ensure_git_info_exclude(root)
     env = os.environ.copy()
     # audit B20: only inject the editable-checkout 'src' onto PYTHONPATH when it actually
     # exists (an installed wheel has no sibling src/), and derive cwd from the session root

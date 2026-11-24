@@ -26,7 +26,7 @@ def test_source_fixture_contains_native_main_entrypoint() -> None:
     helper = MAIN_ENV.read_text(encoding="utf-8")
 
     assert "pub(crate) fn collect_main_args()" in helper
-    assert "tensor_grep_rs::prepare_main_startup(&args[1..])?" in helper
+    assert "tensor_grep_rs::prepare_main_startup(&args[1..])" in helper
     assert _main_inner(source).startswith("fn main_inner()")
 
 

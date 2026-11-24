@@ -20,6 +20,14 @@ _COMPACT_OMITTED_KEYS: frozenset[str] = frozenset({
     "rendered_caller_tree",
     "rendered_context",
     "graph_trust_summary",
+    "file_summaries",
+    "imports",
+    "symbols",
+    "related_paths",
+    "file_matches",
+    "test_matches",
+    "import_graph_consumers",
+    "ranking_quality",
 })
 
 
@@ -48,7 +56,12 @@ def apply_detail_tier(payload: dict[str, Any], detail: str) -> dict[str, Any]:
     validate_detail_tier(detail)
     if detail in ("standard", "full"):
         return payload
-    return {key: value for key, value in payload.items() if key not in _COMPACT_OMITTED_KEYS}
+    filtered = {key: value for key, value in payload.items() if key not in _COMPACT_OMITTED_KEYS}
+    gaps = filtered.get("resolution_gaps")
+    if isinstance(gaps, list) and len(gaps) > 10:
+        filtered["resolution_gaps_truncated_count"] = len(gaps) - 10
+        filtered["resolution_gaps"] = gaps[:10]
+    return filtered
 
 
 def dump_detail_json(

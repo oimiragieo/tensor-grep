@@ -834,8 +834,11 @@ def create_checkpoint(
         scope = _detect_checkpoint_scope(target)
         owner.assert_pinned(scope.root)
         from tensor_grep.cli.checkpoint_create import create_checkpoint_with_owner
+        from tensor_grep.cli.git_exclude_hygiene import ensure_git_info_exclude
 
-        return create_checkpoint_with_owner(scope, paths, normalized_label, owner)
+        result = create_checkpoint_with_owner(scope, paths, normalized_label, owner)
+        ensure_git_info_exclude(scope.root)
+        return result
     finally:
         owner.close()
 

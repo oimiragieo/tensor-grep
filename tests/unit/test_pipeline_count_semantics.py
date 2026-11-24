@@ -187,4 +187,4 @@ def test_ltl_count_keeps_cpu_ltl_semantics(tmp_path, force_cpu):
     cfg = SearchConfig(query_pattern=query, ltl=True, count=True, max_count=1)
     p = Pipeline(force_cpu=force_cpu, config=cfg)
     assert p.selected_backend_reason not in {"count_rg_semantics", "column_rg_offsets"}
-    assert p.backend.search(str(f), query, cfg).total_matches == 1
+    assert p.backend.search(str(f), query, cfg).total_matches == 2

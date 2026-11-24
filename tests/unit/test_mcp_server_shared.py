@@ -621,6 +621,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
     # #98 (MCP consolidation Phase-1): the 10 meta-tools' shared dispatch selector -- an
     # enum-like action name (e.g. "defs"/"scan"/"apply"), never a path.
     "action": "the meta-tool's dispatch action selector (e.g. 'defs'/'scan'/'apply'), not a path",
+    "intent": "natural-language tool discovery query, not a path",
 }
 
 # Minimal valid kwargs per tool so a targeted param's confinement check is actually REACHED
@@ -630,6 +631,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
 # downstream loader reads the file directly with no FileNotFoundError guard (see
 # _ratchet_positive_value below for the two params that need a real file).
 _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
+    "tg_discover_tools": {"intent": "blast radius callers"},
     "tg_batch": {"queries": [{"id": "q", "kind": "search", "pattern": "x"}], "path": "."},
     "tg_ruleset_scan": {"ruleset": "secrets-basic", "path": "."},
     "tg_coverage": {"path": "."},
@@ -930,6 +932,7 @@ _EXPECTED_SINGLETON_TOOL_NAMES = {
     "tg_classify_logs",
     "tg_batch",
     "tg_coverage",
+    "tg_discover_tools",
 }
 
 

@@ -96,3 +96,37 @@ def _promote_filename_phrase(
             item for item in scored_symbols if str(item.get("file")) != path
         ]
         return
+
+
+def promote_exact_declaration_files(
+    scored_files: list[tuple[int, str]],
+    scored_symbols: list[dict[str, Any]],
+    file_reasons: dict[str, list[str]],
+) -> None:
+    """Promote files with exact-query symbol declarations to the front of `scored_files`."""
+    best_exact_score: dict[str, int] = {}
+    for sym in scored_symbols:
+        if not sym.get("exact_query_match"):
+            continue
+        path = str(sym.get("file", ""))
+        if not path:
+            continue
+        score = int(sym.get("score", 0))
+        if path not in best_exact_score or score > best_exact_score[path]:
+            best_exact_score[path] = score
+    if not best_exact_score:
+        return
+    exact_indexed: list[tuple[int, int, tuple[int, str]]] = []
+    rest: list[tuple[int, str]] = []
+    for idx, entry in enumerate(scored_files):
+        path = entry[1]
+        if path in best_exact_score:
+            exact_indexed.append((-best_exact_score[path], idx, entry))
+        else:
+            rest.append(entry)
+    exact_indexed.sort(key=lambda item: (item[0], item[1]))
+    for _, _, (_, path) in exact_indexed:
+        reasons = file_reasons.setdefault(path, [])
+        if "exact-declaration" not in reasons:
+            reasons.append("exact-declaration")
+    scored_files[:] = [entry for _, _, entry in exact_indexed] + rest

@@ -237,3 +237,77 @@ def test_symbol_generation_options_memoization(tmp_path: Path, monkeypatch) -> N
         gen.product(path, lambda: ([], []))
         keys.append(gen.files[str(path)][1])
     assert keys[0] == keys[1]
+
+
+def test_apply_detail_tier_compact_truncates_resolution_gaps_and_omits_verbose_keys() -> None:
+    payload = {
+        "affected_files": ["a.py"],
+        "files": ["a.py"],
+        "definitions": [{"name": "fn"}],
+        "callers": [],
+        "caller_tree": {},
+        "result_incomplete": True,
+        "output_limit": {"max": 10},
+        "resolution_gaps": [{"file": f"f{i}.py", "reason": "unparsed"} for i in range(15)],
+        "file_summaries": [{"file": "a.py"}],
+        "imports": ["os"],
+        "symbols": [{"name": "fn"}],
+        "related_paths": ["b.py"],
+        "file_matches": [{"path": "a.py"}],
+        "test_matches": [{"path": "test_a.py"}],
+        "import_graph_consumers": [{"file": "b.py"}],
+        "ranking_quality": {"score": 1.0},
+    }
+    compact = apply_detail_tier(payload, "compact")
+    assert len(compact["resolution_gaps"]) == 10
+    assert compact["resolution_gaps_truncated_count"] == 5
+    for omitted in (
+        "file_summaries",
+        "imports",
+        "symbols",
+        "related_paths",
+        "file_matches",
+        "test_matches",
+        "import_graph_consumers",
+        "ranking_quality",
+    ):
+        assert omitted not in compact
+    for preserved in (
+        "affected_files",
+        "files",
+        "definitions",
+        "callers",
+        "caller_tree",
+        "result_incomplete",
+        "output_limit",
+    ):
+        assert compact[preserved] == payload[preserved]
+
+
+def test_prune_symbol_unreachable_importers_filters_unrelated_hubs(tmp_path: Path) -> None:
+    from tensor_grep.cli.symbol_blast_pruner import prune_symbol_unreachable_importers
+
+    def_file = tmp_path / "helper.py"
+    direct_user = tmp_path / "direct.py"
+    hub_file = tmp_path / "main.py"
+    unrelated_file = tmp_path / "unrelated.py"
+
+    def_file.write_text("def target_helper():\n    return 1\n", encoding="utf-8")
+    direct_user.write_text("from helper import target_helper\ntarget_helper()\n", encoding="utf-8")
+    hub_file.write_text("import helper\n# does not mention symbol\n", encoding="utf-8")
+    unrelated_file.write_text("import main\n", encoding="utf-8")
+
+    reverse_importers = {
+        str(def_file): {str(direct_user), str(hub_file)},
+        str(hub_file): {str(unrelated_file)},
+        str(direct_user): set(),
+    }
+    pruned = prune_symbol_unreachable_importers(
+        "target_helper",
+        [str(def_file)],
+        reverse_importers,
+        [str(def_file), str(direct_user), str(hub_file), str(unrelated_file)],
+    )
+    assert pruned[str(def_file)] == {str(direct_user)}
+    assert str(hub_file) not in pruned
+    assert str(unrelated_file) not in pruned

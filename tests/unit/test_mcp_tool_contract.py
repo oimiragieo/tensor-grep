@@ -32,6 +32,15 @@ def test_meta_action_schemas_match_runtime_action_tuples() -> None:
 
 
 def _call_tool(name: str, arguments: dict[str, object]) -> types.CallToolResult:
+    if name not in mcp_server._MCP_TOOL_CAPABILITIES:
+        raw = getattr(mcp_server, name)(**arguments)
+        err = _error_result(raw)
+        if err is not None:
+            return err
+        return types.CallToolResult(
+            content=[types.TextContent(type="text", text=raw)],
+            isError=False,
+        )
     result = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
     if isinstance(result, types.CallToolResult):
         return result

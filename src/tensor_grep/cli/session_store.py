@@ -675,10 +675,10 @@ def open_session(
             "count": snapshot_unreadable.count,
             "sample": list(snapshot_unreadable.sample),
         }
-    # Create the sessions dir up front so _session_payload_path's sessions_dir.resolve() is stable:
-    # under concurrent first-time opens, resolving while another writer is still mkdir-ing the dir
-    # can transiently mis-resolve and trip the containment guard on a VALID session id (Windows).
-    _sessions_dir(root).mkdir(parents=True, exist_ok=True)
+    _sessions_dir(root).mkdir(parents=True, exist_ok=True)  # stabilize sessions_dir.resolve()
+    from tensor_grep.cli.git_exclude_hygiene import ensure_git_info_exclude
+
+    ensure_git_info_exclude(root)
     session_path = _session_payload_path(root, session_id)
     seal_session(payload, root)
     _write_json_atomic(session_path, payload)

@@ -1,4 +1,5 @@
 import json
+import os
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.core.case_semantics import effective_ignore_case
@@ -72,9 +73,18 @@ def _routing_gpu_chunk_plan(result: SearchResult) -> list[dict[str, int]]:
     ]
 
 
+def _normalize_match_path(file_path: str, config: SearchConfig | None = None) -> str:
+    if config is not None and config.path_separator is not None:
+        separator = config.path_separator
+        return file_path.replace("\\", separator).replace("/", separator)
+    if os.name == "nt" and file_path:
+        return file_path.replace("/", "\\")
+    return file_path
+
+
 def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict[str, object]:
     payload: dict[str, object] = {
-        "file": match.file,
+        "file": _normalize_match_path(match.file, config),
         # audit M1: keep BOTH `line` (the native plain-`--json` field) and `line_number`
         # so a consumer keyed on `matches[].line` does not break the moment `--stats`
         # routes through this Python serializer instead of the native binary. Mirrors
@@ -219,11 +229,17 @@ class JsonFormatter(OutputFormatter):
 
     def format(self, result: SearchResult) -> str:
         envelope = _routing_envelope(result)
+        normalized_counts: dict[str, int] = {}
+        for path_key, count in result.match_counts_by_file.items():
+            norm_key = _normalize_match_path(path_key, self.config)
+            normalized_counts[norm_key] = normalized_counts.get(norm_key, 0) + count
         data = {
             "total_matches": result.total_matches,
             "total_files": result.total_files,
-            "matched_file_paths": result.matched_file_paths,
-            "match_counts_by_file": result.match_counts_by_file,
+            "matched_file_paths": [
+                _normalize_match_path(p, self.config) for p in result.matched_file_paths
+            ],
+            "match_counts_by_file": normalized_counts,
             "sidecar_used": envelope["sidecar_used"],
             "routing_backend": envelope["routing_backend"],
             "routing_reason": envelope["routing_reason"],

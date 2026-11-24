@@ -737,6 +737,20 @@ def _file_centrality_scores(rm: dict[str, Any]) -> tuple[list[str], dict[str, fl
     return code_files, centrality
 
 
+def _rank_file_symbols(rm: dict[str, Any], file_path: str) -> list[dict[str, Any]]:
+    """Rank symbols within a central file by (is_public, in_degree/centrality, -line)."""
+    matching = [s for s in rm.get("symbols", []) if str(s.get("file")) == file_path]
+    return sorted(
+        matching,
+        key=lambda s: (
+            not str(s["name"]).startswith("_"),
+            float(s.get("in_degree", s.get("centrality", s.get("score", 0.0))) or 0.0),
+            -int(s.get("line", s.get("start_line", 0)) or 0),
+        ),
+        reverse=True,
+    )
+
+
 def _central_files_from_map(
     rm: dict[str, Any],
     *,
@@ -771,8 +785,7 @@ def _central_files_from_map(
     for file_path in ranked[:max_central_files]:
         file_symbols = [
             {"name": str(s["name"]), "kind": str(s["kind"])}
-            for s in rm.get("symbols", [])
-            if str(s.get("file")) == file_path
+            for s in _rank_file_symbols(rm, file_path)
         ][:6]
         rounded_score = round(centrality[file_path], 6)
         result.append({
@@ -1088,8 +1101,7 @@ def build_orient_capsule_from_map(
                 "kind": str(s["kind"]),
                 "line": int(s.get("line", s.get("start_line", 0)) or 0),
             }
-            for s in rm.get("symbols", [])
-            if str(s.get("file")) == file_path
+            for s in _rank_file_symbols(rm, file_path)
         ][:8]
         if syms:
             symbol_map[file_path] = syms

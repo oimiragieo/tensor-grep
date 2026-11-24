@@ -73,7 +73,8 @@ pub fn integrity_file_is_trusted(
     managed_grants_are_safe(grants, user_sid)
 }
 
-/// Trust the selector file; owner must match user/token owner and foreign grants must be read-only.
+/// Trust the selector file; trusted system owners and token default owners are accepted,
+/// and foreign grants must be read-only.
 /// A NULL, unavailable, or unparsed DACL must be passed as `None` and is rejected.
 pub fn selector_is_trusted(
     owner: &str,
@@ -81,7 +82,7 @@ pub fn selector_is_trusted(
     user_sid: &str,
     token_owner_sid: Option<&str>,
 ) -> bool {
-    if !valid_owner(owner, user_sid, token_owner_sid) {
+    if !valid_managed_owner(owner, user_sid, token_owner_sid) {
         return false;
     }
     let Some(grants) = grants else {
@@ -98,7 +99,7 @@ pub fn describe_untrusted_grants(
     token_owner_sid: Option<&str>,
 ) -> String {
     let mut reasons = Vec::new();
-    if !valid_owner(owner, user_sid, token_owner_sid) {
+    if !valid_managed_owner(owner, user_sid, token_owner_sid) {
         reasons.push(format!("untrusted owner {owner} (expected {user_sid})"));
     }
     match grants {
@@ -130,10 +131,11 @@ fn valid_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str>) -> bo
 }
 
 fn valid_managed_owner(owner: &str, user_sid: &str, token_owner_sid: Option<&str>) -> bool {
-    valid_owner(owner, user_sid, token_owner_sid)
-        || owner == SID_SYSTEM
-        || owner == SID_ADMINISTRATORS
-        || owner == SID_TRUSTED_INSTALLER
+    !user_sid.is_empty()
+        && (valid_owner(owner, user_sid, token_owner_sid)
+            || owner == SID_SYSTEM
+            || owner == SID_ADMINISTRATORS
+            || owner == SID_TRUSTED_INSTALLER)
 }
 
 fn grant_is_safe(sid: &str, mask: u32, user_sid: &str) -> bool {
@@ -362,13 +364,12 @@ mod tests {
 
     #[test]
     fn all_profiles_refuse_empty_current_user_sid() {
-        let ancestor = ancestor_is_trusted(USER, Some(&[]), "");
-        let parent = parent_is_trusted(USER, Some(&[]), "", None);
-        let selector = selector_is_trusted(USER, Some(&[]), "", None);
-
-        assert!(!ancestor);
-        assert!(!parent);
-        assert!(!selector);
+        for owner in [USER, SYSTEM, ADMIN, TRUSTED_INSTALLER] {
+            assert!(!ancestor_is_trusted(owner, Some(&[]), ""));
+            assert!(!parent_is_trusted(owner, Some(&[]), "", None));
+            assert!(!integrity_file_is_trusted(owner, Some(&[]), "", None));
+            assert!(!selector_is_trusted(owner, Some(&[]), "", None));
+        }
         assert!(!parent_grants_are_trusted(Some(&[]), ""));
     }
     #[test]
@@ -426,5 +427,39 @@ mod tests {
         let trusted = selector_is_trusted(USER, Some(&grants), USER, None);
 
         assert!(trusted);
+    }
+
+    #[test]
+    fn selector_administrator_owner_with_user_only_dacl_is_allowed() {
+        let grants = [(USER.to_owned(), 0x1F01FF)];
+
+        assert!(selector_is_trusted(ADMIN, Some(&grants), USER, None));
+        assert_eq!(
+            describe_untrusted_grants(ADMIN, Some(&grants), USER, None),
+            "trusted"
+        );
+    }
+
+    #[test]
+    fn selector_system_owner_with_user_only_dacl_is_allowed() {
+        let grants = [(USER.to_owned(), 0x1F01FF)];
+
+        assert!(selector_is_trusted(SYSTEM, Some(&grants), USER, None));
+    }
+
+    #[test]
+    fn selector_foreign_owner_is_refused() {
+        let grants = [(USER.to_owned(), 0x1F01FF)];
+
+        assert!(!selector_is_trusted(OTHER, Some(&grants), USER, None));
+        let msg = describe_untrusted_grants(OTHER, Some(&grants), USER, None);
+        assert!(msg.contains("untrusted owner"));
+    }
+
+    #[test]
+    fn selector_administrator_owner_with_everyone_write_is_refused() {
+        let grants = [(EVERYONE.to_owned(), 0x2)];
+
+        assert!(!selector_is_trusted(ADMIN, Some(&grants), USER, None));
     }
 }

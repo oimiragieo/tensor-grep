@@ -59,7 +59,7 @@ _DECLARED_SCAN_LIMIT_KEYS = {
 # The version in force when the key set above was last reviewed. This is not a "bump me every
 # release" pin -- it moves when the response contract changes, which is exactly when a reviewer
 # should be looking.
-_CONTRACT_AT_LAST_WIRE_REVIEW = "1.23.0"
+_CONTRACT_AT_LAST_WIRE_REVIEW = "1.24.0"
 
 
 @pytest.fixture
@@ -75,6 +75,10 @@ def checkpoint_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[P
 
 
 def _call_checkpoint(tool: str, arguments: dict[str, object]) -> tuple[dict[str, Any], bool]:
+    if tool not in mcp_server._MCP_TOOL_CAPABILITIES:
+        raw = getattr(mcp_server, tool)(**arguments)
+        payload = cast(dict[str, Any], json.loads(raw))
+        return payload, isinstance(payload.get("error"), dict) and bool(payload["error"])
     result = asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
     if isinstance(result, types.CallToolResult):
         payload = cast(dict[str, Any], json.loads(result.content[0].text))
