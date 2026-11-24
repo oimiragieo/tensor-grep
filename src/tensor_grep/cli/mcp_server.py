@@ -191,12 +191,12 @@ _register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
-    """Whether legacy per-function MCP tool names are individually advertised (default False; set TG_MCP_LEGACY_TOOLS=1 to opt in)."""
-    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    """Whether legacy per-function MCP tool names are individually advertised (default True; set TG_MCP_LEGACY_TOOLS=0 for compact 15-tool surface)."""
+    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
     }
 
 

@@ -91,27 +91,25 @@ def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
     assert "Native binary not found: FileNotFoundError" in payload["native_tg"]["error"]
 
 
-def test_mcp_legacy_tools_flag_off_by_default_subprocess():
-    """Baseline (flag unset -> treated as "" -> OFF): only the 15 consolidated/always-on tools
-    register, and the capability registry stays exactly in lockstep with the live registry."""
+def test_mcp_legacy_tools_flag_on_by_default_subprocess():
+    """Baseline (flag unset -> treated as "" -> ON): all 61 tools register, and the
+    capability registry stays exactly in lockstep with the live registry."""
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": ""})
-    assert result["legacy_enabled"] is False
+    assert result["legacy_enabled"] is True
     assert result["tool_names"] == result["capability_names"]
-    assert len(result["tool_names"]) == 15
+    assert len(result["tool_names"]) == 61
     assert _EXPECTED_META_TOOL_NAMES <= set(result["tool_names"])
     assert _EXPECTED_SINGLETON_TOOL_NAMES <= set(result["tool_names"])
     assert "tg_discover_tools" in result["tool_names"]
     assert "tg_coverage" in result["tool_names"]
-    assert "tg_symbol_defs" not in result["tool_names"]
-    assert "tg_search" not in result["tool_names"]
+    assert "tg_symbol_defs" in result["tool_names"]
+    assert "tg_search" in result["tool_names"]
 
 
-@pytest.mark.parametrize(
-    "off_value", ["0", "false", "no", "off", "OFF", "False", "  off  ", "anything-else", "0x"]
-)
+@pytest.mark.parametrize("off_value", ["0", "false", "no", "off", "OFF", "False", "  off  "])
 def test_mcp_legacy_tools_flag_off_deregisters_legacy_tools_subprocess(off_value):
-    """TG_MCP_LEGACY_TOOLS unset or set to any non-opt-in token keeps all 46 legacy tool names
-    de-registered, leaving EXACTLY the 10 meta tools + 5 always-on tools (15 total)."""
+    """TG_MCP_LEGACY_TOOLS set to a recognized off-token de-registers all 46 legacy tool names,
+    leaving EXACTLY the 10 meta tools + 5 always-on tools (15 total)."""
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": off_value})
     assert result["legacy_enabled"] is False
     assert result["tool_names"] == result["capability_names"]
@@ -135,18 +133,6 @@ def test_mcp_legacy_tools_flag_off_deregisters_legacy_tools_subprocess(off_value
         assert legacy_name not in result["capability_names"]
 
 
-@pytest.mark.parametrize("on_value", ["1", "true", "yes", "on", "ON", "True", "  on  "])
-def test_mcp_legacy_tools_flag_on_recognizes_opt_in_tokens_subprocess(on_value):
-    """Explicit opt-in tokens (1/true/yes/on, case/whitespace-insensitive) restore all 46
-    legacy tools (61 total)."""
-    result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": on_value})
-    assert result["legacy_enabled"] is True
-    assert result["tool_names"] == result["capability_names"]
-    assert len(result["tool_names"]) == 61
-    assert "tg_symbol_defs" in result["tool_names"]
-    assert "tg_search" in result["tool_names"]
-
-
 @pytest.mark.parametrize(
     "value,expected",
     [
@@ -164,23 +150,23 @@ def test_mcp_legacy_tools_flag_on_recognizes_opt_in_tokens_subprocess(on_value):
         ("true", True),
         ("yes", True),
         ("on", True),
-        ("", False),
-        ("anything-else", False),
-        ("  ", False),
+        ("", True),
+        ("anything-else", True),
+        ("  ", True),
     ],
 )
-def test_legacy_tools_enabled_recognizes_opt_in_tokens(monkeypatch, value, expected):
+def test_legacy_tools_enabled_recognizes_off_tokens(monkeypatch, value, expected):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.setenv("TG_MCP_LEGACY_TOOLS", value)
     assert mcp_server._legacy_tools_enabled() is expected
 
 
-def test_legacy_tools_enabled_defaults_off_when_unset(monkeypatch):
+def test_legacy_tools_enabled_defaults_on_when_unset(monkeypatch):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.delenv("TG_MCP_LEGACY_TOOLS", raising=False)
-    assert mcp_server._legacy_tools_enabled() is False
+    assert mcp_server._legacy_tools_enabled() is True
 
 
 def test_register_legacy_tool_returns_fn_unchanged_when_flag_off(monkeypatch):
@@ -1296,7 +1282,7 @@ def test_meta_and_singleton_tool_names_partition_cleanly():
     assert meta.isdisjoint(singletons)
     assert meta.isdisjoint(legacy)
     assert singletons.isdisjoint(legacy)
-    assert meta | singletons == set(mcp_server._MCP_TOOL_CAPABILITIES)
+    assert meta | singletons | legacy == set(mcp_server._MCP_TOOL_CAPABILITIES)
 
 
 _LEGACY_NOTE_MARKER = "Legacy per-function tool; meta-tool `"
