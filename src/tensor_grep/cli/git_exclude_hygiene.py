@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import stat
-import tempfile
 from pathlib import Path
 
 _MAX_ASCENT = 24
@@ -148,7 +147,7 @@ def ensure_git_info_exclude(repo_root: Path, entry: str = ".tensor-grep/") -> bo
             return False
 
         exclude_path = info_dir / "exclude"
-        from tensor_grep.cli._index_lock import index_lock
+        from tensor_grep.cli._index_lock import atomic_write_bytes, index_lock
 
         with index_lock(exclude_path):
             excl_st = _lstat_if_exists(exclude_path)
@@ -171,21 +170,7 @@ def ensure_git_info_exclude(repo_root: Path, entry: str = ".tensor-grep/") -> bo
             if existing_bytes and not existing_bytes.endswith((b"\n", b"\r")):
                 prefix = newline
             updated_bytes = existing_bytes + prefix + entry.encode("utf-8") + newline
-
-            fd, tmp_name = tempfile.mkstemp(dir=info_dir, prefix=".exclude-", suffix=".tmp")
-            tmp_path = Path(tmp_name)
-            try:
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(updated_bytes)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(tmp_path, exclude_path)
-            except BaseException:
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                raise
+            atomic_write_bytes(exclude_path, updated_bytes)
         return True
     except OSError:
         return False

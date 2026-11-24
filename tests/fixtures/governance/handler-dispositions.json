@@ -21,7 +21,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1161,
+    "lineno": 1157,
     "enclosing_symbol": "_record_generated_audit_manifest",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -1751,12 +1751,22 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1136,
+    "lineno": 1124,
     "enclosing_symbol": "tg_mcp_capabilities",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "SEC-007: cli/mcp_server.py:tg_mcp_capabilities outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
     "reason": "Fail-closed outer containment boundary for tg_mcp_capabilities preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1150,
+    "enclosing_symbol": "tg_discover_tools",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "cli/mcp_server.py:tg_discover_tools outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_discover_tools preventing internal exceptions and tracebacks from crossing MCP wire to client.",
     "hardened_in": "SEC-007"
   },
   {
@@ -3451,7 +3461,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1672,
+    "lineno": 1677,
     "enclosing_symbol": "tg_coverage",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

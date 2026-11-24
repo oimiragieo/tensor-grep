@@ -111,6 +111,20 @@ def promote_exact_declaration_files(
         path = str(sym.get("file", ""))
         if not path:
             continue
+        reasons = file_reasons.get(path, ())
+        if "vendored-deweighted" in reasons or "deweighted" in reasons:
+            continue
+        lower_parts = {p.lower() for p in Path(path).parts[:-1]}
+        if lower_parts & {
+            "third_party",
+            "vendor",
+            "node_modules",
+            ".venv",
+            "venv",
+            "dist",
+            "build",
+        }:
+            continue
         score = int(sym.get("score", 0))
         if path not in best_exact_score or score > best_exact_score[path]:
             best_exact_score[path] = score

@@ -146,7 +146,7 @@ def test_grounding_walks_up_to_go_mod_and_reports_no_manifest_in_scope(tmp_path:
 
     empty_evidence = dependency_grounding(empty_sub, "local")
     assert empty_evidence is not None
-    assert empty_evidence["status"] == "no_manifest_in_scope"
+    assert empty_evidence["status"] == "complete"
     assert empty_evidence["dependencies"] == []
 
     expired_evidence = dependency_grounding(empty_sub, "local", deadline_monotonic=0.0)

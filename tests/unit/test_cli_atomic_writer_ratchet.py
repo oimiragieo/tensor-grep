@@ -1637,6 +1637,12 @@ def test_population_has_zero_unresolved() -> None:
 # plus every OTHER helper-backed writer surfaced once the census widened from the original 3-file
 # scope (main.py/_index_lock.py/codemap.py) to the full `_CLI_SRC` walk.
 _EXPECTED_HELPER_BACKED = {
+    (
+        "git_exclude_hygiene.py",
+        "ensure_git_info_exclude",
+        "tensor_grep.cli._index_lock.atomic_write_bytes",
+    ),
+    ("incremental_symbol_cache.py", "save", "tensor_grep.cli._index_lock.atomic_write_json"),
     ("codemap_pinned.py", "write", "tensor_grep.cli._index_lock.atomic_write_bytes_confined"),
     (
         "session_resume_service.py",

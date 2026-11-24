@@ -77,7 +77,7 @@ def _normalize_match_path(file_path: str, config: SearchConfig | None = None) ->
     if config is not None and config.path_separator is not None:
         separator = config.path_separator
         return file_path.replace("\\", separator).replace("/", separator)
-    if os.name == "nt" and file_path:
+    if os.name == "nt" and "/" in file_path and "\\" in file_path:
         return file_path.replace("/", "\\")
     return file_path
 

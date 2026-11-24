@@ -31,8 +31,8 @@ def _list_tools_subprocess(env_overrides: dict[str, str] | None = None) -> list[
     return list(json.loads(done.stdout))
 
 
-def test_default_mcp_list_tools_advertises_compact_surface() -> None:
-    names = _list_tools_subprocess()
+def test_compact_mcp_list_tools_advertises_compact_surface() -> None:
+    names = _list_tools_subprocess({"TG_MCP_LEGACY_TOOLS": "0"})
     assert len(names) <= 15
     assert "tg_discover_tools" in names
     assert "tg_mcp_capabilities" in names
@@ -40,8 +40,8 @@ def test_default_mcp_list_tools_advertises_compact_surface() -> None:
     assert "tg_symbol_defs" not in names
 
 
-def test_legacy_opt_in_restores_full_surface() -> None:
-    names = _list_tools_subprocess({"TG_MCP_LEGACY_TOOLS": "1"})
+def test_default_mcp_surface_preserves_legacy_tools_and_discovery() -> None:
+    names = _list_tools_subprocess()
     assert len(names) == 61
     assert "tg_discover_tools" in names
     assert "tg_symbol_defs" in names

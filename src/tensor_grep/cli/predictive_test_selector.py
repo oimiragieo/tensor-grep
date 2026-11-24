@@ -7,7 +7,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-_JS_TS_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"})
+from tensor_grep.cli.lang_suffixes import JS_TS_SUFFIXES as _JS_TS_SUFFIXES
+
 _GENERIC_STEMS = frozenset({"__init__", "init", "main", "cli", "app", "index", "utils", "helpers"})
 _STOP_TOKENS = frozenset({
     "test",
@@ -57,10 +58,7 @@ def _bounded_git_cochanges(
     for raw_entry in proc.stdout.split(b"\x00"):
         cleaned = os.fsdecode(raw_entry).strip()
         if cleaned:
-            try:
-                cochanged.add(str((validation_root / cleaned).resolve()))
-            except OSError:
-                continue
+            cochanged.add(os.path.normpath(os.path.join(validation_root, cleaned)))
     return cochanged
 
 

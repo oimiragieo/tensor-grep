@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import os
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -151,7 +150,7 @@ class IncrementalSymbolCache:
 
     def save(self) -> None:
         """Persist symbol/import entries atomically to `cache_path`."""
-        import tempfile
+        from tensor_grep.cli._index_lock import atomic_write_json
 
         if self._cache_path is None:
             return
@@ -160,20 +159,7 @@ class IncrementalSymbolCache:
                 "version": 1,
                 "entries": {k: asdict(v) for k, v in self._entries.items()},
             }
-            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(
-                dir=self._cache_path.parent,
-                prefix=f".{self._cache_path.name}.",
-                suffix=".tmp",
-            )
-            tmp_path = Path(tmp_name)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    handle.write(json.dumps(payload, sort_keys=True))
-                os.replace(tmp_path, self._cache_path)
-            except BaseException:
-                tmp_path.unlink(missing_ok=True)
-                raise
+            atomic_write_json(self._cache_path, payload)
 
     def load(self) -> None:
         """Load persisted symbol/import entries from `cache_path` if valid."""

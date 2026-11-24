@@ -174,9 +174,17 @@ def _find_manifest_root(
     start_dir: Path, *, deadline_monotonic: float | None = None
 ) -> tuple[Path, bool, bool]:
     """Walk up parent directories to the nearest manifest or VCS root."""
+    import tempfile
+
+    try:
+        stop_dirs = {Path.home().resolve(), Path(tempfile.gettempdir()).resolve()}
+    except OSError:
+        stop_dirs = set()
     for candidate in (start_dir, *start_dir.parents):
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             return start_dir, False, True
+        if candidate != start_dir and candidate in stop_dirs:
+            return start_dir, False, False
         if any(os.path.lexists(candidate / manifest) for manifest in _MANIFESTS):
             return candidate, True, False
         if os.path.lexists(candidate / ".git"):
@@ -291,8 +299,6 @@ def dependency_grounding(
         records.append(row)
     if partial or omitted:
         status = "partial"
-    elif not found_manifest:
-        status = "no_manifest_in_scope"
     else:
         status = "complete"
     result: dict[str, Any] = {

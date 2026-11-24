@@ -14152,15 +14152,16 @@ def build_symbol_blast_radius_from_map(
         _profiling_collector=_profiling_collector,
     )
     definition_files = [str(current["file"]) for current in definitions]
-    reverse_importers = prune_symbol_unreachable_importers(
-        symbol,
-        definition_files,
-        reverse_importers,
-        all_files,
-        imports_by_file=imports_by_file,
-        deadline_monotonic=deadline_monotonic,
-        deadline_hit=reverse_import_graph_deadline_hit_blast,
-    )
+    if os.environ.get("TG_BLAST_SYMBOL_PRUNE") == "1":
+        reverse_importers = prune_symbol_unreachable_importers(
+            symbol,
+            definition_files,
+            reverse_importers,
+            all_files,
+            imports_by_file=imports_by_file,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=reverse_import_graph_deadline_hit_blast,
+        )
     reachable_files = (
         set(definition_files)
         | set(reverse_importers)
@@ -14179,9 +14180,10 @@ def build_symbol_blast_radius_from_map(
             deadline_hit=reverse_import_graph_deadline_hit_blast,
             _profiling_collector=_profiling_collector,
         ).items()
-        if path in reachable_files
+        if os.environ.get("TG_BLAST_SYMBOL_PRUNE") != "1" or path in reachable_files
     }
-    blast_uncertain = {k: v for k, v in blast_uncertain.items() if k in reachable_files}
+    if os.environ.get("TG_BLAST_SYMBOL_PRUNE") == "1":
+        blast_uncertain = {k: v for k, v in blast_uncertain.items() if k in reachable_files}
     for target, importers in reverse_importers.items():
         reverse_importers[target] = {
             importer

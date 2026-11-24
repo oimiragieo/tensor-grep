@@ -191,8 +191,13 @@ _register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
-    """Whether legacy per-function MCP tool names are individually advertised (default False; set TG_MCP_LEGACY_TOOLS=1 to opt in)."""
-    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
+    """Whether legacy per-function MCP tool names are individually advertised (default True; set TG_MCP_LEGACY_TOOLS=0 for compact 15-tool surface)."""
+    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
@@ -1138,9 +1143,13 @@ def tg_mcp_capabilities() -> str:
 @_register_tool  # type: ignore
 def tg_discover_tools(intent: str, limit: int = 5) -> str:
     """Search the full MCP tool catalog by intent and return top matching tools."""
-    from tensor_grep.cli.mcp_tool_discovery import discover_mcp_tools
+    try:
+        from tensor_grep.cli.mcp_tool_discovery import discover_mcp_tools
 
-    return _self._inject_mcp_contract_fields(discover_mcp_tools(intent, limit=limit))
+        return _self._inject_mcp_contract_fields(discover_mcp_tools(intent, limit=limit))
+    except Exception as exc:
+        _log_tool_exception("tg_discover_tools", exc)
+        return json.dumps(_sanitized_tool_error("tg_discover_tools", exc), indent=2)
 
 
 def _record_generated_audit_manifest(payload: object) -> None:
@@ -5611,10 +5620,7 @@ async def _stdio_server_accepting_content_length(
     if not stdout:
         stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
 
-    # Subscript the anyio factory so the item type is explicit: newer mypy cannot infer the generic
-    # of `create_memory_object_stream(0)` and errors "Need type annotation" (older mypy did not).
-    # read side carries a validated SessionMessage OR the JSON-decode Exception (sent at the reader);
-    # write side carries a SessionMessage.
+    # Subscript anyio factory so mypy infers item types explicitly.
     read_stream_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](
         0
     )
@@ -5643,8 +5649,7 @@ async def _stdio_server_accepting_content_length(
             async with write_stream_reader:
                 async for session_message in write_stream_reader:
                     payload = session_message.message.model_dump_json(
-                        by_alias=True,
-                        exclude_none=True,
+                        by_alias=True, exclude_none=True
                     )
                     await stdout.write(payload + "\n")
                     await stdout.flush()
@@ -5661,9 +5666,7 @@ async def _run_mcp_stdio_async() -> None:
     _apply_mcp_server_metadata(mcp)
     async with _stdio_server_accepting_content_length() as (read_stream, write_stream):
         await mcp._mcp_server.run(
-            read_stream,
-            write_stream,
-            mcp._mcp_server.create_initialization_options(),
+            read_stream, write_stream, mcp._mcp_server.create_initialization_options()
         )
 
 

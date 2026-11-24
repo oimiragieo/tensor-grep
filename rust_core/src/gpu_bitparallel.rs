@@ -218,7 +218,7 @@ fn apply_escape(b: u8, allowed: &mut [bool; 256]) {
         }
         b'D' => {
             for (idx, slot) in allowed.iter_mut().enumerate() {
-                if !(b'0'..=b'9').contains(&(idx as u8)) {
+                if !(idx as u8).is_ascii_digit() {
                     *slot = true;
                 }
             }

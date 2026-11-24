@@ -636,7 +636,6 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
                     "module": node.module,
                     "line": int(node.lineno),
                     "level": int(node.level or 0),
-                    "names": [alias.name for alias in node.names if alias.name != "*"],
                 })
             elif node.level:
                 # `from . import x` / `from .. import x` -- no dotted module text, only
