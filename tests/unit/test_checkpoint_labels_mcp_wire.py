@@ -137,29 +137,58 @@ def test_checkpoint_label_schema_remains_optional_nullable_with_default_none() -
 
 
 def test_legacy_checkpoint_create_wire_and_schema_contract(project: Path) -> None:
+    printable_labels = ["null", "123", "true", '"quoted"', '["x"]', '{"a":1}', "再確認 🧭"]
+    nontext_labels: list[object] = [123, True, [], {}]
     repo_root = Path(__file__).resolve().parents[2]
     env = {
         **os.environ,
         "PYTHONPATH": str(repo_root / "src"),
+        "PYTHONIOENCODING": "utf-8",
         "TG_MCP_LEGACY_TOOLS": "1",
         "TG_MCP_ROOT": str(project.parent),
     }
     script = (
-        "import asyncio, json; "
-        "from mcp.server.fastmcp.exceptions import ToolError; "
-        "from tensor_grep.cli import mcp_server as m; "
-        "tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}; "
-        "schemas = {n: tools[n].inputSchema for n in ('tg_checkpoint_create', 'tg_checkpoint')}; "
-        f"res = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 'null'}})); "
-        "created = json.loads((res[0] if isinstance(res, tuple) else res.content)[0].text); "
-        f"bad_path = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': '~', 'label': ''}})); "
-        "refused = json.loads((bad_path[0] if isinstance(bad_path, tuple) else bad_path.content)[0].text); "
-        "nontext_refused = False\n"
-        "try:\n"
-        f"    asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 123}}))\n"
-        "except ToolError:\n"
-        "    nontext_refused = True\n"
-        "print(json.dumps({'schemas': schemas, 'created': created, 'refused': refused, 'nontext_refused': nontext_refused}))"
+        "import asyncio, json\n"
+        "from pathlib import Path\n"
+        "from mcp.server.fastmcp.exceptions import ToolError\n"
+        "from tensor_grep.cli import checkpoint_store, mcp_server as m\n"
+        f"project_dir = {str(project)!r}\n"
+        f"printable_labels = {printable_labels!r}\n"
+        f"nontext_labels = {nontext_labels!r}\n"
+        "tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}\n"
+        "schemas = {n: tools[n].inputSchema for n in ('tg_checkpoint_create', 'tg_checkpoint')}\n"
+        "created_payloads = []\n"
+        "for label in printable_labels:\n"
+        "    res = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {'path': project_dir, 'label': label}))\n"
+        "    created_payloads.append(json.loads((res[0] if isinstance(res, tuple) else res.content)[0].text))\n"
+        "records = checkpoint_store.list_checkpoints(project_dir)\n"
+        "index_path = Path(project_dir) / '.tensor-grep/checkpoints/index.json'\n"
+        "index_entries = json.loads(index_path.read_text(encoding='utf-8'))\n"
+        "metadata_labels = [\n"
+        "    checkpoint_store.load_checkpoint_metadata(c['checkpoint_id'], project_dir)['label']\n"
+        "    for c in created_payloads\n"
+        "]\n"
+        "bad_path = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {'path': '~', 'label': ''}))\n"
+        "refused = json.loads((bad_path[0] if isinstance(bad_path, tuple) else bad_path.content)[0].text)\n"
+        "before_nontext = index_path.read_bytes()\n"
+        "nontext_results = []\n"
+        "for bad_label in nontext_labels:\n"
+        "    try:\n"
+        "        asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {'path': project_dir, 'label': bad_label}))\n"
+        "        nontext_results.append({'refused': False, 'has_label_msg': False})\n"
+        "    except ToolError as exc:\n"
+        "        nontext_results.append({'refused': True, 'has_label_msg': 'label' in str(exc)})\n"
+        "after_nontext = index_path.read_bytes()\n"
+        "print(json.dumps({\n"
+        "    'schemas': schemas,\n"
+        "    'created_payloads': created_payloads,\n"
+        "    'record_labels': [r.label for r in records],\n"
+        "    'index_labels': [entry['label'] for entry in index_entries],\n"
+        "    'metadata_labels': metadata_labels,\n"
+        "    'refused': refused,\n"
+        "    'nontext_results': nontext_results,\n"
+        "    'index_unchanged': after_nontext == before_nontext,\n"
+        "}))\n"
     )
     done = subprocess.run(
         [sys.executable, "-c", script],
@@ -167,6 +196,7 @@ def test_legacy_checkpoint_create_wire_and_schema_contract(project: Path) -> Non
         cwd=str(repo_root),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=90,
         check=True,
     )
@@ -179,10 +209,18 @@ def test_legacy_checkpoint_create_wire_and_schema_contract(project: Path) -> Non
         }
         assert schema["properties"]["label"]["default"] is None
         assert "label" not in schema.get("required", [])
-    assert result["created"]["label"] == "null"
+    assert len(result["created_payloads"]) == len(printable_labels)
+    for label, created in zip(printable_labels, result["created_payloads"], strict=True):
+        assert created["label"] == label
+        assert created["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    assert sorted(result["record_labels"]) == sorted(printable_labels)
+    assert sorted(result["index_labels"]) == sorted(printable_labels)
+    assert result["metadata_labels"] == printable_labels
     assert result["refused"]["error"]["code"] == "invalid_input"
     assert result["refused"]["path"] == "[refused]"
-    assert result["nontext_refused"] is True
+    assert len(result["nontext_results"]) == len(nontext_labels)
+    assert all(item["refused"] and item["has_label_msg"] for item in result["nontext_results"])
+    assert result["index_unchanged"] is True
 
 
 def test_label_adapter_leaves_other_argument_and_tool_parsing_unchanged() -> None:
