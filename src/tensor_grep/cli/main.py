@@ -9735,9 +9735,6 @@ def classify(
         _enrich_classifications,
     )
 
-    if json_output and format_type is not None and format_type != "json":
-        typer.echo("Error: tg classify --json cannot be combined with --format", err=True)
-        raise typer.Exit(2)
     if stdin_flag and text is not None:
         typer.echo("Error: tg classify --stdin cannot be combined with --text", err=True)
         raise typer.Exit(1)
@@ -9751,6 +9748,9 @@ def classify(
             "Error: tg classify --text cannot be combined with a file path argument", err=True
         )
         raise typer.Exit(1)
+    if json_output and format_type is not None and format_type != "json":
+        typer.echo("Error: tg classify --json cannot be combined with --format", err=True)
+        raise typer.Exit(2)
 
     # Mirrors sidecar.py's _classify_payload: content supplied directly (stdin/--text) skips
     # the file-read branch entirely, and empty content degrades cleanly instead of hanging or

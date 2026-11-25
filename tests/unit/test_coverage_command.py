@@ -628,3 +628,10 @@ def test_coverage_malformed_session_record_fields_fail_cleanly(tmp_path: Path) -
 
     with pytest.raises(ValueError, match="invalid session index entry"):
         check_coverage(project, confinement_root=tmp_path)
+
+    index_path.write_text("{}", encoding="utf-8")
+    obj_result = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert obj_result.exit_code == 1
+    obj_payload = json.loads(obj_result.stdout)
+    assert obj_payload["complete"] is False
+    assert obj_payload["error"] == "session index is not a JSON array"

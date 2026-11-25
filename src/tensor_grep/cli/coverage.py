@@ -80,6 +80,12 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
         return []
     if floor is None:
         try:
+            raw_payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("session index is not valid JSON") from exc
+        if not isinstance(raw_payload, list):
+            raise ValueError("session index is not a JSON array")
+        try:
             return _validate_session_records(session_store._load_index(root))
         except (AttributeError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("invalid session index entry") from exc
