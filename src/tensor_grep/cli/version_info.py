@@ -21,7 +21,7 @@ def _module_importable(name: str) -> bool:
     try:
         importlib.import_module(name)
         return True
-    except Exception:
+    except (ImportError, OSError, AttributeError, RuntimeError, ValueError):
         return False
 
 
@@ -35,7 +35,7 @@ def _probe_torch() -> tuple[bool, bool]:
         is_available = getattr(cuda, "is_available", None)
         if callable(is_available) and bool(is_available()):
             return (True, False)
-    except Exception:
+    except (ImportError, OSError, AttributeError, RuntimeError, ValueError):
         return (False, False)
     return (False, True)
 
