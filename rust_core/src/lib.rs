@@ -19,6 +19,7 @@ pub mod gpu_bitparallel;
 #[cfg(feature = "cuda")]
 pub mod gpu_native;
 pub mod index;
+pub mod index_cache;
 pub mod index_lock;
 pub mod managed_runtime_acl_policy;
 #[cfg(windows)]
