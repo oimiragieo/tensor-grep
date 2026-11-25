@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import stat
 import time
 from collections.abc import Iterable, Mapping
@@ -237,14 +238,47 @@ def load_unified_manifest(
         return None
     manifest_path = resolved_root / MANIFEST_REL_PATH
     try:
-        st = manifest_path.lstat()
+        validate_confined_parent_prefix(resolved_root, manifest_path)
+        initial = manifest_path.lstat()
         if (
-            not stat.S_ISREG(st.st_mode)
-            or (getattr(st, "st_file_attributes", 0) & _REPARSE_ATTR)
-            or st.st_nlink != 1
+            not stat.S_ISREG(initial.st_mode)
+            or (getattr(initial, "st_file_attributes", 0) & _REPARSE_ATTR)
+            or initial.st_nlink != 1
+            or initial.st_size > MANIFEST_MAX_BYTES
         ):
             return None
-        raw_bytes = read_confined(resolved_root, manifest_path, MANIFEST_MAX_BYTES)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        descriptor = os.open(manifest_path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
+                or opened.st_size > MANIFEST_MAX_BYTES
+                or (opened.st_dev, opened.st_ino) != (initial.st_dev, initial.st_ino)
+            ):
+                return None
+            raw_bytes = stream.read(MANIFEST_MAX_BYTES + 1)
+            if len(raw_bytes) > MANIFEST_MAX_BYTES:
+                return None
+            after = os.fstat(stream.fileno())
+        current = manifest_path.lstat()
+        validate_confined_parent_prefix(resolved_root, manifest_path)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or after.st_nlink != 1
+            or (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino)
+            or not stat.S_ISREG(current.st_mode)
+            or (getattr(current, "st_file_attributes", 0) & _REPARSE_ATTR)
+            or current.st_nlink != 1
+            or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+        ):
+            return None
         envelope = json.loads(raw_bytes.decode("utf-8"))
         if not isinstance(envelope, dict):
             return None
@@ -274,6 +308,8 @@ def check_view_freshness(
     manifest: Mapping[str, Any] | None,
     current_merkle_root: str,
     views: Iterable[str] = CACHE_VIEWS,
+    *,
+    repo_root: Path | None = None,
 ) -> dict[str, bool]:
     """Return per-view freshness booleans against ``current_merkle_root``."""
     requested = tuple(views)
@@ -282,14 +318,33 @@ def check_view_freshness(
     view_map = manifest.get("views")
     if not isinstance(view_map, Mapping):
         return dict.fromkeys(requested, False)
+    resolved_root: Path | None = None
+    if repo_root is not None:
+        resolved_root = Path(repo_root).resolve()
+    else:
+        source_addr = manifest.get("source_address")
+        raw_root = source_addr.get("root") if isinstance(source_addr, Mapping) else None
+        if isinstance(raw_root, str) and raw_root:
+            resolved_root = Path(raw_root).resolve()
     result: dict[str, bool] = {}
     for view_name in requested:
         entry = view_map.get(view_name)
-        result[view_name] = (
+        is_fresh = (
             isinstance(entry, Mapping)
             and entry.get("merkle_root") == current_merkle_root
             and entry.get("ready") is True
         )
+        if is_fresh and view_name in ("hybrid_v1", "index_v1"):
+            if resolved_root is None:
+                is_fresh = False
+            else:
+                fp = compute_view_artifact_fingerprint(resolved_root, view_name)
+                recorded_fp = (
+                    entry.get("artifact_fingerprint") if isinstance(entry, Mapping) else None
+                )
+                if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
+                    is_fresh = False
+        result[view_name] = is_fresh
     return result
 
 
@@ -338,19 +393,16 @@ def save_unified_manifest(
             if existing is not None and existing.get("merkle_root") == merkle_root:
                 for k, v in existing.get("views", {}).items():
                     if isinstance(v, Mapping):
-                        carried = dict(v)
-                        view_name = str(k)
-                        if view_name in ("hybrid_v1", "index_v1"):
-                            fp = compute_view_artifact_fingerprint(resolved_root, view_name)
-                            if fp is None or (
-                                carried.get("artifact_fingerprint") is not None
-                                and carried.get("artifact_fingerprint") != fp
-                            ):
-                                carried["ready"] = False
-                        merged_views[view_name] = carried
+                        merged_views[str(k)] = dict(v)
             if views is not None:
                 for view_name, view_data in views.items():
                     merged_views[str(view_name)] = dict(view_data)
+            for view_name, entry in merged_views.items():
+                if view_name in ("hybrid_v1", "index_v1"):
+                    fp = compute_view_artifact_fingerprint(resolved_root, view_name)
+                    recorded_fp = entry.get("artifact_fingerprint")
+                    if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
+                        entry["ready"] = False
 
             resolved_source_address = (
                 dict(source_address)

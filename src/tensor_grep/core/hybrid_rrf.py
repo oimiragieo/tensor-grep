@@ -567,29 +567,33 @@ class HybridSQLiteIndex:
 
         # Stage 1: Fast 1-bit Hamming recall preview when binary_blob is present.
         has_all_binary = q_bin is not None and all(r[2] is not None for r in rows)
-        survivors: list[tuple[str, bytes | None, float | None]]
+        survivors: list[tuple[str, bytes | None, float | None]] | None = None
         if has_all_binary and q_bin is not None and len(rows) > preview_k:
             hamming_scored: list[tuple[float, str, bytes | None]] = []
             for doc_id, emb_blob, bin_blob in rows:
                 h_sim = hamming_similarity_1bit(q_bin, bin_blob)
                 if h_sim is None:
+                    if _coerce_blob(emb_blob) is not None:
+                        has_all_binary = False
+                        break
                     continue
                 hamming_scored.append((h_sim, str(doc_id), _coerce_blob(emb_blob)))
-            hamming_scored.sort(key=lambda item: (-item[0], item[1]))
-            # Include all candidates tied at the Hamming cutoff so lexicographic doc_id
-            # ordering cannot silently drop strong cosine matches before Stage 2 reranking.
-            if len(hamming_scored) > preview_k:
-                cutoff_h_sim = hamming_scored[preview_k - 1][0]
-                survivors = [
-                    (doc_id, emb_blob, h_sim)
-                    for idx, (h_sim, doc_id, emb_blob) in enumerate(hamming_scored)
-                    if idx < preview_k or h_sim >= cutoff_h_sim
-                ]
-            else:
-                survivors = [
-                    (doc_id, emb_blob, h_sim) for h_sim, doc_id, emb_blob in hamming_scored
-                ]
-        else:
+            if has_all_binary:
+                hamming_scored.sort(key=lambda item: (-item[0], item[1]))
+                # Include all candidates tied at the Hamming cutoff so lexicographic doc_id
+                # ordering cannot silently drop strong cosine matches before Stage 2 reranking.
+                if len(hamming_scored) > preview_k:
+                    cutoff_h_sim = hamming_scored[preview_k - 1][0]
+                    survivors = [
+                        (doc_id, emb_blob, h_sim)
+                        for idx, (h_sim, doc_id, emb_blob) in enumerate(hamming_scored)
+                        if idx < preview_k or h_sim >= cutoff_h_sim
+                    ]
+                else:
+                    survivors = [
+                        (doc_id, emb_blob, h_sim) for h_sim, doc_id, emb_blob in hamming_scored
+                    ]
+        if survivors is None:
             survivors = [
                 (
                     str(doc_id),

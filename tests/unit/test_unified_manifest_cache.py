@@ -16,6 +16,7 @@ from tensor_grep.cli.unified_cache import (
     build_source_address_contract,
     check_view_freshness,
     compute_generation_merkle_root,
+    compute_view_artifact_fingerprint,
     is_manifest_fresh,
     load_unified_manifest,
     save_unified_manifest,
@@ -50,6 +51,12 @@ def test_unified_manifest_creation_and_cross_view_freshness(tmp_path: Path) -> N
     assert len(merkle_root) == 64
     assert source_address["file_count"] == 4
 
+    hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+    hybrid_path.parent.mkdir(parents=True, exist_ok=True)
+    hybrid_path.write_bytes(b"valid-hybrid-v1")
+    hybrid_fp = compute_view_artifact_fingerprint(tmp_path, "hybrid_v1")
+    assert hybrid_fp is not None
+
     assert update_view_states(
         tmp_path,
         merkle_root,
@@ -60,6 +67,7 @@ def test_unified_manifest_creation_and_cross_view_freshness(tmp_path: Path) -> N
             "index_v1": (False, 1),
         },
         source_address=source_address,
+        artifact_fingerprints={"hybrid_v1": hybrid_fp},
     )
     manifest_path = tmp_path / MANIFEST_REL_PATH
     assert manifest_path.is_file()
@@ -432,3 +440,59 @@ def test_prepare_resets_stale_ready_views_when_artifacts_removed_or_replaced(
     assert after_prepare is not None
     assert after_prepare["views"]["hybrid_v1"]["ready"] is False
     assert after_prepare["views"]["index_v1"]["ready"] is False
+
+
+def test_save_and_check_view_freshness_fail_closed_on_missing_or_mismatched_artifacts(
+    tmp_path: Path,
+) -> None:
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+
+    # Newly supplied hybrid_v1/index_v1 without on-disk artifacts must be forced ready=False.
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"hybrid_v1": (True, 1), "index_v1": (True, 1)},
+        source_address=addr1,
+    )
+    loaded = load_unified_manifest(tmp_path)
+    assert loaded is not None
+    assert loaded["views"]["hybrid_v1"]["ready"] is False
+    assert loaded["views"]["index_v1"]["ready"] is False
+    assert check_view_freshness(loaded, m1, ("hybrid_v1", "index_v1")) == {
+        "hybrid_v1": False,
+        "index_v1": False,
+    }
+
+    # Create real hybrid_v1 artifact, save with matching fingerprint -> fresh=True.
+    hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+    hybrid_path.parent.mkdir(parents=True, exist_ok=True)
+    hybrid_path.write_bytes(b"valid-hybrid-v1")
+    hybrid_fp = compute_view_artifact_fingerprint(tmp_path, "hybrid_v1")
+    assert hybrid_fp is not None
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"hybrid_v1": (True, 1)},
+        source_address=addr1,
+        artifact_fingerprints={"hybrid_v1": hybrid_fp},
+    )
+    loaded_ok = load_unified_manifest(tmp_path)
+    assert loaded_ok is not None
+    assert check_view_freshness(loaded_ok, m1, ("hybrid_v1",)) == {"hybrid_v1": True}
+
+    # Mutate on-disk artifact -> check_view_freshness must immediately return False.
+    hybrid_path.write_bytes(b"mutated-hybrid-v1-bytes")
+    assert check_view_freshness(loaded_ok, m1, ("hybrid_v1",)) == {"hybrid_v1": False}
+
+    # Saving newly supplied ready=True with stale fingerprint must force ready=False.
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"hybrid_v1": (True, 1)},
+        source_address=addr1,
+        artifact_fingerprints={"hybrid_v1": hybrid_fp},
+    )
+    loaded_stale = load_unified_manifest(tmp_path)
+    assert loaded_stale is not None
+    assert loaded_stale["views"]["hybrid_v1"]["ready"] is False

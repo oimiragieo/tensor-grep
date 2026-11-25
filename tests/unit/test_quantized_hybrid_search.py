@@ -216,3 +216,37 @@ def test_corrupt_sqlite_blobs_and_oversized_inputs_fail_safely() -> None:
             idf_weight=0.0,
         )
         assert [h["doc_id"] for h in hits] == ["valid_doc"]
+
+
+def test_corrupt_binary_blob_falls_back_to_exact_cosine_when_over_preview_k() -> None:
+    # 65 non-target rows + 1 exact-match target row (66 > preview_k=64 for limit=3).
+    # Corrupting target's binary_blob while keeping embedding_blob intact must fall back
+    # to exact cosine scoring instead of dropping target during Hamming preselection.
+    dim = 16
+    query_vec = [1.0 if i < 8 else -1.0 for i in range(dim)]
+    docs: list[tuple[str, str, list[float]]] = [
+        (
+            f"doc_{idx:02d}",
+            f"filler_symbol_{idx}",
+            [-1.0 if i < 8 else 1.0 for i in range(dim)],
+        )
+        for idx in range(65)
+    ]
+    docs.append(("target", "exact_target_symbol", list(query_vec)))
+
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents(docs)
+        index._conn.execute(
+            "UPDATE documents SET binary_blob = ? WHERE doc_id = ?",
+            (b"\x01\x02", "target"),
+        )
+        index._conn.commit()
+
+        hits = index.search(
+            "nonexistent_lexical_token",
+            query_vec=query_vec,
+            limit=3,
+            idf_weight=0.0,
+        )
+        assert len(hits) == 3
+        assert hits[0]["doc_id"] == "target"
