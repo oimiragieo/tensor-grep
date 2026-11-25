@@ -2127,7 +2127,8 @@ fn test_routing_stale_index_with_explicit_index_rebuilds() {
     write_text_corpus(dir.path());
     build_index(dir.path());
 
-    let index_path = dir.path().join(".tg_index");
+    let index_path =
+        tensor_grep_rs::index_cache::resolve_index_paths(dir.path().to_str().unwrap()).write_path;
     let before = index_path.metadata().unwrap().modified().unwrap();
 
     thread::sleep(Duration::from_millis(50));
