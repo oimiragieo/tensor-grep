@@ -82,6 +82,7 @@ _NON_GIT_IGNORED_DIRS = {
     ".mypy_cache",
     ".ruff_cache",
     ".tensor-grep",
+    ".tg_cache",
     "artifacts",
     "build",
     "dist",

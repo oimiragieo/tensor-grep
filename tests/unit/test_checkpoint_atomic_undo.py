@@ -760,3 +760,34 @@ def test_undo_callback_failure_after_publish_does_not_reuse_prior_identity(
     assert confined._file_identity(first)[:2] == (prior_info.st_dev, prior_info.st_ino)
     assert first.read_bytes() == b"UNRELATED_SENTINEL"
     assert later.read_bytes() == b"current b"
+
+
+@requires_checkpoint_creation
+def test_checkpoint_excludes_tg_cache_from_snapshot_and_undo_divergence(tmp_path: Path) -> None:
+    import os
+    import time
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    _make_project(
+        root,
+        {
+            "src/app.py": "print('ok')\n",
+            ".tg_cache/symbols_v1/metadata.sqlite3": "sqlite-bytes",
+            ".tg_cache/symbols_v1/metadata.sqlite3.lock": "lock",
+        },
+    )
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    assert created.file_count == 1
+    snapshot_dir = root / ".tensor-grep" / "checkpoints" / created.checkpoint_id / "snapshot"
+    assert not (snapshot_dir / ".tg_cache").exists()
+
+    cache_db = root / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    cache_db.write_text("sqlite-mutated", encoding="utf-8")
+    future = time.time() + 10
+    os.utime(cache_db, (future, future))
+
+    undone = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert undone.diverged_paths == []
+    assert cache_db.read_text(encoding="utf-8") == "sqlite-mutated"
