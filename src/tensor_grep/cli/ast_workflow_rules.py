@@ -20,11 +20,13 @@ without a partial-initialization ImportError.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
 import sys
-from collections.abc import Mapping
+import time
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -739,6 +741,126 @@ _AST_RUN_REMEDIATION_IDIOMS: tuple[str, ...] = (
     "function $NAME($$$) { $$$ }",
 )
 
+_PYTHON_RETURN_TYPE_ADVISORY_HINT = (
+    "Typed Python functions (`def ... -> ...:`) were found that did not match this pattern; "
+    "pass `--selector function_definition` or use `def $NAME($$$ARGS) -> $RET: $$$BODY` "
+    "to match return-annotated definitions."
+)
+
+_MAX_ADVISORY_FILES = 64
+_MAX_ADVISORY_SECONDS = 0.25
+_MAX_ADVISORY_FILE_BYTES = 256 * 1024
+
+
+def _extract_python_def_target_name(pattern: str) -> str | None:
+    match = re.search(r"\bdef\s+(\$[A-Za-z0-9_$]*|[A-Za-z_][A-Za-z0-9_]*)", pattern)
+    if match is None:
+        return None
+    name = match.group(1)
+    return None if name.startswith("$") else name
+
+
+def _source_has_unmatched_typed_def(
+    source: str, matched_lines: set[int], target_name: str | None = None
+) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if target_name is not None and node.name != target_name:
+                continue
+            if node.returns is not None and node.lineno not in matched_lines:
+                return True
+    return False
+
+
+def _collect_python_return_type_advisory_hints(
+    *,
+    pattern: str,
+    lang: str | None,
+    selector: str | None,
+    result: SearchResult,
+    search_path: str,
+    stdin: bool = False,
+    stdin_input: str | None = None,
+    cfg: SearchConfig | None = None,
+    candidate_files: list[str] | None = None,
+) -> list[str]:
+    deadline = time.monotonic() + _MAX_ADVISORY_SECONDS
+    if not lang or lang.strip().lower() not in {"py", "python"}:
+        return []
+    if "->" in pattern or not re.search(r"\bdef\b", pattern):
+        return []
+    if selector == "function_definition" or result.result_incomplete:
+        return []
+
+    target_name = _extract_python_def_target_name(pattern)
+
+    if stdin:
+        if len(stdin_input or "") > _MAX_ADVISORY_FILE_BYTES:
+            return []
+        matched_lines = {m.line_number for m in result.matches}
+        if _source_has_unmatched_typed_def(stdin_input or "", matched_lines, target_name):
+            return [_PYTHON_RETURN_TYPE_ADVISORY_HINT]
+        return []
+
+    matched_lines_by_file: dict[str, set[int]] = {}
+    for match in result.matches:
+        if time.monotonic() >= deadline:
+            return []
+        if match.file:
+            norm = os.path.normcase(os.path.abspath(match.file))
+            matched_lines_by_file.setdefault(norm, set()).add(match.line_number)
+
+    def _iter_advisory_files() -> Iterator[str]:
+        yield from result.matched_file_paths
+        for m in result.matches:
+            if m.file:
+                yield m.file
+        if candidate_files is not None:
+            yield from candidate_files
+            return
+        target = Path(search_path)
+        if target.is_file():
+            yield str(target)
+        elif target.is_dir() and cfg is not None:
+            from tensor_grep.io.directory_scanner import DirectoryScanner
+
+            yield from DirectoryScanner(cfg).walk(search_path)
+
+    explicit_file = Path(search_path).is_file()
+    seen: set[str] = set()
+    inspected = 0
+    for file_path in _iter_advisory_files():
+        if inspected >= _MAX_ADVISORY_FILES or time.monotonic() >= deadline:
+            break
+        norm = os.path.normcase(os.path.abspath(file_path))
+        if norm in seen:
+            continue
+        seen.add(norm)
+        if not explicit_file and Path(file_path).suffix.lower() not in {".py", ".pyi"}:
+            continue
+        inspected += 1
+        try:
+            path_obj = Path(file_path)
+            if path_obj.stat().st_size > _MAX_ADVISORY_FILE_BYTES:
+                continue
+            source = path_obj.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _source_has_unmatched_typed_def(
+            source, matched_lines_by_file.get(norm, set()), target_name
+        ):
+            return [_PYTHON_RETURN_TYPE_ADVISORY_HINT]
+    return []
+
+
+def _emit_ast_run_advisory_hints(hints: list[str]) -> None:
+    for hint in hints:
+        print(f"advisory_hints: {hint}", file=sys.stderr)
+
 
 def _ast_run_remediation_lines(pattern: str, lang: str | None) -> list[str]:
     """Static/heuristic remediation lines for a zero-match ``tg run`` (scope: ``tg run`` only)."""
@@ -786,7 +908,14 @@ def _emit_ast_run_remediation(
 
 
 def _build_ast_run_search_payload(
-    *, stdin: bool, backend_name: str, pattern: str, path: str, result: Any, lang: str | None
+    *,
+    stdin: bool,
+    backend_name: str,
+    pattern: str,
+    path: str,
+    result: Any,
+    lang: str | None,
+    advisory_hints: list[str] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "version": 1,
@@ -809,9 +938,96 @@ def _build_ast_run_search_payload(
             payload["incomplete_reason_class"] = result.incomplete_reason_class
     if result.total_matches == 0 and not result.result_incomplete:
         _emit_ast_run_remediation(pattern, lang, json_payload=payload)
+    if advisory_hints:
+        payload["advisory_hints"] = list(advisory_hints)
     return payload
 
 
 def _emit_ast_run_incomplete(reason: str | None) -> None:
     detail = reason or "AST scan could not cover all requested paths"
     print(f"tg: AST run incomplete: {detail}", file=sys.stderr)
+
+
+def _emit_ast_run_search_results(
+    *,
+    json_mode: bool,
+    files_with_matches: bool,
+    stdin: bool,
+    stdin_input: str | None,
+    backend_name: str,
+    pattern: str,
+    search_path: str,
+    result: SearchResult,
+    lang: str | None,
+    selector: str | None,
+    cfg: SearchConfig,
+    candidate_files: list[str] | None,
+) -> int:
+    advisory_hints = _collect_python_return_type_advisory_hints(
+        pattern=pattern,
+        lang=lang,
+        selector=selector,
+        result=result,
+        search_path=search_path,
+        stdin=stdin,
+        stdin_input=stdin_input,
+        cfg=cfg,
+        candidate_files=candidate_files,
+    )
+    if json_mode:
+        payload = _build_ast_run_search_payload(
+            stdin=stdin,
+            backend_name=backend_name,
+            pattern=pattern,
+            path=search_path,
+            result=result,
+            lang=lang,
+            advisory_hints=advisory_hints,
+        )
+        _safe_stdout_line(json.dumps(payload))
+        if result.total_matches == 0:
+            if result.result_incomplete:
+                return 2
+            _warn_windows_single_quote_pattern(pattern)
+            return 1
+        return 2 if result.result_incomplete else 0
+
+    if files_with_matches:
+        seen_paths: set[str] = set()
+        ordered_paths: list[str] = []
+        for match in result.matches:
+            if match.file and match.file not in seen_paths:
+                seen_paths.add(match.file)
+                ordered_paths.append(match.file)
+        if not ordered_paths:
+            for matched_path in result.matched_file_paths:
+                if matched_path not in seen_paths:
+                    seen_paths.add(matched_path)
+                    ordered_paths.append(matched_path)
+        for matched_path in ordered_paths:
+            _safe_stdout_line(matched_path)
+        if not ordered_paths:
+            if result.result_incomplete:
+                _emit_ast_run_incomplete(result.incomplete_reason)
+                return 2
+            _warn_windows_single_quote_pattern(pattern)
+            _emit_ast_run_remediation(pattern, lang)
+            _emit_ast_run_advisory_hints(advisory_hints)
+            return 1
+        if result.result_incomplete:
+            _emit_ast_run_incomplete(result.incomplete_reason)
+            return 2
+        _emit_ast_run_advisory_hints(advisory_hints)
+        return 0
+
+    from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+
+    _safe_stdout_line(RipgrepFormatter().format(result))
+    if result.result_incomplete:
+        _emit_ast_run_incomplete(result.incomplete_reason)
+        return 2
+    if result.total_matches == 0:
+        _warn_windows_single_quote_pattern(pattern)
+        _emit_ast_run_remediation(pattern, lang)
+    _emit_ast_run_advisory_hints(advisory_hints)
+    return 1 if result.total_matches == 0 else 0

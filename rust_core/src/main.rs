@@ -5568,6 +5568,7 @@ mod tests {
             match_counts_by_file: std::collections::BTreeMap::new(),
             matches: Vec::new(),
             remediation: None,
+            advisory_hints: Vec::new(),
             result_incomplete,
             incomplete_reason_class,
             incomplete_paths_count,
@@ -9409,6 +9410,7 @@ fn emit_multi_pattern_native_results(
             incomplete_paths,
             options.path_was_implicit,
             (binary_matches > 0).then_some(binary_matches),
+            None,
         )?;
     } else if options.ndjson {
         emit_ndjson_search_results(
@@ -10218,6 +10220,7 @@ fn run_index_query(
             None,
             request.path_was_implicit,
             binary_match_files,
+            None,
         );
     }
 
@@ -10351,6 +10354,8 @@ struct SearchResultJson<'a> {
     scope_note: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     remediation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    advisory_hints: Vec<String>,
 }
 
 /// Terminal record keeps disclosures available on empty and incomplete scans.
@@ -12248,18 +12253,6 @@ fn emit_validation_status(summary: &ValidationSummary) {
     }
 }
 
-fn warn_windows_single_quote_ast_pattern(pattern: &str) {
-    if !cfg!(windows) {
-        return;
-    }
-    let trimmed = pattern.trim();
-    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
-        eprintln!(
-            "No AST matches found. cmd.exe treats single quotes literally; use double quotes in cmd.exe or run this pattern from PowerShell/Git Bash where single quotes quote literal text."
-        );
-    }
-}
-
 fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     if args.update_all {
         if args.rewrite.is_none() {
@@ -12317,9 +12310,10 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
             None,
             path_was_implicit,
             None,
+            Some((&args.lang, args.selector.as_deref())),
         )?;
         if match_count == 0 {
-            warn_windows_single_quote_ast_pattern(pattern);
+            ast_run_remediation::warn_windows_single_quote_ast_pattern(pattern);
             std::process::exit(1);
         }
         return Ok(());
@@ -12334,12 +12328,17 @@ fn handle_ast_run(mut args: RunArgs) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::ast());
     }
+    ast_run_remediation::emit_cli_run_advisories(
+        &args.lang,
+        args.selector.as_deref(),
+        pattern,
+        path,
+        &matches,
+        match_count,
+    );
     if match_count == 0 {
-        ast_run_remediation::emit_text_for_search(pattern, match_count);
-        warn_windows_single_quote_ast_pattern(pattern);
         std::process::exit(1);
     }
-
     let stdout = io::stdout();
     let mut stdout = io::BufWriter::new(stdout.lock());
     if args.files_with_matches {
@@ -14148,7 +14147,9 @@ fn emit_json_search_results(
     incomplete_paths: Option<usize>,
     path_was_implicit: bool,
     binary_match_files: Option<usize>,
+    ast_context: Option<(&str, Option<&str>)>,
 ) -> anyhow::Result<()> {
+    let (ast_lang, ast_selector) = ast_context.map_or((None, None), |(l, s)| (Some(l), s));
     let proof_fields = gpu_proof_fields(
         requested_gpu_device_ids,
         decision.routing_backend(),
@@ -14187,6 +14188,13 @@ fn emit_json_search_results(
         matched_file_paths,
         match_counts_by_file,
         remediation: ast_run_remediation::json_for_search(pattern, matches.len(), decision.reason),
+        advisory_hints: ast_run_remediation::python_return_type_advisory_for_json(
+            ast_lang,
+            ast_selector,
+            pattern,
+            path,
+            &matches,
+        ),
         matches,
         result_incomplete,
         incomplete_reason_class,
