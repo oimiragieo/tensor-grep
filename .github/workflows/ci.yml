@@ -1510,7 +1510,7 @@ jobs:
             --baseline base-revision/artifacts/bench_run_benchmarks.base.json \
             --current artifacts/bench_run_benchmarks.head.json \
             --max-regression-pct 20.0 \
-            --min-baseline-time-s 0.2
+            --min-baseline-time-s 0.05
 
       - name: Report accepted benchmark baseline drift
         if: needs.changes.outputs.benchmark == 'true'

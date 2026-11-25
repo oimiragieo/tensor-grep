@@ -22,6 +22,7 @@ module already produces, without that future work needing to re-parse `_build_pr
 untyped dict shape by hand.
 """
 
+import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -354,7 +355,7 @@ def _build_prepare_payload(
                 max_hops=1,
                 max_nodes=16,
             )
-        except Exception:
+        except (OSError, ValueError, sqlite3.Error):
             pass
 
     symbol = str(target.get("symbol") or "")

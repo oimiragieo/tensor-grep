@@ -30,13 +30,17 @@ def test_mcp_stdio_launcher_warning_strips_windows_extended_length_prefix() -> N
 def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
     tmp_path: Path, monkeypatch
 ) -> None:
+    import os
+    import shlex
+    import subprocess
+
     root_str = str(tmp_path)
     monkeypatch.setattr(
         "tensor_grep.cli.session_daemon.get_session_daemon_status",
         lambda _path: {
             "running": False,
             "stale_metadata": True,
-            "root": rf"\\?\{root_str}",
+            "root": rf"\\?\{root_str}" if os.name == "nt" else root_str,
         },
     )
     monkeypatch.setattr(
@@ -51,10 +55,6 @@ def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
     status = doctor_report._doctor_session_daemon_status(root_str)
     assert status["stale_metadata"] is True
     assert "\\\\?\\" not in status["cleanup_hint"]
-    import os
-    import shlex
-    import subprocess
-
     expected_quoted = (
         subprocess.list2cmdline([root_str]) if os.name == "nt" else shlex.quote(root_str)
     )

@@ -177,9 +177,8 @@ def _mcp_server_version() -> str:
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = (
-    "1.25.0"  # compact outputSchema, tg_session preconditions & safety notes
-)
+# compact outputSchema, tg_session preconditions & safety notes
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.25.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

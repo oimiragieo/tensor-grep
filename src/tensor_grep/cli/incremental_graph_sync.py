@@ -30,6 +30,9 @@ def _open_graph_db(cache_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Conn
     db_path = resolved_root / GRAPH_SYNC_REL_PATH
     if create_dirs:
         prepare_directory(resolved_root, db_path.parent)
+        gitignore_path = resolved_root / ".tg_cache" / ".gitignore"
+        if not gitignore_path.exists():
+            publish_confined(resolved_root, gitignore_path, b"*\n", only_if_missing=True)
     else:
         validate_confined_parent_prefix(resolved_root, db_path)
     conn = sqlite3.connect(":memory:")
