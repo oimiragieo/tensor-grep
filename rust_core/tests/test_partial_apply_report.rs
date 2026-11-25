@@ -6,6 +6,21 @@ use std::fs;
 use tempfile::tempdir;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewriteRule};
 
+#[cfg_attr(not(unix), allow(clippy::permissions_set_readonly_false))]
+fn make_writable(path: &std::path::Path) {
+    let mut perms = fs::metadata(path).unwrap().permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o644);
+    }
+    #[cfg(not(unix))]
+    {
+        perms.set_readonly(false);
+    }
+    fs::set_permissions(path, perms).unwrap();
+}
+
 #[test]
 fn test_batch_apply_failure_in_later_language_group_names_earlier_group_writes() {
     let dir = tempdir().unwrap();
@@ -20,9 +35,7 @@ fn test_batch_apply_failure_in_later_language_group_names_earlier_group_writes()
     // Root (or any principal that bypasses read-only) cannot provoke the failure: skip then.
     let probe = fs::OpenOptions::new().write(true).open(&rs);
     if probe.is_ok() {
-        let mut perms = fs::metadata(&rs).unwrap().permissions();
-        perms.set_readonly(false);
-        fs::set_permissions(&rs, perms).unwrap();
+        make_writable(&rs);
         eprintln!("skipping: read-only file is writable for this principal");
         return;
     }
@@ -41,9 +54,7 @@ fn test_batch_apply_failure_in_later_language_group_names_earlier_group_writes()
     ];
     let result = AstBackend::new().plan_and_apply_batch(&rewrites, dir.path().to_str().unwrap());
 
-    let mut perms = fs::metadata(&rs).unwrap().permissions();
-    perms.set_readonly(false);
-    fs::set_permissions(&rs, perms).unwrap();
+    make_writable(&rs);
 
     let err = result.expect_err("the read-only Rust file must fail the apply");
     let msg = format!("{err:#}");

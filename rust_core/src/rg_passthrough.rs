@@ -881,11 +881,12 @@ mod tests {
     }
 
     fn args_with(patterns: Vec<&str>, paths: Vec<&str>, files: bool) -> RipgrepSearchArgs {
-        let mut args = RipgrepSearchArgs::default();
-        args.patterns = patterns.into_iter().map(String::from).collect();
-        args.paths = paths.into_iter().map(String::from).collect();
-        args.files = files;
-        args
+        RipgrepSearchArgs {
+            patterns: patterns.into_iter().map(String::from).collect(),
+            paths: paths.into_iter().map(String::from).collect(),
+            files,
+            ..Default::default()
+        }
     }
 
     // --- Task #264: root-ignore-file passthrough parity ------------------------------------

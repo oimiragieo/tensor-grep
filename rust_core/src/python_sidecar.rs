@@ -354,7 +354,10 @@ pub fn execute_python_passthrough_command_captured(
     let stdout_reader = read_all_thread(stdout);
     let stderr_reader = read_all_thread(stderr);
     let wait_outcome = wait_for_passthrough_or_kill(&mut child, passthrough_timeout)?;
+    #[cfg(windows)]
     drop(job_handle);
+    #[cfg(not(windows))]
+    let _ = job_handle;
 
     let stdout_bytes = stdout_reader.join().map_err(|_| SidecarError {
         exit_code: 1,
@@ -474,7 +477,10 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     let stderr_reader = read_all_thread(stderr);
 
     let wait_outcome = wait_for_sidecar_or_kill(&mut child, sidecar_timeout)?;
+    #[cfg(windows)]
     drop(job_handle);
+    #[cfg(not(windows))]
+    let _ = job_handle;
 
     let write_result = writer.join().map_err(|_| SidecarError {
         exit_code: 1,

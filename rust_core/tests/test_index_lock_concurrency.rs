@@ -103,12 +103,16 @@ fn set_mtime(path: &Path, when: SystemTime) {
 /// exactly once by exactly one process -- no cross-process append race to reason about) for a
 /// DIRECT mutual-exclusion proof, on top of the hard correctness assertions (no hangs, every
 /// process returns the correct match count, the final index is loadable, no lock survives).
+fn resolved_index_path(dir: &Path) -> PathBuf {
+    tensor_grep_rs::index_cache::resolve_index_paths(dir.to_str().unwrap()).write_path
+}
+
 #[test]
 fn hammer_concurrent_tg_search_index_one_writer_at_a_time_no_corruption_no_hangs() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
     let root = dir.path().to_path_buf();
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
     let lock_path = lock_path_for(&index_path);
 
     let debug_dir = tempdir().unwrap();
@@ -281,7 +285,7 @@ fn interval_reader_rejects_non_utf8_names() {
 fn atomic_crash_kill_mid_rebuild_never_leaves_a_torn_index_file() {
     let dir = tempdir().unwrap();
     write_wide_corpus(dir.path(), 300);
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
 
     let baseline = run_bounded(
         {
@@ -382,7 +386,8 @@ fn atomic_crash_kill_mid_rebuild_never_leaves_a_torn_index_file() {
 fn lock_held_and_heartbeating_causes_tg_to_skip_persistence_but_still_return_correct_results() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     let lock_path = lock_path_for(&index_path);
 
     fs::write(
@@ -462,7 +467,8 @@ fn lock_held_and_heartbeating_causes_tg_to_skip_persistence_but_still_return_cor
 fn tg_search_index_reclaims_an_abandoned_stale_lock_without_waiting_out_the_full_timeout() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     let lock_path = lock_path_for(&index_path);
 
     fs::write(&lock_path, "999999\ndeadtoken-no-heartbeat\n").unwrap();
@@ -509,7 +515,8 @@ fn tg_search_index_reclaims_an_abandoned_stale_lock_without_waiting_out_the_full
 #[test]
 fn abandoned_regular_lock_is_acquired_and_released() {
     let dir = tempdir().unwrap();
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     let lock_path = lock_path_for(&index_path);
     let abandoned = b"999999\nabandoned-regular-lock\n";
     fs::write(&lock_path, abandoned).unwrap();
@@ -532,7 +539,8 @@ fn abandoned_regular_lock_is_acquired_and_released() {
 #[test]
 fn zero_timeout_stale_reclaim_returns_typed_timeout() {
     let dir = tempdir().unwrap();
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     let lock_path = lock_path_for(&index_path);
     fs::write(&lock_path, b"999999\nabandoned-zero-timeout\n").unwrap();
     set_mtime(&lock_path, SystemTime::now() - Duration::from_secs(30));
@@ -561,7 +569,8 @@ fn stale_regular_lock_without_delete_sharing_obeys_timeout() {
 
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
-    let index_path = dir.path().join(".tg_index");
+    let index_path = resolved_index_path(dir.path());
+    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
     let lock_path = lock_path_for(&index_path);
     let abandoned = b"999999\nabandoned-no-delete-sharing\n";
     fs::write(&lock_path, abandoned).unwrap();
@@ -577,7 +586,7 @@ fn stale_regular_lock_without_delete_sharing_obeys_timeout() {
         Some(32)
     );
     assert_eq!(fs::read(&lock_path).unwrap(), abandoned);
-    let directory = AnchoredDirectory::open(dir.path()).unwrap();
+    let directory = AnchoredDirectory::open(index_path.parent().unwrap()).unwrap();
     let target = directory.target(lock_path.file_name().unwrap()).unwrap();
     assert_eq!(
         target.create_new_file().unwrap_err().kind(),

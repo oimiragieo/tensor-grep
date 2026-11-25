@@ -561,7 +561,7 @@ fn new_checkpoint_directories_use_a_protected_owner_only_dacl() {
     let child = root.create_child(OsStr::new("private-checkpoint")).unwrap();
     let handle = child.handles.last().unwrap();
 
-    assert!(super::windows::has_protected_owner_rights_ace(&handle, 0x001f_01ff, 0x03).unwrap());
+    assert!(super::windows::has_protected_owner_rights_ace(handle, 0x001f_01ff, 0x03).unwrap());
 }
 
 #[cfg(windows)]

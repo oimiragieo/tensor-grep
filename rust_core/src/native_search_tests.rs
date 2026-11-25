@@ -436,7 +436,8 @@ fn search_stats_is_empty_covers_every_countable_field() {
         "a fresh SearchStats must be empty"
     );
 
-    let mutators: [(&str, fn(&mut SearchStats)); 7] = [
+    type SearchStatsMutator = (&'static str, fn(&mut SearchStats));
+    let mutators: [SearchStatsMutator; 7] = [
         ("searched_files", |s| s.searched_files = 1),
         ("matched_files", |s| s.matched_files = 1),
         ("total_matches", |s| s.total_matches = 1),
@@ -928,7 +929,7 @@ fn multi_chunk_binary_fixture(needle: &str) -> Vec<u8> {
         content.extend_from_slice(format!("filler line {i:05} of {needle} data\n").as_bytes());
     }
     let splice_at = content.len() / 2;
-    content.splice(splice_at..splice_at, std::iter::repeat(0u8).take(16));
+    content.splice(splice_at..splice_at, std::iter::repeat_n(0u8, 16));
     content
 }
 
