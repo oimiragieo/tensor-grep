@@ -1412,7 +1412,9 @@ def build_diff_blast_radius(
     payload["risk_cap_evidence"] = risk_cap_evidence_status(
         changed_symbols, reference_lookup_complete
     )
-    return payload
+    from tensor_grep.cli.tdad_kg_ast import enrich_diff_impact_payload
+
+    return enrich_diff_impact_payload(payload, root=root, repo_map_payload=repo_m)
 
 
 def diff_impact_command(

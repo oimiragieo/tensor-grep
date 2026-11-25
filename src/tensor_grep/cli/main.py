@@ -11824,6 +11824,7 @@ def review_bundle_create(
                     previous_manifest=previous_manifest,
                     receipt_paths=receipt,
                     output_path=output_path,
+                    include_change_slice=True,
                 )
             )
             return
@@ -11834,6 +11835,7 @@ def review_bundle_create(
             previous_manifest=previous_manifest,
             receipt_paths=receipt,
             output_path=output_path,
+            include_change_slice=True,
         )
     except FileNotFoundError as exc:
         if json_output:

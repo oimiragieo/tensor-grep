@@ -36,6 +36,7 @@ _REVIEW_BUNDLE_COMPONENTS = (
     # sufficient to fold evidence_receipts into checksums/bundle_sha256/tamper-detection with no
     # other changes to either loop.
     "evidence_receipts",
+    "change_slice",
 )
 _REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
@@ -195,6 +196,8 @@ def create_review_bundle(
     previous_manifest: str | Path | None = None,
     receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
+    change_slice: dict[str, Any] | None = None,
+    include_change_slice: bool = False,
 ) -> dict[str, Any]:
     from tensor_grep.cli.checkpoint_store import load_checkpoint_metadata
 
@@ -224,6 +227,24 @@ def create_review_bundle(
             evidence_signing.read_receipt_file(receipt_path) for receipt_path in receipt_paths
         ]
 
+    slice_obj: dict[str, Any] | None = None
+    slice_digest: str | None = None
+    if change_slice is not None:
+        if "slice" in change_slice and "slice_digest" in change_slice:
+            slice_obj = change_slice["slice"]
+            slice_digest = str(change_slice["slice_digest"])
+        else:
+            from tensor_grep.cli.tdad_kg_ast import _canonical_slice_bytes
+
+            slice_obj = dict(change_slice)
+            slice_digest = _sha256_hex(_canonical_slice_bytes(slice_obj))
+    elif include_change_slice:
+        from tensor_grep.cli.tdad_kg_ast import build_change_slice_from_manifest
+
+        built_slice = build_change_slice_from_manifest(manifest, root=root)
+        slice_obj = built_slice["slice"]
+        slice_digest = str(built_slice["slice_digest"])
+
     payload = _envelope(routing_reason="review-bundle-create")
     payload["created_at"] = _review_bundle_created_at(
         manifest,
@@ -236,6 +257,8 @@ def create_review_bundle(
     payload["checkpoint_metadata"] = checkpoint_metadata
     payload["diff"] = diff_payload
     payload["evidence_receipts"] = evidence_receipts
+    payload["change_slice"] = slice_obj
+    payload["slice_digest"] = slice_digest
 
     checksums = {
         component: _component_checksum(payload[component])
@@ -273,6 +296,8 @@ def create_review_bundle_json(
     previous_manifest: str | Path | None = None,
     receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
+    change_slice: dict[str, Any] | None = None,
+    include_change_slice: bool = False,
 ) -> str:
     return json.dumps(
         create_review_bundle(
@@ -282,6 +307,8 @@ def create_review_bundle_json(
             previous_manifest=previous_manifest,
             receipt_paths=receipt_paths,
             output_path=output_path,
+            change_slice=change_slice,
+            include_change_slice=include_change_slice,
         ),
         indent=2,
     )
@@ -578,6 +605,18 @@ def verify_review_bundle(
             "valid receipts"
         )
 
+    slice_digest_valid = True
+    embedded_slice = bundle.get("change_slice")
+    embedded_slice_digest = bundle.get("slice_digest")
+    if embedded_slice is not None or embedded_slice_digest is not None:
+        from tensor_grep.cli.tdad_kg_ast import verify_change_slice_digest
+
+        slice_digest_valid = (
+            isinstance(embedded_slice, dict)
+            and isinstance(embedded_slice_digest, str)
+            and verify_change_slice_digest(embedded_slice, embedded_slice_digest)
+        )
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
     payload["valid"] = (
@@ -587,6 +626,7 @@ def verify_review_bundle(
         and against_resolution_valid
         and receipts_valid
         and policy_valid
+        and slice_digest_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
