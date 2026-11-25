@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.hybrid_rrf import (
+    HYBRID_SCHEMA_VERSION,
     HybridSQLiteIndex,
     _estimate_query_idf_weight,
     adaptive_idf_rrf_score,
@@ -35,6 +36,7 @@ from tensor_grep.core.retrieval_lexical import split_terms
 from tensor_grep.io.confined import prepare_directory
 
 HYBRID_INDEX_REL_PATH = Path(".tg_cache") / "hybrid_v1" / "index.sqlite3"
+MAX_HYBRID_INDEX_BYTES = 64 * 1024 * 1024
 
 # PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
 # filename-token overlap with the query -- a precision signal (a query mentioning "invoice" should
@@ -240,22 +242,106 @@ def rerank_by_bm25(
 
 def _open_confined_hybrid_index(
     cache_root: Path | None,
+    telemetry: dict[str, Any] | None = None,
 ) -> tuple[HybridSQLiteIndex, Path | None, Path | None]:
     if cache_root is None:
         return HybridSQLiteIndex(":memory:"), None, None
+    import sqlite3
+    import stat
+
     from tensor_grep.io.confined import read_confined
 
     resolved_root = Path(cache_root).resolve()
     db_path = resolved_root / HYBRID_INDEX_REL_PATH
     prepare_directory(resolved_root, db_path.parent)
     index = HybridSQLiteIndex(":memory:")
+    rebuilt_reason: str | None = None
     try:
-        if db_path.exists():
-            index._conn.deserialize(read_confined(resolved_root, db_path, 64 * 1024 * 1024))
+        try:
+            info = db_path.lstat()
+        except FileNotFoundError:
+            info = None
+        if info is not None:
+            if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+                raise OSError(f"symbol cache refuses non-regular source: {db_path}")
+            if info.st_size > MAX_HYBRID_INDEX_BYTES:
+                rebuilt_reason = "exceeds_size_cap"
+            else:
+                try:
+                    raw_bytes = read_confined(resolved_root, db_path, MAX_HYBRID_INDEX_BYTES)
+                except OSError as exc:
+                    if "exceeds" in str(exc):
+                        rebuilt_reason = "exceeds_size_cap"
+                    else:
+                        raise
+                else:
+                    try:
+                        index._conn.deserialize(raw_bytes)
+                        ver_row = index._conn.execute("PRAGMA user_version").fetchone()
+                        user_ver = int(ver_row[0]) if ver_row is not None else 0
+                        tables = {
+                            str(r[0])
+                            for r in index._conn.execute(
+                                "SELECT name FROM sqlite_master WHERE type='table'"
+                            ).fetchall()
+                        }
+                        triggers = {
+                            str(r[0])
+                            for r in index._conn.execute(
+                                "SELECT name FROM sqlite_master WHERE type='trigger'"
+                            ).fetchall()
+                        }
+                        if user_ver != HYBRID_SCHEMA_VERSION:
+                            rebuilt_reason = (
+                                "legacy_schema"
+                                if user_ver < HYBRID_SCHEMA_VERSION
+                                else "schema_version_mismatch"
+                            )
+                        elif not (
+                            {"documents", "documents_fts"} <= tables
+                            and {"documents_ai", "documents_ad", "documents_au"} <= triggers
+                        ):
+                            rebuilt_reason = "corrupt_index"
+                        else:
+                            index._init_schema()
+                    except sqlite3.DatabaseError:
+                        rebuilt_reason = "corrupt_index"
+        if rebuilt_reason is not None:
+            index.close()
+            index = HybridSQLiteIndex(":memory:")
+            if telemetry is not None:
+                telemetry["hybrid_index_rebuilt_reason"] = rebuilt_reason
     except BaseException:
         index.close()
         raise
     return index, resolved_root, db_path
+
+
+def _run_cache_fts_query(
+    index: HybridSQLiteIndex,
+    query: str,
+    chunks: list[Chunk],
+    *,
+    cache_root: Path | None,
+    resolved_root: Path | None,
+    db_path: Path | None,
+    telemetry: dict[str, Any] | None,
+) -> dict[str, int]:
+    doc_rows = [(str(i), chunk.text, None) for i, chunk in enumerate(chunks)]
+    index.upsert_documents(doc_rows)
+    if cache_root is not None:
+        index.remove_missing([doc_id for doc_id, _text, _emb in doc_rows])
+    fts_ranks = index._fts_rankings(query, limit=len(chunks))
+    if cache_root is not None and resolved_root is not None and db_path is not None:
+        from tensor_grep.io.confined import publish_confined
+
+        serialized = index._conn.serialize()
+        if len(serialized) > MAX_HYBRID_INDEX_BYTES:
+            if telemetry is not None:
+                telemetry["hybrid_cache_skipped"] = "exceeds_size_cap"
+        else:
+            publish_confined(resolved_root, db_path, serialized)
+    return fts_ranks
 
 
 def hybrid_rerank(
@@ -266,53 +352,73 @@ def hybrid_rerank(
     k: int = DEFAULT_K,
     idf_weight: float | None = None,
     cache_root: Path | None = None,
+    telemetry: dict[str, Any] | None = None,
 ) -> list[int]:
     """Rank chunks using ``HybridSQLiteIndex`` (FTS5 + adaptive IDF-weighted RRF)."""
     if not chunks:
         return []
-    index, resolved_root, db_path = _open_confined_hybrid_index(cache_root)
-    with index:
-        doc_rows = [(str(i), chunk.text, None) for i, chunk in enumerate(chunks)]
-        index.upsert_documents(doc_rows)
-        if cache_root is not None:
-            index.remove_missing([doc_id for doc_id, _text, _emb in doc_rows])
-            if resolved_root is not None and db_path is not None:
-                from tensor_grep.io.confined import publish_confined
+    import sqlite3
+    import struct
 
-                publish_confined(resolved_root, db_path, index._conn.serialize())
-        if dense_index is None:
-            results = index.search(query, limit=len(chunks), k=k, idf_weight=idf_weight)
-            return [int(row["doc_id"]) for row in results]
-
-        fts_ranks = index._fts_rankings(query)
-        dense_ranks = {
+    index, resolved_root, db_path = _open_confined_hybrid_index(cache_root, telemetry=telemetry)
+    try:
+        with index:
+            fts_ranks = _run_cache_fts_query(
+                index,
+                query,
+                chunks,
+                cache_root=cache_root,
+                resolved_root=resolved_root,
+                db_path=db_path,
+                telemetry=telemetry,
+            )
+    except (sqlite3.DatabaseError, struct.error, ValueError):
+        if cache_root is None:
+            raise
+        if telemetry is not None:
+            telemetry["hybrid_index_rebuilt_reason"] = "corrupt_index"
+        with HybridSQLiteIndex(":memory:") as fresh_index:
+            fts_ranks = _run_cache_fts_query(
+                fresh_index,
+                query,
+                chunks,
+                cache_root=cache_root,
+                resolved_root=resolved_root,
+                db_path=db_path,
+                telemetry=telemetry,
+            )
+    dense_ranks = (
+        {
             chunk_idx: rank
             for rank, (chunk_idx, _score) in enumerate(
                 dense_index.query(query, top_k=len(chunks)), start=1
             )
         }
-        if not fts_ranks and not dense_ranks:
-            return []
-        resolved_idf_weight = (
-            _estimate_query_idf_weight(query, total_docs=len(chunks), fts_hits=len(fts_ranks))
-            if idf_weight is None
-            else float(idf_weight)
+        if dense_index is not None
+        else {}
+    )
+    if not fts_ranks and not dense_ranks:
+        return []
+    resolved_idf_weight = (
+        _estimate_query_idf_weight(query, total_docs=len(chunks), fts_hits=len(fts_ranks))
+        if idf_weight is None
+        else float(idf_weight)
+    )
+    candidate_ids = {int(doc_id) for doc_id in fts_ranks} | set(dense_ranks)
+    scored = [
+        (
+            adaptive_idf_rrf_score(
+                fts_ranks.get(str(idx)),
+                dense_ranks.get(idx),
+                idf_weight=resolved_idf_weight,
+                k=k,
+            ),
+            idx,
         )
-        candidate_ids = {int(doc_id) for doc_id in fts_ranks} | set(dense_ranks)
-        scored = [
-            (
-                adaptive_idf_rrf_score(
-                    fts_ranks.get(str(idx)),
-                    dense_ranks.get(idx),
-                    idf_weight=resolved_idf_weight,
-                    k=k,
-                ),
-                idx,
-            )
-            for idx in candidate_ids
-        ]
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [idx for _score, idx in scored]
+        for idx in candidate_ids
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [idx for _score, idx in scored]
 
 
 def rank_chunks(
@@ -381,10 +487,23 @@ def rank_chunks(
     """
     total = max(1, len(chunks))
     symbol_reason: str | None = None
+    hybrid_reason: str | None = None
     if hybrid:
+        hybrid_telemetry: dict[str, Any] = {}
         fused_order = hybrid_rerank(
-            query, chunks, dense_index=dense_index, k=k, cache_root=cache_root
+            query,
+            chunks,
+            dense_index=dense_index,
+            k=k,
+            cache_root=cache_root,
+            telemetry=hybrid_telemetry,
         )
+        if hybrid_telemetry:
+            if evidence is not None:
+                evidence.update(hybrid_telemetry)
+            hybrid_parts = [f"{key}={val}" for key, val in sorted(hybrid_telemetry.items())]
+            hybrid_reason = "; ".join(hybrid_parts)
+            sys.stderr.write(f"tg: {hybrid_reason}\n")
     else:
         bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
         rankings: list[list[int]] = [bm25_ranking]
@@ -500,7 +619,7 @@ def rank_chunks(
         else:
             fused_order = rerank_result[0] + fused_order[pool_k:]
 
-    reasons = [reason for reason in (symbol_reason, late_fallback_reason) if reason]
+    reasons = [reason for reason in (symbol_reason, hybrid_reason, late_fallback_reason) if reason]
     return fused_order, "; ".join(reasons) or None
 
 

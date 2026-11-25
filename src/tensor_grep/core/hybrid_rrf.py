@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
 import math
 import re
 import sqlite3
+import struct
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -15,21 +16,65 @@ try:
 except ImportError:  # pragma: no cover - pure-Python fallback is always available
     np = None  # type: ignore[assignment]
 
-_IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z0-9_]*[_.A-Z0-9][A-Za-z0-9_]*")
+HYBRID_SCHEMA_VERSION = 2
+_IDENTIFIER_TOKEN_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_CAMEL_ACRONYM_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
+_CAMEL_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
 
 
-def escape_fts5_query(query: str) -> str:
+def split_code_identifiers(token: str) -> list[str]:
+    """Split ``camelCase`` / ``snake_case`` identifier tokens into lowercase sub-terms."""
+    if not token or not _IDENTIFIER_TOKEN_RE.match(token):
+        return [token] if token else []
+    normalized = _CAMEL_ACRONYM_RE.sub(r"\1 \2", token)
+    normalized = _CAMEL_BOUNDARY_RE.sub(r"\1 \2", normalized)
+    normalized = normalized.replace("_", " ")
+    parts = [part.lower() for part in normalized.split() if part]
+    return parts or [token.lower()]
+
+
+def escape_fts5_query(query: str, mode: str = "and") -> str:
     """Quote each whitespace-delimited term as an FTS5 string literal.
 
     Strips embedded NUL bytes and doubles embedded ``"`` characters so Boolean
     operators (``AND``, ``OR``, ``NOT``) and punctuation (``*``, ``:``, ``-``,
     ``^``) in code queries cannot trigger FTS5 syntax errors.
     """
+    if mode not in {"and", "or"}:
+        raise ValueError(f"mode must be 'and' or 'or', got {mode!r}")
     tokens = query.replace("\x00", "").split()
     if not tokens:
         return ""
-    escaped_tokens = [f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens]
-    return " ".join(escaped_tokens)
+    if mode == "and":
+        expanded_and: list[str] = []
+        seen_and: set[str] = set()
+        for token in tokens:
+            parts = (
+                split_code_identifiers(token)
+                if (_IDENTIFIER_TOKEN_RE.match(token) and any(c.isupper() for c in token))
+                else [token]
+            )
+            cands = parts if len(parts) > 1 else [token]
+            for part in cands:
+                if part not in seen_and:
+                    seen_and.add(part)
+                    expanded_and.append(part)
+        escaped_tokens = [f'"{tok.replace(chr(34), chr(34) * 2)}"' for tok in expanded_and]
+        return " ".join(escaped_tokens)
+
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        candidates = [token]
+        if _IDENTIFIER_TOKEN_RE.match(token):
+            for part in split_code_identifiers(token):
+                if part not in candidates:
+                    candidates.append(part)
+        for cand in candidates:
+            if cand not in seen:
+                seen.add(cand)
+                expanded.append(f'"{cand.replace(chr(34), chr(34) * 2)}"')
+    return " OR ".join(expanded)
 
 
 def adaptive_idf_rrf_score(
@@ -96,6 +141,57 @@ def _cosine_similarity_py(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def _content_hash(content: str) -> str:
+    return hashlib.blake2b(
+        content.encode("utf-8", errors="surrogatepass"), digest_size=16
+    ).hexdigest()
+
+
+_F16_MAX = 65504.0
+
+
+def _clamp_f16(val: float) -> float:
+    fval = float(val)
+    if not math.isfinite(fval):
+        return 0.0
+    return max(-_F16_MAX, min(_F16_MAX, fval))
+
+
+def _pack_embedding(emb: Sequence[float] | None) -> bytes | None:
+    if emb is None:
+        return None
+    if np is not None:
+        arr = np.asarray(emb, dtype=np.float64)
+        arr = np.where(np.isfinite(arr), np.clip(arr, -_F16_MAX, _F16_MAX), 0.0)
+        return arr.astype("<f2").tobytes()
+    vals = [_clamp_f16(v) for v in emb]
+    return struct.pack(f"<{len(vals)}e", *vals)
+
+
+def _extract_alias_tokens(content: str) -> str:
+    phrases: list[str] = []
+    seen_phrases: set[str] = set()
+    for raw_tok in re.findall(r"[A-Za-z0-9_]+", content):
+        if any(c.isupper() for c in raw_tok):
+            parts = split_code_identifiers(raw_tok)
+            if len(parts) > 1:
+                phrase = " ".join(parts)
+                if phrase not in seen_phrases:
+                    seen_phrases.add(phrase)
+                    phrases.append(phrase)
+    return " ".join(phrases)
+
+
+def _unpack_embedding_py(blob: bytes | memoryview) -> list[float]:
+    raw = bytes(blob)
+    if len(raw) % 2 != 0:
+        raise ValueError(f"corrupt float16 embedding length: {len(raw)}")
+    count = len(raw) // 2
+    if count == 0:
+        return []
+    return list(struct.unpack(f"<{count}e", raw))
+
+
 class HybridSQLiteIndex:
     """Single-file SQLite WAL index combining FTS5 and vector cosine similarity."""
 
@@ -116,13 +212,42 @@ class HybridSQLiteIndex:
 
     def _init_schema(self) -> None:
         with self._conn:
+            ver_row = self._conn.execute("PRAGMA user_version").fetchone()
+            user_ver = int(ver_row[0]) if ver_row is not None else 0
+            existing_tables = {
+                str(r[0])
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            existing_triggers = {
+                str(r[0])
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='trigger'"
+                ).fetchall()
+            }
+            incomplete_schema = bool(existing_tables) and not (
+                {"documents", "documents_fts"} <= existing_tables
+                and {"documents_ai", "documents_ad", "documents_au"} <= existing_triggers
+            )
+            if (user_ver != HYBRID_SCHEMA_VERSION or incomplete_schema) and (
+                existing_tables & {"documents", "documents_fts", "meta"}
+            ):
+                self._conn.execute("DROP TRIGGER IF EXISTS documents_ai")
+                self._conn.execute("DROP TRIGGER IF EXISTS documents_ad")
+                self._conn.execute("DROP TRIGGER IF EXISTS documents_au")
+                self._conn.execute("DROP TABLE IF EXISTS documents_fts")
+                self._conn.execute("DROP TABLE IF EXISTS documents")
+                self._conn.execute("DROP TABLE IF EXISTS meta")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS documents (
                     id INTEGER PRIMARY KEY,
                     doc_id TEXT UNIQUE NOT NULL,
                     content TEXT NOT NULL,
-                    embedding_json TEXT
+                    alias_tokens TEXT NOT NULL DEFAULT '',
+                    content_hash TEXT,
+                    embedding_blob BLOB
                 )
                 """
             )
@@ -130,10 +255,41 @@ class HybridSQLiteIndex:
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
                     doc_id UNINDEXED,
-                    content
+                    content,
+                    alias_tokens,
+                    content='documents',
+                    content_rowid='id',
+                    tokenize="unicode61"
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+                    INSERT INTO documents_fts(rowid, doc_id, content, alias_tokens)
+                    VALUES (new.id, new.doc_id, new.content, new.alias_tokens);
+                END
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+                    INSERT INTO documents_fts(documents_fts, rowid, doc_id, content, alias_tokens)
+                    VALUES ('delete', old.id, old.doc_id, old.content, old.alias_tokens);
+                END
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE OF doc_id, content, alias_tokens ON documents BEGIN
+                    INSERT INTO documents_fts(documents_fts, rowid, doc_id, content, alias_tokens)
+                    VALUES ('delete', old.id, old.doc_id, old.content, old.alias_tokens);
+                    INSERT INTO documents_fts(rowid, doc_id, content, alias_tokens)
+                    VALUES (new.id, new.doc_id, new.content, new.alias_tokens);
+                END
+                """
+            )
+            self._conn.execute(f"PRAGMA user_version = {HYBRID_SCHEMA_VERSION}")
 
     def close(self) -> None:
         self._conn.close()
@@ -149,7 +305,7 @@ class HybridSQLiteIndex:
         docs: Sequence[tuple[str, str, Sequence[float] | None] | Mapping[str, Any]],
     ) -> int:
         """Insert or update documents and their FTS5 + optional vector entries."""
-        normalized: list[tuple[str, str, str | None]] = []
+        normalized: list[tuple[str, str, str, bytes | None]] = []
         for item in docs:
             if isinstance(item, Mapping):
                 doc_id = str(item.get("doc_id", item.get("id", "")))
@@ -159,32 +315,69 @@ class HybridSQLiteIndex:
                 doc_id, content, emb = item
                 doc_id = str(doc_id)
                 content = str(content)
-            emb_json = json.dumps([float(v) for v in emb]) if emb is not None else None
-            normalized.append((doc_id, content, emb_json))
+            c_hash = _content_hash(content)
+            emb_blob = _pack_embedding(emb)
+            normalized.append((doc_id, content, c_hash, emb_blob))
 
-        with self._conn:
-            for doc_id, content, emb_json in normalized:
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing_rows = self._conn.execute(
+                "SELECT doc_id, content_hash, length(embedding_blob) FROM documents"
+            ).fetchall()
+            existing: dict[str, tuple[str | None, int | None, bytes | None]] = {
+                str(r[0]): (
+                    str(r[1]) if r[1] is not None else None,
+                    int(r[2]) if r[2] is not None else None,
+                    None,
+                )
+                for r in existing_rows
+            }
+            for doc_id, content, c_hash, emb_blob in normalized:
+                emb_len = len(emb_blob) if emb_blob is not None else None
+                prev = existing.get(doc_id)
+                if prev is not None:
+                    prev_hash, prev_len, prev_blob = prev
+                    if prev_hash == c_hash:
+                        if emb_blob is None and prev_len is None:
+                            continue
+                        if emb_blob is not None and prev_len == emb_len:
+                            if prev_blob is None:
+                                row = self._conn.execute(
+                                    "SELECT embedding_blob FROM documents WHERE doc_id = ?",
+                                    (doc_id,),
+                                ).fetchone()
+                                prev_blob = (
+                                    bytes(row[0])
+                                    if row is not None and row[0] is not None
+                                    else None
+                                )
+                            if prev_blob == emb_blob:
+                                existing[doc_id] = (c_hash, emb_len, prev_blob)
+                                continue
+                        self._conn.execute(
+                            "UPDATE documents SET embedding_blob = ? WHERE doc_id = ?",
+                            (emb_blob, doc_id),
+                        )
+                        existing[doc_id] = (c_hash, emb_len, emb_blob)
+                        continue
+                aliases = _extract_alias_tokens(content)
                 self._conn.execute(
                     """
-                    INSERT INTO documents (doc_id, content, embedding_json)
-                    VALUES (?, ?, ?)
+                    INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(doc_id) DO UPDATE SET
                         content = excluded.content,
-                        embedding_json = excluded.embedding_json
+                        alias_tokens = excluded.alias_tokens,
+                        content_hash = excluded.content_hash,
+                        embedding_blob = excluded.embedding_blob
                     """,
-                    (doc_id, content, emb_json),
+                    (doc_id, content, aliases, c_hash, emb_blob),
                 )
-                row = self._conn.execute(
-                    "SELECT id FROM documents WHERE doc_id = ?", (doc_id,)
-                ).fetchone()
-                if row is None:  # pragma: no cover - defensive invariant
-                    raise sqlite3.DatabaseError(f"Missing rowid for doc_id={doc_id!r}")
-                row_id = int(row[0])
-                self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
-                self._conn.execute(
-                    "INSERT INTO documents_fts (rowid, doc_id, content) VALUES (?, ?, ?)",
-                    (row_id, doc_id, content),
-                )
+                existing[doc_id] = (c_hash, emb_len, emb_blob)
+            self._conn.commit()
+        except BaseException:
+            self._conn.rollback()
+            raise
         return len(normalized)
 
     def remove_missing(self, active_doc_ids: Iterable[str]) -> int:
@@ -200,23 +393,60 @@ class HybridSQLiteIndex:
         with self._conn:
             for row_id in stale_ids:
                 self._conn.execute("DELETE FROM documents WHERE id = ?", (row_id,))
-                self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
         return len(stale_ids)
 
-    def _fts_rankings(self, query: str) -> dict[str, int]:
-        escaped = escape_fts5_query(query)
-        if not escaped:
+    def _fts_rankings(self, query: str, *, limit: int = 20) -> dict[str, int]:
+        escaped_and = escape_fts5_query(query, mode="and")
+        if not escaped_and:
             return {}
-        rows = self._conn.execute(
+        and_rows = self._conn.execute(
             """
             SELECT doc_id
             FROM documents_fts
             WHERE documents_fts MATCH ?
             ORDER BY bm25(documents_fts) ASC, doc_id ASC
             """,
-            (escaped,),
+            (escaped_and,),
         ).fetchall()
-        return {str(row[0]): rank for rank, row in enumerate(rows, start=1)}
+        tokens = query.replace("\x00", "").split()
+        min_hits = 1 if len(tokens) <= 1 else (3 if limit >= 3 else max(1, limit))
+        if len(and_rows) >= min_hits:
+            return {str(row[0]): rank for rank, row in enumerate(and_rows, start=1)}
+
+        escaped_or = escape_fts5_query(query, mode="or")
+        if not escaped_or:
+            return {str(row[0]): rank for rank, row in enumerate(and_rows, start=1)}
+        or_rows = self._conn.execute(
+            """
+            SELECT doc_id, bm25(documents_fts), content
+            FROM documents_fts
+            WHERE documents_fts MATCH ?
+            """,
+            (escaped_or,),
+        ).fetchall()
+        and_ids = [str(row[0]) for row in and_rows]
+        seen_and = set(and_ids)
+        query_terms = {
+            part.lower()
+            for raw_tok in query.replace("\x00", "").split()
+            for part in split_code_identifiers(raw_tok)
+        }
+
+        scored_or: list[tuple[int, float, str]] = []
+        for doc_id, bm25_score, content in or_rows:
+            doc_key = str(doc_id)
+            if doc_key in seen_and:
+                continue
+            doc_tokens = {
+                part.lower()
+                for raw_tok in re.findall(r"[A-Za-z0-9_]+", str(content))
+                for part in split_code_identifiers(raw_tok)
+            }
+            coverage = len(query_terms & doc_tokens)
+            scored_or.append((-coverage, float(bm25_score), doc_key))
+        scored_or.sort()
+        ordered = and_ids + [doc_id for _neg_cov, _bm25, doc_id in scored_or]
+        return {doc_id: rank for rank, doc_id in enumerate(ordered, start=1)}
 
     def _vector_rankings(self, query_vec: Sequence[float] | None) -> dict[str, int]:
         if query_vec is None:
@@ -225,7 +455,7 @@ class HybridSQLiteIndex:
         if not q_list:
             return {}
         rows = self._conn.execute(
-            "SELECT doc_id, embedding_json FROM documents WHERE embedding_json IS NOT NULL"
+            "SELECT doc_id, embedding_blob FROM documents WHERE embedding_blob IS NOT NULL"
         ).fetchall()
         if not rows:
             return {}
@@ -236,16 +466,16 @@ class HybridSQLiteIndex:
             q_norm = float(np.linalg.norm(q_arr))
             if q_norm == 0.0:
                 return {}
-            for doc_id, emb_json in rows:
-                vec = np.asarray(json.loads(str(emb_json)), dtype=np.float64)
+            for doc_id, emb_blob in rows:
+                vec = np.frombuffer(bytes(emb_blob), dtype="<f2").astype(np.float64)
                 if vec.shape != q_arr.shape:
                     continue
                 v_norm = float(np.linalg.norm(vec))
                 sim = float(np.dot(q_arr, vec) / (q_norm * v_norm)) if v_norm > 0.0 else 0.0
                 scored.append((str(doc_id), sim))
         else:
-            for doc_id, emb_json in rows:
-                vec_py = [float(v) for v in json.loads(str(emb_json))]
+            for doc_id, emb_blob in rows:
+                vec_py = _unpack_embedding_py(emb_blob)
                 sim = _cosine_similarity_py(q_list, vec_py)
                 scored.append((str(doc_id), sim))
 
@@ -264,7 +494,7 @@ class HybridSQLiteIndex:
         """Run hybrid FTS5 + vector search fused with adaptive IDF-weighted RRF."""
         if limit <= 0:
             return []
-        fts_ranks = self._fts_rankings(query)
+        fts_ranks = self._fts_rankings(query, limit=limit)
         vec_ranks = self._vector_rankings(query_vec)
         if not fts_ranks and not vec_ranks:
             return []
