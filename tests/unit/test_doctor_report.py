@@ -80,4 +80,16 @@ def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
         "lsp": {"enabled": False},
     })
     assert "session_daemon: stale-metadata" in rendered
-    assert f"cleanup_hint: Run `tg session daemon stop {root_str}`" in rendered
+    assert f"cleanup_hint: Run `tg session daemon stop '{root_str}'`" in rendered
+
+
+def test_strip_windows_extended_prefix_handles_unc_and_preserves_device_namespaces() -> None:
+    from tensor_grep.cli.doctor_launcher_probe import strip_windows_extended_prefix
+
+    assert strip_windows_extended_prefix(r"\\?\unc\server\share\tg.exe") == r"\\server\share\tg.exe"
+    assert strip_windows_extended_prefix(r"\\?\UNC\server\share\tg.exe") == r"\\server\share\tg.exe"
+    assert strip_windows_extended_prefix(r"\\?\C:\Users\demo\tg.exe") == r"C:\Users\demo\tg.exe"
+    assert (
+        strip_windows_extended_prefix(r"\\?\GLOBALROOT\Device\Harddisk0")
+        == r"\\?\GLOBALROOT\Device\Harddisk0"
+    )

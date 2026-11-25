@@ -79,8 +79,39 @@ def test_orient_and_agent_compact_emit_under_4000_bytes(tmp_path: Path) -> None:
     assert agent_bytes < 4000, f"agent --compact emitted {agent_bytes} bytes (>= 4000)"
     agent_payload = json.loads(agent_res.stdout)
     assert agent_payload["primary_target"]["file"].endswith("pricing.py")
-    for omitted in ("context_consistency", "raw_context_ref", "symbol_cache", "gpu_acceleration"):
+    for preserved in ("context_consistency", "omissions", "rollback"):
+        assert preserved in agent_payload
+    for omitted in ("raw_context_ref", "symbol_cache", "gpu_acceleration"):
         assert omitted not in agent_payload
+
+
+def test_compact_preserves_capsule_safety_and_bounds_oversized_snippets() -> None:
+    from tensor_grep.cli.detail_tier import dump_detail_json
+
+    payload = {
+        "context_consistency": {"validation_alignment": "mismatch"},
+        "omissions": {"omitted_section_count": 2},
+        "rollback": {"command": "tg checkpoint create ."},
+        "snippets": [{"text": "x" * 4100}],
+    }
+    serialized = dump_detail_json(payload, "compact")
+    assert len(serialized.encode("utf-8")) <= 4000
+    parsed = json.loads(serialized)
+    assert parsed["context_consistency"] == {"validation_alignment": "mismatch"}
+    assert parsed["omissions"] == {"omitted_section_count": 2}
+    assert parsed["rollback"] == {"command": "tg checkpoint create ."}
+    assert parsed["compact_truncated"] is True
+
+
+def test_agent_compact_rejects_conflicting_detail_or_missing_json(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+    runner = CliRunner()
+    res_conflict = runner.invoke(
+        app, ["agent", str(tmp_path), "f", "--json", "--compact", "--detail", "full"]
+    )
+    assert res_conflict.exit_code == 2
+    res_no_json = runner.invoke(app, ["agent", str(tmp_path), "f", "--compact"])
+    assert res_no_json.exit_code == 2
 
 
 def test_compact_payload_does_not_mutate_input() -> None:

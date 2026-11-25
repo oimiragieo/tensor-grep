@@ -25,12 +25,28 @@ _SIMPLE_DELEGATE_RE = re.compile(
 
 
 def strip_windows_extended_prefix(path_str: str) -> str:
-    """Strip Windows extended-length path prefixes for user-facing diagnostics."""
-    if path_str.startswith("\\\\?\\UNC\\"):
+    """Strip Windows extended-length drive/UNC prefixes while preserving device namespaces."""
+    lower = path_str.lower()
+    if lower.startswith("\\\\?\\unc\\"):
         return "\\\\" + path_str[8:]
-    if path_str.startswith("\\\\?\\"):
+    if (
+        path_str.startswith("\\\\?\\")
+        and len(path_str) >= 7
+        and path_str[4].isalpha()
+        and path_str[5:7] in {":\\", ":/"}
+    ):
         return path_str[4:]
     return path_str
+
+
+def format_stale_daemon_cleanup_hint(root_path: str) -> str:
+    """Format a shell-quoted cleanup hint for stale session_daemon metadata."""
+    import shlex
+
+    clean_root = strip_windows_extended_prefix(root_path)
+    return (
+        f"Run `tg session daemon stop {shlex.quote(clean_root)}` to remove stale daemon metadata."
+    )
 
 
 _PROBE_ENV_ALLOWLIST = (

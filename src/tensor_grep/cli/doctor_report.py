@@ -87,9 +87,10 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
         # Additive-only field when stopped (mirrors conditional install_hint).
         status["autostart"] = _doctor_session_daemon_autostart_status()
         if status.get("stale_metadata"):
-            clean_root = _strip_windows_extended_prefix(str(status.get("root") or path))
-            status["cleanup_hint"] = (
-                f"Run `tg session daemon stop {clean_root}` to remove stale daemon metadata."
+            from tensor_grep.cli.doctor_launcher_probe import format_stale_daemon_cleanup_hint
+
+            status["cleanup_hint"] = format_stale_daemon_cleanup_hint(
+                str(status.get("root") or path)
             )
     return status
 

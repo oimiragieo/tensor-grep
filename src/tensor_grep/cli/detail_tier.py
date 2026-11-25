@@ -32,13 +32,18 @@ _COMPACT_OMITTED_KEYS: frozenset[str] = frozenset({
     "navigation_pack",
     "candidate_edit_targets",
     "plan",
-    "context_consistency",
     "raw_context_ref",
     "gpu_acceleration",
-    "call_site_evidence",
-    "omissions",
-    "rollback",
 })
+_COMPACT_MAX_BYTES = 4000
+_COMPACT_TRIM_ORDER: tuple[str, ...] = (
+    "snippets",
+    "call_site_evidence",
+    "candidates",
+    "validation_plan",
+    "tests",
+    "resolution_gaps",
+)
 
 
 def validate_detail_tier(detail: Any) -> str:
@@ -70,6 +75,15 @@ def compact_option() -> Any:
     )
 
 
+def resolve_compact_detail(compact: bool, detail: str, *, json_output: bool) -> str:
+    """Resolve `--compact` / `--detail` precedence and reject invalid combinations."""
+    if compact and not json_output:
+        raise typer.BadParameter("--compact requires --json.")
+    if compact and detail not in {"standard", "compact"}:
+        raise typer.BadParameter(f"--compact cannot be combined with --detail {detail}.")
+    return "compact" if compact else detail
+
+
 def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Deduplicate overlapping target/plan blocks and omit verbose diagnostic keys."""
     filtered = {key: value for key, value in payload.items() if key not in _COMPACT_OMITTED_KEYS}
@@ -78,6 +92,21 @@ def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
         filtered["resolution_gaps_truncated_count"] = len(gaps) - 10
         filtered["resolution_gaps"] = gaps[:10]
     return filtered
+
+
+def _bound_compact_json(filtered: dict[str, Any], *, ensure_ascii: bool) -> str:
+    serialized = json.dumps(filtered, ensure_ascii=ensure_ascii, separators=(",", ":"))
+    if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
+        return serialized
+    bounded = dict(filtered)
+    for trim_key in _COMPACT_TRIM_ORDER:
+        if trim_key in bounded:
+            bounded.pop(trim_key, None)
+            bounded["compact_truncated"] = True
+            serialized = json.dumps(bounded, ensure_ascii=ensure_ascii, separators=(",", ":"))
+            if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
+                return serialized
+    return serialized
 
 
 def apply_detail_tier(payload: dict[str, Any], detail: str) -> dict[str, Any]:
@@ -97,5 +126,5 @@ def dump_detail_json(
     """Apply `detail` filtering and serialize `payload` to JSON."""
     filtered = apply_detail_tier(payload, detail)
     if detail == "compact":
-        return json.dumps(filtered, ensure_ascii=ensure_ascii, separators=(",", ":"))
+        return _bound_compact_json(filtered, ensure_ascii=ensure_ascii)
     return json.dumps(filtered, ensure_ascii=ensure_ascii, indent=2)

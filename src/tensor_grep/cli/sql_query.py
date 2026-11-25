@@ -147,13 +147,16 @@ def _has_multiple_sql_statements(query: str) -> bool:
 def _available_tables_schema(conn: Any) -> dict[str, list[str]]:
     """Inspect available SQLite tables and columns dynamically via PRAGMA table_info."""
     conn.set_authorizer(None)
-    tables: dict[str, list[str]] = {}
-    for (table_name,) in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-    ):
-        cols = [row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')]
-        tables[str(table_name)] = cols
-    return tables
+    try:
+        tables: dict[str, list[str]] = {}
+        for (table_name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        ):
+            cols = [row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')]
+            tables[str(table_name)] = cols
+        return tables
+    finally:
+        conn.set_authorizer(_sql_read_only_authorizer)
 
 
 def _sql_read_only_authorizer(

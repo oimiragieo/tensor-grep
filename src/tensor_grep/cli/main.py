@@ -45,6 +45,7 @@ from tensor_grep.cli.detail_tier import apply_detail_tier as _apply_detail_tier
 from tensor_grep.cli.detail_tier import compact_option as _compact_option
 from tensor_grep.cli.detail_tier import detail_option as _detail_option
 from tensor_grep.cli.detail_tier import dump_detail_json as _dump_detail_json
+from tensor_grep.cli.detail_tier import resolve_compact_detail as _resolve_compact_detail
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
@@ -5857,7 +5858,7 @@ def agent(
                 daemon_payload["dependency_grounding"] = daemon_grounding
             else:
                 daemon_payload.pop("dependency_grounding", None)
-            effective_detail = "compact" if compact else detail
+            effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
             if json_output:
                 typer.echo(_dump_detail_json(daemon_payload, effective_detail, ensure_ascii=False))
             else:
@@ -5898,7 +5899,7 @@ def agent(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     # Emit the full capsule before applying the scan-truncation exit contract.
-    effective_detail = "compact" if compact else detail
+    effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
     if citations:
         _citations.emit_payload_citations(
             _apply_detail_tier(payload, effective_detail) if json_output else payload,
