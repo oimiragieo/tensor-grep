@@ -32,6 +32,7 @@ from tensor_grep.cli import _index_lock as _index_lock
 from tensor_grep.cli import ast_scan as _ast_scan
 from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import citations as _citations
+from tensor_grep.cli import detail_tier as _detail_tier
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import managed_runtime_upgrade as _managed_runtime_upgrade
@@ -41,21 +42,6 @@ from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
-from tensor_grep.cli.detail_tier import (
-    apply_detail_tier as _apply_detail_tier,
-)
-from tensor_grep.cli.detail_tier import (
-    compact_option as _compact_option,
-)
-from tensor_grep.cli.detail_tier import (
-    detail_option as _detail_option,
-)
-from tensor_grep.cli.detail_tier import (
-    dump_detail_json as _dump_detail_json,
-)
-from tensor_grep.cli.detail_tier import (
-    resolve_compact_detail as _resolve_compact_detail,
-)
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
@@ -4829,7 +4815,7 @@ def orient(
         help="Accepted for command-surface parity with codemap; a no-op since orient already "
         "defaults to an unbounded --deadline.",
     ),
-    compact: bool = _compact_option(),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
@@ -4837,7 +4823,9 @@ def orient(
     # orient_capsule import and the daemon gate, so front-door time counts against --deadline.
     # CLI consistency fix : `--deadline` used to be undefined on `tg orient`
     # (Click "No such option" exit-2).
-    orient_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
+    orient_detail = _detail_tier.resolve_compact_detail(
+        compact, "standard", json_output=json_output
+    )
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
@@ -4883,7 +4871,7 @@ def orient(
     if json_output:
         # build_orient_capsule_json's exact format (json.dumps(..., indent=2), no
         # ensure_ascii=False) -- match it here so a warm hit is byte-identical to a cold miss.
-        typer.echo(_dump_detail_json(payload, orient_detail))
+        typer.echo(_detail_tier.dump_detail_json(payload, orient_detail))
         return
 
     # `tg orient` has no exit-2 contract by design (see --deadline's help): a truncated scan still
@@ -5791,8 +5779,8 @@ def agent(
     rerank: str = typer.Option(
         "off", "--rerank", help="Native advisory snippet reranking: off, auto, cross-encoder."
     ),
-    detail: str = _detail_option(),
-    compact: bool = _compact_option(),
+    detail: str = _detail_tier.detail_option(),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
 ) -> None:
@@ -5822,7 +5810,7 @@ def agent(
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
         # Daemon misses or unreliable evidence fall through to the cold build. Requests requiring
         # fresh deadlines or new option contracts use the cold path until daemon schema support.
-        effective_detail = _resolve_compact_detail(
+        effective_detail = _detail_tier.resolve_compact_detail(
             compact, detail, json_output=json_output, citations=citations
         )
         daemon_payload = (
@@ -5854,7 +5842,11 @@ def agent(
             else:
                 daemon_payload.pop("dependency_grounding", None)
             if json_output:
-                typer.echo(_dump_detail_json(daemon_payload, effective_detail, ensure_ascii=False))
+                typer.echo(
+                    _detail_tier.dump_detail_json(
+                        daemon_payload, effective_detail, ensure_ascii=False
+                    )
+                )
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 _emit_agent_text(daemon_payload, gpu_device_ids)
@@ -5895,12 +5887,12 @@ def agent(
     # Emit the full capsule before applying the scan-truncation exit contract.
     if citations:
         _citations.emit_payload_citations(
-            _apply_detail_tier(payload, effective_detail) if json_output else payload,
+            _detail_tier.apply_detail_tier(payload, effective_detail) if json_output else payload,
             resolved_path,
             json_output=json_output,
         )
     elif json_output:
-        typer.echo(_dump_detail_json(payload, effective_detail, ensure_ascii=False))
+        typer.echo(_detail_tier.dump_detail_json(payload, effective_detail, ensure_ascii=False))
     else:
         _emit_scan_incompleteness_banner(payload)
         _emit_agent_text(payload, gpu_device_ids)
@@ -5962,7 +5954,7 @@ def edit_plan(
         help="Accepted for command-surface parity with codemap; a no-op since edit-plan already "
         "defaults to an unbounded --deadline.",
     ),
-    compact: bool = _compact_option(),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
@@ -5986,7 +5978,9 @@ def edit_plan(
         # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
         # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
         # refs/callers/impact/blast-radius's own daemon gate.
-        edit_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
+        edit_detail = _detail_tier.resolve_compact_detail(
+            compact, "standard", json_output=json_output
+        )
         daemon_payload = (
             _maybe_edit_plan_via_running_daemon(
                 path=resolved_path,
@@ -6006,7 +6000,7 @@ def edit_plan(
             # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
             # the cold path below -- print the full daemon payload, then exit 2 if it was truncated.
             if json_output:
-                typer.echo(_dump_detail_json(daemon_payload, edit_detail))
+                typer.echo(_detail_tier.dump_detail_json(daemon_payload, edit_detail))
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 payload = daemon_payload
@@ -6041,7 +6035,7 @@ def edit_plan(
     # text branches share the same scan-truncation gate below -- output the full payload FIRST, then
     # exit 2 if the scan itself (not just the output) was capped.
     if json_output:
-        typer.echo(_dump_detail_json(payload, edit_detail))
+        typer.echo(_detail_tier.dump_detail_json(payload, edit_detail))
     else:
         _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Edit plan for {payload['path']}")
@@ -7061,7 +7055,8 @@ def _emit_symbol_command_result(
     payload["not_found"] = not_found
     from tensor_grep.cli.symbol_suggestions import suggestions_for_payload
 
-    suggestions = suggestions_for_payload(payload) if not_found else []
+    suggest = not_found or (result_key == "definitions" and not payload.get(result_key))
+    suggestions = suggestions_for_payload(payload) if suggest else []
     payload["suggestions"] = suggestions
     if not keep_candidate_symbols:
         payload.pop("candidate_symbols", None)
@@ -7088,7 +7083,11 @@ def _emit_symbol_command_result(
         )
         is_truncation = True
     if json_output:
-        typer.echo(_dump_detail_json(payload, detail))
+        if detail == "compact":
+            from tensor_grep.cli.symbol_compact import trim_symbol_compact_payload
+
+            payload = trim_symbol_compact_payload(payload, result_key=result_key)
+        typer.echo(_detail_tier.dump_detail_json(payload, detail))
     else:
         leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
         if leading is not None:
@@ -7294,7 +7293,7 @@ def defs(
     deadline: float | None = _deadline_option(
         "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
     ),
-    detail: str = _detail_option(),
+    detail: str = _detail_tier.detail_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -7467,7 +7466,7 @@ def impact(
         min=0,
         help="Approximate maximum payload size in tokens (0 = unbounded).",
     ),
-    detail: str = _detail_option(),
+    detail: str = _detail_tier.detail_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
@@ -7668,7 +7667,7 @@ def refs(
         min=0,
         help="Approximate maximum payload size in tokens (0 = unbounded).",
     ),
-    detail: str = _detail_option(),
+    detail: str = _detail_tier.detail_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
@@ -7771,7 +7770,7 @@ def callers(
         min=0,
         help="Approximate maximum payload size in tokens (0 = unbounded).",
     ),
-    detail: str = _detail_option(),
+    detail: str = _detail_tier.detail_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
@@ -8167,7 +8166,7 @@ def blast_radius(
     deadline: float | None = _deadline_option(
         "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
     ),
-    detail: str = _detail_option(),
+    detail: str = _detail_tier.detail_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     mermaid_output: bool = typer.Option(
         False,
@@ -8274,11 +8273,11 @@ def blast_radius(
         # Embed, don't refuse: fold the rendered mermaid text into the JSON payload so one call
         # returns both the machine graph and the diagram.
         payload["mermaid"] = _render_blast_radius_mermaid(payload)
-        typer.echo(_dump_detail_json(payload, detail))
+        typer.echo(_detail_tier.dump_detail_json(payload, detail))
     elif mermaid_output:
         typer.echo(_render_blast_radius_mermaid(payload))
     elif json_output:
-        typer.echo(_dump_detail_json(payload, detail))
+        typer.echo(_detail_tier.dump_detail_json(payload, detail))
     else:
         # Same leading-banner-vs-trailing-note split as _emit_symbol_command_result: a truncation
         # warning has to be read BEFORE the counts it qualifies (an agent reading
