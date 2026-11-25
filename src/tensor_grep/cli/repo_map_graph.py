@@ -158,18 +158,17 @@ def _candidate_evidence(
     *,
     deadline_monotonic: float | None,
     deadline_hit: Any,
+    evidence_cache: dict[tuple[Any, ...], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    from tensor_grep.cli.symbols_cache import content_receipts_active
-
-    cache_key: tuple[str, Any, str, bool] | None = None
-    if not content_receipts_active():
+    cache_key: tuple[Any, ...] | None = None
+    if evidence_cache is not None:
         cache_key = (
             candidate,
             owner._mtime_key(candidate),
             str(repo_root),
             bool(imports_by_file.get(candidate)),
         )
-        cached = _CANDIDATE_EVIDENCE_CACHE.get(cache_key)
+        cached = evidence_cache.get(cache_key)
         if cached is not None:
             return cached
     result = _compute_candidate_evidence(
@@ -180,14 +179,9 @@ def _candidate_evidence(
         deadline_monotonic=deadline_monotonic,
         deadline_hit=deadline_hit,
     )
-    if cache_key is not None and result.get("reason") != "deadline":
-        if len(_CANDIDATE_EVIDENCE_CACHE) >= 4096:
-            _CANDIDATE_EVIDENCE_CACHE.clear()
-        _CANDIDATE_EVIDENCE_CACHE[cache_key] = result
+    if evidence_cache is not None and cache_key is not None and result.get("reason") != "deadline":
+        evidence_cache[cache_key] = result
     return result
-
-
-_CANDIDATE_EVIDENCE_CACHE: dict[tuple[str, Any, str, bool], dict[str, Any]] = {}
 
 
 def _compute_candidate_evidence(

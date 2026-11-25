@@ -12794,7 +12794,11 @@ def _infer_project_root(file_path: Path) -> Path:
     for candidate in [current, *current.parents]:
         try:
             if any(
-                (candidate / marker).is_file()
+                (
+                    _is_file_with_receipt(candidate / marker)
+                    if authenticated_root is not None
+                    else (candidate / marker).is_file()
+                )
                 for marker in _PROJECT_ROOT_MARKERS
                 if marker != ".git"
             ):

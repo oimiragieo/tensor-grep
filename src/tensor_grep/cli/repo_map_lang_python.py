@@ -1007,24 +1007,6 @@ def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -
     )
 
 
-@lru_cache(maxsize=8192)
-def _cached_python_module_candidates(
-    importer_str: str,
-    mtime_key: Any,
-    parent_mtime_key: Any,
-    module_name: str,
-    repo_root_str: str | None,
-    level: int,
-) -> dict[str, Any]:
-    _ = (mtime_key, parent_mtime_key)
-    return _compute_python_module_candidates(
-        Path(importer_str), module_name, repo_root_str, level=level
-    )
-
-
-_MTIME_CACHE_CLEAR_REGISTRY.append(_cached_python_module_candidates.cache_clear)
-
-
 def _python_module_candidates(
     importer_path: Path,
     module_name: str,
@@ -1032,19 +1014,7 @@ def _python_module_candidates(
     *,
     level: int = 0,
 ) -> dict[str, Any]:
-    from tensor_grep.cli.symbols_cache import content_receipts_active
-
-    if content_receipts_active():
-        return _compute_python_module_candidates(importer_path, module_name, repo_root, level=level)
-    repo_root_str = str(repo_root) if repo_root is not None else None
-    return _cached_python_module_candidates(
-        str(importer_path),
-        _self._mtime_key(str(importer_path)),
-        _self._mtime_key(str(importer_path.parent)),
-        module_name,
-        repo_root_str,
-        level,
-    )
+    return _compute_python_module_candidates(importer_path, module_name, repo_root, level=level)
 
 
 def _compute_python_module_candidates(

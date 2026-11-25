@@ -48,7 +48,6 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
-from tensor_grep.cli.repo_map_fast_cache import has_valid_primary_target
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.root_app import create_root_app
 from tensor_grep.cli.runtime_paths import (
@@ -5864,8 +5863,7 @@ def agent(
                 deadline_partial_note = _agent_trustworthy_deadline_partial_note(daemon_payload)
                 if deadline_partial_note is not None:
                     typer.echo(deadline_partial_note, err=True)
-                if not has_valid_primary_target(daemon_payload):
-                    raise typer.Exit(2)
+                raise typer.Exit(2)
             return
 
         # Apply the default 60-second bound after daemon lookup, preserving warm reuse.
@@ -5911,8 +5909,7 @@ def agent(
         deadline_partial_note = _agent_trustworthy_deadline_partial_note(payload)
         if deadline_partial_note is not None:
             typer.echo(deadline_partial_note, err=True)
-        if not has_valid_primary_target(payload):
-            raise typer.Exit(2)
+        raise typer.Exit(2)
 
 
 @app.command(name="edit-plan")
@@ -6599,7 +6596,7 @@ def prepare(
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
 
-    if _scan_incomplete(payload) and not has_valid_primary_target(payload):
+    if _scan_incomplete(payload):
         raise typer.Exit(2)
 
 

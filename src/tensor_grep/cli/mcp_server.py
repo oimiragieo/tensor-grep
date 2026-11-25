@@ -177,7 +177,9 @@ def _mcp_server_version() -> str:
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.24.0"  # progressive MCP tool discovery & legacy default-off
+_TG_MCP_SERVER_CONTRACT_VERSION = (
+    "1.25.0"  # compact outputSchema, tg_session preconditions & safety notes
+)
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -5042,7 +5044,7 @@ def tg_audit(
     output_path: str | None = None,
     bundle_path: str | None = None,
 ) -> str:
-    """Rewrite audit & review bundles: manifest_verify, history, diff, bundle_create, bundle_verify."""
+    """Rewrite audit & review bundles: manifest_verify (manifest_path), history, diff (previous_manifest, current_manifest), bundle_create (manifest_path), bundle_verify (bundle_path). signing_key requires TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -5148,7 +5150,7 @@ def tg_rewrite(
     expected_plan_digest: str | None = None,
     expected_match_count: int | None = None,
 ) -> str:
-    """Native AST rewrites (pattern, replacement, lang required): plan (preview), apply (mutates; supports checkpoint/verify/audit), diff (native tg)."""
+    """Native AST rewrites (pattern, replacement, lang required): plan, apply (mutates; checkpoint/verify/audit_manifest; audit_signing_key requires TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ; lint_cmd/test_cmd require TG_MCP_ALLOW_VALIDATION_COMMANDS=1), diff."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))

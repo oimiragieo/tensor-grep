@@ -187,6 +187,8 @@ _SESSION_REQUIRED_TOOLS = frozenset({
     "tg_session_file_importers",
 })
 
+_SESSION_OPENING_ACTIONS = frozenset({"open", "list"})
+
 _NEXT_STEPS_MAP: dict[str, tuple[str, ...]] = {
     "tg_explore": ("tg_context(action='capsule')", "tg_navigate(action='defs')"),
     "tg_orient": ("tg_context(action='capsule')", "tg_navigate(action='defs')"),
@@ -198,8 +200,15 @@ _NEXT_STEPS_MAP: dict[str, tuple[str, ...]] = {
     "tg_symbol_blast_radius": ("tg_context(action='edit_plan')", "tg_rewrite(action='plan')"),
     "tg_query": ("tg_navigate(action='defs')", "tg_context(action='capsule')"),
     "tg_context": ("tg_checkpoint(action='create')", "tg_rewrite(action='plan')"),
-    "tg_session": ("tg_session(action='context')", "tg_session(action='blast_radius')"),
-    "tg_session_open": ("tg_session(action='context')", "tg_session(action='blast_radius')"),
+    "tg_session": (
+        "tg_session(action='open')",
+        "tg_session(action='context', session_id='<id>')",
+        "tg_session(action='blast_radius', session_id='<id>')",
+    ),
+    "tg_session_open": (
+        "tg_session(action='context', session_id='<id>')",
+        "tg_session(action='blast_radius', session_id='<id>')",
+    ),
     "tg_checkpoint": ("tg_rewrite(action='apply')",),
     "tg_checkpoint_create": ("tg_rewrite(action='apply')",),
     "tg_rewrite": ("tg_audit(action='manifest_verify')", "tg_scan(action='scan')"),
@@ -225,7 +234,7 @@ def _strip_schema_titles(node: Any) -> None:
 
 
 def compact_mcp_tool_schemas(mcp_server_obj: Any) -> None:
-    """Strip redundant JSON-schema titles and outputSchema from registered tools."""
+    """Strip redundant JSON-schema titles from registered tool input and output schemas."""
     tool_manager = getattr(mcp_server_obj, "_tool_manager", None)
     list_tools = getattr(tool_manager, "list_tools", None)
     if not callable(list_tools):
@@ -233,8 +242,8 @@ def compact_mcp_tool_schemas(mcp_server_obj: Any) -> None:
     for tool in list_tools():
         if isinstance(getattr(tool, "parameters", None), dict):
             _strip_schema_titles(tool.parameters)
-        if hasattr(tool, "output_schema"):
-            tool.output_schema = None
+        if isinstance(getattr(tool, "output_schema", None), dict):
+            _strip_schema_titles(tool.output_schema)
 
 
 @dataclass(frozen=True)
@@ -246,6 +255,7 @@ class _CatalogEntry:
     is_legacy: bool
     actions: tuple[str, ...]
     requires_session: bool
+    session_actions_requiring_session: tuple[str, ...]
     next_steps: tuple[str, ...]
 
 
@@ -258,6 +268,13 @@ def _parse_catalog() -> tuple[_CatalogEntry, ...]:
         if actions is None:
             action = _LEGACY_META_ACTION_MAP.get(name)
             actions = (action,) if action else ()
+        requires_session = name in _SESSION_REQUIRED_TOOLS
+        if name == "tg_session":
+            session_actions = tuple(a for a in actions if a not in _SESSION_OPENING_ACTIONS)
+        elif requires_session:
+            session_actions = actions
+        else:
+            session_actions = ()
         rows.append(
             _CatalogEntry(
                 name=name,
@@ -266,7 +283,8 @@ def _parse_catalog() -> tuple[_CatalogEntry, ...]:
                 tags=tags,
                 is_legacy=(legacy_flag == "1"),
                 actions=actions,
-                requires_session=(name in _SESSION_REQUIRED_TOOLS),
+                requires_session=requires_session,
+                session_actions_requiring_session=session_actions,
                 next_steps=_NEXT_STEPS_MAP.get(name, ()),
             )
         )
@@ -382,6 +400,14 @@ def _coerce_extra_entry(raw: Mapping[str, Any]) -> _CatalogEntry:
     tags = str(raw.get("tags", ""))
     actions = tuple(str(a) for a in raw.get("actions", ()))
     next_steps = tuple(str(s) for s in raw.get("next_steps", ()))
+    requires_session = bool(raw.get("requires_session", False))
+    session_actions = tuple(
+        str(a)
+        for a in raw.get(
+            "session_actions_requiring_session",
+            actions if requires_session else (),
+        )
+    )
     return _CatalogEntry(
         name=name,
         summary=summary,
@@ -389,7 +415,8 @@ def _coerce_extra_entry(raw: Mapping[str, Any]) -> _CatalogEntry:
         tags=tags,
         is_legacy=bool(raw.get("is_legacy", True)),
         actions=actions,
-        requires_session=bool(raw.get("requires_session", False)),
+        requires_session=requires_session,
+        session_actions_requiring_session=session_actions,
         next_steps=next_steps,
     )
 
@@ -439,6 +466,7 @@ def discover_mcp_tools(
             "legacy_opt_in_env": _LEGACY_OPT_IN_ENV if entries[i].is_legacy else None,
             "intent_schema_overlap": round(iso_scores[i], 4),
             "requires_session": entries[i].requires_session,
+            "session_actions_requiring_session": list(entries[i].session_actions_requiring_session),
             "next_steps": list(entries[i].next_steps),
         }
         for i in ranked

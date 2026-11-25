@@ -248,7 +248,7 @@ def test_agent_daemon_end_to_end_preserves_suggested_scope(
         server.shutdown()
         server.server_close()
 
-    assert result.exit_code == 0, result.output  # valid primary_target -> exit 0
+    assert result.exit_code == 2, result.output  # scan-truncated -> exit 2, per _scan_incomplete
     payload = json.loads(result.stdout)
     assert payload["scan_limit"]["possibly_truncated"] is True
     assert payload.get("suggested_scope", {}).get("dirs") == [str(project / "src")]
@@ -764,7 +764,7 @@ def test_daemon_evidence_unreliable_never_leaks_into_direct_cold_agent_json(
     result = runner.invoke(
         app, ["agent", str(project), "helper_0", "--max-repo-files", "1", "--json"]
     )
-    assert result.exit_code == 0, result.output  # valid primary_target -> exit 0
+    assert result.exit_code == 2, result.output  # truncated scan
     payload = json.loads(result.stdout)
     assert payload["scan_limit"]["possibly_truncated"] is True
     assert "daemon_evidence_unreliable" not in payload

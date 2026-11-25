@@ -89,8 +89,8 @@ def test_compact_mcp_list_tools_payload_under_20kb_budget() -> None:
         "import asyncio, json; from tensor_grep.cli import mcp_server as m; "
         "tools = asyncio.run(m.mcp.list_tools()); "
         "payload = [t.model_dump(mode='json', exclude_none=True) for t in tools]; "
-        "raw = json.dumps(payload).encode('utf-8'); "
-        "print(json.dumps({'count': len(tools), 'bytes': len(raw)}))"
+        "raw = json.dumps({'tools': payload}).encode('utf-8'); "
+        "print(json.dumps({'count': len(tools), 'bytes': len(raw), 'has_output_schema': any('outputSchema' in p for p in payload)}))"
     )
     done = subprocess.run(
         [sys.executable, "-c", script],
@@ -103,6 +103,7 @@ def test_compact_mcp_list_tools_payload_under_20kb_budget() -> None:
     )
     info = json.loads(done.stdout)
     assert info["count"] == 15
+    assert info["has_output_schema"] is True
     assert info["bytes"] < 20_000
 
 
@@ -150,11 +151,16 @@ def test_tg_discover_tools_includes_state_preconditions_and_next_steps() -> None
     open_by_name = {tool["name"]: tool for tool in open_payload["tools"]}
     assert "tg_session" in open_by_name
     assert open_by_name["tg_session"]["requires_session"] is False
+    session_actions = set(open_by_name["tg_session"]["session_actions_requiring_session"])
+    assert {"open", "list"}.isdisjoint(session_actions)
+    assert {"context", "blast_radius", "refresh", "show", "file_importers"} <= session_actions
     assert open_by_name["tg_session"]["next_steps"]
+    assert open_by_name["tg_session"]["next_steps"][0] == "tg_session(action='open')"
 
     for tool in session_payload["tools"]:
         assert isinstance(tool["intent_schema_overlap"], float)
         assert 0.0 <= tool["intent_schema_overlap"] <= 1.0
         assert isinstance(tool["requires_session"], bool)
+        assert isinstance(tool["session_actions_requiring_session"], list)
         assert isinstance(tool["next_steps"], list)
         assert all(isinstance(step, str) for step in tool["next_steps"])

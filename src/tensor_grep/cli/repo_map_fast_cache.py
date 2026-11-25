@@ -145,9 +145,3 @@ def finalize_importers_payload(
     payload["importer_count"] = len(edges)
     payload["production_importer_count"] = prod_count
     payload["test_importer_count"] = test_count
-
-
-def has_valid_primary_target(payload: dict[str, Any]) -> bool:
-    """Return True when payload contains a non-empty primary_target.file."""
-    target = payload.get("primary_target")
-    return isinstance(target, dict) and bool(str(target.get("file") or "").strip())
