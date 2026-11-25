@@ -56,6 +56,8 @@ pub struct CrossoverConfig {
     pub device_name: String,
     #[serde(default)]
     pub measurements: Vec<CalibrationMeasurement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitparallel_calibration: Option<crate::gpu_bitparallel::CrossoverCalibrationReport>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -181,7 +183,7 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        return summarize_measurements(mocked.device_name, measurements, now_timestamp);
+        return summarize_measurements(mocked.device_name, measurements, now_timestamp, false);
     }
 
     let cache_dir = resolve_crossover_cache_dir();
@@ -206,7 +208,12 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
         )?);
     }
 
-    summarize_measurements(device_name, measurements, now_timestamp)
+    summarize_measurements(
+        device_name,
+        measurements,
+        now_timestamp,
+        cfg!(feature = "cuda"),
+    )
 }
 
 pub fn write_crossover_config(
@@ -244,6 +251,7 @@ fn summarize_measurements(
     device_name: String,
     measurements: Vec<CalibrationMeasurement>,
     calibration_timestamp: u64,
+    native_gpu_executed: bool,
 ) -> Result<CrossoverConfig> {
     if measurements.is_empty() {
         bail!("crossover calibration did not produce any measurements");
@@ -273,6 +281,21 @@ fn summarize_measurements(
         "cpu_always".to_string()
     };
 
+    let parity_verified = crate::gpu_bitparallel::verify_default_bitparallel_parity().is_ok();
+    let backend_kind = if native_gpu_executed {
+        crate::gpu_bitparallel::ExecutionBackendKind::NativeGpuKernel
+    } else {
+        crate::gpu_bitparallel::ExecutionBackendKind::CpuFallback
+    };
+    let bitparallel_calibration = Some(
+        crate::gpu_bitparallel::CrossoverCalibrationReport::evaluate(
+            backend_kind,
+            winner.as_ref().map(|m| m.size_bytes),
+            parity_verified,
+            winner.is_some(),
+        ),
+    );
+
     Ok(CrossoverConfig {
         version: CROSSOVER_CONFIG_VERSION,
         routing_backend: CROSSOVER_ROUTING_BACKEND.to_string(),
@@ -285,6 +308,7 @@ fn summarize_measurements(
         calibration_timestamp,
         device_name,
         measurements,
+        bitparallel_calibration,
     })
 }
 
@@ -567,10 +591,16 @@ impl std::error::Error for NoCudaBuildError {}
 /// path. Pulled out as a pure, allocation-only function (no `process::exit`, no I/O) so the
 /// JSON shape is unit-testable without spawning a subprocess to observe the real exit code.
 pub fn skip_signal_payload(err: &NoCudaBuildError) -> serde_json::Value {
+    let parity_verified = crate::gpu_bitparallel::verify_default_bitparallel_parity().is_ok();
+    let report = crate::gpu_bitparallel::CrossoverCalibrationReport::cpu_fallback(
+        parity_verified,
+        "no CUDA support compiled in; CPU fallback only",
+    );
     serde_json::json!({
         "calibration_status": "skipped_no_cuda_build",
         "reason": err.reason.clone(),
         "remediation": err.remediation.clone(),
+        "bitparallel_calibration": report,
     })
 }
 

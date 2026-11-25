@@ -5,6 +5,7 @@
 //! case-insensitive matching, overlapping matches, and exact 1-based
 //! line/column extraction.
 
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
 /// Maximum number of pattern positions supported by a 64-bit Shift-Or mask.
@@ -409,6 +410,224 @@ impl BitParallelMatcher {
         matches.sort_by_key(|m| (m.start, m.pattern_index, m.end));
         matches
     }
+
+    /// Reference scalar matcher producing exact byte-identical matches (including
+    /// overlapping matches) for parity verification against the Shift-Or path.
+    pub fn search_scalar(&self, text: &str) -> Vec<BitParallelMatch> {
+        self.search_scalar_impl(text, true)
+    }
+
+    /// Reference scalar matcher producing per-pattern non-overlapping matches for
+    /// parity verification against [`Self::search_non_overlapping`].
+    pub fn search_scalar_non_overlapping(&self, text: &str) -> Vec<BitParallelMatch> {
+        self.search_scalar_impl(text, false)
+    }
+
+    fn search_scalar_impl(
+        &self,
+        text: &str,
+        allow_same_pattern_overlap: bool,
+    ) -> Vec<BitParallelMatch> {
+        if self.patterns.is_empty() || text.is_empty() {
+            return Vec::new();
+        }
+
+        let bytes = text.as_bytes();
+        let mut line_starts = vec![0usize];
+        for nl_pos in memchr::memchr_iter(b'\n', bytes) {
+            line_starts.push(nl_pos + 1);
+        }
+
+        let mut next_allowed_start = vec![0usize; self.patterns.len()];
+        let mut matches = Vec::new();
+
+        for start in 0..bytes.len() {
+            if !text.is_char_boundary(start) {
+                continue;
+            }
+            for (pat_idx, pat) in self.patterns.iter().enumerate() {
+                if !allow_same_pattern_overlap && start < next_allowed_start[pat_idx] {
+                    continue;
+                }
+                let end = start + pat.len;
+                if end > bytes.len() || !text.is_char_boundary(end) {
+                    continue;
+                }
+                let matched = (0..pat.len)
+                    .all(|pos| (pat.masks[bytes[start + pos] as usize] & (1u64 << pos)) == 0);
+                if matched {
+                    if !allow_same_pattern_overlap {
+                        next_allowed_start[pat_idx] = end;
+                    }
+                    let line_idx = line_starts.partition_point(|&ls| ls <= start) - 1;
+                    let line_start = line_starts[line_idx];
+                    let column = text[line_start..start].chars().count() + 1;
+                    matches.push(BitParallelMatch {
+                        pattern_index: pat_idx,
+                        line: line_idx + 1,
+                        column,
+                        start,
+                        end,
+                        matched_text: text[start..end].to_string(),
+                    });
+                }
+            }
+        }
+
+        matches.sort_by_key(|m| (m.start, m.pattern_index, m.end));
+        matches
+    }
+
+    /// Verify byte-identical match parity (`dyno-ratchet` invariant) between the
+    /// bit-parallel Shift-Or matcher and the scalar reference matcher across
+    /// overlapping, non-overlapping, and pattern-index modes.
+    pub fn verify_byte_parity(&self, text: &str) -> Result<BitParallelParityReport, String> {
+        let bp_all = self.search(text);
+        let sc_all = self.search_scalar(text);
+        if bp_all != sc_all {
+            return Err(format!(
+                "overlapping parity mismatch: bit-parallel produced {} matches, scalar produced {}",
+                bp_all.len(),
+                sc_all.len()
+            ));
+        }
+
+        let bp_non = self.search_non_overlapping(text);
+        let sc_non = self.search_scalar_non_overlapping(text);
+        if bp_non != sc_non {
+            return Err(format!(
+                "non-overlapping parity mismatch: bit-parallel produced {} matches, scalar produced {}",
+                bp_non.len(),
+                sc_non.len()
+            ));
+        }
+
+        let bp_indices = self.matching_patterns(text);
+        let mut sc_indices: Vec<usize> = sc_all.iter().map(|m| m.pattern_index).collect();
+        sc_indices.sort_unstable();
+        sc_indices.dedup();
+        if bp_indices != sc_indices {
+            return Err(format!(
+                "matching_patterns parity mismatch: bit-parallel={bp_indices:?}, scalar={sc_indices:?}"
+            ));
+        }
+
+        Ok(BitParallelParityReport {
+            overlapping_match_count: bp_all.len(),
+            non_overlapping_match_count: bp_non.len(),
+            matching_pattern_indices: bp_indices,
+            byte_identical: true,
+        })
+    }
+}
+
+/// Summary of a byte-identical parity check between bit-parallel and scalar matchers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BitParallelParityReport {
+    pub overlapping_match_count: usize,
+    pub non_overlapping_match_count: usize,
+    pub matching_pattern_indices: Vec<usize>,
+    pub byte_identical: bool,
+}
+
+/// Execution path used to evaluate the GPU side of crossover calibration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBackendKind {
+    /// Simulated or CPU fallback path; never qualifies as native GPU promotion proof.
+    CpuFallback,
+    /// Native CUDA GPU kernel execution.
+    NativeGpuKernel,
+}
+
+/// Honest crossover calibration report distinguishing CPU fallback / simulated runs
+/// from verified native GPU kernel execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrossoverCalibrationReport {
+    pub execution_path: ExecutionBackendKind,
+    pub native_gpu_executed: bool,
+    pub promotion_proof: bool,
+    pub crossover_threshold_bytes: Option<u64>,
+    pub parity_verified: bool,
+    pub reason: String,
+}
+
+impl CrossoverCalibrationReport {
+    /// Construct an honest CPU-fallback report. `promotion_proof` and
+    /// `native_gpu_executed` are always `false` and `crossover_threshold_bytes` is `None`.
+    pub fn cpu_fallback(parity_verified: bool, reason: impl Into<String>) -> Self {
+        Self {
+            execution_path: ExecutionBackendKind::CpuFallback,
+            native_gpu_executed: false,
+            promotion_proof: false,
+            crossover_threshold_bytes: None,
+            parity_verified,
+            reason: reason.into(),
+        }
+    }
+
+    /// Evaluate a calibration outcome into an honest [`CrossoverCalibrationReport`].
+    ///
+    /// `CpuFallback` never sets `promotion_proof = true`, regardless of timing inputs.
+    pub fn evaluate(
+        execution_path: ExecutionBackendKind,
+        crossover_threshold_bytes: Option<u64>,
+        parity_verified: bool,
+        gpu_beats_cpu: bool,
+    ) -> Self {
+        match execution_path {
+            ExecutionBackendKind::CpuFallback => Self::cpu_fallback(
+                parity_verified,
+                "CPU fallback / simulated path cannot prove native GPU promotion",
+            ),
+            ExecutionBackendKind::NativeGpuKernel => {
+                let threshold = if gpu_beats_cpu {
+                    crossover_threshold_bytes
+                } else {
+                    None
+                };
+                let promotion_proof = parity_verified && gpu_beats_cpu && threshold.is_some();
+                let reason = if !parity_verified {
+                    "native GPU kernel ran but byte-identical parity was not verified".to_string()
+                } else if let Some(bytes) = threshold {
+                    format!(
+                        "native GPU kernel verified byte-identical parity and outperformed CPU at >= {bytes} bytes"
+                    )
+                } else {
+                    "native GPU kernel did not outperform CPU at any calibrated corpus size"
+                        .to_string()
+                };
+                Self {
+                    execution_path: ExecutionBackendKind::NativeGpuKernel,
+                    native_gpu_executed: true,
+                    promotion_proof,
+                    crossover_threshold_bytes: threshold,
+                    parity_verified,
+                    reason,
+                }
+            }
+        }
+    }
+
+    /// Run CPU-fallback parity verification and return an honest report with
+    /// `promotion_proof = false`.
+    pub fn calibrate_cpu_fallback(corpus: &str, patterns: &[&str]) -> Result<Self, String> {
+        let matcher = BitParallelMatcher::new(patterns, false)?;
+        let parity = matcher.verify_byte_parity(corpus)?;
+        Ok(Self::cpu_fallback(
+            parity.byte_identical,
+            "CPU bit-parallel fallback verified byte-identical parity; native GPU kernel not executed",
+        ))
+    }
+}
+
+/// Verify bit-parallel vs scalar byte parity on a built-in edge-case corpus
+/// (empty lines, multi-pattern, overlapping boundaries, and UTF-8 multi-byte chars).
+pub fn verify_default_bitparallel_parity() -> Result<BitParallelParityReport, String> {
+    let patterns = ["aa", "aba", "ERROR", "WARN_\\d", "é"];
+    let corpus = "\n\naaa\nababa\n\nERROR WARN_7 éé\n";
+    let matcher = BitParallelMatcher::new(&patterns, false)?;
+    matcher.verify_byte_parity(corpus)
 }
 
 /// Run a quick micro-benchmark sanity check and return `(elapsed_nanos, match_count)`.
@@ -585,5 +804,93 @@ line 4: ok00 WARN_Zy foo-bar
             dot.matching_patterns("é").is_empty(),
             dot.search("é").is_empty()
         );
+    }
+
+    #[test]
+    fn parity_scalar_vs_bitparallel_edge_cases() {
+        let patterns = ["aa", "aba", "ERROR", "WARN_\\d", "é", "🚀"];
+        let corpus = "\n\n\naaa\nababa\n\nERROR WARN_7 éé 🚀\nαβγ\nabaabaa\n";
+        let matcher = BitParallelMatcher::new(&patterns, false).expect("valid patterns");
+        let report = matcher
+            .verify_byte_parity(corpus)
+            .expect("bit-parallel and scalar matchers must be byte-identical");
+        assert!(report.byte_identical);
+        assert_eq!(report.matching_pattern_indices, vec![0, 1, 2, 3, 4, 5]);
+        assert!(report.overlapping_match_count >= report.non_overlapping_match_count);
+
+        let ci_matcher =
+            BitParallelMatcher::new(&["error", "warn_\\w", "é"], true).expect("valid ci patterns");
+        let ci_report = ci_matcher
+            .verify_byte_parity("\nERROR\nwarn_A\né\n")
+            .expect("case-insensitive parity must hold");
+        assert!(ci_report.byte_identical);
+
+        let default_report = verify_default_bitparallel_parity().expect("default parity");
+        assert!(default_report.byte_identical);
+    }
+
+    #[test]
+    fn crossover_calibration_report_cpu_fallback_never_claims_promotion_proof() {
+        let fallback = CrossoverCalibrationReport::cpu_fallback(true, "simulated CPU run");
+        assert_eq!(fallback.execution_path, ExecutionBackendKind::CpuFallback);
+        assert!(!fallback.native_gpu_executed);
+        assert!(!fallback.promotion_proof);
+        assert_eq!(fallback.crossover_threshold_bytes, None);
+        assert!(fallback.parity_verified);
+
+        // Even if a caller passes a positive threshold and gpu_beats_cpu=true under CpuFallback,
+        // promotion_proof must remain false.
+        let evaluated = CrossoverCalibrationReport::evaluate(
+            ExecutionBackendKind::CpuFallback,
+            Some(1024 * 1024),
+            true,
+            true,
+        );
+        assert_eq!(evaluated.execution_path, ExecutionBackendKind::CpuFallback);
+        assert!(!evaluated.native_gpu_executed);
+        assert!(!evaluated.promotion_proof);
+        assert_eq!(evaluated.crossover_threshold_bytes, None);
+
+        let live_cpu = CrossoverCalibrationReport::calibrate_cpu_fallback(
+            "ERROR\n\nWARN_1\n",
+            &["ERROR", "WARN_\\d"],
+        )
+        .expect("cpu fallback calibration");
+        assert!(live_cpu.parity_verified);
+        assert!(!live_cpu.native_gpu_executed);
+        assert!(!live_cpu.promotion_proof);
+    }
+
+    #[test]
+    fn crossover_calibration_report_native_gpu_requires_parity_and_measured_crossover() {
+        let no_parity = CrossoverCalibrationReport::evaluate(
+            ExecutionBackendKind::NativeGpuKernel,
+            Some(104_857_600),
+            false,
+            true,
+        );
+        assert!(no_parity.native_gpu_executed);
+        assert!(!no_parity.promotion_proof);
+
+        let cpu_faster = CrossoverCalibrationReport::evaluate(
+            ExecutionBackendKind::NativeGpuKernel,
+            Some(104_857_600),
+            true,
+            false,
+        );
+        assert!(cpu_faster.native_gpu_executed);
+        assert!(!cpu_faster.promotion_proof);
+        assert_eq!(cpu_faster.crossover_threshold_bytes, None);
+
+        let proven = CrossoverCalibrationReport::evaluate(
+            ExecutionBackendKind::NativeGpuKernel,
+            Some(104_857_600),
+            true,
+            true,
+        );
+        assert_eq!(proven.execution_path, ExecutionBackendKind::NativeGpuKernel);
+        assert!(proven.native_gpu_executed);
+        assert!(proven.promotion_proof);
+        assert_eq!(proven.crossover_threshold_bytes, Some(104_857_600));
     }
 }
