@@ -29,6 +29,7 @@ from tensor_grep.io.confined import (
 
 TDAD_CACHE_REL_PATH = Path(".tg_cache") / "graph_v1" / "tdad_tests.sqlite3"
 _TDAD_DB_LIMIT = 32 * 1024 * 1024
+_TDAD_SOURCE_FILE_LIMIT = 16 * 1024 * 1024
 _TDAD_SCHEMA_VERSION = 1
 _SLICE_SCHEMA_VERSION = 1
 
@@ -108,16 +109,23 @@ def _collect_repo_map_file_paths(
 
 
 def _compute_repo_fingerprint(repo_root: Path, tracked_files: Sequence[str]) -> str:
+    resolved_root = Path(repo_root).expanduser().resolve()
     hasher = hashlib.blake2b(digest_size=32)
-    hasher.update(_git_head_revision(repo_root).encode("utf-8"))
+    hasher.update(_git_head_revision(resolved_root).encode("utf-8"))
     hasher.update(b"\0")
-    for rel in sorted({_norm_path(f, repo_root=repo_root) for f in tracked_files if f}):
-        fp = repo_root / rel
+    for rel in sorted({_norm_path(f, repo_root=resolved_root) for f in tracked_files if f}):
+        fp = resolved_root / rel
         try:
             st = fp.lstat()
-            entry = f"{rel}:{int(st.st_mtime_ns)}:{int(st.st_size)}\n"
         except OSError:
-            entry = f"{rel}:missing\n"
+            hasher.update(f"{rel}:missing\n".encode())
+            continue
+        try:
+            content = read_confined(resolved_root, fp, _TDAD_SOURCE_FILE_LIMIT)
+            content_tag = hashlib.blake2b(content, digest_size=32).hexdigest()
+        except (OSError, ValueError):
+            content_tag = "unreadable"
+        entry = f"{rel}:{int(st.st_mtime_ns)}:{int(st.st_size)}:{content_tag}\n"
         hasher.update(entry.encode("utf-8"))
     return hasher.hexdigest()
 

@@ -333,6 +333,50 @@ def test_tdad_cache_invalidates_on_file_change_and_git_head_change(
     assert third["cache_hit"] is False
 
 
+def test_tdad_cache_invalidates_on_same_size_edit_with_restored_mtime(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import os
+
+    from tensor_grep.cli import tdad_kg_ast
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    src_alpha = repo / "src" / "alpha.py"
+    src_beta = repo / "src" / "beta.py"
+    test_file = repo / "tests" / "test_suite.py"
+    src_alpha.write_text("def fn_a():\n    return 1\n", encoding="utf-8")
+    src_beta.write_text("def fn_b():\n    return 2\n", encoding="utf-8")
+    original_content = "from src.alpha import fn_a\n\ndef test_it():\n    assert fn_a() == 1\n"
+    updated_content = "from src.beta  import fn_b\n\ndef test_it():\n    assert fn_b() == 2\n"
+    assert len(original_content.encode("utf-8")) == len(updated_content.encode("utf-8"))
+    test_file.write_text(original_content, encoding="utf-8")
+
+    monkeypatch.setattr(tdad_kg_ast, "_git_head_revision", lambda _root: "rev-1")
+
+    first = ensure_tdad_dependency_map(repo, persist=True)
+    assert first["cache_hit"] is False
+    second = ensure_tdad_dependency_map(repo, persist=True)
+    assert second["cache_hit"] is True
+
+    orig_stat = test_file.stat()
+    test_file.write_text(updated_content, encoding="utf-8")
+    os.utime(test_file, ns=(orig_stat.st_atime_ns, orig_stat.st_mtime_ns))
+
+    restored_stat = test_file.stat()
+    assert restored_stat.st_size == orig_stat.st_size
+    assert restored_stat.st_mtime_ns == orig_stat.st_mtime_ns
+
+    third = ensure_tdad_dependency_map(repo, persist=True)
+    assert third["cache_hit"] is False
+
+    beta_hits = query_tdad_tests(repo, ["src/beta.py"], repo_map_payload=None)
+    assert any(h["test_file"] == "tests/test_suite.py" for h in beta_hits)
+    alpha_hits = query_tdad_tests(repo, ["src/alpha.py"], repo_map_payload=None)
+    assert not any(h["test_file"] == "tests/test_suite.py" for h in alpha_hits)
+
+
 def test_prepare_populates_tdad_cache(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
