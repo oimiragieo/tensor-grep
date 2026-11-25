@@ -20,7 +20,7 @@
     "producer_fingerprint": "5773848423b85f32d1f6dac8c7ab58f1572e80af951c4cfaef330dd789655a65"
   },
   {
-    "identity": "backends/ast_wrapper_backend.py:AstGrepWrapperBackend._run_ast_grep_command:subprocess.run:4428f93443dc103b4b7698907aed771ed3cf9481d7ad19ca388ddab98d9f7184:0",
+    "identity": "backends/ast_wrapper_backend.py:AstGrepWrapperBackend._run_ast_grep_command:subprocess.run:f8e28e86f0d65b887b503d505f32efb33ae050a079e22437b91120c9b7c9c914:0",
     "path": "backends/ast_wrapper_backend.py",
     "function": "AstGrepWrapperBackend._run_ast_grep_command",
     "line": 454,
@@ -36,8 +36,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "4428f93443dc103b4b7698907aed771ed3cf9481d7ad19ca388ddab98d9f7184",
-    "producer_fingerprint": "69892c0b076e9af301498fca725cc776c10520c22993a6919d3d3227a09afa92"
+    "call_fingerprint": "f8e28e86f0d65b887b503d505f32efb33ae050a079e22437b91120c9b7c9c914",
+    "producer_fingerprint": "212b41b2dd6808e2030f767263dfaf3f7796ef64fe5ead66c9befc76f11475ac"
   },
   {
     "identity": "backends/ripgrep_backend.py:RipgrepBackend.supports_pcre2:run_subprocess:a79318292abf54dacea9a447d3d4d5bd1d13ce52436d4a0c6cfbd2ddf11b1fcb:0",
@@ -200,7 +200,7 @@
     "producer_fingerprint": "580e206847737c7e009336d5d9bec236b3241aaf71548b20cd923306a48dc55d"
   },
   {
-    "identity": "cli/apply_policy.py:_run_policy_command:subprocess.run:c27b86eea3b5704e1c913960848640e531ac336958329b4daca40757c75b2898:0",
+    "identity": "cli/apply_policy.py:_run_policy_command:subprocess.run:52425d0cdb72c09b2457756af94a24df97d1d14d2ab84777af2505701fdd0f5f:0",
     "path": "cli/apply_policy.py",
     "function": "_run_policy_command",
     "line": 728,
@@ -216,8 +216,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "c27b86eea3b5704e1c913960848640e531ac336958329b4daca40757c75b2898",
-    "producer_fingerprint": "d0d562d6e21b4ac9fe3b3395dcf3fd4c6ac3342b459b5bc8080dfb257b313a34"
+    "call_fingerprint": "52425d0cdb72c09b2457756af94a24df97d1d14d2ab84777af2505701fdd0f5f",
+    "producer_fingerprint": "0d99c40f5d885f956381004f4d3d970b82360cdbb2a4f6fb95bfbd5929ad7496"
   },
   {
     "identity": "cli/audit_manifest.py:_resolve_git_ref_commit_sha:run_subprocess:b08d83e377d9453a8ea152197855d726da122f47845c2dc9ebca5ff2cd1a20df:0",
@@ -766,7 +766,7 @@
     "producer_fingerprint": "1c84fc9c1bdd22e41394b0b676220475ec8a4ff55a1e48bb7bfbe5d6bee05311"
   },
   {
-    "identity": "cli/lsp_provider_setup.py:_run_checked:subprocess.run:d9e2f308f5535a257fa254cbdf13e653d8d0ce375d56d9ab3e57ccd25e72dd7d:0",
+    "identity": "cli/lsp_provider_setup.py:_run_checked:subprocess.run:34d617b568f042416990e445f56d04905719ee1c92c366980b22d8114e07f0a1:0",
     "path": "cli/lsp_provider_setup.py",
     "function": "_run_checked",
     "line": 607,
@@ -782,14 +782,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "d9e2f308f5535a257fa254cbdf13e653d8d0ce375d56d9ab3e57ccd25e72dd7d",
-    "producer_fingerprint": "22bfd3d8ef5538cdd8a3c58ad442c2c04fe6ec91d6b1e912f90e62d3622dca54"
+    "call_fingerprint": "34d617b568f042416990e445f56d04905719ee1c92c366980b22d8114e07f0a1",
+    "producer_fingerprint": "ebe3af343afc558fadc75c2b8f60a7d791984dead59ff3aa5ef7c0bf3acaeade"
   },
   {
-    "identity": "cli/lsp_provider_setup.py:_find_go_binary_name:subprocess.run:d6a6bd25c37ec787864d821143fa9d4097b8b7078549f4143c9e34fc4cd7af53:0",
+    "identity": "cli/lsp_provider_setup.py:_find_go_binary_name:subprocess.run:af2d70cf3106c0be2ee4c5ab1ac50d4ea4ba0708f2d6e864e227a4916dcc4151:0",
     "path": "cli/lsp_provider_setup.py",
     "function": "_find_go_binary_name",
-    "line": 811,
+    "line": 813,
     "column": 20,
     "target": "subprocess.run",
     "policy": "bytes-protocol",
@@ -802,14 +802,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "d6a6bd25c37ec787864d821143fa9d4097b8b7078549f4143c9e34fc4cd7af53",
-    "producer_fingerprint": "273271b444a9312cf3a32b6472277148cdf81adb535799652ddbdb8c6be1d272"
+    "call_fingerprint": "af2d70cf3106c0be2ee4c5ab1ac50d4ea4ba0708f2d6e864e227a4916dcc4151",
+    "producer_fingerprint": "5a644b2e27033b27bfdb92fbc101babde46ee15cb42e991db2384059e64f6215"
   },
   {
-    "identity": "cli/lsp_provider_setup.py:_ensure_csharp_ls:subprocess.run:602859e3c5c0b968e5a26cee90f8c1497205136f049b33d92eff8026fc53160a:0",
+    "identity": "cli/lsp_provider_setup.py:_ensure_csharp_ls:subprocess.run:7e5175e8b86766124063ac4601f61dd25c31a2927734fd93516e3e69bb00c6a7:0",
     "path": "cli/lsp_provider_setup.py",
     "function": "_ensure_csharp_ls",
-    "line": 871,
+    "line": 875,
     "column": 16,
     "target": "subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -822,14 +822,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "602859e3c5c0b968e5a26cee90f8c1497205136f049b33d92eff8026fc53160a",
-    "producer_fingerprint": "7e58acc5e676e5cb5f1611864294621f9e1fc480bac3109648f0de316518dc47"
+    "call_fingerprint": "7e5175e8b86766124063ac4601f61dd25c31a2927734fd93516e3e69bb00c6a7",
+    "producer_fingerprint": "d20afeece5abeeec4774d83f86102d14969e30bf9656195b2e68f4aba5e44f83"
   },
   {
-    "identity": "cli/lsp_provider_setup.py:_swift_command:subprocess.run:e3268ba5724b5ccbcd7863788b967de0a1a72f2c656610cb1e1e0b4bdff2079b:0",
+    "identity": "cli/lsp_provider_setup.py:_swift_command:subprocess.run:a80e1d4661ef84d9e6bd47f23234ba4a634df2ad3e78b7dd0415ef49f7358f1e:0",
     "path": "cli/lsp_provider_setup.py",
     "function": "_swift_command",
-    "line": 917,
+    "line": 923,
     "column": 16,
     "target": "subprocess.run",
     "policy": "bytes-protocol",
@@ -842,8 +842,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "e3268ba5724b5ccbcd7863788b967de0a1a72f2c656610cb1e1e0b4bdff2079b",
-    "producer_fingerprint": "76e74bd2e6b18593df4006193950983e1c1d06c6a610f87c151f0a68e10cd055"
+    "call_fingerprint": "a80e1d4661ef84d9e6bd47f23234ba4a634df2ad3e78b7dd0415ef49f7358f1e",
+    "producer_fingerprint": "6c2aec465f31b7995ffd5ae654a083b3473fcf0a126c5ff6dbcaa24e8bb6aa05"
   },
   {
     "identity": "cli/main.py:_delegate_to_native_tg_search:subprocess.run:c6de068d71c2934e83679429dc7984fdba89f397e69ccf1341b8c2a1aabb0862:0",
@@ -1506,7 +1506,7 @@
     "producer_fingerprint": "72cd630d85e01c62aec665b86fa6603fec05651d450ef70912f26554dbbcf3a8"
   },
   {
-    "identity": "cli/predictive_test_selector.py:_bounded_git_cochanges:subprocess.run:af4ede0c6759065a1423bc710c6257eb12641974cc407b915080256eb359b64a:0",
+    "identity": "cli/predictive_test_selector.py:_bounded_git_cochanges:subprocess.run:c7ecc45332be261cbba958ec5858ce340b1e5f1bdc661b22aae4577260d85722:0",
     "path": "cli/predictive_test_selector.py",
     "function": "_bounded_git_cochanges",
     "line": 52,
@@ -1522,8 +1522,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "af4ede0c6759065a1423bc710c6257eb12641974cc407b915080256eb359b64a",
-    "producer_fingerprint": "b593485229431b7e7273df92f18748c598b719328ecff1aea3e9202b5d143877"
+    "call_fingerprint": "c7ecc45332be261cbba958ec5858ce340b1e5f1bdc661b22aae4577260d85722",
+    "producer_fingerprint": "7fcb1fa8c96499db416ca0784fb5e1529b3a18a91b015b1b6efb75a731eda8eb"
   },
   {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",
@@ -1630,7 +1630,7 @@
     "producer_fingerprint": "3abb83e3acff109b9baf67094cc808369c4fca15c72725303eaadc81339a7d2c"
   },
   {
-    "identity": "cli/session_daemon.py:_restrict_windows_file_to_current_user:subprocess.run:9a234935993fd88257ff67cb2a8c157b0df62ff0e68b93e635f35c44dea78350:0",
+    "identity": "cli/session_daemon.py:_restrict_windows_file_to_current_user:subprocess.run:0bd0e243e601112d83372017b4e09152875b9122c1eaefe4cb79785f34d14bad:0",
     "path": "cli/session_daemon.py",
     "function": "_restrict_windows_file_to_current_user",
     "line": 369,
@@ -1646,8 +1646,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "9a234935993fd88257ff67cb2a8c157b0df62ff0e68b93e635f35c44dea78350",
-    "producer_fingerprint": "66214527e03e9432b3a16cde2fd7587474e7d8fde6e6073211db7088c17ef26d"
+    "call_fingerprint": "0bd0e243e601112d83372017b4e09152875b9122c1eaefe4cb79785f34d14bad",
+    "producer_fingerprint": "9334eeb52ebc91f7f32b7f11398d251df9134eaa17945e40366be20662e89ff6"
   },
   {
     "identity": "cli/session_daemon_start_capture.py:spawn_daemon_subprocess:subprocess.Popen:cc8b25cac77bb4a7609cdbfdf3801e3ffab472c7d0e2bc508ebbe7786758135c:0",

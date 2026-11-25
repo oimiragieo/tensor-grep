@@ -49,7 +49,14 @@ def _bounded_git_cochanges(
             "--",
             rel_source,
         ]
-        proc = subprocess.run(cmd, capture_output=True, timeout=0.5, check=False)
+        proc = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=0.5,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
     except (OSError, ValueError, subprocess.SubprocessError):
         return set()
     if proc.returncode != 0 or not proc.stdout:
