@@ -591,3 +591,76 @@ def test_verify_review_bundle_refuses_change_slice_stripping_and_expected_digest
         audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest=orig_digest)["valid"]
         is False
     )
+
+    # API + CLI: --require-change-slice and --expect-slice-digest fail closed (exit 1)
+    # when change_slice + slice_digest + checksums are stripped and bundle_sha256 is recomputed
+    api_req = audit_manifest.verify_review_bundle(bundle_path, require_change_slice=True)
+    assert api_req["valid"] is False
+    assert api_req["slice_digest_valid"] is False
+    assert api_req.get("slice_digest_reason") == "missing_change_slice"
+
+    api_req_json = json.loads(
+        audit_manifest.verify_review_bundle_json(bundle_path, require_change_slice=True)
+    )
+    assert api_req_json["valid"] is False
+    assert api_req_json["slice_digest_valid"] is False
+    assert api_req_json.get("slice_digest_reason") == "missing_change_slice"
+
+    cli_req = runner.invoke(
+        app,
+        ["review-bundle", "verify", str(bundle_path), "--require-change-slice", "--json"],
+    )
+    assert cli_req.exit_code == 1
+    cli_req_payload = json.loads(cli_req.stdout)
+    assert cli_req_payload["valid"] is False
+    assert cli_req_payload["slice_digest_valid"] is False
+    assert cli_req_payload.get("slice_digest_reason") == "missing_change_slice"
+
+    cli_exp = runner.invoke(
+        app,
+        [
+            "review-bundle",
+            "verify",
+            str(bundle_path),
+            "--expect-slice-digest",
+            orig_digest,
+            "--json",
+        ],
+    )
+    assert cli_exp.exit_code == 1
+    cli_exp_payload = json.loads(cli_exp.stdout)
+    assert cli_exp_payload["valid"] is False
+    assert cli_exp_payload["slice_digest_valid"] is False
+
+
+def test_tdad_sqlite_cache_missing_required_columns_rebuilds_gracefully(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "billing.py").write_text("def charge(x):\n    return x\n", encoding="utf-8")
+    (repo / "tests" / "test_billing.py").write_text(
+        "from src.billing import charge\n\ndef test_charge():\n    assert charge(1) == 1\n",
+        encoding="utf-8",
+    )
+
+    db_path = repo / TDAD_CACHE_REL_PATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    mem = sqlite3.connect(":memory:")
+    try:
+        with mem:
+            mem.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            mem.execute(
+                "CREATE TABLE source_test_deps ("
+                "source_symbol TEXT NOT NULL, test_file TEXT NOT NULL, "
+                "edge_kind TEXT NOT NULL, weight REAL NOT NULL)"
+            )
+            mem.execute("INSERT INTO metadata(key, value) VALUES ('schema_version', '1')")
+        db_path.write_bytes(mem.serialize())
+    finally:
+        mem.close()
+
+    rebuilt = ensure_tdad_dependency_map(repo, persist=True)
+    assert rebuilt["cache_hit"] is False
+    assert rebuilt["edge_count"] > 0
+    hits = query_tdad_tests(repo, ["src/billing.py"])
+    assert any(h["test_file"] == "tests/test_billing.py" for h in hits)

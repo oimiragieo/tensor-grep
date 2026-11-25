@@ -200,11 +200,37 @@ def _open_tdad_db(repo_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connec
                     ).fetchall()
                 }
                 if {"metadata", "source_test_deps"}.issubset(tables):
-                    ver_row = conn.execute(
-                        "SELECT value FROM metadata WHERE key = 'schema_version'"
-                    ).fetchone()
-                    if ver_row is not None and str(ver_row[0]) == str(_TDAD_SCHEMA_VERSION):
-                        loaded_from_disk = True
+                    meta_cols = {
+                        row[1] for row in conn.execute("PRAGMA table_info(metadata)").fetchall()
+                    }
+                    dep_cols = {
+                        row[1]
+                        for row in conn.execute("PRAGMA table_info(source_test_deps)").fetchall()
+                    }
+                    required_dep_cols = {
+                        "source_file",
+                        "source_symbol",
+                        "test_file",
+                        "edge_kind",
+                        "weight",
+                    }
+                    if {"key", "value"}.issubset(meta_cols) and required_dep_cols.issubset(
+                        dep_cols
+                    ):
+                        ver_row = conn.execute(
+                            "SELECT value FROM metadata WHERE key = 'schema_version'"
+                        ).fetchone()
+                        if ver_row is not None and str(ver_row[0]) == str(_TDAD_SCHEMA_VERSION):
+                            with conn:
+                                conn.execute(
+                                    "CREATE INDEX IF NOT EXISTS idx_tdad_src_file "
+                                    "ON source_test_deps(source_file)"
+                                )
+                                conn.execute(
+                                    "CREATE INDEX IF NOT EXISTS idx_tdad_src_sym "
+                                    "ON source_test_deps(source_symbol)"
+                                )
+                            loaded_from_disk = True
             except (sqlite3.Error, ValueError, OSError):
                 loaded_from_disk = False
             if not loaded_from_disk:
