@@ -52,9 +52,7 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.root_app import create_root_app
-from tensor_grep.cli.runtime_paths import (
-    _native_tg_version as _native_tg_version,
-)
+from tensor_grep.cli.runtime_paths import _native_tg_version as _native_tg_version
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version_matches as _native_tg_version_matches,
 )
