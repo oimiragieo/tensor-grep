@@ -61,9 +61,7 @@ from tensor_grep.cli.prepare_service import _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.root_app import create_root_app
 from tensor_grep.cli.runtime_paths import _native_tg_version as _native_tg_version
-from tensor_grep.cli.runtime_paths import (
-    _native_tg_version_matches as _native_tg_version_matches,
-)
+from tensor_grep.cli.runtime_paths import _native_tg_version_matches as _native_tg_version_matches
 from tensor_grep.cli.runtime_paths import env_flag_disabled, env_flag_enabled
 from tensor_grep.cli.runtime_paths import inspect_native_tg_binary as inspect_native_tg_binary
 from tensor_grep.cli.runtime_paths import (
@@ -4843,6 +4841,7 @@ def orient(
     # orient_capsule import and the daemon gate, so front-door time counts against --deadline.
     # CLI consistency fix : `--deadline` used to be undefined on `tg orient`
     # (Click "No such option" exit-2).
+    orient_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
@@ -4885,7 +4884,6 @@ def orient(
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc
 
-    orient_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
     if json_output:
         # build_orient_capsule_json's exact format (json.dumps(..., indent=2), no
         # ensure_ascii=False) -- match it here so a warm hit is byte-identical to a cold miss.
@@ -5828,7 +5826,9 @@ def agent(
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
         # Daemon misses or unreliable evidence fall through to the cold build. Requests requiring
         # fresh deadlines or new option contracts use the cold path until daemon schema support.
-        effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
+        effective_detail = _resolve_compact_detail(
+            compact, detail, json_output=json_output, citations=citations
+        )
         daemon_payload = (
             _self._maybe_agent_via_running_daemon(
                 path=resolved_path,

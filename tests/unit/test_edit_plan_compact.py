@@ -127,6 +127,31 @@ def test_agent_compact_rejects_conflicting_detail_or_missing_json(tmp_path: Path
     assert len(bounded.encode("utf-8")) <= 4000
     assert "call_site_evidence" in json.loads(bounded)
 
+    emoji_stress = {
+        "context_consistency": {f"field_{i}": "😀" * 200 for i in range(20)},
+        "omissions": {"omitted_section_count": 0},
+        "rollback": {"command": "tg checkpoint create ."},
+        "call_site_evidence": {
+            "status": "collected",
+            "callers": [{"file": "😀" * 200, "snippet": "😀" * 200} for _ in range(10)],
+        },
+    }
+    bounded_emoji = dump_detail_json(emoji_stress, "compact", ensure_ascii=False)
+    assert len(bounded_emoji.encode("utf-8")) <= 4000
+    assert set(json.loads(bounded_emoji)) >= {
+        "call_site_evidence",
+        "compact_truncated",
+        "context_consistency",
+        "omissions",
+        "rollback",
+    }
+    assert (
+        runner.invoke(
+            app, ["agent", str(tmp_path), "f", "--json", "--compact", "--citations"]
+        ).exit_code
+        == 2
+    )
+
 
 def test_compact_payload_does_not_mutate_input() -> None:
     original = {
