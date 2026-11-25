@@ -39,8 +39,12 @@ tg search -F -n "TODO" .
 # Get an overview of the project's central files and likely entry points.
 tg orient .
 
-# Gather relevant code for a question, within a context budget.
+# Gather relevant code for a question, within a context budget (or --compact for <=4KB JSON).
 tg context . "how are invoices calculated?" --max-tokens 2000
+tg edit-plan . "how are invoices calculated?" --json --compact
+
+# Search using local-first SQLite FTS5 + adaptive IDF-weighted RRF hybrid ranking.
+tg find --hybrid "invoice calculation" . --json
 ```
 
 Use `tg --help` for grouped command examples and `tg COMMAND --help` for options. Environment overrides are documented in [CLI environment settings](docs/cli_environment.md).
