@@ -556,7 +556,7 @@ class HybridSQLiteIndex:
             return {}
 
         q_bin = pack_heaviside_1bit(q_list)
-        preview_k = max(limit * 8, 32) if limit is not None and limit > 0 else len(rows)
+        preview_k = max(limit * 16, 64) if limit is not None and limit > 0 else len(rows)
 
         # Stage 1: Fast 1-bit Hamming recall preview when binary_blob is present.
         has_all_binary = q_bin is not None and all(r[2] is not None for r in rows)
@@ -569,9 +569,19 @@ class HybridSQLiteIndex:
                     continue
                 hamming_scored.append((h_sim, str(doc_id), bytes(emb_blob) if emb_blob else None))
             hamming_scored.sort(key=lambda item: (-item[0], item[1]))
-            survivors = [
-                (doc_id, emb_blob, h_sim) for h_sim, doc_id, emb_blob in hamming_scored[:preview_k]
-            ]
+            # Include all candidates tied at the Hamming cutoff so lexicographic doc_id
+            # ordering cannot silently drop strong cosine matches before Stage 2 reranking.
+            if len(hamming_scored) > preview_k:
+                cutoff_h_sim = hamming_scored[preview_k - 1][0]
+                survivors = [
+                    (doc_id, emb_blob, h_sim)
+                    for idx, (h_sim, doc_id, emb_blob) in enumerate(hamming_scored)
+                    if idx < preview_k or h_sim >= cutoff_h_sim
+                ]
+            else:
+                survivors = [
+                    (doc_id, emb_blob, h_sim) for h_sim, doc_id, emb_blob in hamming_scored
+                ]
         else:
             survivors = [
                 (

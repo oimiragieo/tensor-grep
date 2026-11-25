@@ -947,6 +947,13 @@ def _build_prepare_payload(
             )
             view_fresh = check_view_freshness(manifest, merkle_root, ("symbols_v1", "graph_v1"))
             manifest_fresh = all(view_fresh.values())
+            graph_view_ready = bool(
+                manifest_fresh
+                and isinstance(manifest, dict)
+                and isinstance(manifest.get("views"), dict)
+                and isinstance(manifest["views"].get("graph_v1"), dict)
+                and manifest["views"]["graph_v1"].get("ready") is True
+            )
 
             rm_context_digest = hashlib.blake2b(
                 json.dumps(
@@ -954,6 +961,14 @@ def _build_prepare_payload(
                         "files": rm.get("files") or [],
                         "imports": rm.get("imports") or [],
                         "exports": rm.get("exports") or [],
+                        "tests": rm.get("tests") or [],
+                        "query": resolved_query,
+                        "seed_files": seed_files,
+                        "related_call_sites": related_call_sites,
+                        "edges_by_file": {
+                            src: sorted((dst, kind) for dst, kind in edges)
+                            for src, edges in edges_by_file.items()
+                        },
                         "merkle_root": merkle_root,
                     },
                     sort_keys=True,
@@ -970,6 +985,7 @@ def _build_prepare_payload(
                 max_hops=2,
                 max_nodes=24,
                 deadline_monotonic=deadline_monotonic,
+                force_refresh=not graph_view_ready,
                 context_digest=rm_context_digest,
             )
             if len(seed_files) > 1 and ego_subgraph is not None:
@@ -1000,16 +1016,34 @@ def _build_prepare_payload(
                 ego_subgraph["nodes"] = merged_nodes
                 ego_subgraph["edges"] = merged_edges
                 ego_subgraph["seed_files"] = seed_files
-            if (
-                can_use_warm_cache
-                and not manifest_fresh
-                and ego_subgraph is not None
+            rm_truncated_for_manifest = bool(
+                (rm.get("scan_limit") or {}).get("possibly_truncated")
+            ) or bool(rm.get("possibly_truncated"))
+            symbols_ready = (
+                not bool(rm.get("partial"))
+                and not bool(rm.get("unreadable_paths"))
+                and not rm_truncated_for_manifest
+            )
+            graph_ready = (
+                ego_subgraph is not None
                 and int((ego_subgraph.get("sync") or {}).get("complete", 0)) == 1
-            ):
+            )
+            if can_use_warm_cache and not graph_view_ready:
+                view_updates: dict[str, tuple[bool, int]] = {
+                    "symbols_v1": (symbols_ready, 1),
+                    "graph_v1": (graph_ready, 1),
+                }
+                other_view_fresh = check_view_freshness(
+                    manifest, merkle_root, ("hybrid_v1", "index_v1")
+                )
+                if (resolved_root_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3").is_file():
+                    view_updates["hybrid_v1"] = (bool(other_view_fresh.get("hybrid_v1")), 1)
+                if (resolved_root_path / ".tg_cache" / "index_v1" / "trigram.idx").is_file():
+                    view_updates["index_v1"] = (bool(other_view_fresh.get("index_v1")), 1)
                 update_view_states(
                     resolved_root_path,
                     merkle_root,
-                    {"symbols_v1": (True, 1), "graph_v1": (True, 1)},
+                    view_updates,
                     source_address=source_address,
                     deadline_monotonic=deadline_monotonic,
                 )

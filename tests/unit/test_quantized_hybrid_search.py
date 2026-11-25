@@ -157,3 +157,27 @@ def test_legacy_v2_schema_without_binary_blob_upgrades_cleanly(tmp_path: Path) -
         assert "binary_blob" in cols
         index.upsert_documents([("d1", "hello world", [1.0, 0.0, 1.0, 0.0])])
         assert index.search("hello", query_vec=[1.0, 0.0, 1.0, 0.0], limit=1)[0]["doc_id"] == "d1"
+
+
+def test_hamming_preview_preserves_strong_cosine_match_across_hamming_ties() -> None:
+    # 100 docs (> preview_k=64 for limit=3) all share the exact same sign pattern as query_vec
+    # (1-bit Hamming similarity = 1.0 for every doc). doc_99 has the highest cosine similarity
+    # and must not be dropped by preview_k truncation + doc_id tie-breaking.
+    dim = 16
+    query_vec = [1.0] * dim
+    docs: list[tuple[str, str, list[float]]] = []
+    for idx in range(100):
+        if idx == 99:
+            emb = [1.0] * dim  # cosine = 1.0
+        else:
+            # Same all-positive sign pattern, skewed magnitude -> lower cosine (~0.25)
+            emb = [10.0 if i == 0 else 0.01 for i in range(dim)]
+        docs.append((f"doc_{idx:02d}", f"symbol_{idx}", emb))
+
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents(docs)
+        hits = index.search(
+            "nonexistent_lexical_token", query_vec=query_vec, limit=3, idf_weight=0.0
+        )
+        assert len(hits) == 3
+        assert hits[0]["doc_id"] == "doc_99"

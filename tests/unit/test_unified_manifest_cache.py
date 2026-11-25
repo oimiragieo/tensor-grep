@@ -198,3 +198,102 @@ def test_warm_prepare_reuses_unified_manifest_and_expands_larger_neighborhood(
     warm_manifest = load_unified_manifest(tmp_path)
     assert warm_manifest is not None
     assert warm_manifest["views"]["graph_v1"]["updated_at"] == cold_updated_at
+
+
+def test_prepare_forces_graph_refresh_when_manifest_stale_or_invalid_and_tracks_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+
+    # Create hybrid_v1 and index_v1 artifacts on disk so view inspection records them.
+    hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+    hybrid_path.parent.mkdir(parents=True, exist_ok=True)
+    hybrid_path.write_bytes(b"stale-hybrid")
+    index_path = tmp_path / ".tg_cache" / "index_v1" / "trigram.idx"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_bytes(b"stale-index")
+
+    # Mark graph_v1 ready=False in manifest_v1.json -> prepare must force refresh and repair it.
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"symbols_v1": (True, 1), "graph_v1": (False, 1)},
+        source_address=addr1,
+    )
+
+    seen_force_refresh: list[bool] = []
+    from tensor_grep.cli import symbol_graph_index
+
+    orig_sync = symbol_graph_index.sync_incremental_ego_subgraph_from_paths
+
+    def spy_sync(*args, **kwargs):
+        seen_force_refresh.append(bool(kwargs.get("force_refresh", False)))
+        return orig_sync(*args, **kwargs)
+
+    monkeypatch.setattr(symbol_graph_index, "sync_incremental_ego_subgraph_from_paths", spy_sync)
+
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    assert seen_force_refresh == [True]
+    repaired = load_unified_manifest(tmp_path)
+    assert repaired is not None
+    assert repaired["views"]["graph_v1"]["ready"] is True
+    assert repaired["views"]["symbols_v1"]["ready"] is True
+    assert repaired["views"]["hybrid_v1"]["ready"] is False
+    assert repaired["views"]["index_v1"]["ready"] is False
+
+
+def test_prepare_context_digest_changes_across_queries_and_marks_partial_symbols_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_repo(tmp_path)
+    seen_digests: list[str] = []
+    from tensor_grep.cli import symbol_graph_index
+
+    orig_sync = symbol_graph_index.sync_incremental_ego_subgraph_from_paths
+
+    def spy_sync(*args, **kwargs):
+        seen_digests.append(str(kwargs.get("context_digest") or ""))
+        return orig_sync(*args, **kwargs)
+
+    monkeypatch.setattr(symbol_graph_index, "sync_incremental_ego_subgraph_from_paths", spy_sync)
+
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="compute tax rate",
+        claim=False,
+    )
+    assert len(seen_digests) == 2
+    assert seen_digests[0] != ""
+    assert seen_digests[0] != seen_digests[1]
+
+    # Partial repo_map must NOT mark symbols_v1 ready even when graph sync completes.
+    orig_build = repo_map.build_repo_map
+
+    def partial_build(*args, **kwargs):
+        rm = orig_build(*args, **kwargs)
+        rm["partial"] = True
+        return rm
+
+    monkeypatch.setattr(repo_map, "build_repo_map", partial_build)
+    partial_dir = tmp_path / "partial_repo"
+    partial_dir.mkdir()
+    _make_repo(partial_dir)
+    prepare_service._build_prepare_payload(
+        path=str(partial_dir),
+        query="invoice total calculation",
+        claim=False,
+    )
+    partial_manifest = load_unified_manifest(partial_dir)
+    assert partial_manifest is not None
+    assert partial_manifest["views"]["graph_v1"]["ready"] is True
+    assert partial_manifest["views"]["symbols_v1"]["ready"] is False
