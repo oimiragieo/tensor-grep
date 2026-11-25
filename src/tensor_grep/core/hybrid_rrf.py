@@ -163,7 +163,7 @@ def _pack_embedding(emb: Sequence[float] | None) -> bytes | None:
     if np is not None:
         arr = np.asarray(emb, dtype=np.float64)
         arr = np.where(np.isfinite(arr), np.clip(arr, -_F16_MAX, _F16_MAX), 0.0)
-        return arr.astype("<f2").tobytes()
+        return bytes(arr.astype("<f2").tobytes())
     vals = [_clamp_f16(v) for v in emb]
     return struct.pack(f"<{len(vals)}e", *vals)
 
