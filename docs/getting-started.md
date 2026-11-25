@@ -125,8 +125,12 @@ tg run -p 'print($VALUE)' --lang python ./src
 | Inspect one file's public signatures | `tg file-api ./src/invoice.py --json` | Function, class, and TypeScript `interface`/`type`/`enum` signatures without reading file bodies |
 | Follow a symbol or its callers | `tg callers ./src invoice_total --json --detail compact` | Call sites and affected tests; `--detail compact` omits verbose diagnostics while keeping completeness flags |
 | Gather files relevant to a task | `tg context ./src 'calculate an invoice total' --max-tokens 1000 --json` | A bounded context result based on local project data |
+| Get a compact edit plan under 4 KB | `tg edit-plan ./src 'add invoice tax field' --json --compact` | A compact JSON plan guaranteed to stay within 4,000 bytes while keeping key safety fields |
+| Search by keywords and relevance | `tg find --hybrid 'invoice total' ./src --json` | Local-first keyword + relevance ranking (`SQLite FTS5` + RRF) with no API key or GPU |
 | Prepare an edit investigation | `tg prepare ./src 'add invoice tax field' --json` | Suggested target and supporting context for review, not approval to edit |
 | Check your local installation | `tg doctor . --fast --json` | Fast launcher, backend, and environment health report without slow network or LSP probes |
+
+If a literal pattern starts with `-` (for example `--compact`), place `--` before the pattern so `tg search` does not treat it as a flag: `tg search -F -- '--compact' ./src`.
 
 **JSON** is a text format for structured data. The `--json` options make results easier for programs to read; a person can still inspect them. A **context capsule** is a bounded package of selected files and metadata for a task. Limits such as `--max-tokens` constrain output size, not correctness. Caller and impact reports may be partial when a scan reaches its configured bounds; inspect their completeness fields before treating missing results as proof.
 

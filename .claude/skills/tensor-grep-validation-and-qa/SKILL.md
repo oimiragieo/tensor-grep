@@ -25,12 +25,18 @@ ensure no stale `src/tensor_grep/rust_core*.pyd` / `.so` shadows `.venv`
 `site-packages` when `pytest` runs with `pythonpath = ["src"]` (copy the newly
 built extension into `src/tensor_grep/` or remove the stale copy).
 
-When touching `except Exception` blocks, loop `try/except OSError:` handlers, or
-PyO3 error formatting, also run:
+When touching `except Exception` blocks, loop `try/except OSError:` handlers,
+PyO3 error formatting, or renaming/moving handler functions, also run:
 
 ```text
-pytest -q tests/unit/test_handler_dispositions.py tests/unit/test_silent_loss_census_ratchet.py
+pytest -q tests/unit/test_handler_dispositions.py tests/unit/test_silent_loss_census_ratchet.py tests/unit/test_extractor_consumer_census.py
 ```
+
+When touching `subprocess` calls, text decoding, or `_TG_MCP_SERVER_CONTRACT_VERSION`:
+
+- Keep `_TG_MCP_SERVER_CONTRACT_VERSION = "X.Y.Z"` on a single line in `src/tensor_grep/cli/mcp_server.py` and synced in `docs/harness_api.md`.
+- Regenerate the subprocess policy inventory with `uv run --no-sync python scripts/check_subprocess_decoding.py --write-inventory`.
+- Run `uv run --no-sync pytest -q tests/unit/test_subprocess_decoding_guard.py tests/unit/test_mcp_contract_version_docs_are_pinned.py`.
 
 In Rust `anyhow` error checks, use `err.is::<T>()` (not `err.chain().any(|c| c.is::<T>())`)
 to match `.with_context(|| T(...))` wrappers, and place diagnostic tags after

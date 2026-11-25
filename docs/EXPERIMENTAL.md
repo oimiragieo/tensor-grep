@@ -4,7 +4,7 @@ As of 2026-10-06, this page describes optional features with narrower support or
 
 ## `tg find`: experimental result search
 
-`tg find` combines text retrieval with ranking options for finding potentially relevant files or passages. The command remains experimental, including when it uses BM25 ranking. **BM25** is a local ranking method that orders text results by how well their words match the query; it is not a generative model and does not establish that a result is correct.
+`tg find` combines text retrieval with ranking options for finding potentially relevant files or passages. The command remains experimental, including when it uses BM25 ranking or `--hybrid` mode. **BM25** is a local ranking method that orders text results by how well their words match the query; `--hybrid` combines local SQLite FTS5 full-text search with adaptive IDF-weighted Reciprocal Rank Fusion (RRF) so multi-word queries rank relevant files without requiring a generative model, API key, or GPU. Neither mode establishes that a result is correct.
 
 Some `tg find` modes can use dense embeddings. A **dense embedding** is a numerical representation of text used to find passages with similar meaning, including when they do not share exact words. Dense mode is optional; without its dependencies, `tg find` reports that it is using BM25 only. To try dense matching, explicitly run:
 

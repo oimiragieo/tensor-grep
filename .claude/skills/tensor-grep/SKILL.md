@@ -9,9 +9,9 @@ Use `tg` to find relevant files and inspect the evidence before editing. Start w
 `tg --version` and `tg --help`; installed entry points and optional dependencies
 affect available features.
 
-This guidance was checked against v1.138.20. Native `--version` prints `tg X.Y.Z`;
+This guidance was checked against v1.141.0. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package
-origins separately. MCP's `serverInfo.version` is its contract version (1.23.0),
+origins separately. MCP's `serverInfo.version` is its contract version (1.25.0),
 not the installed CLI version; call `tg_mcp_capabilities` for both values.
 
 ## Choose a command
@@ -27,6 +27,8 @@ tg freshness REPO_PATH --json
 tg sql REPO_PATH --query-file query.sql --json
 tg dogfood --all --json
 tg agent REPO_PATH 'investigate symbol' --plan-hops --grounding local --json
+tg orient REPO_PATH --json --compact
+tg find --hybrid 'task description' REPO_PATH --json
 tg find 'task description' REPO_PATH --grounding off --rerank auto --json
 ```
 
@@ -67,7 +69,14 @@ maps, then read the full source before editing. Focused excerpts do not establis
 data-flow completeness; `tg agent` does not accept `--render-profile`. For JSON
 token reduction on `agent`, `defs`, `impact`, `refs`, `callers`, and `blast-radius`,
 pass `--detail compact` (omits verbose diagnostic/telemetry blocks while preserving
-`result_incomplete`, `resolution_gaps`, and primary results).
+`result_incomplete`, `resolution_gaps`, and primary results). On `orient`,
+`edit-plan`, and `agent`, `--compact` (with `--json`, incompatible with
+`--citations`) guarantees `<= 4000` UTF-8 bytes while preserving required
+capsule safety fields (`primary_target`, `context_consistency`, `omissions`,
+`rollback`, `call_site_evidence`). `tg find --hybrid` uses confined SQLite
+FTS5 + adaptive IDF-weighted RRF without requiring dense model downloads, and
+`tg prepare` / incremental graph sync auto-creates `.tg_cache/.gitignore` so
+clean repositories stay unpolluted.
 
 A command deadline may stop new work without imposing a hard process timeout.
 Automation should impose its own external timeout.

@@ -43,7 +43,7 @@ tg orient .
 tg context . "how are invoices calculated?" --max-tokens 2000
 tg edit-plan . "how are invoices calculated?" --json --compact
 
-# Search using local-first SQLite FTS5 + adaptive IDF-weighted RRF hybrid ranking.
+# Search by keywords and relevance locally (SQLite FTS5 + adaptive IDF-weighted RRF, no GPU/API key).
 tg find --hybrid "invoice calculation" . --json
 ```
 
