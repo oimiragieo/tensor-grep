@@ -567,6 +567,18 @@ def test_verify_review_bundle_refuses_change_slice_stripping_and_expected_digest
         audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest="f" * 64)["valid"]
         is False
     )
+    for bad_digest in ("   ", "abcd", "z" * 64):
+        bad_res = audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest=bad_digest)
+        assert bad_res["valid"] is False
+        assert bad_res["slice_digest_valid"] is False
+        assert bad_res["slice_digest_reason"] == "invalid_expected_slice_digest"
+    non_str_res = audit_manifest.verify_review_bundle(
+        bundle_path,
+        expected_slice_digest=123,  # type: ignore[arg-type]
+    )
+    assert non_str_res["valid"] is False
+    assert non_str_res["slice_digest_valid"] is False
+    assert non_str_res["slice_digest_reason"] == "invalid_expected_slice_digest"
 
     # Strip change_slice while keeping checksums -> must fail closed
     stripped_one = json.loads(bundle_path.read_text(encoding="utf-8"))
