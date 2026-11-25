@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import Mock
@@ -38,17 +41,11 @@ def _call(tool: str, arguments: dict[str, object]) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(cast(Any, content)[0].text))
 
 
-@pytest.mark.parametrize("tool", ["tg_checkpoint_create", "tg_checkpoint"])
 @pytest.mark.parametrize(
     "label", ["null", "123", "true", '"quoted"', '["x"]', '{"a":1}', "再確認 🧭"]
 )
-def test_real_mcp_create_preserves_printable_label_strings(
-    project: Path, tool: str, label: str
-) -> None:
-    arguments: dict[str, object] = {"path": str(project), "label": label}
-    if tool == "tg_checkpoint":
-        arguments["action"] = "create"
-    payload = _call(tool, arguments)
+def test_real_mcp_create_preserves_printable_label_strings(project: Path, label: str) -> None:
+    payload = _call("tg_checkpoint", {"action": "create", "path": str(project), "label": label})
     assert payload["label"] == label
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     records = checkpoint_store.list_checkpoints(str(project))
@@ -64,13 +61,11 @@ def test_real_mcp_create_preserves_printable_label_strings(
     )
 
 
-@pytest.mark.parametrize("tool", ["tg_checkpoint_create", "tg_checkpoint"])
 @pytest.mark.parametrize("label", [123, True, [], {}])
 @requires_checkpoint_creation
 def test_real_mcp_nontext_labels_are_protocol_refusals_without_writes(
     project: Path,
     monkeypatch: pytest.MonkeyPatch,
-    tool: str,
     label: object,
 ) -> None:
     checkpoint_store.create_checkpoint(str(project), label="baseline")
@@ -78,24 +73,26 @@ def test_real_mcp_nontext_labels_are_protocol_refusals_without_writes(
     before = index.read_bytes()
     create = Mock(side_effect=AssertionError("protocol refusal must precede checkpoint creation"))
     monkeypatch.setattr(checkpoint_store, "create_checkpoint", create)
-    arguments: dict[str, object] = {"path": str(project), "label": label}
-    if tool == "tg_checkpoint":
-        arguments["action"] = "create"
     with pytest.raises(ToolError, match="label"):
-        asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
+        asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_checkpoint", {"action": "create", "path": str(project), "label": label}
+            )
+        )
     create.assert_not_called()
     assert index.read_bytes() == before
 
 
-def test_real_legacy_invalid_label_never_echoes_unconfined_path(
+def test_real_invalid_label_never_echoes_unconfined_path(
     project: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     create = Mock(side_effect=AssertionError("invalid label must precede checkpoint creation"))
     monkeypatch.setattr(checkpoint_store, "create_checkpoint", create)
-    payload = _call("tg_checkpoint_create", {"path": "~", "label": ""})
+    payload = _call("tg_checkpoint", {"action": "create", "path": "~", "label": ""})
     assert payload["error"]["code"] == "invalid_input"
-    assert payload["path"] == "[refused]"
+    assert "~" not in json.dumps(payload)
+    assert str(Path("~").expanduser()) not in json.dumps(payload)
     create.assert_not_called()
     assert not (project / ".tensor-grep").exists()
 
@@ -130,14 +127,62 @@ def test_real_meta_labels_are_refused_before_list_or_undo_dispatch(
 
 def test_checkpoint_label_schema_remains_optional_nullable_with_default_none() -> None:
     tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
+    assert "tg_checkpoint_create" not in tools
+    schema = tools["tg_checkpoint"].inputSchema
+    label_schema = schema["properties"]["label"]
+    assert set(label_schema["type"]) == {"string", "null"}
+    assert "anyOf" not in label_schema
+    assert "default" not in label_schema
+    assert "label" not in schema.get("required", [])
+
+
+def test_legacy_checkpoint_create_wire_and_schema_contract(project: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(repo_root / "src"),
+        "TG_MCP_LEGACY_TOOLS": "1",
+        "TG_MCP_ROOT": str(project.parent),
+    }
+    script = (
+        "import asyncio, json; "
+        "from mcp.server.fastmcp.exceptions import ToolError; "
+        "from tensor_grep.cli import mcp_server as m; "
+        "tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}; "
+        "schemas = {n: tools[n].inputSchema for n in ('tg_checkpoint_create', 'tg_checkpoint')}; "
+        f"res = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 'null'}})); "
+        "created = json.loads((res[0] if isinstance(res, tuple) else res.content)[0].text); "
+        f"bad_path = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': '~', 'label': ''}})); "
+        "refused = json.loads((bad_path[0] if isinstance(bad_path, tuple) else bad_path.content)[0].text); "
+        "nontext_refused = False\n"
+        "try:\n"
+        f"    asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 123}}))\n"
+        "except ToolError:\n"
+        "    nontext_refused = True\n"
+        "print(json.dumps({'schemas': schemas, 'created': created, 'refused': refused, 'nontext_refused': nontext_refused}))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=True,
+    )
+    result = json.loads(done.stdout)
     for name in ("tg_checkpoint_create", "tg_checkpoint"):
-        schema = tools[name].inputSchema
+        schema = result["schemas"][name]
         assert {item["type"] for item in schema["properties"]["label"]["anyOf"]} == {
             "string",
             "null",
         }
         assert schema["properties"]["label"]["default"] is None
         assert "label" not in schema.get("required", [])
+    assert result["created"]["label"] == "null"
+    assert result["refused"]["error"]["code"] == "invalid_input"
+    assert result["refused"]["path"] == "[refused]"
+    assert result["nontext_refused"] is True
 
 
 def test_label_adapter_leaves_other_argument_and_tool_parsing_unchanged() -> None:
