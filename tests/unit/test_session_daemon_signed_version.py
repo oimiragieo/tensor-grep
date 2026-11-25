@@ -670,7 +670,8 @@ def test_doctored_metadata_on_a_current_daemon_gets_no_skew_stop(
 ) -> None:
     root = tmp_path.resolve()
     daemon = _Daemon(root, metadata_version="OLD")  # the daemon itself runs the CURRENT version
-    commands = _record_commands(monkeypatch)
+    commands: list[str] = []
+    _install_inline_signed_ping(monkeypatch, daemon, commands)
     try:
         assert session_daemon._probe_daemon(root) is None  # premise: metadata makes it "stale"
         commands.clear()
