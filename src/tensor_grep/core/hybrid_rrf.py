@@ -182,8 +182,21 @@ def _extract_alias_tokens(content: str) -> str:
     return " ".join(phrases)
 
 
-def _unpack_embedding_py(blob: bytes | memoryview) -> list[float]:
-    raw = bytes(blob)
+_MAX_BLOB_BYTES = 1024 * 1024
+
+
+def _coerce_blob(raw: object) -> bytes | None:
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        return None
+    if len(raw) > _MAX_BLOB_BYTES:
+        return None
+    return bytes(raw)
+
+
+def _unpack_embedding_py(blob: object) -> list[float]:
+    raw = _coerce_blob(blob)
+    if raw is None:
+        raise ValueError("corrupt float16 embedding blob")
     if len(raw) % 2 != 0:
         raise ValueError(f"corrupt float16 embedding length: {len(raw)}")
     count = len(raw) // 2
@@ -213,11 +226,13 @@ def pack_heaviside_1bit(emb: Sequence[float] | None) -> bytes | None:
     return header + bytes(buf)
 
 
-def unpack_heaviside_1bit(blob: bytes | memoryview) -> list[int]:
+def unpack_heaviside_1bit(blob: object) -> list[int]:
     """Unpack a Heaviside 1-bit packed BLOB back into ``{0, 1}`` bits."""
-    raw = bytes(blob)
-    if len(raw) < 4:
-        raise ValueError(f"corrupt 1-bit embedding header length: {len(raw)}")
+    raw = _coerce_blob(blob)
+    if raw is None or len(raw) < 4:
+        raise ValueError(
+            f"corrupt 1-bit embedding header length: {len(raw) if raw is not None else 'invalid'}"
+        )
     (dim,) = struct.unpack("<I", raw[:4])
     payload = raw[4:]
     expected_bytes = (dim + 7) // 8
@@ -233,11 +248,11 @@ def unpack_heaviside_1bit(blob: bytes | memoryview) -> list[int]:
     return [(payload[idx >> 3] >> (idx & 7)) & 1 for idx in range(dim)]
 
 
-def hamming_similarity_1bit(a_blob: bytes | memoryview, b_blob: bytes | memoryview) -> float | None:
+def hamming_similarity_1bit(a_blob: object, b_blob: object) -> float | None:
     """Return normalized Hamming similarity in ``[-1.0, 1.0]`` for two 1-bit blobs."""
-    raw_a = bytes(a_blob)
-    raw_b = bytes(b_blob)
-    if len(raw_a) < 4 or len(raw_b) < 4:
+    raw_a = _coerce_blob(a_blob)
+    raw_b = _coerce_blob(b_blob)
+    if raw_a is None or raw_b is None or len(raw_a) < 4 or len(raw_b) < 4:
         return None
     (dim_a,) = struct.unpack("<I", raw_a[:4])
     (dim_b,) = struct.unpack("<I", raw_b[:4])
@@ -425,16 +440,8 @@ class HybridSQLiteIndex:
                                     "SELECT embedding_blob, binary_blob FROM documents WHERE doc_id = ?",
                                     (doc_id,),
                                 ).fetchone()
-                                prev_blob = (
-                                    bytes(row[0])
-                                    if row is not None and row[0] is not None
-                                    else None
-                                )
-                                prev_bin = (
-                                    bytes(row[1])
-                                    if row is not None and row[1] is not None
-                                    else None
-                                )
+                                prev_blob = _coerce_blob(row[0]) if row is not None else None
+                                prev_bin = _coerce_blob(row[1]) if row is not None else None
                             else:
                                 prev_bin = bin_blob
                             if prev_blob == emb_blob and prev_bin == bin_blob:
@@ -567,7 +574,7 @@ class HybridSQLiteIndex:
                 h_sim = hamming_similarity_1bit(q_bin, bin_blob)
                 if h_sim is None:
                     continue
-                hamming_scored.append((h_sim, str(doc_id), bytes(emb_blob) if emb_blob else None))
+                hamming_scored.append((h_sim, str(doc_id), _coerce_blob(emb_blob)))
             hamming_scored.sort(key=lambda item: (-item[0], item[1]))
             # Include all candidates tied at the Hamming cutoff so lexicographic doc_id
             # ordering cannot silently drop strong cosine matches before Stage 2 reranking.
@@ -586,7 +593,7 @@ class HybridSQLiteIndex:
             survivors = [
                 (
                     str(doc_id),
-                    bytes(emb_blob) if emb_blob is not None else None,
+                    _coerce_blob(emb_blob),
                     hamming_similarity_1bit(q_bin, bin_blob)
                     if (q_bin is not None and bin_blob is not None)
                     else None,
@@ -606,7 +613,16 @@ class HybridSQLiteIndex:
                     if h_sim is not None:
                         scored.append((doc_id, h_sim))
                     continue
-                vec = np.frombuffer(emb_blob, dtype="<f2").astype(np.float64)
+                if len(emb_blob) % 2 != 0:
+                    if h_sim is not None:
+                        scored.append((doc_id, h_sim))
+                    continue
+                try:
+                    vec = np.frombuffer(emb_blob, dtype="<f2").astype(np.float64)
+                except (ValueError, TypeError):
+                    if h_sim is not None:
+                        scored.append((doc_id, h_sim))
+                    continue
                 if vec.shape != q_arr.shape:
                     continue
                 v_norm = float(np.linalg.norm(vec))
@@ -618,8 +634,13 @@ class HybridSQLiteIndex:
                     if h_sim is not None:
                         scored.append((doc_id, h_sim))
                     continue
-                vec_py = _unpack_embedding_py(emb_blob)
-                sim = _cosine_similarity_py(q_list, vec_py)
+                try:
+                    vec_py = _unpack_embedding_py(emb_blob)
+                    sim = _cosine_similarity_py(q_list, vec_py)
+                except (ValueError, TypeError):
+                    if h_sim is not None:
+                        scored.append((doc_id, h_sim))
+                    continue
                 scored.append((doc_id, sim))
 
         scored.sort(key=lambda item: (-item[1], item[0]))

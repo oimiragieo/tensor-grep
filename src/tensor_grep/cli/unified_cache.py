@@ -24,12 +24,14 @@ from tensor_grep.cli.symbols_cache_io import (
     publish_confined,
     read_confined,
 )
+from tensor_grep.io.confined import validate_confined_parent_prefix
 
 MANIFEST_REL_PATH = Path(".tg_cache") / "manifest_v1.json"
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
 SOURCE_ADDRESS_SCHEME = "relpath-mtime-size-v1"
 CACHE_VIEWS: tuple[str, ...] = ("symbols_v1", "graph_v1", "hybrid_v1", "index_v1")
+_REPARSE_ATTR = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 _VIEW_DEFAULT_PATHS: dict[str, str] = {
     "symbols_v1": ".tg_cache/symbols_v1/metadata.sqlite3",
@@ -49,9 +51,10 @@ class ViewFreshnessRecord:
     schema_version: int = 1
     updated_at: float = 0.0
     ready: bool = True
+    artifact_fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "name": self.name,
             "merkle_root": self.merkle_root,
             "artifact_path": self.artifact_path,
@@ -59,6 +62,9 @@ class ViewFreshnessRecord:
             "updated_at": self.updated_at,
             "ready": self.ready,
         }
+        if self.artifact_fingerprint is not None:
+            payload["artifact_fingerprint"] = self.artifact_fingerprint
+        return payload
 
 
 @dataclass(frozen=True)
@@ -168,6 +174,55 @@ def build_source_address_contract(
     return merkle_root, contract
 
 
+def _stat_confined_regular_artifact(repo_root: Path, path: Path) -> tuple[int, int, int] | None:
+    try:
+        validate_confined_parent_prefix(repo_root, path)
+        st = path.lstat()
+    except OSError:
+        return None
+    if (
+        not stat.S_ISREG(st.st_mode)
+        or (getattr(st, "st_file_attributes", 0) & _REPARSE_ATTR)
+        or st.st_nlink != 1
+    ):
+        return None
+    return int(st.st_size), int(st.st_mtime_ns), int(st.st_ino)
+
+
+def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | None:
+    """Return a confined regular-file fingerprint for ``hybrid_v1`` or ``index_v1``, else None."""
+    resolved_root = Path(repo_root).resolve()
+    if view_name == "hybrid_v1":
+        fp = _stat_confined_regular_artifact(
+            resolved_root, resolved_root / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+        )
+        if fp is None:
+            return None
+        return hashlib.sha256(f"{fp[0]}:{fp[1]}:{fp[2]}".encode()).hexdigest()
+    if view_name == "index_v1":
+        index_dir = resolved_root / ".tg_cache" / "index_v1"
+        try:
+            validate_confined_parent_prefix(resolved_root, index_dir)
+            dir_st = index_dir.lstat()
+        except OSError:
+            return None
+        if not stat.S_ISDIR(dir_st.st_mode) or (
+            getattr(dir_st, "st_file_attributes", 0) & _REPARSE_ATTR
+        ):
+            return None
+        candidates = sorted(index_dir.glob("*.tg_index"))
+        if not candidates:
+            return None
+        digest = hashlib.sha256()
+        for candidate in candidates:
+            fp = _stat_confined_regular_artifact(resolved_root, candidate)
+            if fp is None:
+                return None
+            digest.update(f"{candidate.name}:{fp[0]}:{fp[1]}:{fp[2]}\0".encode())
+        return digest.hexdigest()
+    return None
+
+
 def load_unified_manifest(
     repo_root: Path,
     *,
@@ -181,9 +236,14 @@ def load_unified_manifest(
     if signing_key is None:
         return None
     manifest_path = resolved_root / MANIFEST_REL_PATH
-    if not manifest_path.exists():
-        return None
     try:
+        st = manifest_path.lstat()
+        if (
+            not stat.S_ISREG(st.st_mode)
+            or (getattr(st, "st_file_attributes", 0) & _REPARSE_ATTR)
+            or st.st_nlink != 1
+        ):
+            return None
         raw_bytes = read_confined(resolved_root, manifest_path, MANIFEST_MAX_BYTES)
         envelope = json.loads(raw_bytes.decode("utf-8"))
         if not isinstance(envelope, dict):
@@ -195,7 +255,7 @@ def load_unified_manifest(
         if not hmac.compare_digest(_sign_manifest(signing_key, payload_json), mac):
             return None
         data = json.loads(payload_json)
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return None
     if (
         not isinstance(data, dict)
@@ -278,7 +338,16 @@ def save_unified_manifest(
             if existing is not None and existing.get("merkle_root") == merkle_root:
                 for k, v in existing.get("views", {}).items():
                     if isinstance(v, Mapping):
-                        merged_views[str(k)] = dict(v)
+                        carried = dict(v)
+                        view_name = str(k)
+                        if view_name in ("hybrid_v1", "index_v1"):
+                            fp = compute_view_artifact_fingerprint(resolved_root, view_name)
+                            if fp is None or (
+                                carried.get("artifact_fingerprint") is not None
+                                and carried.get("artifact_fingerprint") != fp
+                            ):
+                                carried["ready"] = False
+                        merged_views[view_name] = carried
             if views is not None:
                 for view_name, view_data in views.items():
                     merged_views[str(view_name)] = dict(view_data)
@@ -321,6 +390,7 @@ def update_view_states(
     *,
     source_address: Mapping[str, Any] | None = None,
     deadline_monotonic: float | None = None,
+    artifact_fingerprints: Mapping[str, str | None] | None = None,
 ) -> bool:
     """Update one or more view freshness entries in ``manifest_v1.json``."""
     now = time.time()
@@ -333,6 +403,9 @@ def update_view_states(
             schema_version=schema_ver,
             updated_at=now,
             ready=ready,
+            artifact_fingerprint=(
+                artifact_fingerprints.get(view_name) if artifact_fingerprints is not None else None
+            ),
         ).to_dict()
     return save_unified_manifest(
         repo_root,

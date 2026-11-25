@@ -181,3 +181,38 @@ def test_hamming_preview_preserves_strong_cosine_match_across_hamming_ties() -> 
         )
         assert len(hits) == 3
         assert hits[0]["doc_id"] == "doc_99"
+
+
+def test_corrupt_sqlite_blobs_and_oversized_inputs_fail_safely() -> None:
+    valid_bin = pack_heaviside_1bit([1.0, 0.0, 1.0, 0.0])
+    assert valid_bin is not None
+    assert hamming_similarity_1bit("not-bytes", valid_bin) is None
+    assert hamming_similarity_1bit(10**12, valid_bin) is None
+    assert hamming_similarity_1bit(b"\x00" * (1024 * 1024 + 1), valid_bin) is None
+
+    with pytest.raises(ValueError, match="corrupt 1-bit"):
+        unpack_heaviside_1bit("not-bytes")
+    with pytest.raises(ValueError, match="corrupt 1-bit"):
+        unpack_heaviside_1bit(10**12)
+
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents([("valid_doc", "clean symbol", [1.0, 0.0, 1.0, 0.0])])
+        index._conn.execute(
+            "INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("corrupt_text", "bad binary text", "", "h1", b"\x01\x02\x03", "text-not-blob"),
+        )
+        index._conn.execute(
+            "INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("corrupt_int", "bad binary int", "", "h2", "text-emb", 999999999999),
+        )
+        index._conn.commit()
+
+        hits = index.search(
+            "nonexistent_lexical_token",
+            query_vec=[1.0, 0.0, 1.0, 0.0],
+            limit=5,
+            idf_weight=0.0,
+        )
+        assert [h["doc_id"] for h in hits] == ["valid_doc"]

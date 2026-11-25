@@ -346,3 +346,89 @@ def test_prepare_repairs_fresh_manifest_to_not_ready_on_degradation(
     assert degraded is not None
     assert degraded["views"]["symbols_v1"]["ready"] is False
     assert degraded["views"]["graph_v1"]["ready"] is False
+
+
+def test_unified_manifest_rejects_deeply_nested_json_recursion_error(tmp_path: Path) -> None:
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+    assert save_unified_manifest(tmp_path, m1, source_address=addr1)
+
+    manifest_path = tmp_path / MANIFEST_REL_PATH
+    depth = 2000
+    deep_json = ("[" * depth) + "0" + ("]" * depth)
+    manifest_path.write_text(deep_json, encoding="utf-8")
+    assert load_unified_manifest(tmp_path) is None
+
+
+def test_unified_manifest_refuses_hardlinked_manifest(tmp_path: Path) -> None:
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+    assert save_unified_manifest(tmp_path, m1, source_address=addr1)
+
+    manifest_path = tmp_path / MANIFEST_REL_PATH
+    hardlink_path = tmp_path / "manifest_hardlink.json"
+    try:
+        os.link(manifest_path, hardlink_path)
+    except OSError:
+        pytest.skip("hardlink creation unavailable")
+
+    assert load_unified_manifest(tmp_path) is None
+
+
+def test_prepare_resets_stale_ready_views_when_artifacts_removed_or_replaced(
+    tmp_path: Path,
+) -> None:
+    from tensor_grep.cli.unified_cache import compute_view_artifact_fingerprint
+
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+
+    hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+    hybrid_path.parent.mkdir(parents=True, exist_ok=True)
+    hybrid_path.write_bytes(b"valid-hybrid-v1")
+
+    index_path = tmp_path / ".tg_cache" / "index_v1" / "a1b2c3d4e5f6.tg_index"
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_bytes(b"valid-index-v1")
+
+    hybrid_fp = compute_view_artifact_fingerprint(tmp_path, "hybrid_v1")
+    index_fp = compute_view_artifact_fingerprint(tmp_path, "index_v1")
+    assert hybrid_fp is not None
+    assert index_fp is not None
+
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"hybrid_v1": (True, 1), "index_v1": (True, 1)},
+        source_address=addr1,
+        artifact_fingerprints={"hybrid_v1": hybrid_fp, "index_v1": index_fp},
+    )
+
+    # Remove hybrid_v1 artifact and replace index_v1 artifact with different content.
+    hybrid_path.unlink()
+    index_path.write_bytes(b"replaced-index-v1-different-bytes")
+
+    # save_unified_manifest must not preserve stale ready=True for missing/replaced artifacts.
+    assert update_view_states(tmp_path, m1, {"symbols_v1": (True, 1)}, source_address=addr1)
+    after_save = load_unified_manifest(tmp_path)
+    assert after_save is not None
+    assert after_save["views"]["hybrid_v1"]["ready"] is False
+    assert after_save["views"]["index_v1"]["ready"] is False
+
+    # Re-seed ready=True with old fingerprints, then run prepare_service -> must reset to False.
+    assert update_view_states(
+        tmp_path,
+        m1,
+        {"hybrid_v1": (True, 1), "index_v1": (True, 1)},
+        source_address=addr1,
+        artifact_fingerprints={"hybrid_v1": hybrid_fp, "index_v1": index_fp},
+    )
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    after_prepare = load_unified_manifest(tmp_path)
+    assert after_prepare is not None
+    assert after_prepare["views"]["hybrid_v1"]["ready"] is False
+    assert after_prepare["views"]["index_v1"]["ready"] is False

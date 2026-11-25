@@ -901,6 +901,7 @@ def _build_prepare_payload(
             from tensor_grep.cli.unified_cache import (
                 build_source_address_contract,
                 check_view_freshness,
+                compute_view_artifact_fingerprint,
                 load_unified_manifest,
                 update_view_states,
             )
@@ -1036,19 +1037,6 @@ def _build_prepare_payload(
                 other_view_fresh = check_view_freshness(
                     manifest, merkle_root, ("hybrid_v1", "index_v1")
                 )
-                hybrid_path = resolved_root_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
-                if hybrid_path.is_file() and not hybrid_path.is_symlink():
-                    view_updates["hybrid_v1"] = (bool(other_view_fresh.get("hybrid_v1")), 1)
-                index_v1_dir = resolved_root_path / ".tg_cache" / "index_v1"
-                if (
-                    index_v1_dir.is_dir()
-                    and not index_v1_dir.is_symlink()
-                    and any(
-                        p.is_file() and not p.is_symlink() for p in index_v1_dir.glob("*.tg_index")
-                    )
-                ):
-                    view_updates["index_v1"] = (bool(other_view_fresh.get("index_v1")), 1)
-
                 loaded_views = (
                     manifest.get("views")
                     if isinstance(manifest, dict)
@@ -1056,12 +1044,35 @@ def _build_prepare_payload(
                     and isinstance(manifest.get("views"), dict)
                     else None
                 )
+                artifact_fingerprints: dict[str, str | None] = {}
+                for vname in ("hybrid_v1", "index_v1"):
+                    fp = compute_view_artifact_fingerprint(resolved_root_path, vname)
+                    artifact_fingerprints[vname] = fp
+                    if fp is None:
+                        view_updates[vname] = (False, 1)
+                    else:
+                        prev_entry = loaded_views.get(vname) if loaded_views is not None else None
+                        prev_fp = (
+                            prev_entry.get("artifact_fingerprint")
+                            if isinstance(prev_entry, dict)
+                            else None
+                        )
+                        view_updates[vname] = (
+                            bool(other_view_fresh.get(vname)) and prev_fp == fp,
+                            1,
+                        )
+
                 views_changed = loaded_views is None or any(
                     not (
                         isinstance(loaded_views.get(vname), dict)
                         and loaded_views[vname].get("merkle_root") == merkle_root
                         and loaded_views[vname].get("ready") is vready
                         and loaded_views[vname].get("schema_version") == vschema
+                        and (
+                            vname not in artifact_fingerprints
+                            or loaded_views[vname].get("artifact_fingerprint")
+                            == artifact_fingerprints[vname]
+                        )
                     )
                     for vname, (vready, vschema) in view_updates.items()
                 )
@@ -1072,6 +1083,7 @@ def _build_prepare_payload(
                         view_updates,
                         source_address=source_address,
                         deadline_monotonic=deadline_monotonic,
+                        artifact_fingerprints=artifact_fingerprints,
                     )
         except (OSError, ValueError, sqlite3.Error):
             ego_subgraph = None
