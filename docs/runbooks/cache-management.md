@@ -8,9 +8,11 @@ Paths below are relative to a project root unless otherwise noted.
 
 | Path | Purpose | Safe assumption |
 |---|---|---|
-| `.tg_index` | Native trigram index for eligible repeated text searches | Rebuildable search data |
+| `.tg_cache/index_v1/<hash>.tg_index` (legacy fallback `.tg_index`) | Native trigram index for eligible repeated text searches | Rebuildable search data |
+| `.tg_cache/manifest_v1.json` | Signed `CodeNib` unified cross-view cache manifest | Rebuildable cache metadata |
 | `.tg_cache/ast/project_data_v6.json` | AST project cache | Rebuildable AST data |
 | `.tg_cache/symbols_v1/metadata.sqlite3` | Content-addressed whole-file symbol/import products and transactional generation/Merkle metadata | Rebuildable symbol data |
+| `.tg_cache/graph_v1/tdad_tests.sqlite3` | `TDAD` source-to-test pre-change dependency map | Rebuildable graph data |
 | `.tensor-grep/sessions/` | Persisted session metadata and snapshots | May contain context you intend to reuse |
 | `.tensor-grep/checkpoints/` | Saved checkpoint metadata and file snapshots | Recovery data; preserve it unless you intend to remove those recovery points |
 

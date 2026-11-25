@@ -11,8 +11,9 @@ affect available features.
 
 This guidance was checked against v1.141.0. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package
-origins separately. MCP's `serverInfo.version` is its contract version (1.25.0),
-not the installed CLI version; call `tg_mcp_capabilities` for both values.
+origins separately. MCP's `serverInfo.version` is its contract version (1.28.0),
+not the installed CLI version; call `tg_mcp_capabilities` for both values. By default,
+`tg mcp` exposes the 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=1` opts into all 61 tools).
 
 ## Choose a command
 
