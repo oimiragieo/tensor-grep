@@ -417,3 +417,21 @@ def test_parse_cap_cause_is_complete_even_when_omission_sample_is_bounded(
     assert absent["incomplete_reason_class"] == "coverage_gap"
     assert "TENSOR_GREP_MAX_PARSE_BYTES" in absent["incomplete_reason"]
     assert "merkle_root" in raw["symbol_cache"]
+
+
+def test_subdirectory_scope_anchors_symbol_cache_to_project_root(tmp_path: Path) -> None:
+    """BUG-05: scanning `<fixture>/src` anchors `.tg_cache` at `<fixture>`, not `<fixture>/src`."""
+    (tmp_path / ".git").mkdir()
+    src_file = _source(tmp_path / "src", "mod.py", "beta")
+    payload = repo_map.build_repo_map(tmp_path / "src")
+    assert _names(payload) == {"beta"}
+    cache_path = Path(payload["symbol_cache"]["path"])
+    assert cache_path == tmp_path / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    assert cache_path.exists()
+    assert not (tmp_path / "src" / ".tg_cache").exists()
+    with closing(sqlite3.connect(cache_path)) as conn:
+        scopes = [row[0] for row in conn.execute("SELECT scope FROM generations").fetchall()]
+        file_scopes = [row[0] for row in conn.execute("SELECT scope FROM files").fetchall()]
+    assert str((tmp_path / "src").resolve()) in scopes
+    assert str((tmp_path / "src").resolve()) in file_scopes
+    assert src_file.exists()

@@ -159,6 +159,46 @@ def _candidate_evidence(
     deadline_monotonic: float | None,
     deadline_hit: Any,
 ) -> dict[str, Any]:
+    from tensor_grep.cli.symbols_cache import content_receipts_active
+
+    cache_key: tuple[str, Any, str, bool] | None = None
+    if not content_receipts_active():
+        cache_key = (
+            candidate,
+            owner._mtime_key(candidate),
+            str(repo_root),
+            bool(imports_by_file.get(candidate)),
+        )
+        cached = _CANDIDATE_EVIDENCE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    result = _compute_candidate_evidence(
+        owner,
+        candidate,
+        repo_root,
+        imports_by_file,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=deadline_hit,
+    )
+    if cache_key is not None and result.get("reason") != "deadline":
+        if len(_CANDIDATE_EVIDENCE_CACHE) >= 4096:
+            _CANDIDATE_EVIDENCE_CACHE.clear()
+        _CANDIDATE_EVIDENCE_CACHE[cache_key] = result
+    return result
+
+
+_CANDIDATE_EVIDENCE_CACHE: dict[tuple[str, Any, str, bool], dict[str, Any]] = {}
+
+
+def _compute_candidate_evidence(
+    owner: ModuleType,
+    candidate: str,
+    repo_root: Path,
+    imports_by_file: dict[str, list[str]],
+    *,
+    deadline_monotonic: float | None,
+    deadline_hit: Any,
+) -> dict[str, Any]:
     path = Path(candidate)
     spec = owner.lang_registry.spec_for_path(path)
     language_id = spec.language_id if spec is not None else None

@@ -47,7 +47,10 @@ def _classification_parts(path: Path) -> tuple[tuple[str, ...], frozenset[str]]:
         return path.parts, _LEGACY_TEST_DIR_NAMES
 
 
-def _is_test_file(path: Path) -> bool:
+@lru_cache(maxsize=8192)
+def _is_test_file_cached(path_str: str, auth_root_str: str | None) -> bool:
+    _ = auth_root_str
+    path = Path(path_str)
     stem, suffix = path.stem, path.suffix.lower()
     if path.name.startswith("test_") or stem.endswith("_test"):
         return True
@@ -57,3 +60,8 @@ def _is_test_file(path: Path) -> bool:
         return True
     parts, dir_names = _classification_parts(path)
     return any(part in dir_names for part in parts)
+
+
+def _is_test_file(path: Path) -> bool:
+    root_path = authenticated_content_root()
+    return _is_test_file_cached(str(path), str(root_path) if root_path is not None else None)

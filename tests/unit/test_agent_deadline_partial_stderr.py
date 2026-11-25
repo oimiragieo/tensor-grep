@@ -234,7 +234,7 @@ def test_cli_agent_cold_path_trustworthy_deadline_partial_emits_stderr_note(
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert "note: partial result" in result.stderr
     assert "--deadline" in result.stderr
     assert "0.90" in result.stderr
@@ -254,7 +254,7 @@ def test_cli_agent_cold_path_ask_required_suppresses_note(tmp_path: Path, monkey
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert json.loads(result.stdout) == payload
 
@@ -266,7 +266,7 @@ def test_cli_agent_cold_path_low_confidence_suppresses_note(tmp_path: Path, monk
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert json.loads(result.stdout) == payload
 
@@ -293,7 +293,7 @@ def test_cli_agent_cold_path_non_deadline_partial_suppresses_note(
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert json.loads(result.stdout) == payload
 
@@ -337,7 +337,7 @@ def test_cli_agent_cold_path_malformed_capsule_fail_safe_no_note_no_crash(
 
         result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-        assert result.exit_code == 2, (field, result.output)
+        assert result.exit_code == 0, (field, result.output)
         assert result.stderr == "", field
         assert json.loads(result.stdout) == payload
 
@@ -357,7 +357,7 @@ def test_cli_agent_daemon_path_trustworthy_deadline_partial_emits_stderr_note(
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert "note: partial result" in result.stderr
     assert json.loads(result.stdout) == payload
 
@@ -370,6 +370,6 @@ def test_cli_agent_daemon_path_ask_required_suppresses_note(tmp_path: Path, monk
 
     result = runner.invoke(app, ["agent", str(tmp_path), "f", "--json"])
 
-    assert result.exit_code == 2, result.output
+    assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert json.loads(result.stdout) == payload

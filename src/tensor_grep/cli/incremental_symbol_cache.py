@@ -7,6 +7,7 @@ import hashlib
 import json
 import threading
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +27,17 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _normalized_path(path: Path | str) -> Path:
-    p = Path(path)
+@lru_cache(maxsize=8192)
+def _normalized_path_str(path_str: str) -> Path:
+    p = Path(path_str)
     try:
         return p.resolve()
     except OSError:
         return p.absolute()
+
+
+def _normalized_path(path: Path | str) -> Path:
+    return _normalized_path_str(str(path))
 
 
 def _extract_imports_and_symbols(

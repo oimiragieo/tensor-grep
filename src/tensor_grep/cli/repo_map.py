@@ -32,6 +32,7 @@ from tensor_grep.cli import (
     lang_suffixes,
 )
 from tensor_grep.cli import predictive_test_selector as _predictive_test_selector
+from tensor_grep.cli import repo_map_fast_cache as _fast_cache
 from tensor_grep.cli import repo_map_graph as _repo_map_graph
 from tensor_grep.cli import repo_map_input_provenance as _input_provenance
 from tensor_grep.cli import repo_map_ranking as _repo_map_ranking
@@ -4150,7 +4151,9 @@ def build_repo_map(
         _load_gitignore_matcher.cache_clear()
         _prime_all_language_repo_contexts(context_root)
         generation = SymbolGeneration(
-            _infer_project_root(root) if not _self._is_dir_with_receipt(root) else context_root,
+            _fast_cache.canonical_symbol_cache_root(
+                root, _infer_project_root, authenticated_content_root()
+            ),
             scope=root,
             max_bytes=_self._max_parse_bytes(),
             ignore_policy=sorted(_SKIP_DIR_NAMES),
@@ -10529,6 +10532,8 @@ def build_context_render_from_map(
         symbol_sources = _self.build_symbol_source_from_map(
             repo_map,
             str(symbol["name"]),
+            deadline_monotonic=deadline_monotonic,
+            include_tests=False,
             _profiling_collector=collector,
         ).get("sources", [])
         for source in symbol_sources:
@@ -11647,6 +11652,7 @@ def build_symbol_defs_from_map(
     semantic_provider: str = "native",
     max_tests: int | None = None,
     deadline_monotonic: float | None = None,
+    include_tests: bool = True,
 ) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["routing_reason"] = "symbol-defs"
@@ -11715,14 +11721,17 @@ def build_symbol_defs_from_map(
     # on a repo with many tests ran this loop fully unbounded even when a caller supplied a
     # deadline. Mirrors build_context_pack_from_map's own_deadline_hit pattern (repo_map.py:13744).
     defs_related_tests_deadline_hit = _DeadlineBreakFlag()
-    payload["tests"] = _self._relevant_tests_for_symbol(
-        repo_map,
-        symbol,
-        definition_files,
-        deadline_monotonic=deadline_monotonic,
-        deadline_hit=defs_related_tests_deadline_hit,
-    )
-    _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
+    if include_tests:
+        payload["tests"] = _self._relevant_tests_for_symbol(
+            repo_map,
+            symbol,
+            definition_files,
+            deadline_monotonic=deadline_monotonic,
+            deadline_hit=defs_related_tests_deadline_hit,
+        )
+        _apply_symbol_field_output_limit(payload, field_name="tests", max_count=max_tests)
+    else:
+        payload["tests"] = []
     if defs_related_tests_deadline_hit.hit:
         payload["partial"] = True
         _stamp_partial_status(payload, deadline_exceeded=True, emit_reason=False)
@@ -11906,6 +11915,7 @@ def build_symbol_source_from_map(
     *,
     semantic_provider: str = "native",
     deadline_monotonic: float | None = None,
+    include_tests: bool = True,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     # audit C1/C2: `deadline_monotonic` is a NEW parameter here (site 6) -- this
@@ -11916,7 +11926,11 @@ def build_symbol_source_from_map(
     # `_copy_partial_signal(payload, defs_payload)` below already folds defs_payload's partial
     # signal into this function's own fresh envelope, so threading the deadline is the whole fix.
     defs_payload = _self.build_symbol_defs_from_map(
-        repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
+        repo_map,
+        symbol,
+        semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
+        include_tests=include_tests,
     )
     default_agreement, default_status = _default_provider_metadata(
         _repo_map_root_dir(repo_map),
@@ -12775,17 +12789,19 @@ def _infer_project_root(file_path: Path) -> Path:
     single-file operation), so bare-specifier / tsconfig-alias / Rust-workspace resolution needs
     a plausible root inferred from the file's own location rather than passed explicitly.
     """
-    current = file_path.parent
+    current = file_path if _is_dir_with_receipt(file_path) else file_path.parent
     authenticated_root = authenticated_content_root()
     for candidate in [current, *current.parents]:
         try:
             if any(
-                _is_file_with_receipt(candidate / marker)
+                (candidate / marker).is_file()
                 for marker in _PROJECT_ROOT_MARKERS
                 if marker != ".git"
             ):
                 return candidate
-            if authenticated_root is not None and candidate == authenticated_root:
+            if authenticated_root is not None and os.path.normcase(
+                os.path.abspath(candidate)
+            ) == os.path.normcase(os.path.abspath(authenticated_root)):
                 return candidate
             if authenticated_root is None and (candidate / ".git").exists():
                 return candidate
@@ -12876,7 +12892,9 @@ def _resolve_raw_import_entry(
             (str(p) for p in candidate_info["paths"] if _is_file_with_receipt(Path(p))), None
         )
         provenance = list(candidate_info["provenance"])
-        if resolved is None or entry.get("names"):
+        if (resolved is None and (level > 0 or candidate_info["paths"])) or (
+            entry.get("names") and (level > 0 or candidate_info["paths"])
+        ):
             from tensor_grep.cli.incremental_symbol_cache import resolve_python_import_target
 
             target = resolve_python_import_target(
@@ -13204,7 +13222,7 @@ def build_file_importers_from_map(
     payload["file"] = target_file
     payload["file_outside_root"] = file_outside_root
 
-    all_files = [str(current) for current in repo_map.get("files", [])]
+    all_files = _fast_cache.importers_all_files(repo_map)
     imports_by_file = {
         str(current["file"]): list(
             dict.fromkeys(str(name) for name in current.get("imports", []) if name)
@@ -13254,9 +13272,7 @@ def build_file_importers_from_map(
         edges.extend(_confirm_import_edges(Path(candidate), target_file, repo_root))
     edges.sort(key=lambda item: (str(item["file"]), int(item.get("line", 0) or 0)))
 
-    payload["importers"] = edges
-    payload["importer_files"] = sorted(dict.fromkeys(str(item["file"]) for item in edges))
-    payload["importer_count"] = len(edges)
+    _fast_cache.finalize_importers_payload(payload, edges, _is_test_file)
     # backlog #57 companion fix: copy the (unrelated) repo-map-level scan_limit/scan_remediation
     # BEFORE stamping the caller-scan ceiling's own remediation below -- build_symbol_callers_from_map
     # orders it the same way (_copy_scan_limit, then its ceiling-hit _mark_result_incomplete).
