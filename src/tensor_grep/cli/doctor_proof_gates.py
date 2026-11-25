@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 
 _DYNO_REQUIRED_SCALES: tuple[str, ...] = ("1GB", "5GB")
+_DYNO_MIN_SIZE_BYTES: dict[str, int] = {
+    "1GB": 1_000_000_000,
+    "5GB": 5_000_000_000,
+}
 _DYNO_REQUIRED_BASELINES: tuple[str, ...] = ("rg", "tg_cpu", "tg_simd")
 
 _DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES: tuple[str, ...] = (
@@ -47,6 +51,10 @@ def _baseline_passed(entry: object) -> bool:
     return True
 
 
+def _is_positive_int(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value > 0
+
+
 def _verify_dyno_promotion_report(payload: dict[str, Any]) -> str | None:
     """Independently verify 1 GB & 5 GB parity, speedups, and NativeGpuBackend evidence."""
     if payload.get("sidecar_observed") is True:
@@ -77,11 +85,23 @@ def _verify_dyno_promotion_report(payload: dict[str, Any]) -> str | None:
         row = rows_by_label.get(label)
         if row is None:
             return f"missing_scale_row:{label}"
+        size_bytes = row.get("size_bytes")
+        min_bytes = _DYNO_MIN_SIZE_BYTES[label]
+        if (
+            isinstance(size_bytes, bool)
+            or not isinstance(size_bytes, int)
+            or size_bytes < min_bytes
+        ):
+            return f"invalid_scale_size_bytes:{label}"
         tg_gpu = row.get("tg_gpu")
         if not isinstance(tg_gpu, dict):
             return f"missing_tg_gpu:{label}"
+        gpu_exit_code = tg_gpu.get("exit_code")
         if (
             tg_gpu.get("status") != "PASS"
+            or isinstance(gpu_exit_code, bool)
+            or not isinstance(gpu_exit_code, int)
+            or gpu_exit_code != 0
             or tg_gpu.get("routing_backend") != "NativeGpuBackend"
             or tg_gpu.get("sidecar_used") is not False
         ):
@@ -111,6 +131,30 @@ def _verify_dyno_promotion_report(payload: dict[str, Any]) -> str | None:
             or check.get("rg_match_identity_equal") is not True
         ):
             return f"parity_unverified:{label}"
+
+        gpu_matches = check.get("gpu_match_count")
+        cpu_matches = check.get("cpu_match_count")
+        rg_matches = check.get("rg_match_count")
+        if (
+            not _is_positive_int(gpu_matches)
+            or not _is_positive_int(cpu_matches)
+            or not _is_positive_int(rg_matches)
+            or not (gpu_matches == cpu_matches == rg_matches)
+        ):
+            return f"parity_count_mismatch:{label}"
+
+        file_count_keys = ("gpu_file_count", "cpu_file_count", "rg_file_count")
+        if any(key in check for key in file_count_keys):
+            gpu_files = check.get("gpu_file_count")
+            cpu_files = check.get("cpu_file_count")
+            rg_files = check.get("rg_file_count")
+            if (
+                not _is_positive_int(gpu_files)
+                or not _is_positive_int(cpu_files)
+                or not _is_positive_int(rg_files)
+                or not (gpu_files == cpu_files == rg_files)
+            ):
+                return f"parity_file_count_mismatch:{label}"
     return None
 
 

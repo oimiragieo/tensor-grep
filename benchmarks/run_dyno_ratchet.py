@@ -142,10 +142,15 @@ def evaluate_dyno_promotion_gate(
         backend = str(tg_gpu.get("routing_backend") or "")
         if backend:
             observed_backends.add(backend)
-        row_sidecar = bool(tg_gpu.get("sidecar_used", False))
+        raw_sidecar = tg_gpu.get("sidecar_used")
+        row_sidecar = raw_sidecar is True
         sidecar_observed = sidecar_observed or row_sidecar
 
-        if tg_gpu.get("status") != "PASS" or backend != "NativeGpuBackend" or row_sidecar:
+        if (
+            tg_gpu.get("status") != "PASS"
+            or backend != "NativeGpuBackend"
+            or raw_sidecar is not False
+        ):
             blockers.append(f"native_gpu_not_verified:{label}")
 
         gpu_median = tg_gpu.get("median_s")
@@ -178,7 +183,7 @@ def evaluate_dyno_promotion_gate(
             and label in passing_parity_set
             and tg_gpu.get("status") == "PASS"
             and backend == "NativeGpuBackend"
-            and not row_sidecar
+            and raw_sidecar is False
         ):
             passing_speed_scales.append(label)
 
@@ -186,7 +191,7 @@ def evaluate_dyno_promotion_gate(
             "size_label": label,
             "gpu_median_s": float(gpu_median),
             "routing_backend": backend or None,
-            "sidecar_used": row_sidecar,
+            "sidecar_used": raw_sidecar,
             **ratios,
         })
 
@@ -294,7 +299,7 @@ def _evaluate_scale_parity(
     rg_res: dict[str, Any],
     gpu_payload: dict[str, Any] | None,
     routing_backend: Any,
-    sidecar_used: bool,
+    sidecar_used: Any,
 ) -> dict[str, Any]:
     cpu_payload = _parse_tg_json_payload(str(cpu_res.get("stdout") or ""))
     rg_stdout = str(rg_res.get("stdout") or "")
@@ -310,7 +315,7 @@ def _evaluate_scale_parity(
         and cpu_res.get("status") == "PASS"
         and rg_res.get("status") == "PASS"
         and routing_backend == "NativeGpuBackend"
-        and not sidecar_used
+        and sidecar_used is False
         and gpu_payload is not None
         and cpu_payload is not None
         and isinstance(gpu_payload.get("matches"), list)
@@ -446,7 +451,8 @@ def run_dyno_ratchet(
 
             gpu_payload = _parse_tg_json_payload(str(gpu_res.get("stdout") or ""))
             routing_backend = gpu_payload.get("routing_backend") if gpu_payload else None
-            sidecar_used = bool(gpu_payload.get("sidecar_used", False)) if gpu_payload else False
+            sidecar_used = gpu_payload.get("sidecar_used") if gpu_payload is not None else None
+            sidecar_verified = gpu_payload is not None and sidecar_used is False
             rows.append({
                 "size_label": label,
                 "size_bytes": size_bytes,
@@ -469,7 +475,7 @@ def run_dyno_ratchet(
                     "status": "PASS"
                     if gpu_res["status"] == "PASS"
                     and routing_backend == "NativeGpuBackend"
-                    and not sidecar_used
+                    and sidecar_verified
                     else "UNSUPPORTED",
                     "exit_code": gpu_res.get("exit_code"),
                     "median_s": gpu_res.get("median_s"),

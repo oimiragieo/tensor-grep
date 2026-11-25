@@ -28,16 +28,25 @@ def _passing_row(
     simd_s: float = 6.0,
     gpu_s: float = 2.0,
     routing_backend: str = "NativeGpuBackend",
-    sidecar_used: bool = False,
+    sidecar_used: bool | None = False,
     status: str = "PASS",
+    exit_code: int = 0,
+    size_bytes: int | None = None,
 ) -> dict[str, object]:
+    resolved_size_bytes = (
+        size_bytes
+        if size_bytes is not None
+        else (1_000_000_000 if size_label == "1GB" else 5_000_000_000)
+    )
     return {
         "size_label": size_label,
-        "rg": {"status": "PASS", "median_s": rg_s},
-        "tg_cpu": {"status": "PASS", "median_s": cpu_s},
-        "tg_simd": {"status": "PASS", "median_s": simd_s},
+        "size_bytes": resolved_size_bytes,
+        "rg": {"status": "PASS", "exit_code": 0, "median_s": rg_s},
+        "tg_cpu": {"status": "PASS", "exit_code": 0, "median_s": cpu_s},
+        "tg_simd": {"status": "PASS", "exit_code": 0, "median_s": simd_s},
         "tg_gpu": {
             "status": status,
+            "exit_code": exit_code,
             "median_s": gpu_s,
             "routing_backend": routing_backend,
             "sidecar_used": sidecar_used,
@@ -54,6 +63,12 @@ def _passing_check(size_label: str, *, equal: bool = True) -> dict[str, object]:
         "rg_matches_equal": equal,
         "rg_files_equal": equal,
         "rg_match_identity_equal": equal,
+        "gpu_match_count": 42,
+        "cpu_match_count": 42,
+        "rg_match_count": 42 if equal else 41,
+        "gpu_file_count": 1,
+        "cpu_file_count": 1,
+        "rg_file_count": 1,
     }
 
 
@@ -197,6 +212,66 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
     assert "experimental" in reason_forged.lower() or "verification" in reason_forged.lower()
 
 
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "match_count_mismatch",
+        "zero_match_count",
+        "file_count_mismatch",
+        "nonzero_gpu_exit_code",
+        "small_size_bytes",
+        "missing_size_bytes",
+        "missing_sidecar_used",
+        "gpu_status_fail",
+    ],
+)
+def test_doctor_dyno_promotion_status_rejects_contradictory_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, case_name: str
+) -> None:
+    rows = [_passing_row("1GB"), _passing_row("5GB")]
+    checks = [_passing_check("1GB"), _passing_check("5GB")]
+
+    if case_name == "match_count_mismatch":
+        checks[0]["rg_match_count"] = 41
+    elif case_name == "zero_match_count":
+        checks[0]["gpu_match_count"] = 0
+        checks[0]["cpu_match_count"] = 0
+        checks[0]["rg_match_count"] = 0
+    elif case_name == "file_count_mismatch":
+        checks[1]["rg_file_count"] = 2
+    elif case_name == "nonzero_gpu_exit_code":
+        gpu_entry = rows[0]["tg_gpu"]
+        assert isinstance(gpu_entry, dict)
+        gpu_entry["exit_code"] = 1
+    elif case_name == "small_size_bytes":
+        rows[0]["size_bytes"] = 1024
+    elif case_name == "missing_size_bytes":
+        rows[1].pop("size_bytes", None)
+    elif case_name == "missing_sidecar_used":
+        gpu_entry = rows[0]["tg_gpu"]
+        assert isinstance(gpu_entry, dict)
+        gpu_entry.pop("sidecar_used", None)
+    elif case_name == "gpu_status_fail":
+        gpu_entry = rows[1]["tg_gpu"]
+        assert isinstance(gpu_entry, dict)
+        gpu_entry["status"] = "FAIL"
+
+    contradictory = tmp_path / f"dyno_{case_name}.json"
+    contradictory.write_text(
+        json.dumps({
+            "promotion_proof": True,
+            "promotion_reason": "1GB & 5GB verified",
+            "rows": rows,
+            "correctness_checks": checks,
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(contradictory))
+    promoted, reason = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted is False
+    assert "verification" in reason.lower() or "experimental" in reason.lower()
+
+
 def test_lsp_warm_pool_proof_requires_all_10_languages_within_latency_budget() -> None:
     required = list(doctor_report._DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES)
     assert len(required) == 10
@@ -297,6 +372,54 @@ def test_run_dyno_ratchet_rejects_output_parity_mismatch_even_with_exit_zero(
     assert check["status"] == "FAIL"
     assert check["matches_equal"] is False
     assert check["rg_match_identity_equal"] is False
+
+
+def test_run_dyno_ratchet_rejects_missing_sidecar_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run_dyno_ratchet.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def _fake_time_command(cmd: list[str], *, runs: int, warmup: int) -> dict[str, object]:
+        del runs, warmup
+        corpus_path = cmd[-1]
+        if cmd[0] == "rg":
+            stdout = json.dumps({
+                "type": "match",
+                "data": {
+                    "path": {"text": corpus_path},
+                    "line_number": 64,
+                    "lines": {"text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok\n"},
+                },
+            })
+            return {"status": "PASS", "exit_code": 0, "median_s": 10.0, "stdout": stdout}
+        if "--gpu" in cmd:
+            stdout = json.dumps({
+                "routing_backend": "NativeGpuBackend",
+                "matches": [
+                    {
+                        "file": corpus_path,
+                        "line": 64,
+                        "text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok",
+                    }
+                ],
+            })
+            return {"status": "PASS", "exit_code": 0, "median_s": 1.0, "stdout": stdout}
+        stdout = json.dumps({
+            "matches": [
+                {
+                    "file": corpus_path,
+                    "line": 64,
+                    "text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok",
+                }
+            ]
+        })
+        return {"status": "PASS", "exit_code": 0, "median_s": 8.0, "stdout": stdout}
+
+    monkeypatch.setattr(run_dyno_ratchet, "_time_command", _fake_time_command)
+    report = run_dyno_ratchet.run_dyno_ratchet(corpus_sizes=(1024,), runs=1, warmup=0)
+    assert report["promotion_proof"] is False
+    tg_gpu = report["rows"][0]["tg_gpu"]
+    assert tg_gpu["sidecar_used"] is None
+    assert tg_gpu["status"] == "UNSUPPORTED"
+    assert report["correctness_checks"][0]["status"] == "FAIL"
 
 
 def test_native_embeddings_ready_is_honest(monkeypatch: pytest.MonkeyPatch) -> None:
