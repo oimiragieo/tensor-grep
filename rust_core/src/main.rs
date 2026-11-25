@@ -8541,8 +8541,8 @@ fn detect_warm_index_state(
         return (IndexRoutingState::default(), None);
     }
 
-    let index_path = resolve_index_path(request.primary_path());
-    if !index_path.exists() {
+    let index_path = tensor_grep_rs::index_cache::resolve_read_index_path(request.primary_path());
+    if !tensor_grep_rs::index_cache::confined_regular_file_exists(&index_path) {
         return (IndexRoutingState::default(), None);
     }
 
@@ -9925,15 +9925,6 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     }
 }
 
-fn resolve_index_path(search_path: &str) -> PathBuf {
-    let root = Path::new(search_path);
-    if root.is_file() {
-        root.parent().unwrap_or(Path::new(".")).join(".tg_index")
-    } else {
-        root.join(".tg_index")
-    }
-}
-
 /// Persists `index` to `index_path` under the write-serializing index lock -- the ONLY place in
 /// the search path that acquires it. Readers (`TrigramIndex::load`, `detect_warm_index_state`)
 /// never take this lock; a wrong lock on the read path would deadlock (or at minimum
@@ -9944,9 +9935,23 @@ fn resolve_index_path(search_path: &str) -> PathBuf {
 /// caller's in-memory `index` (already fully built) is unaffected and is what actually answers
 /// the search.
 fn save_index_locked(index: &TrigramIndex, index_path: &Path, verbose: bool) {
-    match tensor_grep_rs::index_lock::IndexLockGuard::acquire(index_path) {
+    let index_dir = match tensor_grep_rs::index_cache::ensure_cache_parent_anchored(index_path) {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("[index] warning: failed to prepare index cache directory: {e}");
+            return;
+        }
+    };
+    let Some(file_name) = index_path.file_name() else {
+        eprintln!(
+            "[index] warning: failed to persist index: {} has no file name",
+            index_path.display()
+        );
+        return;
+    };
+    match tensor_grep_rs::index_lock::IndexLockGuard::acquire_anchored(index_path, &index_dir) {
         Ok(_guard) => {
-            if let Err(e) = index.save(index_path) {
+            if let Err(e) = index.save_anchored(&index_dir, file_name) {
                 eprintln!("[index] warning: failed to persist index: {e}");
             } else if verbose {
                 eprintln!("[index] persisted index to {}", index_path.display());
@@ -10001,7 +10006,7 @@ fn handle_index_search(
         );
     }
 
-    let index_path = resolve_index_path(request.primary_path());
+    let index_paths = tensor_grep_rs::index_cache::resolve_index_paths(request.primary_path());
 
     // M17 (audit-m17): never serve a mismatched root. The preloaded index arrived via
     // `detect_warm_index_state`'s routing gate, which now marks a root-mismatched index
@@ -10026,8 +10031,8 @@ fn handle_index_search(
             );
         }
         loaded
-    } else if index_path.exists() {
-        let loaded = match TrigramIndex::load(&index_path) {
+    } else if tensor_grep_rs::index_cache::confined_regular_file_exists(&index_paths.read_path) {
+        let loaded = match TrigramIndex::load(&index_paths.read_path) {
             Ok(idx) => idx,
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
@@ -10036,7 +10041,7 @@ fn handle_index_search(
                     Path::new(request.primary_path()),
                     args.no_ignore,
                 )?;
-                save_index_locked(&fresh, &index_path, args.verbose);
+                save_index_locked(&fresh, &index_paths.write_path, args.verbose);
                 if args.verbose {
                     eprintln!(
                         "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
@@ -10064,7 +10069,7 @@ fn handle_index_search(
                 Path::new(request.primary_path()),
                 args.no_ignore,
             )?;
-            save_index_locked(&fresh, &index_path, args.verbose);
+            save_index_locked(&fresh, &index_paths.write_path, args.verbose);
             if args.verbose {
                 eprintln!(
                     "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
@@ -10085,7 +10090,7 @@ fn handle_index_search(
                 Path::new(request.primary_path()),
                 args.no_ignore,
             )?;
-            save_index_locked(&update.index, &index_path, args.verbose);
+            save_index_locked(&update.index, &index_paths.write_path, args.verbose);
             if args.verbose {
                 eprintln!(
                     "[index] incremental update complete in {:?}: reused {} unchanged files, added {}, modified {}, deleted {}; {} files, {} trigrams, {} postings",
@@ -10120,7 +10125,7 @@ fn handle_index_search(
         let started = Instant::now();
         let fresh =
             TrigramIndex::build_with_options(Path::new(request.primary_path()), args.no_ignore)?;
-        save_index_locked(&fresh, &index_path, args.verbose);
+        save_index_locked(&fresh, &index_paths.write_path, args.verbose);
         if args.verbose {
             eprintln!(
                 "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",

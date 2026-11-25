@@ -15,7 +15,7 @@ use bounded_json::DecodeBudget;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{self, Read as _, Write as _};
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -1193,6 +1193,19 @@ impl TrigramIndex {
         None
     }
 
+    /// Persists the bincode-serialized index atomically through an already-anchored directory
+    /// handle so no path re-walk can follow a swapped symlink or junction.
+    pub fn save_anchored(
+        &self,
+        dir: &crate::safe_write::AnchoredDirectory,
+        file_name: &std::ffi::OsStr,
+    ) -> Result<()> {
+        let data = bincode_serialize(self)?;
+        dir.target(file_name)?
+            .publish_atomic(&data)
+            .map_err(|failure| failure.error)
+    }
+
     /// Persists the bincode-serialized index atomically -- see [`atomic_write_bytes`]. Audit
     /// #138 item #1: the previous `std::fs::write(path, ...)` here wrote the destination
     /// in-place, so a crash mid-write left a truncated/corrupt `.tg_index` behind.
@@ -1245,53 +1258,22 @@ impl TrigramIndex {
 /// after the rename, best-effort, for durability of the directory entry itself (skipped on
 /// Windows, where a directory handle cannot be fsync'd this way). Audit #138 item #1.
 fn atomic_write_bytes(path: &Path, data: &[u8]) -> Result<()> {
-    let parent = match path.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p,
-        _ => Path::new("."),
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
     };
-    std::fs::create_dir_all(parent)
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", path.display()))?;
+    let file_name = absolute
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} has no file name", path.display()))?;
+    let dir = crate::index_cache::ensure_dir_anchored(parent)
         .with_context(|| format!("failed to create parent dir for {}", path.display()))?;
-
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("index");
-    let tmp_path = parent.join(format!(
-        ".{file_name}.{}.tmp",
-        crate::index_lock::random_token()
-    ));
-
-    let write_result = (|| -> io::Result<()> {
-        let mut file = std::fs::File::create(&tmp_path)?;
-        file.write_all(data)?;
-        // fsync the data before the rename so a crash can never publish a truncated index --
-        // the rename below is the ONLY step that makes the new content visible at `path`.
-        file.sync_all()
-    })();
-
-    if let Err(e) = write_result {
-        let _ = std::fs::remove_file(&tmp_path); // best-effort cleanup; the original at `path` is untouched
-        return Err(e).with_context(|| format!("failed to write temp file {}", tmp_path.display()));
-    }
-
-    if let Err(e) = crate::index_lock::replace_with_retry(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(e).with_context(|| {
-            format!(
-                "failed to atomically rename {} -> {}",
-                tmp_path.display(),
-                path.display()
-            )
-        });
-    }
-
-    #[cfg(unix)]
-    {
-        // Best-effort durability of the rename's directory entry; a failure here does not
-        // invalidate the already-completed atomic rename above.
-        if let Ok(dir_file) = std::fs::File::open(parent) {
-            let _ = dir_file.sync_all();
-        }
-    }
-
-    Ok(())
+    dir.target(file_name)?
+        .publish_atomic(data)
+        .map_err(|failure| failure.error)
 }
 
 fn collect_file_entries(root: &Path, no_ignore: bool) -> Result<Vec<FileEntry>> {

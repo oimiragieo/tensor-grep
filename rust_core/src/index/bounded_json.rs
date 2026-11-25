@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 #[derive(Default)]
@@ -636,7 +635,7 @@ pub(super) fn deserialize_index_json(
     Ok(index)
 }
 pub(super) fn read_bounded_index_input(path: &Path) -> Result<Vec<u8>> {
-    let file = File::open(path)
+    let file = crate::index_cache::open_confined_regular_file(path)
         .with_context(|| format!("failed to read index from {}", path.display()))?;
     if file
         .metadata()
