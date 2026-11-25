@@ -53,6 +53,24 @@ def _display_path(path: Path, root: Path) -> str:
         return path.name
 
 
+def _validate_session_records(records: list[Any]) -> list[Any]:
+    for record in records:
+        if (
+            not isinstance(record.session_id, str)
+            or not record.session_id
+            or not isinstance(record.created_at, str)
+            or not isinstance(record.root, str)
+            or isinstance(record.version, bool)
+            or not isinstance(record.version, int)
+            or isinstance(record.file_count, bool)
+            or not isinstance(record.file_count, int)
+            or isinstance(record.symbol_count, bool)
+            or not isinstance(record.symbol_count, int)
+        ):
+            raise ValueError("invalid session index entry")
+    return records
+
+
 def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
     from tensor_grep.cli import session_store
     from tensor_grep.cli._index_lock import record_from_entry
@@ -62,7 +80,7 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
         return []
     if floor is None:
         try:
-            return session_store._load_index(root)
+            return _validate_session_records(session_store._load_index(root))
         except (AttributeError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("invalid session index entry") from exc
     anchor = floor.resolve()
@@ -88,7 +106,7 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
             records.append(record_from_entry(session_store.SessionRecord, entry))
         except TypeError as exc:
             raise ValueError("invalid session index entry") from exc
-    return records
+    return _validate_session_records(records)
 
 
 def _session_entries(

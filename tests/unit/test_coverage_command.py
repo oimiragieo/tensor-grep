@@ -601,3 +601,30 @@ def test_coverage_malformed_session_index_emits_valid_json_error(tmp_path: Path)
     payload = json.loads(result.stdout)
     assert payload["complete"] is False
     assert payload["error"] == "invalid session index entry"
+
+
+def test_coverage_malformed_session_record_fields_fail_cleanly(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("value = 1\n", encoding="utf-8")
+    runner = CliRunner()
+    opened = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+
+    session_root = session_store._resolve_root(project)
+    index_path = session_store._index_path(session_root)
+    entries = json.loads(index_path.read_text(encoding="utf-8"))
+    entries[0]["session_id"] = []
+    entries[0]["created_at"] = 123
+    index_path.write_text(json.dumps(entries), encoding="utf-8")
+
+    result = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["complete"] is False
+    assert payload["error"] == "invalid session index entry"
+
+    with pytest.raises(ValueError, match="invalid session index entry"):
+        check_coverage(project, confinement_root=tmp_path)
