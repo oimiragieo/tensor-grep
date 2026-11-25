@@ -1028,7 +1028,7 @@ def _build_prepare_payload(
                 ego_subgraph is not None
                 and int((ego_subgraph.get("sync") or {}).get("complete", 0)) == 1
             )
-            if can_use_warm_cache and not graph_view_ready:
+            if can_use_warm_cache:
                 view_updates: dict[str, tuple[bool, int]] = {
                     "symbols_v1": (symbols_ready, 1),
                     "graph_v1": (graph_ready, 1),
@@ -1036,17 +1036,43 @@ def _build_prepare_payload(
                 other_view_fresh = check_view_freshness(
                     manifest, merkle_root, ("hybrid_v1", "index_v1")
                 )
-                if (resolved_root_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3").is_file():
+                hybrid_path = resolved_root_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
+                if hybrid_path.is_file() and not hybrid_path.is_symlink():
                     view_updates["hybrid_v1"] = (bool(other_view_fresh.get("hybrid_v1")), 1)
-                if (resolved_root_path / ".tg_cache" / "index_v1" / "trigram.idx").is_file():
+                index_v1_dir = resolved_root_path / ".tg_cache" / "index_v1"
+                if (
+                    index_v1_dir.is_dir()
+                    and not index_v1_dir.is_symlink()
+                    and any(
+                        p.is_file() and not p.is_symlink() for p in index_v1_dir.glob("*.tg_index")
+                    )
+                ):
                     view_updates["index_v1"] = (bool(other_view_fresh.get("index_v1")), 1)
-                update_view_states(
-                    resolved_root_path,
-                    merkle_root,
-                    view_updates,
-                    source_address=source_address,
-                    deadline_monotonic=deadline_monotonic,
+
+                loaded_views = (
+                    manifest.get("views")
+                    if isinstance(manifest, dict)
+                    and manifest.get("merkle_root") == merkle_root
+                    and isinstance(manifest.get("views"), dict)
+                    else None
                 )
+                views_changed = loaded_views is None or any(
+                    not (
+                        isinstance(loaded_views.get(vname), dict)
+                        and loaded_views[vname].get("merkle_root") == merkle_root
+                        and loaded_views[vname].get("ready") is vready
+                        and loaded_views[vname].get("schema_version") == vschema
+                    )
+                    for vname, (vready, vschema) in view_updates.items()
+                )
+                if not graph_view_ready or not graph_ready or not symbols_ready or views_changed:
+                    update_view_states(
+                        resolved_root_path,
+                        merkle_root,
+                        view_updates,
+                        source_address=source_address,
+                        deadline_monotonic=deadline_monotonic,
+                    )
         except (OSError, ValueError, sqlite3.Error):
             ego_subgraph = None
 

@@ -210,7 +210,7 @@ def test_prepare_forces_graph_refresh_when_manifest_stale_or_invalid_and_tracks_
     hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
     hybrid_path.parent.mkdir(parents=True, exist_ok=True)
     hybrid_path.write_bytes(b"stale-hybrid")
-    index_path = tmp_path / ".tg_cache" / "index_v1" / "trigram.idx"
+    index_path = tmp_path / ".tg_cache" / "index_v1" / "a1b2c3d4e5f6.tg_index"
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_bytes(b"stale-index")
 
@@ -297,3 +297,52 @@ def test_prepare_context_digest_changes_across_queries_and_marks_partial_symbols
     assert partial_manifest is not None
     assert partial_manifest["views"]["graph_v1"]["ready"] is True
     assert partial_manifest["views"]["symbols_v1"]["ready"] is False
+
+
+def test_prepare_repairs_fresh_manifest_to_not_ready_on_degradation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_repo(tmp_path)
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    fresh = load_unified_manifest(tmp_path)
+    assert fresh is not None
+    assert fresh["views"]["symbols_v1"]["ready"] is True
+    assert fresh["views"]["graph_v1"]["ready"] is True
+
+    # Simulate a subsequent degraded run on the same source generation where both
+    # repo_map is partial and graph sync is incomplete.
+    orig_build = repo_map.build_repo_map
+
+    def partial_build(*args, **kwargs):
+        rm = orig_build(*args, **kwargs)
+        rm["partial"] = True
+        return rm
+
+    from tensor_grep.cli import symbol_graph_index
+
+    def incomplete_sync(*args, **kwargs):
+        return {"nodes": [], "edges": [], "sync": {"complete": 0, "updated": 0, "deleted": 0}}
+
+    monkeypatch.setattr(
+        prepare_service,
+        "_load_warm_prepare_cache",
+        lambda *_args, **_kwargs: (None, {}, None, False),
+    )
+    monkeypatch.setattr(repo_map, "build_repo_map", partial_build)
+    monkeypatch.setattr(
+        symbol_graph_index, "sync_incremental_ego_subgraph_from_paths", incomplete_sync
+    )
+
+    prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    degraded = load_unified_manifest(tmp_path)
+    assert degraded is not None
+    assert degraded["views"]["symbols_v1"]["ready"] is False
+    assert degraded["views"]["graph_v1"]["ready"] is False
