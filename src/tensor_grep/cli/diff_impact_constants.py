@@ -590,7 +590,10 @@ def resolve_constant_blast_radius(
             bound_names.add(name)
         file_syms = symbols_by_file.get(rel_file, [])
         file_has_usage = False
-        target_names = [name, *sorted(aliases)]
+        target_names = [
+            *sorted(bound_names),
+            *(t for t in (name, *sorted(aliases)) if t not in bound_names),
+        ]
         for target_name in target_names:
             try:
                 refs, _ = repo_map._references_and_calls_for_path(file_path, target_name, root)
