@@ -42,6 +42,7 @@ from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.detail_tier import apply_detail_tier as _apply_detail_tier
+from tensor_grep.cli.detail_tier import compact_option as _compact_option
 from tensor_grep.cli.detail_tier import detail_option as _detail_option
 from tensor_grep.cli.detail_tier import dump_detail_json as _dump_detail_json
 from tensor_grep.cli.formatters.base import OutputFormatter
@@ -4836,6 +4837,7 @@ def orient(
         help="Accepted for command-surface parity with codemap; a no-op since orient already "
         "defaults to an unbounded --deadline.",
     ),
+    compact: bool = _compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
@@ -4888,7 +4890,7 @@ def orient(
     if json_output:
         # build_orient_capsule_json's exact format (json.dumps(..., indent=2), no
         # ensure_ascii=False) -- match it here so a warm hit is byte-identical to a cold miss.
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(_dump_detail_json(payload, "compact" if compact else "standard"))
         return
 
     # `tg orient` has no exit-2 contract by design (see --deadline's help): a truncated scan still
@@ -5797,6 +5799,7 @@ def agent(
         "off", "--rerank", help="Native advisory snippet reranking: off, auto, cross-encoder."
     ),
     detail: str = _detail_option(),
+    compact: bool = _compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
 ) -> None:
@@ -5854,8 +5857,9 @@ def agent(
                 daemon_payload["dependency_grounding"] = daemon_grounding
             else:
                 daemon_payload.pop("dependency_grounding", None)
+            effective_detail = "compact" if compact else detail
             if json_output:
-                typer.echo(_dump_detail_json(daemon_payload, detail, ensure_ascii=False))
+                typer.echo(_dump_detail_json(daemon_payload, effective_detail, ensure_ascii=False))
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 _emit_agent_text(daemon_payload, gpu_device_ids)
@@ -5894,14 +5898,15 @@ def agent(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     # Emit the full capsule before applying the scan-truncation exit contract.
+    effective_detail = "compact" if compact else detail
     if citations:
         _citations.emit_payload_citations(
-            _apply_detail_tier(payload, detail) if json_output else payload,
+            _apply_detail_tier(payload, effective_detail) if json_output else payload,
             resolved_path,
             json_output=json_output,
         )
     elif json_output:
-        typer.echo(_dump_detail_json(payload, detail, ensure_ascii=False))
+        typer.echo(_dump_detail_json(payload, effective_detail, ensure_ascii=False))
     else:
         _emit_scan_incompleteness_banner(payload)
         _emit_agent_text(payload, gpu_device_ids)
@@ -5963,6 +5968,7 @@ def edit_plan(
         help="Accepted for command-surface parity with codemap; a no-op since edit-plan already "
         "defaults to an unbounded --deadline.",
     ),
+    compact: bool = _compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
@@ -6005,7 +6011,7 @@ def edit_plan(
             # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
             # the cold path below -- print the full daemon payload, then exit 2 if it was truncated.
             if json_output:
-                typer.echo(json.dumps(daemon_payload, indent=2))
+                typer.echo(_dump_detail_json(daemon_payload, "compact" if compact else "standard"))
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 payload = daemon_payload
@@ -6040,7 +6046,7 @@ def edit_plan(
     # text branches share the same scan-truncation gate below -- output the full payload FIRST, then
     # exit 2 if the scan itself (not just the output) was capped.
     if json_output:
-        typer.echo(json.dumps(payload, indent=2))
+        typer.echo(_dump_detail_json(payload, "compact" if compact else "standard"))
     else:
         _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Edit plan for {payload['path']}")

@@ -28,6 +28,16 @@ _COMPACT_OMITTED_KEYS: frozenset[str] = frozenset({
     "test_matches",
     "import_graph_consumers",
     "ranking_quality",
+    "edit_plan_seed",
+    "navigation_pack",
+    "candidate_edit_targets",
+    "plan",
+    "context_consistency",
+    "raw_context_ref",
+    "gpu_acceleration",
+    "call_site_evidence",
+    "omissions",
+    "rollback",
 })
 
 
@@ -51,17 +61,31 @@ def detail_option() -> Any:
     )
 
 
-def apply_detail_tier(payload: dict[str, Any], detail: str) -> dict[str, Any]:
-    """Filter verbose diagnostic/telemetry keys when `detail == 'compact'`."""
-    validate_detail_tier(detail)
-    if detail in ("standard", "full"):
-        return payload
+def compact_option() -> Any:
+    """Shared `--compact` Typer option for deduplicated compact JSON output."""
+    return typer.Option(
+        False,
+        "--compact",
+        help="Emit compact, deduplicated JSON output (JSON mode only).",
+    )
+
+
+def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Deduplicate overlapping target/plan blocks and omit verbose diagnostic keys."""
     filtered = {key: value for key, value in payload.items() if key not in _COMPACT_OMITTED_KEYS}
     gaps = filtered.get("resolution_gaps")
     if isinstance(gaps, list) and len(gaps) > 10:
         filtered["resolution_gaps_truncated_count"] = len(gaps) - 10
         filtered["resolution_gaps"] = gaps[:10]
     return filtered
+
+
+def apply_detail_tier(payload: dict[str, Any], detail: str) -> dict[str, Any]:
+    """Filter verbose diagnostic/telemetry keys when `detail == 'compact'`."""
+    validate_detail_tier(detail)
+    if detail in ("standard", "full"):
+        return payload
+    return compact_payload(payload)
 
 
 def dump_detail_json(
