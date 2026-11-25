@@ -4528,7 +4528,7 @@ def tg_query(
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
-    """Code search: text/search (regex/literal), ast (pattern+lang), find (semantic query), index (native trigram). Optional workspace_roots (<=8)."""
+    """Code search: "search" (regex/literal), "ast" (pattern+lang), "find" (semantic), "index" (native trigram). Optional workspace_roots (<=8)."""
     try:
         try:
             confined_path = str(_confine_mcp_path(path, label="path"))
