@@ -100,3 +100,105 @@ def test_strip_windows_extended_prefix_handles_unc_and_preserves_device_namespac
         strip_windows_extended_prefix(r"\\?\GLOBALROOT\Device\Harddisk0")
         == r"\\?\GLOBALROOT\Device\Harddisk0"
     )
+
+
+def test_mcp_stdio_launcher_warning_prefers_stable_managed_shim_over_hash_runtime(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    tg_root = tmp_path / ".tensor-grep"
+    shim_bin = tg_root / "bin" / "tg.exe"
+    shim_bin.parent.mkdir(parents=True, exist_ok=True)
+    shim_bin.write_text("exe", encoding="utf-8")
+    runtime_bin = tg_root / "runtimes" / "0123456789abcdef0123456789abcdef" / "bin" / "tg.exe"
+    runtime_bin.parent.mkdir(parents=True, exist_ok=True)
+    runtime_bin.write_text("exe", encoding="utf-8")
+
+    native_path = Path(rf"\\?\{runtime_bin}") if os.name == "nt" else runtime_bin
+    warning = doctor_report._doctor_mcp_stdio_launcher_warning(
+        native_tg_binary=native_path,
+        launchers=[
+            (
+                "PATH",
+                "powershell-shim",
+                r"\\?\C:\Users\dev\AppData\Local\Microsoft\WindowsApps\tg.ps1",
+            )
+        ],
+    )
+
+    assert warning is not None
+    assert "\\\\?\\" not in warning
+    assert "runtimes" not in warning
+    assert str(shim_bin) in warning
+
+
+def test_mcp_stdio_launcher_warning_falls_back_when_stable_managed_shim_missing(
+    tmp_path: Path,
+) -> None:
+    import os
+
+    tg_root = tmp_path / ".tensor-grep"
+    runtime_bin = tg_root / "runtimes" / "0123456789abcdef0123456789abcdef" / "bin" / "tg.exe"
+    runtime_bin.parent.mkdir(parents=True, exist_ok=True)
+    runtime_bin.write_text("exe", encoding="utf-8")
+
+    native_path = Path(rf"\\?\{runtime_bin}") if os.name == "nt" else runtime_bin
+    warning = doctor_report._doctor_mcp_stdio_launcher_warning(
+        native_tg_binary=native_path,
+        launchers=[
+            (
+                "PATH",
+                "powershell-shim",
+                r"\\?\C:\Users\dev\AppData\Local\Microsoft\WindowsApps\tg.ps1",
+            )
+        ],
+    )
+
+    assert warning is not None
+    assert "\\\\?\\" not in warning
+    assert str(runtime_bin) in warning
+
+
+def test_doctor_payload_and_gpu_probe_strip_windows_extended_prefix(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_bin = tmp_path / "tg.exe"
+    fake_bin.write_text("exe", encoding="utf-8")
+    extended_bin = Path(rf"\\?\{fake_bin}")
+
+    class _FakeCompleted:
+        returncode = 0
+        stdout = (
+            b'{"routing_backend":"NativeCpuBackend","routing_reason":"gpu_unavailable",'
+            b'"sidecar_used":false,"routing_gpu_device_ids":[]}'
+        )
+        stderr = b""
+
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(extended_bin))
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.141.0")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: extended_bin)
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_rust_binary_version", lambda _b: "tg 1.141.0")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.inspect_native_tg_binary",
+        lambda _b, **_kw: {"native_frontdoor_flavor": "nvidia"},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_rust_core_extension_available", lambda: True)
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_path_tg_candidates", lambda: [])
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates", lambda: [])
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_python_subprocess_path_tg_candidate", lambda: None
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status", lambda _p: {"running": False}
+    )
+    monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _b: False)
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", lambda *a, **kw: _FakeCompleted())
+
+    payload = doctor_payload._build_doctor_payload(str(tmp_path), with_lsp=False, fast=True)
+    assert payload["native_tg_binary"] == str(fake_bin)
+    assert payload["env"]["TG_NATIVE_TG_BINARY"] == str(fake_bin)
+    probe_cmd = payload["gpu"]["search_runtime_probe"]["command"]
+    assert probe_cmd is not None
+    assert "\\\\?\\" not in probe_cmd
+    assert probe_cmd.startswith(str(fake_bin))

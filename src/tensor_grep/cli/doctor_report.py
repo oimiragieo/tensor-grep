@@ -35,6 +35,9 @@ from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
 from tensor_grep.cli.doctor_launcher_probe import (
+    build_mcp_stdio_launcher_warning as _build_mcp_stdio_launcher_warning,
+)
+from tensor_grep.cli.doctor_launcher_probe import (
     powershell_shim_target as powershell_shim_target,
 )
 from tensor_grep.cli.doctor_launcher_probe import (
@@ -1077,54 +1080,10 @@ def _doctor_mcp_stdio_launcher_warning(
     launchers: list[tuple[str, str | None, str | None]],
     path_tg_candidates: list[dict[str, str | None]] | None = None,
 ) -> str | None:
-    native_stdio_path = native_tg_binary
-    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
-        native_stdio_path = next(
-            (
-                Path(path)
-                for _label, kind, path in launchers
-                if path
-                and Path(path).suffix.lower() == ".exe"
-                and kind in {"managed-native", "native-exe"}
-            ),
-            None,
-        )
-    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
-        return None
-
-    powershell_launchers = [
-        (label, path)
-        for label, kind, path in launchers
-        if path and (kind == "powershell-shim" or Path(path).suffix.lower() == ".ps1")
-    ]
-    # Also flag .ps1 anywhere in PATH candidates: PowerShell's `Get-Command tg`
-    # resolves .ps1 ahead of .exe regardless of enumeration order, so a .ps1
-    # sibling next to a working .exe still traps MCP clients using Start-Process.
-    if path_tg_candidates:
-        seen_paths = {path for _, path in powershell_launchers if path}
-        for candidate in path_tg_candidates:
-            cpath = candidate.get("path")
-            if cpath and cpath not in seen_paths and Path(cpath).suffix.lower() == ".ps1":
-                powershell_launchers.append(("PATH .ps1 sibling", cpath))
-                seen_paths.add(cpath)
-    if not powershell_launchers:
-        return None
-
-    observed = "; ".join(
-        f"{label} resolves {_strip_windows_extended_prefix(path)}"
-        for label, path in powershell_launchers
-    )
-    script_path = _strip_windows_extended_prefix(powershell_launchers[0][1])
-    clean_native_stdio_path = _strip_windows_extended_prefix(str(native_stdio_path))
-    return (
-        "MCP stdio launcher warning: "
-        f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
-        f"tg.exe directly: {clean_native_stdio_path}. Windows MCP/stdio clients that launch "
-        "`tg` via PowerShell Start-Process must target native tg.exe directly, not "
-        "`tg.ps1`, because Start-Process can resolve the PowerShell shim instead of "
-        "the native stdio-safe front door. If you intentionally use the PowerShell "
-        "script shim, configure the client to launch it explicitly as "
-        f"`pwsh -NoProfile -File {script_path} mcp`."
+    return _build_mcp_stdio_launcher_warning(
+        native_tg_binary=native_tg_binary,
+        launchers=launchers,
+        path_tg_candidates=path_tg_candidates,
     )
 
 
@@ -1285,7 +1244,9 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         base["error"] = "native tg binary was not resolved"
         return base
     if not native_tg_binary.exists():
-        base["error"] = f"native tg binary does not exist: {native_tg_binary}"
+        base["error"] = (
+            f"native tg binary does not exist: {_strip_windows_extended_prefix(str(native_tg_binary))}"
+        )
         return base
 
     # GPU-P0-1 (#171): on WSL, native_tg_binary can be a Windows-target binary that cannot
@@ -1327,7 +1288,11 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             sentinel,
             probe_target,
         ]
-        base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
+        base["command"] = " ".join([
+            _strip_windows_extended_prefix(command[0]),
+            *command[1:-1],
+            "<doctor-gpu-probe-file>",
+        ])
         from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
 
         probe_env, _refusal = child_env_or_refusal()

@@ -12200,10 +12200,13 @@ fn verify_audit_manifest_payload(
         routing_backend: "AuditManifest",
         routing_reason: "audit-manifest-verify",
         sidecar_used: false,
-        manifest_path: manifest_path.to_string_lossy().to_string(),
-        signing_key_path: signing_key_path.map(|path| path.to_string_lossy().to_string()),
+        manifest_path: tensor_grep_rs::clean_windows_extended_path(&manifest_path),
+        signing_key_path: signing_key_path
+            .as_deref()
+            .map(tensor_grep_rs::clean_windows_extended_path),
         previous_manifest_path: previous_manifest_path
-            .map(|path| path.to_string_lossy().to_string()),
+            .as_deref()
+            .map(tensor_grep_rs::clean_windows_extended_path),
         kind: Some(manifest.kind),
         manifest_sha256: manifest.manifest_sha256,
         previous_manifest_sha256: manifest.previous_manifest_sha256,
