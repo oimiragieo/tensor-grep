@@ -53,17 +53,31 @@ def version_invocation_verbose(argv: Sequence[str]) -> bool | None:
     return None
 
 
+def native_embeddings_ready() -> bool:
+    """Return True only when rust_core is importable and compiled with native-embeddings."""
+    if not _module_importable("tensor_grep.rust_core"):
+        return False
+    try:
+        rust_core = importlib.import_module("tensor_grep.rust_core")
+        probe = getattr(rust_core, "native_embeddings_ready", None)
+        return bool(callable(probe) and probe())
+    except (ImportError, OSError, AttributeError, RuntimeError, ValueError):
+        return False
+
+
 def version_detail_lines() -> tuple[str, ...]:
     """Return truthful verbose version lines based on dynamically probed modules."""
     has_cudf = _module_importable("cudf")
     has_gpu_torch, has_cpu_torch = _probe_torch()
     has_rust_core = _module_importable("tensor_grep.rust_core")
     has_pyarrow = _module_importable("pyarrow")
+    has_native_embeddings = native_embeddings_ready()
 
     cudf_flag = "+gpu-cudf" if has_cudf else "-gpu-cudf"
     torch_flag = "+gpu-torch" if has_gpu_torch else "-gpu-torch"
     rust_flag = "+rust-core" if has_rust_core else "-rust-core"
     ipc_status = "available (cudf+pyarrow)" if (has_pyarrow and has_cudf) else "unavailable"
+    embeddings_status = "ready" if has_native_embeddings else "unavailable"
 
     lines = [
         "",
@@ -72,4 +86,5 @@ def version_detail_lines() -> tuple[str, ...]:
     if has_cpu_torch:
         lines.append("torch-cpu")
     lines.append(f"Arrow Zero-Copy IPC: {ipc_status}")
+    lines.append(f"Native Embeddings: {embeddings_status}")
     return tuple(lines)

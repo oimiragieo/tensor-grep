@@ -43,6 +43,15 @@ from tensor_grep.cli.doctor_launcher_probe import (
 from tensor_grep.cli.doctor_launcher_probe import (
     strip_windows_extended_prefix as _strip_windows_extended_prefix,
 )
+from tensor_grep.cli.doctor_proof_gates import (
+    _DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES as _DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES,
+)
+from tensor_grep.cli.doctor_proof_gates import (
+    evaluate_doctor_dyno_promotion_status as evaluate_doctor_dyno_promotion_status,
+)
+from tensor_grep.cli.doctor_proof_gates import (
+    evaluate_lsp_warm_pool_proof as evaluate_lsp_warm_pool_proof,
+)
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )

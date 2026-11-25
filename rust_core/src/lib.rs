@@ -33,6 +33,8 @@ mod cross_encoder_pins;
 mod cross_encoder_runtime;
 pub mod crossover;
 pub mod editor_plane;
+#[cfg(feature = "native-embeddings")]
+pub mod embeddings;
 pub mod exit_codes;
 pub mod frontdoor_hops;
 pub mod gpu_bitparallel;
@@ -478,7 +480,13 @@ fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ast_rewrite_apply_json, m)?)?;
     m.add_function(wrap_pyfunction!(_literal_pattern_hint, m)?)?;
     m.add_function(wrap_pyfunction!(cross_encoder_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(native_embeddings_ready, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+fn native_embeddings_ready() -> bool {
+    cfg!(feature = "native-embeddings")
 }
 
 #[pyfunction]
