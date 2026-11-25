@@ -71,32 +71,20 @@ _CHECKPOINT_MAX_TOTAL_BYTES_ENV = "TG_CHECKPOINT_MAX_TOTAL_BYTES"
 _DEFAULT_CHECKPOINT_MAX_TOTAL_BYTES = 4 * 1024 * 1024 * 1024  # 4 GiB per checkpoint
 _CHECKPOINT_FREE_SPACE_MARGIN_BYTES_ENV = "TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES"
 _DEFAULT_CHECKPOINT_FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024  # keep >=256 MiB free after copy
-_NON_GIT_IGNORED_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".tensor-grep",
-    ".tg_cache",
-    "artifacts",
-    "build",
-    "dist",
-    "site",
-    "target",
-}
+_NON_GIT_IGNORED_DIRS = frozenset(
+    ".git .hg .svn .venv node_modules __pycache__ .pytest_cache "
+    ".mypy_cache .ruff_cache .tensor-grep .tg_cache artifacts build dist site target".split()
+)
 _NON_GIT_IGNORED_DIRS_LOWER = {name.lower() for name in _NON_GIT_IGNORED_DIRS}
 _DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
 
 
 def _is_ignored_snapshot_dir(name: str) -> bool:
-    if os.name == "nt":
-        return name.lower() in _NON_GIT_IGNORED_DIRS_LOWER
-    return name in _NON_GIT_IGNORED_DIRS
+    return (
+        (name.lower() in _NON_GIT_IGNORED_DIRS_LOWER)
+        if os.name == "nt"
+        else (name in _NON_GIT_IGNORED_DIRS)
+    )
 
 
 def _is_tg_cache_part(name: str) -> bool:

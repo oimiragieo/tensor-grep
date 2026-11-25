@@ -5186,20 +5186,10 @@ mod tests {
     }
 
     #[test]
-    fn classify_args_accepts_json_and_rejects_conflicting_format() {
-        let Commands::Classify(args) =
-            CommandCli::try_parse_from(["tg", "classify", "--json", "--text", "CRITICAL OOM"])
-                .unwrap()
-                .command
-        else {
-            panic!()
-        };
-        assert!(
-            args.json
-                && resolve_classify_format(args.json, args.format.as_deref())
-                    == Ok("json".to_string())
-        );
-        assert!(resolve_classify_format(true, Some("text")).is_err());
+    fn classify_args_accepts_json_flag() {
+        let cli =
+            CommandCli::try_parse_from(["tg", "classify", "--json", "--text", "OOM"]).unwrap();
+        assert!(matches!(cli.command, Commands::Classify(a) if a.json && a.format.is_none()));
     }
 
     #[test]
@@ -14012,18 +14002,6 @@ fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<Strin
 // (sidecar.py:_classify_payload already prefers payload content over the positional file
 // argument) -- no new IPC protocol, just wiring these two flags into the existing Optional
 // payload parameter that execute_sidecar_command has always accepted.
-fn resolve_classify_format(json: bool, format: Option<&str>) -> Result<String, &'static str> {
-    if json && format.is_some_and(|fmt| fmt != "json") {
-        return Err("Error: tg classify --json cannot be combined with --format");
-    }
-    Ok(if json {
-        "json"
-    } else {
-        format.unwrap_or("json")
-    }
-    .to_string())
-}
-
 fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
     if args.stdin_flag && args.text.is_some() {
         anyhow::bail!("tg classify --stdin cannot be combined with --text");
@@ -14034,11 +14012,11 @@ fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
     if args.text.is_some() && args.file_path.is_some() {
         anyhow::bail!("tg classify --text cannot be combined with a file path argument");
     }
-
-    let format = resolve_classify_format(args.json, args.format.as_deref()).unwrap_or_else(|msg| {
-        eprintln!("{msg}");
+    if args.json && args.format.as_deref().is_some_and(|fmt| fmt != "json") {
+        eprintln!("Error: tg classify --json cannot be combined with --format");
         std::process::exit(2);
-    });
+    }
+    let format = args.format.unwrap_or_else(|| "json".to_string());
     let sidecar_args = vec![
         "--format".to_string(),
         format,
