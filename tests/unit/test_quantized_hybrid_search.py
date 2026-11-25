@@ -250,3 +250,36 @@ def test_corrupt_binary_blob_falls_back_to_exact_cosine_when_over_preview_k() ->
         )
         assert len(hits) == 3
         assert hits[0]["doc_id"] == "target"
+
+
+def test_nonzero_padding_bits_rejected_and_triggers_cosine_fallback() -> None:
+    query_vec = [1.0]
+    q_bin = pack_heaviside_1bit(query_vec)
+    assert q_bin is not None
+    tampered = b"\x01\x00\x00\x00\xff"
+    assert hamming_similarity_1bit(q_bin, tampered) is None
+    assert hamming_similarity_1bit(tampered, q_bin) is None
+    with pytest.raises(ValueError, match="corrupt 1-bit"):
+        unpack_heaviside_1bit(tampered)
+
+    docs: list[tuple[str, str, list[float]]] = [
+        (f"doc_{idx:02d}", f"filler_symbol_{idx}", [-1.0]) for idx in range(65)
+    ]
+    docs.append(("target", "exact_target_symbol", list(query_vec)))
+
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents(docs)
+        index._conn.execute(
+            "UPDATE documents SET binary_blob = ? WHERE doc_id = ?",
+            (tampered, "target"),
+        )
+        index._conn.commit()
+
+        hits = index.search(
+            "nonexistent_lexical_token",
+            query_vec=query_vec,
+            limit=3,
+            idf_weight=0.0,
+        )
+        assert len(hits) == 3
+        assert hits[0]["doc_id"] == "target"

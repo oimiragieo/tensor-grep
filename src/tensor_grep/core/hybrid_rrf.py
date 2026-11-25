@@ -242,6 +242,8 @@ def unpack_heaviside_1bit(blob: object) -> list[int]:
         )
     if dim == 0:
         return []
+    if dim % 8 != 0 and (payload[-1] & (~((1 << (dim % 8)) - 1) & 0xFF)) != 0:
+        raise ValueError("corrupt 1-bit embedding non-zero padding bits")
     if np is not None:
         unpacked = np.unpackbits(np.frombuffer(payload, dtype=np.uint8), bitorder="little")
         return [int(b) for b in unpacked[:dim]]
@@ -263,6 +265,10 @@ def hamming_similarity_1bit(a_blob: object, b_blob: object) -> float | None:
     expected_bytes = (dim_a + 7) // 8
     if len(pay_a) != expected_bytes or len(pay_b) != expected_bytes:
         return None
+    if dim_a % 8 != 0:
+        unused_mask = ~((1 << (dim_a % 8)) - 1) & 0xFF
+        if (pay_a[-1] & unused_mask) != 0 or (pay_b[-1] & unused_mask) != 0:
+            return None
     int_a = int.from_bytes(pay_a, "little")
     int_b = int.from_bytes(pay_b, "little")
     dist = (int_a ^ int_b).bit_count()
