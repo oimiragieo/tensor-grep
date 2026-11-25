@@ -19,6 +19,11 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 from tensor_grep.core import retrieval_symbols
+from tensor_grep.core.hybrid_rrf import (
+    HybridSQLiteIndex,
+    _estimate_query_idf_weight,
+    adaptive_idf_rrf_score,
+)
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.core.retrieval_bm25 import Bm25Index
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS, Chunk, chunk_file
@@ -229,6 +234,54 @@ def rerank_by_bm25(
     return dataclasses.replace(result, matches=reranked)
 
 
+def hybrid_rerank(
+    query: str,
+    chunks: list[Chunk],
+    *,
+    dense_index: DenseIndex | None = None,
+    k: int = DEFAULT_K,
+    idf_weight: float | None = None,
+) -> list[int]:
+    """Rank chunks using ``HybridSQLiteIndex`` (FTS5 + adaptive IDF-weighted RRF)."""
+    if not chunks:
+        return []
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents([(str(i), chunk.text, None) for i, chunk in enumerate(chunks)])
+        if dense_index is None:
+            results = index.search(query, limit=len(chunks), k=k, idf_weight=idf_weight)
+            return [int(row["doc_id"]) for row in results]
+
+        fts_ranks = index._fts_rankings(query)
+        dense_ranks = {
+            chunk_idx: rank
+            for rank, (chunk_idx, _score) in enumerate(
+                dense_index.query(query, top_k=len(chunks)), start=1
+            )
+        }
+        if not fts_ranks and not dense_ranks:
+            return []
+        resolved_idf_weight = (
+            _estimate_query_idf_weight(query, total_docs=len(chunks), fts_hits=len(fts_ranks))
+            if idf_weight is None
+            else float(idf_weight)
+        )
+        candidate_ids = {int(doc_id) for doc_id in fts_ranks} | set(dense_ranks)
+        scored = [
+            (
+                adaptive_idf_rrf_score(
+                    fts_ranks.get(str(idx)),
+                    dense_ranks.get(idx),
+                    idf_weight=resolved_idf_weight,
+                    k=k,
+                ),
+                idx,
+            )
+            for idx in candidate_ids
+        ]
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [idx for _score, idx in scored]
+
+
 def rank_chunks(
     query: str,
     chunks: list[Chunk],
@@ -240,6 +293,7 @@ def rank_chunks(
     dense_weight: float = 1.0,
     combine: Literal["sum", "max"] = "max",
     evidence: dict[str, Any] | None = None,
+    hybrid: bool = False,
 ) -> tuple[list[int], str | None]:
     """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
     via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
@@ -292,53 +346,56 @@ def rank_chunks(
       caller, per the Backend Fail-Closed Contract.
     """
     total = max(1, len(chunks))
-    bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
-    rankings: list[list[int]] = [bm25_ranking]
-    if dense_index is not None:
-        dense_ranking = [chunk_idx for chunk_idx, _ in dense_index.query(query, top_k=total)]
-        rankings.append(dense_ranking)
-
-    weights: list[float] | None = None
-    path_ranking: list[int] = []
-    if dense_index is not None and dense_weight != 1.0:
-        weights = [1.0, dense_weight]
-    if _rrf_channels_enabled():
-        weights = weights if weights is not None else [1.0] * len(rankings)
-        path_ranking = _path_channel_ranking(chunks, query)
-        if path_ranking:
-            rankings.append(path_ranking)
-            weights.append(PATH_CHANNEL_WEIGHT)
-
     symbol_reason: str | None = None
-    if retrieval_symbols.enabled():
-        symbol_order, symbol_evidence = retrieval_symbols.symbol_ranking(chunks, query)
-        if symbol_order:
-            rankings.append(symbol_order)
-            # Exact definitions use equal AST/lexical/dense agreement votes.
-            # Queries without definition evidence keep their existing ordering.
-            weights = [1.0] * len(rankings)
+    if hybrid:
+        fused_order = hybrid_rerank(query, chunks, dense_index=dense_index, k=k)
+    else:
+        bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
+        rankings: list[list[int]] = [bm25_ranking]
+        if dense_index is not None:
+            dense_ranking = [chunk_idx for chunk_idx, _ in dense_index.query(query, top_k=total)]
+            rankings.append(dense_ranking)
+
+        weights: list[float] | None = None
+        path_ranking: list[int] = []
+        if dense_index is not None and dense_weight != 1.0:
+            weights = [1.0, dense_weight]
+        if _rrf_channels_enabled():
+            weights = weights if weights is not None else [1.0] * len(rankings)
+            path_ranking = _path_channel_ranking(chunks, query)
             if path_ranking:
-                weights[-2] = PATH_CHANNEL_WEIGHT
-            combine = "sum"
-        symbol_reason = retrieval_symbols.fallback_reason(symbol_evidence)
-        if evidence is not None:
-            evidence.update(
-                method="rrf",
-                combine=combine,
-                k=k,
-                bm25={"evidence": "lexical", "ranked_chunks": len(bm25_ranking)},
-                dense={"evidence": "model", "available": dense_index is not None},
-                ast_symbols=symbol_evidence,
-                weights={
-                    "bm25": 1.0,
-                    "dense": (1.0 if symbol_order else dense_weight)
-                    if dense_index is not None
-                    else 0.0,
-                    "ast_symbols": 1.0 if symbol_order else 0.0,
-                    "path": PATH_CHANNEL_WEIGHT if path_ranking else 0.0,
-                },
-            )
-    fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)
+                rankings.append(path_ranking)
+                weights.append(PATH_CHANNEL_WEIGHT)
+
+        if retrieval_symbols.enabled():
+            symbol_order, symbol_evidence = retrieval_symbols.symbol_ranking(chunks, query)
+            if symbol_order:
+                rankings.append(symbol_order)
+                # Exact definitions use equal AST/lexical/dense agreement votes.
+                # Queries without definition evidence keep their existing ordering.
+                weights = [1.0] * len(rankings)
+                if path_ranking:
+                    weights[-2] = PATH_CHANNEL_WEIGHT
+                combine = "sum"
+            symbol_reason = retrieval_symbols.fallback_reason(symbol_evidence)
+            if evidence is not None:
+                evidence.update(
+                    method="rrf",
+                    combine=combine,
+                    k=k,
+                    bm25={"evidence": "lexical", "ranked_chunks": len(bm25_ranking)},
+                    dense={"evidence": "model", "available": dense_index is not None},
+                    ast_symbols=symbol_evidence,
+                    weights={
+                        "bm25": 1.0,
+                        "dense": (1.0 if symbol_order else dense_weight)
+                        if dense_index is not None
+                        else 0.0,
+                        "ast_symbols": 1.0 if symbol_order else 0.0,
+                        "path": PATH_CHANNEL_WEIGHT if path_ranking else 0.0,
+                    },
+                )
+        fused_order = reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)
 
     # T5/T6: the late-interaction splice. Order-only over `fused_order`'s chunk indices -- same
     # matches, same membership, same JSON shape (design doc "The seam"). `late_reranker=None`

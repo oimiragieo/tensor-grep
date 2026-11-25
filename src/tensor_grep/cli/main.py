@@ -1355,6 +1355,7 @@ def _execute_find(
     why_ranked: bool = False,
     grounding: str = "local",
     rerank: str = "off",
+    hybrid: bool = False,
 ) -> "SearchResult":
     """The `tg find` pipeline: whole-repo walk -> chunk -> BM25 [+ dense] [+ late MaxSim] rank via
     the shared `rank_chunks` core (`core/reranker.py`) -> `--limit` -> token-budget fit -> a
@@ -1582,6 +1583,7 @@ def _execute_find(
             late_reranker=late_reranker,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            hybrid=hybrid,
             **retrieval_symbols.evidence_options(result),
         )
     except DenseUnavailableError as exc:
@@ -1610,6 +1612,7 @@ def _execute_find(
             late_reranker=None,
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
+            hybrid=hybrid,
             **retrieval_symbols.evidence_options(result),
         )
     result.routing_backend, result.routing_reason, result.install_state = route_labels(
@@ -1711,17 +1714,12 @@ def find(
         "Stop the repo walk/chunk phase after N seconds and return ranked results over the partial corpus scanned so far (result_incomplete=true, exit 2) instead of running unbounded."
     ),
     why_ranked: bool = typer.Option(False, "--why-ranked", help="Explain why matches were ranked."),
-    grounding: str = typer.Option(
-        "local", "--grounding", help="Dependency evidence: off, local, registry (explicit network)."
-    ),
-    rerank: str = typer.Option(
-        "off", "--rerank", help="Native reranking: off, auto, cross-encoder."
-    ),
+    grounding: str = typer.Option("local", "--grounding", help="Evidence: off, local, registry."),
+    rerank: str = typer.Option("off", "--rerank", help="Native rerank: off, auto, cross-encoder."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
-    ndjson: bool = typer.Option(
-        False, "--ndjson", help="Emit newline-delimited JSON, one object per match."
-    ),
+    ndjson: bool = typer.Option(False, "--ndjson", help="Emit newline-delimited JSON per match."),
     citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
+    hybrid: bool = typer.Option(False, "--hybrid", help="Use FTS5 + adaptive IDF-weighted RRF."),
 ) -> None:
     """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
     relevance, RRF-fused), ranked file:line results.
@@ -1754,6 +1752,7 @@ def find(
             why_ranked=why_ranked,
             grounding=grounding,
             rerank=rerank,
+            hybrid=hybrid,
         )
     except (FileNotFoundError, ConfigurationError) as exc:
         typer.echo(str(exc), err=True)
