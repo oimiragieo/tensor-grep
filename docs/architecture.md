@@ -61,7 +61,7 @@ underlying services, while their public input and output contracts are documente
 the [harness API](harness_api.md). Running an MCP server does not by itself grant a
 client permission to apply every proposed change.
 
-By default, `tg mcp` starts a server exposing 61 tools (set `TG_MCP_LEGACY_TOOLS=0` for the compact 15-tool surface with `tg_discover_tools`). The registered tool list is
+By default, `tg mcp` starts a server exposing 15 tools (set `TG_MCP_LEGACY_TOOLS=1` for the full 61-tool legacy surface; `tg_discover_tools` searches the full catalog). The registered tool list is
 the source of truth; clients can discover it through MCP, and the
 [API reference](harness_api.md#mcp-tool-responses) describes the available operations.
 

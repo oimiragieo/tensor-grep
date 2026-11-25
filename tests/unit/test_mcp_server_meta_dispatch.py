@@ -91,10 +91,20 @@ def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
     assert "Native binary not found: FileNotFoundError" in payload["native_tg"]["error"]
 
 
-def test_mcp_legacy_tools_flag_on_by_default_subprocess():
-    """Baseline (flag unset -> treated as "" -> ON): all 61 tools register, and the
+def test_mcp_legacy_tools_flag_off_by_default_subprocess():
+    """Default (flag unset -> treated as "" -> OFF): 15 compact tools register, and the
     capability registry stays exactly in lockstep with the live registry."""
     result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": ""})
+    assert result["legacy_enabled"] is False
+    assert result["tool_names"] == result["capability_names"]
+    assert len(result["tool_names"]) == 15
+    assert set(result["tool_names"]) == _EXPECTED_META_TOOL_NAMES | _EXPECTED_SINGLETON_TOOL_NAMES
+
+
+def test_mcp_legacy_tools_flag_on_opt_in_subprocess():
+    """Opt-in (TG_MCP_LEGACY_TOOLS=1): all 61 tools register, and the
+    capability registry stays exactly in lockstep with the live registry."""
+    result = _run_mcp_flag_probe_subprocess({"TG_MCP_LEGACY_TOOLS": "1"})
     assert result["legacy_enabled"] is True
     assert result["tool_names"] == result["capability_names"]
     assert len(result["tool_names"]) == 61
@@ -150,9 +160,9 @@ def test_mcp_legacy_tools_flag_off_deregisters_legacy_tools_subprocess(off_value
         ("true", True),
         ("yes", True),
         ("on", True),
-        ("", True),
-        ("anything-else", True),
-        ("  ", True),
+        ("", False),
+        ("anything-else", False),
+        ("  ", False),
     ],
 )
 def test_legacy_tools_enabled_recognizes_off_tokens(monkeypatch, value, expected):
@@ -162,11 +172,11 @@ def test_legacy_tools_enabled_recognizes_off_tokens(monkeypatch, value, expected
     assert mcp_server._legacy_tools_enabled() is expected
 
 
-def test_legacy_tools_enabled_defaults_on_when_unset(monkeypatch):
+def test_legacy_tools_enabled_defaults_off_when_unset(monkeypatch):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.delenv("TG_MCP_LEGACY_TOOLS", raising=False)
-    assert mcp_server._legacy_tools_enabled() is True
+    assert mcp_server._legacy_tools_enabled() is False
 
 
 def test_register_legacy_tool_returns_fn_unchanged_when_flag_off(monkeypatch):
@@ -1282,7 +1292,10 @@ def test_meta_and_singleton_tool_names_partition_cleanly():
     assert meta.isdisjoint(singletons)
     assert meta.isdisjoint(legacy)
     assert singletons.isdisjoint(legacy)
-    assert meta | singletons | legacy == set(mcp_server._MCP_TOOL_CAPABILITIES)
+    if mcp_server._legacy_tools_enabled():
+        assert meta | singletons | legacy == set(mcp_server._MCP_TOOL_CAPABILITIES)
+    else:
+        assert meta | singletons == set(mcp_server._MCP_TOOL_CAPABILITIES)
 
 
 _LEGACY_NOTE_MARKER = "Legacy per-function tool; meta-tool `"

@@ -52,12 +52,15 @@ _FRAMED_SERVER_SCRIPT = (
 )
 
 
-def _mcp_env() -> dict[str, str]:
+def _mcp_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
+    env.pop("TG_MCP_LEGACY_TOOLS", None)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
         f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
     )
+    if extra:
+        env.update(extra)
     return env
 
 
@@ -85,18 +88,27 @@ async def _stdio_protocol_roundtrip() -> None:
 
             listed = await session.list_tools()
             tool_names = {tool.name for tool in listed.tools}
-            assert "tg_mcp_capabilities" in tool_names
-            assert "tg_rulesets" in tool_names
-            # #98: the 10 additive meta-tools are registered by default (TG_MCP_LEGACY_TOOLS
-            # defaults ON, so the 46 legacy names -- including tg_rulesets above -- stay too).
-            assert "tg_navigate" in tool_names
-            assert "tg_rewrite" in tool_names
+            assert len(listed.tools) == 15
+            assert {
+                "tg_mcp_capabilities",
+                "tg_discover_tools",
+                "tg_batch",
+                "tg_context",
+                "tg_navigate",
+                "tg_rewrite",
+                "tg_query",
+            } <= tool_names
+            assert "tg_rulesets" not in tool_names
+            assert "tg_search" not in tool_names
+            tools_payload = [
+                tool.model_dump(mode="json", exclude_none=True) for tool in listed.tools
+            ]
+            assert len(json.dumps({"tools": tools_payload}).encode("utf-8")) < 12 * 1024
+
             query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
-            assert '"search"' in query_tool.description
+            assert query_tool.description
             assert "action" in query_tool.inputSchema["properties"]
             assert "paths_defaulted" not in query_tool.inputSchema["properties"]
-            search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
-            assert "paths_defaulted" not in search_tool.inputSchema["properties"]
 
             unknown_action = await session.call_tool(
                 "tg_navigate", {"action": "bogus", "symbol": "Foo"}
@@ -130,12 +142,6 @@ async def _stdio_protocol_roundtrip() -> None:
             assert capabilities_payload["cli_version"] == version("tensor-grep")
             assert capabilities_payload["mcp_protocol_version"]
 
-            rulesets = await session.call_tool("tg_rulesets", {})
-            assert rulesets.isError is False
-            rulesets_payload = json.loads(rulesets.content[0].text)
-            assert rulesets_payload["schema_version"] == rulesets_payload["version"]
-            assert {rule["name"] for rule in rulesets_payload["rulesets"]} >= {"secrets-basic"}
-
             search_payloads = []
             for action in ("text", "search"):
                 result = await session.call_tool(
@@ -157,8 +163,51 @@ async def _stdio_protocol_roundtrip() -> None:
             assert search_payloads[0]["matches"] == search_payloads[1]["matches"]
 
 
+async def _stdio_legacy_tools_roundtrip() -> None:
+    server = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "tensor_grep", "mcp"],
+        cwd=REPO_ROOT,
+        env=_mcp_env({"TG_MCP_LEGACY_TOOLS": "1"}),
+        encoding="utf-8",
+        encoding_error_handler="replace",
+    )
+    async with stdio_client(server) as streams:
+        read_stream, write_stream = streams
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            listed = await session.list_tools()
+            tool_names = {tool.name for tool in listed.tools}
+            assert len(listed.tools) == 61
+            assert {
+                "tg_mcp_capabilities",
+                "tg_rulesets",
+                "tg_search",
+                "tg_navigate",
+                "tg_rewrite",
+                "tg_query",
+                "tg_discover_tools",
+                "tg_batch",
+                "tg_context",
+            } <= tool_names
+            query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
+            assert '"search"' in query_tool.description
+            search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
+            assert "paths_defaulted" not in search_tool.inputSchema["properties"]
+
+            rulesets = await session.call_tool("tg_rulesets", {})
+            assert rulesets.isError is False
+            rulesets_payload = json.loads(rulesets.content[0].text)
+            assert rulesets_payload["schema_version"] == rulesets_payload["version"]
+            assert {rule["name"] for rule in rulesets_payload["rulesets"]} >= {"secrets-basic"}
+
+
 def test_tg_mcp_stdio_initialize_tools_list_and_call_roundtrip() -> None:
     asyncio.run(_stdio_protocol_roundtrip())
+
+
+def test_tg_mcp_stdio_legacy_tools_opt_in_roundtrip() -> None:
+    asyncio.run(_stdio_legacy_tools_roundtrip())
 
 
 async def _read_jsonrpc_line(process: asyncio.subprocess.Process) -> dict[str, object]:

@@ -11,6 +11,12 @@ import anyio
 from pydantic import Field
 
 from tensor_grep.cli import mcp_search_scope
+from tensor_grep.cli.mcp_batch_pipeline import (
+    PipelineRefError,
+    compact_final_batch_response,
+    extract_step_dependencies,
+    resolve_item_arguments,
+)
 from tensor_grep.cli.mcp_batch_supervisor import (
     _MAX_WORKER_DIAGNOSTIC_BYTES,
     _WORKER_OPERATION_ERRORS,
@@ -379,11 +385,14 @@ def run_tg_batch(
     citations: bool = False,
     item_deadline: float = 10.0,
     deadline: float = 30.0,
+    return_final_only: bool = False,
     *,
     cancel_event: threading.Event | None = None,
 ) -> str:
     try:
         items = _validate(queries, item_deadline, deadline)
+        if not isinstance(return_final_only, bool):
+            _reject("return_final_only must be a boolean")
     except _BatchRejected as exc:
         payload = json.loads(str(exc))
         payload["mcp_contract_version"] = server._TG_MCP_SERVER_CONTRACT_VERSION
@@ -414,6 +423,15 @@ def run_tg_batch(
     result_slots = list(fallback_results)
     futures: dict[int, Future[WorkerRun]] = {}
     queued_results: dict[int, dict[str, object]] = {}
+    step_deps: dict[int, set[int]] = {}
+    for idx, item in enumerate(items):
+        try:
+            step_deps[idx] = extract_step_dependencies(item, idx)
+        except PipelineRefError as exc:
+            queued_results[idx] = _error_item(
+                str(item["id"]), str(item["kind"]), "invalid_input", str(exc)
+            )
+            step_deps[idx] = set()
     item_ends: dict[int, float] = {}
     held_slots: set[int] = set()
     slots = _BATCH_SLOTS
@@ -423,7 +441,7 @@ def run_tg_batch(
 
     def consume_ready_prefix() -> bool:
         """Consume completed outcomes in request order before releasing their global slots."""
-        nonlocal next_to_consume
+        nonlocal next_to_consume, next_to_schedule
         progressed = False
         while next_to_consume < len(items):
             index = next_to_consume
@@ -431,6 +449,8 @@ def run_tg_batch(
             if queued is not None:
                 _store_bounded_result(server, result_slots, index, queued, fallback_results[index])
                 next_to_consume += 1
+                if next_to_schedule < next_to_consume:
+                    next_to_schedule = next_to_consume
                 progressed = True
                 continue
             future = futures.get(index)
@@ -471,7 +491,29 @@ def run_tg_batch(
 
             if next_to_schedule < len(items):
                 index = next_to_schedule
+                if index in queued_results:
+                    next_to_schedule += 1
+                    continue
+                deps = step_deps.get(index, set())
+                if any(dep >= next_to_consume for dep in deps):
+                    waiting_future = futures.get(next_to_consume)
+                    if waiting_future is not None and not waiting_future.done():
+                        wait({waiting_future}, timeout=0.05, return_when=FIRST_COMPLETED)
+                    else:
+                        time.sleep(0.05)
+                    continue
                 item = items[index]
+                if deps:
+                    try:
+                        item = resolve_item_arguments(
+                            item, index, {dep: result_slots[dep] for dep in deps}
+                        )
+                    except PipelineRefError as exc:
+                        queued_results[index] = _error_item(
+                            str(item["id"]), str(item["kind"]), "invalid_input", str(exc)
+                        )
+                        next_to_schedule += 1
+                        continue
                 now = time.monotonic()
                 if index not in item_ends:
                     item_ends[index] = min(now + item_deadline, overall_end)
@@ -558,11 +600,19 @@ def run_tg_batch(
                 slots.release()
                 held_slots.remove(index)
 
-    payload = _response_payload(server, result_slots)
+    overall_incomplete = any(_result_is_incomplete(result) for result in result_slots)
+    final_results = (
+        compact_final_batch_response(result_slots) if return_final_only else result_slots
+    )
+    payload = _response_payload(server, final_results, result_incomplete=overall_incomplete)
     response_size = _json_pretty_size(payload, _MAX_BATCH_RESPONSE_BYTES)
     if response_size is None:
         # Defensive fallback for an encoder-accounting defect; all preflight fallback IDs fit.
-        payload = _response_payload(server, fallback_results, result_incomplete=True)
+        payload = _response_payload(
+            server,
+            fallback_results[-1:] if return_final_only else fallback_results,
+            result_incomplete=True,
+        )
     response = json.dumps(payload, indent=2)
     if len(response) > _MAX_BATCH_RESPONSE_BYTES:
         # ensure_ascii=True makes len(response) the UTF-8 byte count without an extra copy.
@@ -584,14 +634,11 @@ async def tg_batch(
     citations: bool = False,
     item_deadline: float = 10.0,
     deadline: float = 30.0,
+    return_final_only: bool = False,
 ) -> str:
-    """Run up to 16 independent search and symbol-navigation requests concurrently.
+    """Run up to 16 search/find/defs/refs/callers/source steps (max 4 concurrent) with optional $prev/$steps[i] chaining and return_final_only.
 
-    Invalid top-level requests raise an MCP tool error. Per-item refusals and execution errors
-    are returned in the corresponding result entry, and set `result_incomplete=true`.
-    `item_deadline` bounds each item, while `deadline` bounds the whole call; each is capped at
-    120 seconds. `citations` is accepted for client compatibility; the underlying tools' JSON
-    payloads and search plain text, including existing source locations, are returned unchanged.
+    Invalid top-level requests raise an MCP tool error; per-item errors set result_incomplete=true. item_deadline and deadline are capped at 120 seconds.
     """
     cancelled = threading.Event()
     finished = anyio.Event()
@@ -606,6 +653,7 @@ async def tg_batch(
             citations,
             item_deadline,
             deadline,
+            return_final_only,
             cancel_event=cancelled,
         )
 

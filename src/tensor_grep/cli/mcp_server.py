@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
 # compact outputSchema, tg_session preconditions & safety notes
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.27.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.28.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -192,12 +192,12 @@ _register_tool = register_mcp_tool(mcp)
 
 
 def _legacy_tools_enabled() -> bool:
-    """Whether legacy per-function MCP tool names are individually advertised (default True; set TG_MCP_LEGACY_TOOLS=0 for compact 15-tool surface)."""
-    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
+    """Whether legacy per-function MCP tool names are individually advertised (default False; set TG_MCP_LEGACY_TOOLS=1 for full 61-tool legacy surface)."""
+    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
