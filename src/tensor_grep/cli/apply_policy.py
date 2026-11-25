@@ -729,12 +729,14 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             argv,
             shell=False,
             cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
     except subprocess.TimeoutExpired:
         return _command_result(

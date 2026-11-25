@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import getpass
 import hashlib
 import hmac
 import json
@@ -357,23 +358,22 @@ def _restrict_windows_file_to_current_user(path: Path) -> None:
     """
     if sys.platform != "win32":
         return
-    import getpass
-
     try:
         user = os.environ.get("USERNAME") or getpass.getuser()
     except Exception:
         return
-    if not user:
-        return
-    try:
-        subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
-            check=False,
-            capture_output=True,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    if user:
+        try:
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"],
+                stdin=subprocess.DEVNULL,
+                check=False,
+                capture_output=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def _daemon_token(metadata: dict[str, Any] | None) -> str:

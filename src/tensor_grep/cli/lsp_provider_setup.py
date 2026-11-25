@@ -607,11 +607,13 @@ def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
     completed = subprocess.run(
         command,
         cwd=str(cwd) if cwd is not None else None,
+        stdin=subprocess.DEVNULL,
         check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     if completed.returncode == 0:
         return
@@ -810,9 +812,11 @@ def _find_go_binary_name(root: Path, binary_name: str) -> Path | None:
     for env_name in ("GOBIN", "GOPATH"):
         completed = subprocess.run(
             [go, "env", env_name],
+            stdin=subprocess.DEVNULL,
             check=False,
             capture_output=True,
             text=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         value = os.fsdecode(completed.stdout or b"").removesuffix("\n")
         if not value:
@@ -870,11 +874,13 @@ def _ensure_csharp_ls(root: Path) -> Path:
     ]
     completed = subprocess.run(
         install_cmd,
+        stdin=subprocess.DEVNULL,
         check=False,
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     if completed.returncode != 0:
         if "already installed" in completed.stderr.lower():
@@ -916,9 +922,11 @@ def _swift_command() -> list[str] | None:
         return None
     completed = subprocess.run(
         [xcrun, "--find", "sourcekit-lsp"],
+        stdin=subprocess.DEVNULL,
         check=False,
         capture_output=True,
         text=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     candidate = os.fsdecode(completed.stdout or b"").removesuffix("\n")
     if completed.returncode == 0 and candidate:

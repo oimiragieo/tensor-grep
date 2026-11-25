@@ -456,8 +456,9 @@ class AstGrepWrapperBackend(ComputeBackend):
                 capture_output=True,
                 text=False,
                 check=False,
-                input=input_text.encode("utf-8") if input_text is not None else None,
+                input=input_text.encode("utf-8") if input_text is not None else b"",
                 timeout=timeout_seconds,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             try:
                 stdout = decode_protocol_output(completed.stdout)
