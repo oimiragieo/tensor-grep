@@ -700,30 +700,31 @@ def _collapse_nullable_anyof(node: Any) -> None:
 
 
 _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
-    "tg_navigate": "Symbol defs, source, refs, callers, and file imports/importers.",
-    "tg_impact": "Symbol change-impact, blast radius, plan, and rendered bundle.",
-    "tg_query": "Search code: text regex, ast pattern+lang, find semantic, index trigram.",
-    "tg_context": "Ranked context pack, edit plan, render, or agent capsule.",
-    "tg_explore": "Repo orientation, repo map, doctor diagnostics, and GPU devices.",
-    "tg_session": "Cached repo-map session lifecycle, context, and blast radius.",
-    "tg_scan": "Run ast-grep security ruleset scans and list rulesets.",
-    "tg_audit": "Verify rewrite audit manifests, history, diff, and review bundles.",
-    "tg_checkpoint": "Create, list, and undo workspace edit checkpoints.",
-    "tg_rewrite": "Plan, apply, or diff native AST structural code rewrites.",
-    "tg_mcp_capabilities": "Report MCP tool availability, contract version, and runtime.",
-    "tg_classify_logs": "Classify anomalies and patterns in a log file.",
+    "tg_navigate": "Symbol nav.",
+    "tg_impact": "Impact & blast radius.",
+    "tg_query": "Code search.",
+    "tg_context": "Context pack/capsule.",
+    "tg_explore": "Repo map/orient/doctor.",
+    "tg_session": "Repo-map sessions.",
+    "tg_scan": "Security scans.",
+    "tg_audit": "Audit manifests.",
+    "tg_checkpoint": "Edit checkpoints.",
+    "tg_rewrite": "AST rewrites.",
+    "tg_mcp_capabilities": "MCP capabilities.",
+    "tg_classify_logs": "Log anomalies.",
     "tg_batch": (
-        "Batch up to 16 queries with $prev/$steps[i] chaining and return_final_only. "
-        "Invalid top-level requests error; per-item errors set result_incomplete=true. "
-        "Deadlines cap at 120 seconds."
+        "Batch <=16 $prev/$steps[i] queries; return_final_only. "
+        "Invalid top-level requests error; item errors set result_incomplete=true; "
+        "cap 120 seconds."
     ),
-    "tg_coverage": "Report repo-map session and AST-cache coverage inventory.",
-    "tg_discover_tools": "Search the full MCP tool catalog by natural-language intent.",
+    "tg_coverage": "Cache coverage.",
+    "tg_discover_tools": "Discover tools.",
 }
 
 
 def _strip_property_defaults(node: Any) -> None:
     if isinstance(node, dict):
+        node.pop("title", None)
         props = node.get("properties")
         if isinstance(props, dict):
             for prop_schema in props.values():
@@ -753,5 +754,4 @@ def tighten_mcp_tool_schemas(mcp_server_obj: Any) -> None:
             _strip_property_defaults(tool.parameters)
         if isinstance(getattr(tool, "output_schema", None), dict):
             _collapse_nullable_anyof(tool.output_schema)
-            tool.output_schema.pop("required", None)
-            tool.output_schema.pop("properties", None)
+            _strip_property_defaults(tool.output_schema)

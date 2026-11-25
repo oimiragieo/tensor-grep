@@ -441,7 +441,7 @@ def run_tg_batch(
 
     def consume_ready_prefix() -> bool:
         """Consume completed outcomes in request order before releasing their global slots."""
-        nonlocal next_to_consume
+        nonlocal next_to_consume, next_to_schedule
         progressed = False
         while next_to_consume < len(items):
             index = next_to_consume
@@ -449,6 +449,8 @@ def run_tg_batch(
             if queued is not None:
                 _store_bounded_result(server, result_slots, index, queued, fallback_results[index])
                 next_to_consume += 1
+                if next_to_schedule < next_to_consume:
+                    next_to_schedule = next_to_consume
                 progressed = True
                 continue
             future = futures.get(index)

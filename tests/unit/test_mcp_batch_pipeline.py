@@ -234,3 +234,38 @@ def test_pipeline_enforces_path_confinement_on_chained_path(
     payload = json.loads(raw)
     assert payload["result_incomplete"] is True
     assert payload["results"][0]["error"]["code"] == "invalid_input"
+
+
+def test_pipeline_preflight_rejected_step_is_never_dispatched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dispatched_ids: list[str] = []
+
+    def fake_worker(request: dict[str, object], item_end: float, cancel_event=None) -> WorkerRun:
+        del item_end, cancel_event
+        item = dict(request["item"])  # type: ignore[arg-type]
+        item_id = str(item["id"])
+        dispatched_ids.append(item_id)
+        return _make_worker_run({
+            "id": item_id,
+            "kind": str(item["kind"]),
+            "result": {"definitions": [{"file": "src/app.py", "line": 1}]},
+        })
+
+    monkeypatch.setattr(mcp_batch_tools, "run_contained_worker", fake_worker)
+
+    raw = mcp_batch_tools.run_tg_batch(
+        mcp_server,
+        [
+            {"id": "s0", "kind": "defs", "symbol": "$prev.primary_target.symbol"},
+            {"id": "s1", "kind": "defs", "symbol": "valid_symbol"},
+        ],
+        path=str(tmp_path),
+    )
+    payload = json.loads(raw)
+    assert payload["result_incomplete"] is True
+    assert payload["results"][0]["id"] == "s0"
+    assert payload["results"][0]["error"]["code"] == "invalid_input"
+    assert payload["results"][1]["id"] == "s1"
+    assert "result" in payload["results"][1]
+    assert dispatched_ids == ["s1"]

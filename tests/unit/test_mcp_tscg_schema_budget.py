@@ -28,7 +28,10 @@ def _probe_tools_list(env_overrides: dict[str, str] | None = None) -> dict[str, 
         "'count': len(tools), "
         "'names': [t.name for t in tools], "
         "'std_bytes': len(std_raw), "
-        "'min_bytes': len(min_raw)"
+        "'min_bytes': len(min_raw), "
+        "'output_schemas_ok': all("
+        "'properties' in t['outputSchema'] and 'required' in t['outputSchema'] "
+        "for t in payload if 'outputSchema' in t)"
         "}))"
     )
     done = subprocess.run(
@@ -53,6 +56,7 @@ def test_default_surface_is_compact_15_tools_under_12kb() -> None:
     assert "tg_symbol_defs" not in names
     assert int(info["min_bytes"]) < _MAX_TOOLS_LIST_BYTES  # type: ignore[arg-type]
     assert int(info["std_bytes"]) < _MAX_TOOLS_LIST_BYTES  # type: ignore[arg-type]
+    assert info["output_schemas_ok"] is True
 
 
 def test_legacy_tools_opt_in_exposes_full_61_tools() -> None:

@@ -193,7 +193,7 @@ def test_tg_mcp_capabilities_summary_under_3072_bytes() -> None:
     raw = mcp_server.tg_mcp_capabilities(summary=True)
     assert len(raw.encode("utf-8")) <= mcp_compact.CAPABILITIES_SUMMARY_MAX_BYTES
     payload = json.loads(raw)
-    assert payload["mcp_contract_version"] == "1.27.0"
+    assert payload["mcp_contract_version"] == "1.28.0"
     assert isinstance(payload["cli_version"], str) and payload["cli_version"]
     assert isinstance(payload["native_available"], bool)
     assert isinstance(payload["meta_tools"], list) and len(payload["meta_tools"]) == 10
