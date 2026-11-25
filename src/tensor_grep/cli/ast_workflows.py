@@ -19,7 +19,7 @@ from tensor_grep.cli.ast_workflow_rules import (
     _collect_candidate_files,
     _describe_ast_backend_mode,
     _describe_ast_backend_modes,
-    _emit_ast_run_remediation,
+    _emit_ast_run_search_results,
     _extract_rule_pattern,
     _inject_run_json_fields,
     _load_test_rule_index,
@@ -27,7 +27,6 @@ from tensor_grep.cli.ast_workflow_rules import (
     _safe_stdout_line,
     _stamp_ast_scan_incompleteness,
     _suffix_for_language,
-    _warn_windows_single_quote_pattern,
 )
 
 # NOTE: several names below are re-exported (used only via `ast_workflows.X` from
@@ -445,6 +444,7 @@ def run_command(
             )
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    candidate_files: list[str] | None = None
 
     try:
         if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
@@ -563,62 +563,20 @@ def run_command(
         print(f"Successfully applied rewrites to {total_applied} files.")
         return 0
 
-    if json_mode:
-        payload = _build_ast_run_search_payload(
-            stdin=stdin,
-            backend_name=backend_name,
-            pattern=pattern,
-            path=search_path,
-            result=all_results,
-            lang=lang,
-        )
-        _safe_stdout_line(json.dumps(payload))
-        if all_results.total_matches == 0:
-            if all_results.result_incomplete:
-                return 2
-            _warn_windows_single_quote_pattern(pattern)
-            return 1
-        return 2 if all_results.result_incomplete else 0
-
-    if files_with_matches:
-        seen_paths: set[str] = set()
-        ordered_paths: list[str] = []
-        for match in all_results.matches:
-            if match.file and match.file not in seen_paths:
-                seen_paths.add(match.file)
-                ordered_paths.append(match.file)
-        if not ordered_paths:
-            for matched_path in all_results.matched_file_paths:
-                if matched_path not in seen_paths:
-                    seen_paths.add(matched_path)
-                    ordered_paths.append(matched_path)
-        for matched_path in ordered_paths:
-            _safe_stdout_line(matched_path)
-        if not ordered_paths:
-            if all_results.result_incomplete:
-                _emit_ast_run_incomplete(all_results.incomplete_reason)
-                return 2
-            # remediation goes to STDERR here (like the Windows-quote hint just
-            # above it) so `--files-with-matches`' stdout stays a clean, parseable path list.
-            _warn_windows_single_quote_pattern(pattern)
-            _emit_ast_run_remediation(pattern, lang)
-            return 1
-        if all_results.result_incomplete:
-            _emit_ast_run_incomplete(all_results.incomplete_reason)
-            return 2
-        return 0
-
-    from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
-
-    _safe_stdout_line(RipgrepFormatter().format(all_results))
-    if all_results.result_incomplete:
-        _emit_ast_run_incomplete(all_results.incomplete_reason)
-        return 2
-    if all_results.total_matches == 0:
-        _warn_windows_single_quote_pattern(pattern)
-        _emit_ast_run_remediation(pattern, lang)
-        return 1
-    return 0
+    return _emit_ast_run_search_results(
+        json_mode=json_mode,
+        files_with_matches=files_with_matches,
+        stdin=stdin,
+        stdin_input=stdin_input,
+        backend_name=backend_name,
+        pattern=pattern,
+        search_path=search_path,
+        result=all_results,
+        lang=lang,
+        selector=selector,
+        cfg=cfg,
+        candidate_files=candidate_files,
+    )
 
 
 def _get_cached_backend(name: str) -> Any:
