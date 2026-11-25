@@ -1141,6 +1141,17 @@ def _build_prepare_payload(
             deadline_monotonic,
             pre_build_stats=pre_build_stats,
         )
+    if Path(resolved_path).is_dir() and not rm_truncated and not content_receipts_active():
+        try:
+            from tensor_grep.cli.tdad_kg_ast import ensure_tdad_dependency_map
+
+            ensure_tdad_dependency_map(
+                Path(resolved_path),
+                repo_map_payload=rm,
+                persist=True,
+            )
+        except (OSError, ValueError, sqlite3.Error):
+            pass
     claim_argv: list[object] = ["tg", "ledger", "claim", resolved_path]
     if symbol:
         claim_argv += ["--symbol", symbol]

@@ -36,6 +36,8 @@ _REVIEW_BUNDLE_COMPONENTS = (
     # sufficient to fold evidence_receipts into checksums/bundle_sha256/tamper-detection with no
     # other changes to either loop.
     "evidence_receipts",
+    "change_slice",
+    "slice_digest",
 )
 _REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
@@ -195,6 +197,8 @@ def create_review_bundle(
     previous_manifest: str | Path | None = None,
     receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
+    change_slice: dict[str, Any] | None = None,
+    include_change_slice: bool = False,
 ) -> dict[str, Any]:
     from tensor_grep.cli.checkpoint_store import load_checkpoint_metadata
 
@@ -224,6 +228,28 @@ def create_review_bundle(
             evidence_signing.read_receipt_file(receipt_path) for receipt_path in receipt_paths
         ]
 
+    slice_obj: dict[str, Any] | None = None
+    slice_digest: str | None = None
+    if change_slice is not None:
+        from tensor_grep.cli.tdad_kg_ast import _canonical_slice_bytes, verify_change_slice_digest
+
+        if "slice" in change_slice and "slice_digest" in change_slice:
+            slice_obj = change_slice["slice"]
+            slice_digest = str(change_slice["slice_digest"])
+            if not isinstance(slice_obj, dict) or not verify_change_slice_digest(
+                slice_obj, slice_digest
+            ):
+                raise ValueError("change_slice slice_digest does not match canonical slice bytes.")
+        else:
+            slice_obj = dict(change_slice)
+            slice_digest = _sha256_hex(_canonical_slice_bytes(slice_obj))
+    elif include_change_slice:
+        from tensor_grep.cli.tdad_kg_ast import build_change_slice_from_manifest
+
+        built_slice = build_change_slice_from_manifest(manifest, root=root)
+        slice_obj = built_slice["slice"]
+        slice_digest = str(built_slice["slice_digest"])
+
     payload = _envelope(routing_reason="review-bundle-create")
     payload["created_at"] = _review_bundle_created_at(
         manifest,
@@ -236,6 +262,8 @@ def create_review_bundle(
     payload["checkpoint_metadata"] = checkpoint_metadata
     payload["diff"] = diff_payload
     payload["evidence_receipts"] = evidence_receipts
+    payload["change_slice"] = slice_obj
+    payload["slice_digest"] = slice_digest
 
     checksums = {
         component: _component_checksum(payload[component])
@@ -273,6 +301,8 @@ def create_review_bundle_json(
     previous_manifest: str | Path | None = None,
     receipt_paths: Sequence[str | Path] | None = None,
     output_path: str | Path | None = None,
+    change_slice: dict[str, Any] | None = None,
+    include_change_slice: bool = False,
 ) -> str:
     return json.dumps(
         create_review_bundle(
@@ -282,6 +312,8 @@ def create_review_bundle_json(
             previous_manifest=previous_manifest,
             receipt_paths=receipt_paths,
             output_path=output_path,
+            change_slice=change_slice,
+            include_change_slice=include_change_slice,
         ),
         indent=2,
     )
@@ -425,6 +457,8 @@ def verify_review_bundle(
     require_trusted: bool = False,
     min_receipts: int = 0,
     expect_key_ids: Sequence[str] | None = None,
+    expected_slice_digest: str | None = None,
+    require_change_slice: bool = False,
     root: str | Path | None = None,
 ) -> dict[str, Any]:
     # Local import: evidence_signing imports FROM this module (_utc_now_iso); a module-level
@@ -578,6 +612,59 @@ def verify_review_bundle(
             "valid receipts"
         )
 
+    slice_digest_valid = True
+    slice_digest_reason: str | None = None
+    embedded_slice = bundle.get("change_slice")
+    embedded_slice_digest = bundle.get("slice_digest")
+    normalized_expected_slice_digest: str | None = None
+    expected_slice_digest_invalid = False
+    if expected_slice_digest is not None:
+        stripped_expected = (
+            expected_slice_digest.strip() if isinstance(expected_slice_digest, str) else ""
+        )
+        if (
+            not isinstance(expected_slice_digest, str)
+            or not stripped_expected
+            or len(stripped_expected) != 64
+            or not all(ch in "0123456789abcdefABCDEF" for ch in stripped_expected)
+        ):
+            expected_slice_digest_invalid = True
+        else:
+            normalized_expected_slice_digest = stripped_expected
+    slice_expected_by_checksums = "change_slice" in checksums or "slice_digest" in checksums
+    if expected_slice_digest_invalid:
+        slice_digest_valid = False
+        slice_digest_reason = "invalid_expected_slice_digest"
+    elif (
+        require_change_slice
+        or slice_expected_by_checksums
+        or embedded_slice is not None
+        or embedded_slice_digest is not None
+        or normalized_expected_slice_digest is not None
+    ):
+        from tensor_grep.cli.tdad_kg_ast import verify_change_slice_digest
+
+        if (
+            embedded_slice is None
+            or embedded_slice_digest is None
+            or (isinstance(embedded_slice_digest, str) and not embedded_slice_digest.strip())
+        ):
+            slice_digest_valid = False
+            slice_digest_reason = "missing_change_slice"
+        else:
+            slice_digest_valid = (
+                isinstance(embedded_slice, dict)
+                and isinstance(embedded_slice_digest, str)
+                and bool(embedded_slice_digest.strip())
+                and verify_change_slice_digest(embedded_slice, embedded_slice_digest)
+                and (
+                    normalized_expected_slice_digest is None
+                    or _digests_equal(
+                        embedded_slice_digest.strip(), normalized_expected_slice_digest
+                    )
+                )
+            )
+
     payload = _envelope(routing_reason="review-bundle-verify")
     payload["bundle_path"] = str(resolved_bundle)
     payload["valid"] = (
@@ -587,10 +674,14 @@ def verify_review_bundle(
         and against_resolution_valid
         and receipts_valid
         and policy_valid
+        and slice_digest_valid
     )
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
     payload["manifest_signature_valid"] = manifest_signature_valid
+    payload["slice_digest_valid"] = slice_digest_valid
+    if slice_digest_reason is not None:
+        payload["slice_digest_reason"] = slice_digest_reason
     if manifest_signature_error is not None:
         payload["manifest_signature_error"] = manifest_signature_error
     payload["receipts"] = receipt_checks
@@ -619,6 +710,8 @@ def verify_review_bundle_json(
     require_trusted: bool = False,
     min_receipts: int = 0,
     expect_key_ids: Sequence[str] | None = None,
+    expected_slice_digest: str | None = None,
+    require_change_slice: bool = False,
     root: str | Path | None = None,
 ) -> str:
     return json.dumps(
@@ -630,6 +723,8 @@ def verify_review_bundle_json(
             require_trusted=require_trusted,
             min_receipts=min_receipts,
             expect_key_ids=expect_key_ids,
+            expected_slice_digest=expected_slice_digest,
+            require_change_slice=require_change_slice,
             root=root,
         ),
         indent=2,

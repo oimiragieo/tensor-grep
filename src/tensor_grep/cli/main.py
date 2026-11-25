@@ -11824,6 +11824,7 @@ def review_bundle_create(
                     previous_manifest=previous_manifest,
                     receipt_paths=receipt,
                     output_path=output_path,
+                    include_change_slice=True,
                 )
             )
             return
@@ -11834,6 +11835,7 @@ def review_bundle_create(
             previous_manifest=previous_manifest,
             receipt_paths=receipt,
             output_path=output_path,
+            include_change_slice=True,
         )
     except FileNotFoundError as exc:
         if json_output:
@@ -11965,6 +11967,16 @@ def review_bundle_verify(
         "required, distinct from --trusted-key which pins which signers are cryptographically "
         "trusted at all.",
     ),
+    require_change_slice: bool = typer.Option(
+        False,
+        "--require-change-slice",
+        help="Fail closed unless change_slice and slice_digest are present and valid.",
+    ),
+    expect_slice_digest: str | None = typer.Option(
+        None,
+        "--expect-slice-digest",
+        help="Expected SHA-256 slice_digest the embedded change_slice must match.",
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -11997,6 +12009,8 @@ def review_bundle_verify(
                 require_trusted=require_trusted,
                 min_receipts=min_receipts,
                 expect_key_ids=expect_key,
+                expected_slice_digest=expect_slice_digest,
+                require_change_slice=require_change_slice,
             )
             typer.echo(json_text)
             # Mirror the text path: a tampered/invalid bundle must exit 1 even in
@@ -12012,6 +12026,8 @@ def review_bundle_verify(
             require_trusted=require_trusted,
             min_receipts=min_receipts,
             expect_key_ids=expect_key,
+            expected_slice_digest=expect_slice_digest,
+            require_change_slice=require_change_slice,
         )
     except typer.Exit:
         raise
