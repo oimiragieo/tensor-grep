@@ -112,6 +112,20 @@ def test_agent_compact_rejects_conflicting_detail_or_missing_json(tmp_path: Path
     assert res_conflict.exit_code == 2
     res_no_json = runner.invoke(app, ["agent", str(tmp_path), "f", "--compact"])
     assert res_no_json.exit_code == 2
+    assert runner.invoke(app, ["orient", str(tmp_path), "--compact"]).exit_code == 2
+    assert runner.invoke(app, ["edit-plan", str(tmp_path), "f", "--compact"]).exit_code == 2
+
+    from tensor_grep.cli.detail_tier import dump_detail_json
+
+    large_evidence = {
+        "context_consistency": {"validation_alignment": "aligned"},
+        "omissions": {"omitted_section_count": 0},
+        "rollback": {"command": "tg checkpoint create ."},
+        "call_site_evidence": [{"snippet": "y" * 5000, "file": "a.py"}],
+    }
+    bounded = dump_detail_json(large_evidence, "compact")
+    assert len(bounded.encode("utf-8")) <= 4000
+    assert "call_site_evidence" in json.loads(bounded)
 
 
 def test_compact_payload_does_not_mutate_input() -> None:

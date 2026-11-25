@@ -792,9 +792,10 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         state = "stale-metadata" if session_payload.get("stale_metadata") else "stopped"
         lines.append(f"session_daemon: {state}")
         if state == "stale-metadata":
-            cleanup_hint = session_payload.get("cleanup_hint") or (
-                f"Run `tg session daemon stop {session_payload.get('root') or '.'}` "
-                "to remove stale daemon metadata."
+            from tensor_grep.cli.doctor_launcher_probe import format_stale_daemon_cleanup_hint
+
+            cleanup_hint = session_payload.get("cleanup_hint") or format_stale_daemon_cleanup_hint(
+                str(session_payload.get("root") or ".")
             )
             lines.append(f"  cleanup_hint: {cleanup_hint}")
 

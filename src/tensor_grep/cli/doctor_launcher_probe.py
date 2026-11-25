@@ -41,12 +41,13 @@ def strip_windows_extended_prefix(path_str: str) -> str:
 
 def format_stale_daemon_cleanup_hint(root_path: str) -> str:
     """Format a shell-quoted cleanup hint for stale session_daemon metadata."""
+    import os
     import shlex
+    import subprocess
 
     clean_root = strip_windows_extended_prefix(root_path)
-    return (
-        f"Run `tg session daemon stop {shlex.quote(clean_root)}` to remove stale daemon metadata."
-    )
+    quoted = subprocess.list2cmdline([clean_root]) if os.name == "nt" else shlex.quote(clean_root)
+    return f"Run `tg session daemon stop {quoted}` to remove stale daemon metadata."
 
 
 _PROBE_ENV_ALLOWLIST = (

@@ -4888,10 +4888,11 @@ def orient(
             typer.echo(str(exc), err=True)
             raise typer.Exit(1) from exc
 
+    orient_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
     if json_output:
         # build_orient_capsule_json's exact format (json.dumps(..., indent=2), no
         # ensure_ascii=False) -- match it here so a warm hit is byte-identical to a cold miss.
-        typer.echo(_dump_detail_json(payload, "compact" if compact else "standard"))
+        typer.echo(_dump_detail_json(payload, orient_detail))
         return
 
     # `tg orient` has no exit-2 contract by design (see --deadline's help): a truncated scan still
@@ -6011,8 +6012,9 @@ def edit_plan(
         if daemon_payload is not None:
             # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
             # the cold path below -- print the full daemon payload, then exit 2 if it was truncated.
+            edit_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
             if json_output:
-                typer.echo(_dump_detail_json(daemon_payload, "compact" if compact else "standard"))
+                typer.echo(_dump_detail_json(daemon_payload, edit_detail))
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 payload = daemon_payload
@@ -6047,7 +6049,7 @@ def edit_plan(
     # text branches share the same scan-truncation gate below -- output the full payload FIRST, then
     # exit 2 if the scan itself (not just the output) was capped.
     if json_output:
-        typer.echo(_dump_detail_json(payload, "compact" if compact else "standard"))
+        typer.echo(_dump_detail_json(payload, edit_detail))
     else:
         _emit_scan_incompleteness_banner(payload)
         typer.echo(f"Edit plan for {payload['path']}")

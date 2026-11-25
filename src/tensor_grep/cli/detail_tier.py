@@ -50,9 +50,18 @@ _COMPACT_TRIM_ORDER: tuple[str, ...] = (
     "edit_order",
     "ambiguity",
     "scan_limit",
-    "call_site_evidence",
+    "central_files",
+    "symbol_map",
     "validation_plan",
 )
+_CAPSULE_PROTECTED_KEYS: frozenset[str] = frozenset({
+    "context_consistency",
+    "omissions",
+    "rollback",
+    "call_site_evidence",
+    "primary_target",
+    "compact_truncated",
+})
 
 
 def validate_detail_tier(detail: Any) -> str:
@@ -103,6 +112,16 @@ def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
+def _truncate_value_for_budget(value: Any, max_str: int = 120, max_list: int = 3) -> Any:
+    if isinstance(value, str):
+        return value if len(value) <= max_str else value[:max_str] + "..."
+    if isinstance(value, list):
+        return [_truncate_value_for_budget(v, max_str, max_list) for v in value[:max_list]]
+    if isinstance(value, dict):
+        return {k: _truncate_value_for_budget(v, max_str, max_list) for k, v in value.items()}
+    return value
+
+
 def _bound_compact_json(filtered: dict[str, Any], *, ensure_ascii: bool) -> str:
     serialized = json.dumps(filtered, ensure_ascii=ensure_ascii, separators=(",", ":"))
     if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
@@ -111,6 +130,22 @@ def _bound_compact_json(filtered: dict[str, Any], *, ensure_ascii: bool) -> str:
     for trim_key in _COMPACT_TRIM_ORDER:
         if trim_key in bounded:
             bounded.pop(trim_key, None)
+            bounded["compact_truncated"] = True
+            serialized = json.dumps(bounded, ensure_ascii=ensure_ascii, separators=(",", ":"))
+            if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
+                return serialized
+    for key in sorted(
+        list(bounded.keys()), key=lambda k: len(json.dumps(bounded[k])), reverse=True
+    ):
+        if key not in _CAPSULE_PROTECTED_KEYS:
+            bounded.pop(key, None)
+            bounded["compact_truncated"] = True
+            serialized = json.dumps(bounded, ensure_ascii=ensure_ascii, separators=(",", ":"))
+            if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
+                return serialized
+    for key in list(bounded.keys()):
+        if key != "compact_truncated":
+            bounded[key] = _truncate_value_for_budget(bounded[key])
             bounded["compact_truncated"] = True
             serialized = json.dumps(bounded, ensure_ascii=ensure_ascii, separators=(",", ":"))
             if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:

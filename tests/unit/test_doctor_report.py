@@ -51,7 +51,14 @@ def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
     status = doctor_report._doctor_session_daemon_status(root_str)
     assert status["stale_metadata"] is True
     assert "\\\\?\\" not in status["cleanup_hint"]
-    assert f"tg session daemon stop '{root_str}'" in status["cleanup_hint"]
+    import os
+    import shlex
+    import subprocess
+
+    expected_quoted = (
+        subprocess.list2cmdline([root_str]) if os.name == "nt" else shlex.quote(root_str)
+    )
+    assert f"tg session daemon stop {expected_quoted}" in status["cleanup_hint"]
 
     rendered = doctor_payload._render_doctor_payload({
         "version": "1.0.0",
@@ -80,7 +87,7 @@ def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
         "lsp": {"enabled": False},
     })
     assert "session_daemon: stale-metadata" in rendered
-    assert f"cleanup_hint: Run `tg session daemon stop '{root_str}'`" in rendered
+    assert f"cleanup_hint: Run `tg session daemon stop {expected_quoted}`" in rendered
 
 
 def test_strip_windows_extended_prefix_handles_unc_and_preserves_device_namespaces() -> None:
