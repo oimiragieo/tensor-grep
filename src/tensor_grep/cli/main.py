@@ -43,9 +43,17 @@ from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_wr
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.detail_tier import (
     apply_detail_tier as _apply_detail_tier,
+)
+from tensor_grep.cli.detail_tier import (
     compact_option as _compact_option,
+)
+from tensor_grep.cli.detail_tier import (
     detail_option as _detail_option,
+)
+from tensor_grep.cli.detail_tier import (
     dump_detail_json as _dump_detail_json,
+)
+from tensor_grep.cli.detail_tier import (
     resolve_compact_detail as _resolve_compact_detail,
 )
 from tensor_grep.cli.formatters.base import OutputFormatter
