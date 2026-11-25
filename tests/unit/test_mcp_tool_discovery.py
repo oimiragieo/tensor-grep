@@ -80,3 +80,81 @@ def test_tg_discover_tools_bounds_oversized_intent_and_bool_limit() -> None:
     empty_payload = json.loads(mcp_server.tg_discover_tools("   ", limit=100))
     assert empty_payload["tools"] == []
     assert empty_payload["limit"] == 20
+
+
+def test_compact_mcp_list_tools_payload_under_20kb_budget() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "PYTHONPATH": str(repo_root / "src"), "TG_MCP_LEGACY_TOOLS": "0"}
+    script = (
+        "import asyncio, json; from tensor_grep.cli import mcp_server as m; "
+        "tools = asyncio.run(m.mcp.list_tools()); "
+        "payload = [t.model_dump(mode='json', exclude_none=True) for t in tools]; "
+        "raw = json.dumps(payload).encode('utf-8'); "
+        "print(json.dumps({'count': len(tools), 'bytes': len(raw)}))"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=True,
+    )
+    info = json.loads(done.stdout)
+    assert info["count"] == 15
+    assert info["bytes"] < 20_000
+
+
+def test_tg_discover_tools_ranks_genuine_tools_ahead_of_canary_decoy() -> None:
+    from tensor_grep.cli.mcp_tool_discovery import discover_mcp_tools
+
+    canary = {
+        "name": "tg_canary_helper",
+        "summary": "blast radius callers symbol impact transitive dependencies helper",
+        "parameters": ["input_blob"],
+        "tags": "helper",
+        "is_legacy": False,
+    }
+    payload = json.loads(
+        discover_mcp_tools("blast radius callers symbol", limit=5, extra_tools=[canary])
+    )
+    returned_names = [tool["name"] for tool in payload["tools"]]
+
+    assert "tg_impact" in returned_names
+    assert "tg_symbol_blast_radius" in returned_names
+    assert "tg_canary_helper" not in returned_names
+
+    wide_payload = json.loads(
+        discover_mcp_tools("blast radius callers symbol", limit=20, extra_tools=[canary])
+    )
+    wide_names = [tool["name"] for tool in wide_payload["tools"]]
+    wide_by_name = {tool["name"]: tool for tool in wide_payload["tools"]}
+    if "tg_canary_helper" in wide_by_name:
+        assert wide_names.index("tg_impact") < wide_names.index("tg_canary_helper")
+        assert (
+            wide_by_name["tg_impact"]["intent_schema_overlap"]
+            > wide_by_name["tg_canary_helper"]["intent_schema_overlap"]
+        )
+
+
+def test_tg_discover_tools_includes_state_preconditions_and_next_steps() -> None:
+    from tensor_grep.cli import mcp_server
+
+    session_payload = json.loads(mcp_server.tg_discover_tools("session context render", limit=5))
+    by_name = {tool["name"]: tool for tool in session_payload["tools"]}
+    assert "tg_session_context_render" in by_name
+    assert by_name["tg_session_context_render"]["requires_session"] is True
+
+    open_payload = json.loads(mcp_server.tg_discover_tools("open cached session", limit=5))
+    open_by_name = {tool["name"]: tool for tool in open_payload["tools"]}
+    assert "tg_session" in open_by_name
+    assert open_by_name["tg_session"]["requires_session"] is False
+    assert open_by_name["tg_session"]["next_steps"]
+
+    for tool in session_payload["tools"]:
+        assert isinstance(tool["intent_schema_overlap"], float)
+        assert 0.0 <= tool["intent_schema_overlap"] <= 1.0
+        assert isinstance(tool["requires_session"], bool)
+        assert isinstance(tool["next_steps"], list)
+        assert all(isinstance(step, str) for step in tool["next_steps"])

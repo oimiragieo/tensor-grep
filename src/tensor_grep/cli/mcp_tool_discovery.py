@@ -1,13 +1,39 @@
-"""Compact MCP tool catalog and BM25 progressive discovery (arXiv:2602.14878)."""
+"""Compact MCP tool catalog, Tool Attention (ISO) discovery (arXiv:2604.21816), and schema compaction."""
 
 from __future__ import annotations
 
 import json
 import math
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 _LEGACY_OPT_IN_ENV = "TG_MCP_LEGACY_TOOLS=1"
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+_STOPWORDS = frozenset({
+    "a",
+    "an",
+    "and",
+    "are",
+    "by",
+    "for",
+    "from",
+    "i",
+    "in",
+    "is",
+    "it",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "with",
+})
 
 # Format: name | summary | comma_params | tags | 0(always-on)/1(legacy)
 _CATALOG_SPEC = """\
@@ -74,13 +100,176 @@ tg_index_search|Native trigram index search (native-required).|pattern,path|inde
 tg_rewrite_diff|Unified diff preview for native AST rewrites.|pattern,replacement,lang,path|rewrite diff preview|1
 """
 
+# Maps each of the 46 legacy tools to its covering meta-tool action label.
+_LEGACY_META_ACTION_MAP: dict[str, str] = {
+    "tg_symbol_defs": "defs",
+    "tg_symbol_source": "source",
+    "tg_symbol_refs": "refs",
+    "tg_symbol_callers": "callers",
+    "tg_file_imports": "imports",
+    "tg_file_importers": "importers",
+    "tg_symbol_impact": "impact",
+    "tg_symbol_blast_radius": "blast_radius",
+    "tg_symbol_blast_radius_plan": "blast_radius_plan",
+    "tg_symbol_blast_radius_render": "blast_radius_render",
+    "tg_search": "text",
+    "tg_ast_search": "ast",
+    "tg_find": "find",
+    "tg_index_search": "index",
+    "tg_context_pack": "pack",
+    "tg_edit_plan": "edit_plan",
+    "tg_context_render": "render",
+    "tg_agent_capsule": "capsule",
+    "tg_orient": "orient",
+    "tg_repo_map": "repo_map",
+    "tg_doctor": "doctor",
+    "tg_devices": "devices",
+    "tg_session_open": "open",
+    "tg_session_list": "list",
+    "tg_session_show": "show",
+    "tg_session_refresh": "refresh",
+    "tg_session_context": "context",
+    "tg_session_edit_plan": "edit_plan",
+    "tg_session_context_render": "context_render",
+    "tg_session_blast_radius": "blast_radius",
+    "tg_session_blast_radius_plan": "blast_radius_plan",
+    "tg_session_blast_radius_render": "blast_radius_render",
+    "tg_session_file_importers": "file_importers",
+    "tg_ruleset_scan": "scan",
+    "tg_rulesets": "rulesets",
+    "tg_audit_manifest_verify": "manifest_verify",
+    "tg_audit_history": "history",
+    "tg_audit_diff": "diff",
+    "tg_review_bundle_create": "bundle_create",
+    "tg_review_bundle_verify": "bundle_verify",
+    "tg_checkpoint_create": "create",
+    "tg_checkpoint_list": "list",
+    "tg_checkpoint_undo": "undo",
+    "tg_rewrite_plan": "plan",
+    "tg_rewrite_apply": "apply",
+    "tg_rewrite_diff": "diff",
+}
 
-def _parse_catalog() -> tuple[tuple[str, str, tuple[str, ...], str, bool], ...]:
-    rows: list[tuple[str, str, tuple[str, ...], str, bool]] = []
+_META_ACTIONS_MAP: dict[str, tuple[str, ...]] = {
+    "tg_navigate": ("defs", "source", "refs", "callers", "imports", "importers"),
+    "tg_impact": ("impact", "blast_radius", "blast_radius_plan", "blast_radius_render"),
+    "tg_query": ("text", "search", "ast", "find", "index"),
+    "tg_context": ("pack", "edit_plan", "render", "capsule"),
+    "tg_explore": ("orient", "repo_map", "doctor", "devices"),
+    "tg_session": (
+        "open",
+        "list",
+        "show",
+        "refresh",
+        "context",
+        "edit_plan",
+        "context_render",
+        "blast_radius",
+        "blast_radius_plan",
+        "blast_radius_render",
+        "file_importers",
+    ),
+    "tg_scan": ("scan", "rulesets"),
+    "tg_audit": ("manifest_verify", "history", "diff", "bundle_create", "bundle_verify"),
+    "tg_checkpoint": ("create", "list", "undo"),
+    "tg_rewrite": ("plan", "apply", "diff"),
+}
+
+_SESSION_REQUIRED_TOOLS = frozenset({
+    "tg_session_show",
+    "tg_session_refresh",
+    "tg_session_context",
+    "tg_session_edit_plan",
+    "tg_session_context_render",
+    "tg_session_blast_radius",
+    "tg_session_blast_radius_plan",
+    "tg_session_blast_radius_render",
+    "tg_session_file_importers",
+})
+
+_NEXT_STEPS_MAP: dict[str, tuple[str, ...]] = {
+    "tg_explore": ("tg_context(action='capsule')", "tg_navigate(action='defs')"),
+    "tg_orient": ("tg_context(action='capsule')", "tg_navigate(action='defs')"),
+    "tg_repo_map": ("tg_session(action='open')", "tg_context(action='edit_plan')"),
+    "tg_navigate": ("tg_impact(action='blast_radius')", "tg_context(action='edit_plan')"),
+    "tg_symbol_defs": ("tg_impact(action='blast_radius')", "tg_navigate(action='callers')"),
+    "tg_symbol_callers": ("tg_impact(action='blast_radius')",),
+    "tg_impact": ("tg_context(action='edit_plan')", "tg_rewrite(action='plan')"),
+    "tg_symbol_blast_radius": ("tg_context(action='edit_plan')", "tg_rewrite(action='plan')"),
+    "tg_query": ("tg_navigate(action='defs')", "tg_context(action='capsule')"),
+    "tg_context": ("tg_checkpoint(action='create')", "tg_rewrite(action='plan')"),
+    "tg_session": ("tg_session(action='context')", "tg_session(action='blast_radius')"),
+    "tg_session_open": ("tg_session(action='context')", "tg_session(action='blast_radius')"),
+    "tg_checkpoint": ("tg_rewrite(action='apply')",),
+    "tg_checkpoint_create": ("tg_rewrite(action='apply')",),
+    "tg_rewrite": ("tg_audit(action='manifest_verify')", "tg_scan(action='scan')"),
+    "tg_rewrite_plan": ("tg_rewrite(action='apply')",),
+    "tg_rewrite_apply": ("tg_audit(action='manifest_verify')",),
+    "tg_scan": ("tg_audit(action='bundle_create')",),
+}
+
+
+def legacy_action_for(tool_name: str) -> str:
+    """Return the covering meta-tool action name for a legacy tool."""
+    return _LEGACY_META_ACTION_MAP.get(tool_name, "?")
+
+
+def _strip_schema_titles(node: Any) -> None:
+    if isinstance(node, dict):
+        node.pop("title", None)
+        for value in node.values():
+            _strip_schema_titles(value)
+    elif isinstance(node, list):
+        for item in node:
+            _strip_schema_titles(item)
+
+
+def compact_mcp_tool_schemas(mcp_server_obj: Any) -> None:
+    """Strip redundant JSON-schema titles and outputSchema from registered tools."""
+    tool_manager = getattr(mcp_server_obj, "_tool_manager", None)
+    list_tools = getattr(tool_manager, "list_tools", None)
+    if not callable(list_tools):
+        return
+    for tool in list_tools():
+        if isinstance(getattr(tool, "parameters", None), dict):
+            _strip_schema_titles(tool.parameters)
+        if hasattr(tool, "output_schema"):
+            tool.output_schema = None
+
+
+@dataclass(frozen=True)
+class _CatalogEntry:
+    name: str
+    summary: str
+    params: tuple[str, ...]
+    tags: str
+    is_legacy: bool
+    actions: tuple[str, ...]
+    requires_session: bool
+    next_steps: tuple[str, ...]
+
+
+def _parse_catalog() -> tuple[_CatalogEntry, ...]:
+    rows: list[_CatalogEntry] = []
     for line in _CATALOG_SPEC.strip().splitlines():
         name, summary, params_csv, tags, legacy_flag = line.split("|")
         params = tuple(p for p in params_csv.split(",") if p)
-        rows.append((name, summary, params, tags, legacy_flag == "1"))
+        actions = _META_ACTIONS_MAP.get(name)
+        if actions is None:
+            action = _LEGACY_META_ACTION_MAP.get(name)
+            actions = (action,) if action else ()
+        rows.append(
+            _CatalogEntry(
+                name=name,
+                summary=summary,
+                params=params,
+                tags=tags,
+                is_legacy=(legacy_flag == "1"),
+                actions=actions,
+                requires_session=(name in _SESSION_REQUIRED_TOOLS),
+                next_steps=_NEXT_STEPS_MAP.get(name, ()),
+            )
+        )
     return tuple(rows)
 
 
@@ -91,22 +280,75 @@ def _tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower().replace("_", " "))
 
 
-_DOC_TOKENS: tuple[list[str], ...] = tuple(
-    _tokenize(f"{name} {summary} {tags} {' '.join(params)}")
-    for name, summary, params, tags, _ in _CATALOG
-)
+def _meaningful_query_tokens(text: str) -> list[str]:
+    tokens = _tokenize(text)
+    filtered = [tok for tok in tokens if tok not in _STOPWORDS]
+    return list(dict.fromkeys(filtered or tokens))
+
+
+def _entry_doc_tokens(entry: _CatalogEntry) -> list[str]:
+    return _tokenize(
+        f"{entry.name} {entry.summary} {' '.join(entry.actions)} {entry.tags} {' '.join(entry.params)}"
+    )
+
+
+_DOC_TOKENS: tuple[list[str], ...] = tuple(_entry_doc_tokens(entry) for entry in _CATALOG)
 _AVG_DOC_LEN: float = sum(len(doc) for doc in _DOC_TOKENS) / max(1, len(_DOC_TOKENS))
 
 
-def _bm25_scores(query_tokens: list[str]) -> list[float]:
-    n_docs = len(_CATALOG)
+def compute_intent_schema_overlap(query_tokens: Sequence[str], entry: _CatalogEntry) -> float:
+    """Compute Tool Attention Intent-Schema Overlap ISO(q, t_i) in [0.0, 1.0].
+
+    Weights matches on structured schema facets (tool name, action verbs, parameter/schema
+    keywords) above surface summary prose so decoy tools stuffed with summary keywords
+    cannot outrank genuine schema-matched tools.
+    """
+    unique_q = list(dict.fromkeys(query_tokens))
+    if not unique_q:
+        return 0.0
+    name_tokens = {tok for tok in _tokenize(entry.name) if tok != "tg"}
+    action_tokens = set(_tokenize(" ".join(entry.actions)))
+    schema_tokens = set(_tokenize(f"{' '.join(entry.params)} {entry.tags}"))
+    summary_tokens = set(_tokenize(entry.summary))
+
+    weighted_sum = 0.0
+    structural_hits = 0
+    for tok in unique_q:
+        if tok in name_tokens:
+            weighted_sum += 1.0
+            structural_hits += 1
+        elif tok in action_tokens:
+            weighted_sum += 0.85
+            structural_hits += 1
+        elif tok in schema_tokens:
+            weighted_sum += 0.70
+            structural_hits += 1
+        elif tok in summary_tokens:
+            weighted_sum += 0.45
+
+    iso = weighted_sum / len(unique_q)
+    if structural_hits == 0 and iso > 0.0:
+        # Summary-only overlap without name/action/schema grounding is heavily dampened.
+        iso *= 0.4
+    return min(1.0, iso)
+
+
+def _score_entries(
+    query_tokens: list[str], entries: Sequence[_CatalogEntry]
+) -> tuple[list[float], list[float]]:
+    n_docs = len(entries)
     if not query_tokens or n_docs == 0:
-        return [0.0] * n_docs
+        return [0.0] * n_docs, [0.0] * n_docs
+    docs = (
+        _DOC_TOKENS if entries is _CATALOG else tuple(_entry_doc_tokens(entry) for entry in entries)
+    )
+    avg_len = sum(len(doc) for doc in docs) / max(1, len(docs))
     k1, b = 1.5, 0.75
     unique_q = dict.fromkeys(query_tokens)
-    df: dict[str, int] = {tok: sum(1 for doc in _DOC_TOKENS if tok in doc) for tok in unique_q}
-    scores: list[float] = []
-    for idx, doc in enumerate(_DOC_TOKENS):
+    df: dict[str, int] = {tok: sum(1 for doc in docs if tok in doc) for tok in unique_q}
+    bm25_raw: list[float] = []
+    iso_scores: list[float] = []
+    for entry, doc in zip(entries, docs, strict=True):
         doc_len = len(doc)
         tf_map: dict[str, int] = {}
         for tok in doc:
@@ -117,22 +359,58 @@ def _bm25_scores(query_tokens: list[str]) -> list[float]:
             if tf == 0:
                 continue
             idf = math.log(1.0 + (n_docs - df[tok] + 0.5) / (df[tok] + 0.5))
-            denom = tf + k1 * (1.0 - b + b * (doc_len / _AVG_DOC_LEN))
+            denom = tf + k1 * (1.0 - b + b * (doc_len / avg_len))
             score += idf * (tf * (k1 + 1.0)) / denom
-        if not _CATALOG[idx][4] and score > 0.0:
+        bm25_raw.append(score)
+        iso_scores.append(compute_intent_schema_overlap(list(unique_q), entry))
+
+    max_bm25 = max(bm25_raw, default=0.0)
+    combined: list[float] = []
+    for entry, bm25, iso in zip(entries, bm25_raw, iso_scores, strict=True):
+        bm25_norm = (bm25 / max_bm25) if max_bm25 > 0.0 else 0.0
+        score = 0.45 * bm25_norm + 0.55 * iso
+        if not entry.is_legacy and score > 0.0:
             score += 0.05
-        scores.append(score)
-    return scores
+        combined.append(score)
+    return combined, iso_scores
+
+
+def _coerce_extra_entry(raw: Mapping[str, Any]) -> _CatalogEntry:
+    name = str(raw.get("name", ""))
+    summary = str(raw.get("summary", ""))
+    params = tuple(str(p) for p in raw.get("parameters", ()))
+    tags = str(raw.get("tags", ""))
+    actions = tuple(str(a) for a in raw.get("actions", ()))
+    next_steps = tuple(str(s) for s in raw.get("next_steps", ()))
+    return _CatalogEntry(
+        name=name,
+        summary=summary,
+        params=params,
+        tags=tags,
+        is_legacy=bool(raw.get("is_legacy", True)),
+        actions=actions,
+        requires_session=bool(raw.get("requires_session", False)),
+        next_steps=next_steps,
+    )
 
 
 _MAX_DISCOVER_LIMIT = 20
 
 
-def discover_mcp_tools(intent: str, limit: int = 5) -> str:
+def discover_mcp_tools(
+    intent: str,
+    limit: int = 5,
+    extra_tools: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
     """Return top matching MCP tools for a natural-language intent as JSON."""
     bounded_intent = intent[:4096] if isinstance(intent, str) else ""
+    entries: Sequence[_CatalogEntry] = (
+        _CATALOG
+        if not extra_tools
+        else tuple(_CATALOG) + tuple(_coerce_extra_entry(item) for item in extra_tools)
+    )
     safe_limit = 5 if isinstance(limit, bool) or not isinstance(limit, int) else limit
-    clamped_limit = max(1, min(safe_limit, _MAX_DISCOVER_LIMIT, len(_CATALOG)))
+    clamped_limit = max(1, min(safe_limit, _MAX_DISCOVER_LIMIT, len(entries)))
     if not bounded_intent.strip():
         return json.dumps(
             {
@@ -142,22 +420,26 @@ def discover_mcp_tools(intent: str, limit: int = 5) -> str:
                 "sidecar_used": False,
                 "intent": bounded_intent,
                 "limit": clamped_limit,
-                "total_catalog_tools": len(_CATALOG),
+                "total_catalog_tools": len(entries),
                 "tools": [],
             },
             indent=2,
         )
-    scores = _bm25_scores(_tokenize(bounded_intent))
+    query_tokens = _meaningful_query_tokens(bounded_intent)
+    scores, iso_scores = _score_entries(query_tokens, entries)
     ranked = sorted(
-        range(len(_CATALOG)),
-        key=lambda i: (-scores[i], _CATALOG[i][4], _CATALOG[i][0]),
+        range(len(entries)),
+        key=lambda i: (-scores[i], -iso_scores[i], entries[i].is_legacy, entries[i].name),
     )[:clamped_limit]
     tools = [
         {
-            "name": _CATALOG[i][0],
-            "summary": _CATALOG[i][1],
-            "parameters": list(_CATALOG[i][2]),
-            "legacy_opt_in_env": _LEGACY_OPT_IN_ENV if _CATALOG[i][4] else None,
+            "name": entries[i].name,
+            "summary": entries[i].summary,
+            "parameters": list(entries[i].params),
+            "legacy_opt_in_env": _LEGACY_OPT_IN_ENV if entries[i].is_legacy else None,
+            "intent_schema_overlap": round(iso_scores[i], 4),
+            "requires_session": entries[i].requires_session,
+            "next_steps": list(entries[i].next_steps),
         }
         for i in ranked
     ]
@@ -169,7 +451,7 @@ def discover_mcp_tools(intent: str, limit: int = 5) -> str:
             "sidecar_used": False,
             "intent": bounded_intent,
             "limit": clamped_limit,
-            "total_catalog_tools": len(_CATALOG),
+            "total_catalog_tools": len(entries),
             "tools": tools,
         },
         indent=2,

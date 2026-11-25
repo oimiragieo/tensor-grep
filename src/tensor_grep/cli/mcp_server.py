@@ -3769,17 +3769,7 @@ def tg_ast_search(
 
 @_register_tool  # type: ignore
 def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
-    """
-    Analyze a system log file with local heuristics by default, or the opt-in
-    CyBERT/Triton provider when TENSOR_GREP_CLASSIFY_PROVIDER=cybert is set.
-
-    Args:
-        file_path: The absolute path to the log file to classify. Confined to the
-            MCP server root (cwd, or TG_MCP_ROOT if set); a log file that legitimately
-            lives outside it must be copied in first (fail-closed, not a silent drop).
-        structured_json: Return bounded structured JSON (default true). Set to false for
-            plain-text output.
-    """
+    """Classify anomalies in a log file (heuristics default; CyBERT if TENSOR_GREP_CLASSIFY_PROVIDER=cybert)."""
     # round-7 security (audit #81 #1): confine file_path to the project root (cwd) before any
     # read -- unconfined it is an arbitrary-file-read/exfil primitive (FallbackReader will
     # happily read .env/keys/anything locally readable, and up to 20 heuristic-flagged lines
@@ -4258,32 +4248,7 @@ def tg_navigate(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     deadline: float | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: symbol/file navigation. Composes 6 legacy tools by `action`:
-
-    - action="defs": exact definition locations for `symbol` (= tg_symbol_defs)
-    - action="source": exact source blocks for `symbol`'s definition (= tg_symbol_source)
-    - action="refs": references to `symbol`, rows carry `provenance`; empty with non-empty
-      `resolution_gaps` means UNKNOWN (= tg_symbol_refs)
-    - action="callers": call sites + likely impacted tests for `symbol`; same `provenance` and
-      `resolution_gaps` caveat (= tg_symbol_callers)
-    - action="imports": what `file` imports, O(1) single-file parse (= tg_file_imports)
-    - action="importers": the files that import `file` (= tg_file_importers)
-
-    Args:
-        action: One of "defs", "source", "refs", "callers", "imports", "importers".
-        symbol: Exact symbol name to resolve. Required for defs/source/refs/callers.
-        file: File to inspect. Required for imports/importers. Confined to the MCP server
-            root; a file that legitimately lives outside it must be copied in first
-            (fail-closed, not a silent drop).
-        path: File or directory to inventory. Confined to the MCP server root. Unused by
-            imports/importers (which scope via `file`), but still confined unconditionally.
-        provider: Semantic provider for primary target proof: native, lsp, or hybrid. Used
-            by defs/source/refs/callers.
-        max_repo_files: Maximum repository files to scan. Used by refs/callers/importers.
-        deadline: Optional wall-clock budget in seconds for the underlying repo scan (refs/
-            callers/importers only). Partial results are flagged, never silently truncated.
-    """
+    """Symbol/file navigation: defs, source, refs, callers (symbol); imports, importers (file). Confined to MCP root."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -4363,36 +4328,7 @@ def tg_impact(
     max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     deadline: float | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: symbol change-impact analysis. Composes 4 legacy tools:
-
-    - action="impact": likely impacted files/tests for `symbol` (= tg_symbol_impact)
-    - action="blast_radius": exact callers + transitive file/test blast radius
-      (= tg_symbol_blast_radius)
-    - action="blast_radius_plan": machine-readable blast-radius planning bundle
-      (= tg_symbol_blast_radius_plan)
-    - action="blast_radius_render": prompt-ready blast-radius bundle
-      (= tg_symbol_blast_radius_render)
-
-    Args:
-        action: One of "impact", "blast_radius", "blast_radius_plan", "blast_radius_render".
-        symbol: Exact symbol name to resolve. Required for all 4 actions.
-        path: File or directory to inventory. Confined to the MCP server root.
-        max_depth: Maximum reverse-import depth to include (blast_radius* actions).
-        max_files: Maximum files to include (blast_radius_plan/blast_radius_render).
-        max_symbols: Maximum ranked symbols to retain (blast_radius_plan).
-        max_sources: Maximum exact source blocks to include (blast_radius_render).
-        max_symbols_per_file: Maximum summary symbols per file (blast_radius_render).
-        max_render_chars: Maximum characters in rendered_context (blast_radius_render).
-        optimize_context: Strip blank/comment-only lines from rendered source
-            (blast_radius_render).
-        render_profile: Render profile: full, compact, llm, or focused (blast_radius_render).
-        profile: Include a render profiling breakdown (blast_radius_render).
-        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
-        max_repo_files: Maximum repository files to scan before resolving the symbol.
-        deadline: Optional wall-clock budget in seconds (impact/blast_radius only). Partial
-            results are flagged, never silently truncated.
-    """
+    """Symbol change-impact: impact, blast_radius, blast_radius_plan, blast_radius_render (symbol required)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -4590,51 +4526,7 @@ def tg_query(
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
 ) -> str:
-    """
-    Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
-    Composes 4 legacy tools by `action`:
-
-    - action="text" or "search": regex/literal search, optional BM25/hybrid re-rank (= tg_search)
-    - action="ast": structural ast-grep/tree-sitter pattern search (= tg_ast_search)
-    - action="find": whole-repo hybrid semantic search, no pattern pre-filter (= tg_find)
-    - action="index": native trigram-index search; REQUIRES a standalone native tg binary
-      and fails closed (routing_reason="native-tg-unavailable") without one (= tg_index_search)
-
-    Args:
-        action: One of "text", "search" (alias for "text"), "ast", "find", "index".
-        pattern: Regex/literal search pattern (text/index) or AST pattern (ast). Accepted as
-            a `query` alias for action="text"/"find".
-        query: Free-text query (find) or a `pattern` alias (text). Required for find.
-        lang: Tree-sitter language name. Required for action="ast".
-        path: File or directory to search. Confined to the MCP server root as the first
-            operation, regardless of action.
-        action="text"/"search" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
-            (-F), word_regexp (-w), context (-C), max_count (-m), count_matches (-c), glob,
-            type_filter; max_results (default 150) / max_files (default 15) bound output;
-            rank re-ranks by BM25; semantic re-ranks by BM25 + local dense embeddings (wins
-            over rank; falls back to BM25 visibly via rank_fallback_reason).
-        structured_json: Return bounded structured JSON (default true). text/ast only.
-        max_repo_files: Maximum repository files to scan/walk before the scan is capped.
-        limit: Maximum ranked chunks to return (action="find").
-        grounding, rerank: Dependency metadata and native candidate ordering for action="find".
-        max_tokens: Bound the result set to ~N tokens (action="find"). None uses tg_find's
-            own default (mirrors the CLI's `tg find --max-tokens` default); pass 0 for
-            explicitly unbounded.
-        deadline: Optional wall-clock budget in seconds (action="find"). Partial results are
-            flagged via result_incomplete, never silently truncated.
-        workspace_roots: Optional list of additional workspace roots (at most 8; a longer
-            list is refused). When supplied (non-empty), EACH element is independently
-            confined to the MCP server root; if ANY element escapes, or the list exceeds the
-            cap, the WHOLE call is refused fail-closed (no partial/best-effort root list). The
-            SAME action then runs once per confined root, and results are aggregated under a
-            top-level `results_by_root` map keyed by the confined root path, instead of the
-            single-root envelope this tool normally returns. A `deadline`, when set, bounds
-            the WHOLE multi-root call as ONE shared wall-clock budget rather than being handed
-            to every root in full: any root whose turn would start only after that shared
-            budget is already exhausted is skipped (never dispatched) instead of silently
-            multiplying the total cost by the root count. Skipped roots are reported via a
-            top-level `omitted_roots` list plus `partial: true`, never silently dropped.
-    """
+    """Code search: text/search (regex/literal), ast (pattern+lang), find (semantic query), index (native trigram). Optional workspace_roots (<=8)."""
     try:
         try:
             confined_path = str(_confine_mcp_path(path, label="path"))
@@ -4800,44 +4692,7 @@ def tg_context(
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
     citations: bool = False,
 ) -> str:
-    """
-    Task-shaped meta-tool: repository context for edit planning. Composes 4 legacy tools:
-
-    - action="pack": ranked repository context pack (= tg_context_pack)
-    - action="edit_plan": machine-readable edit-planning bundle, no rendered source
-      (= tg_edit_plan)
-    - action="render": prompt-ready repository context bundle (= tg_context_render)
-    - action="capsule": Actionable Context Capsule for agent edit planning (= tg_agent_capsule)
-
-    Pick by output: capsule = smallest answer (1200 tokens); edit_plan = targets, no source;
-    pack = ranked files/symbols/tests (~16000); render = same + source. Repeat: tg_session.
-
-    Args:
-        action: One of "pack", "edit_plan", "render", "capsule".
-        query: Query text used to rank relevant files/symbols/tests. Required for all 4.
-        path: File or directory to inventory. Confined to the MCP server root.
-        max_files: Maximum ranked files to consider.
-        max_repo_files: Maximum repository files to scan (edit_plan/render/capsule).
-        max_sources: Maximum source snippets/blocks to include.
-        max_symbols: Maximum ranked symbols to retain (edit_plan).
-        max_symbols_per_file: Maximum summary symbols per file (render).
-        max_render_chars: Maximum characters in rendered_context (render).
-        max_tokens: Bound the output for prompt injection. None uses the composed action's
-            own default (pack/render default ~16000, edit_plan defaults unbounded, capsule
-            defaults 1200); pass 0 for explicitly unbounded on pack/render/capsule.
-        model: Optional model name used for token estimation (render/capsule).
-        optimize_context: Strip blank/comment-only lines from rendered source (render).
-        render_profile: Render profile: full, compact, llm, or focused (render).
-        provider: Semantic provider for primary target proof: native, lsp, or hybrid
-            (edit_plan/render/capsule).
-        profile: Include a render profiling breakdown (render).
-        gpu_device_ids: Optional selected GPU IDs for native route evidence (capsule).
-        gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command (capsule).
-        deadline: Optional wall-clock budget in seconds (capsule only; mirrors
-            `tg agent --deadline` / `tg codemap --deadline`).
-        plan_hops, grounding, rerank: Investigation graph, dependency metadata, and advisory
-            native snippet ordering for action="capsule". Defaults false, local, and off.
-    """
+    """Edit-planning context (query required): capsule (1200 tok), edit_plan (targets), pack (~16k), render (pack+source)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -4924,28 +4779,7 @@ def tg_explore(
     with_lsp: bool = True,
     json_output: bool = True,
 ) -> str:
-    """
-    Task-shaped meta-tool: codebase orientation and diagnostics. Composes 4 legacy tools:
-
-    - action="orient": one-call codebase orientation capsule for an unfamiliar repo
-      (= tg_orient)
-    - action="repo_map": deterministic repository inventory (= tg_repo_map)
-    - action="doctor": system/GPU/cache/AST/daemon/LSP diagnostics (= tg_doctor)
-    - action="devices": routable GPU inventory (= tg_devices)
-
-    Args:
-        action: One of "orient", "repo_map", "doctor", "devices".
-        path: File or directory to inspect. Confined to the MCP server root. Unused by
-            devices, but still confined unconditionally.
-        max_tokens: Snippet token budget for the orientation capsule (orient).
-        max_central_files: Number of top central files to surface (orient).
-        ignore: Glob(s) to exclude from centrality ranking (orient); a glob-pattern list,
-            not a path -- not confined.
-        max_repo_files: Maximum repo files to scan (repo_map).
-        config: Path to an ast-grep root config, resolved relative to `path` (doctor).
-        with_lsp: Include external LSP provider diagnostics (doctor).
-        json_output: Emit machine-readable JSON output (devices).
-    """
+    """Repo orientation & diagnostics: orient (capsule), repo_map (inventory), doctor (system/GPU/LSP), devices (GPUs)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -5004,51 +4838,7 @@ def tg_session(
     refresh_on_stale: bool = False,
     auto_refresh: bool | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: cached repository-map session lifecycle and session-scoped
-    queries. Composes 11 legacy tools by `action`:
-
-    - action="open": create a cached session (= tg_session_open) [writes the session cache]
-    - action="list": list cached sessions (= tg_session_list)
-    - action="show": return the cached repo-map payload (= tg_session_show)
-    - action="refresh": refresh a session after file changes (= tg_session_refresh)
-      [writes the session cache]
-    - action="context": cached-session context pack (= tg_session_context)
-    - action="edit_plan": cached-session edit-planning bundle (= tg_session_edit_plan)
-    - action="context_render": cached-session prompt-ready context (= tg_session_context_render)
-    - action="blast_radius": cached-session blast radius for a symbol (= tg_session_blast_radius)
-    - action="blast_radius_plan": cached-session blast-radius plan
-      (= tg_session_blast_radius_plan)
-    - action="blast_radius_render": cached-session blast-radius render
-      (= tg_session_blast_radius_render)
-    - action="file_importers": cached-session (zero-reparse) importers of a file
-      (= tg_session_file_importers)
-
-    Args:
-        action: One of "open", "list", "show", "refresh", "context", "edit_plan",
-            "context_render", "blast_radius", "blast_radius_plan", "blast_radius_render",
-            "file_importers".
-        session_id: Session ID to query. Required for all actions except open/list.
-        query: Query text. Required for context/edit_plan/context_render.
-        symbol: Exact symbol name. Required for blast_radius/blast_radius_plan/
-            blast_radius_render.
-        file: File to find importers of. Required for file_importers. Confined to the MCP
-            server root; the delegated legacy tool re-confines it to the session root.
-        path: File or directory rooted at the session scope. Confined to the MCP server root.
-        max_repo_files: repo files to scan (open) or cached files to score (edit_plan/
-            context_render). Size caps: max_files, max_sources (edit_plan/context_render/
-            blast_radius_render), max_symbols (edit_plan/blast_radius_plan), max_symbols_per_file,
-            max_render_chars (context_render/blast_radius_render).
-        model (token estimation), profile (render profiling): context_render.
-            optimize_context (strip blank/comment-only lines), render_profile (full, compact,
-            llm, focused): context_render/blast_radius_render.
-        max_tokens: Bound the output for prompt injection (context/context_render). None
-            uses the composed action's own default; pass 0 for explicitly unbounded.
-        max_depth: Maximum reverse-import depth (blast_radius* actions).
-        refresh_on_stale: Refresh the session inline if its cache is stale, instead of
-            returning an error.
-        auto_refresh: Alias for refresh_on_stale accepted for command-surface parity.
-    """
+    """Cached repo-map sessions: open, list; or with session_id: show, refresh, context, edit_plan, context_render, blast_radius*, file_importers."""
     try:
         try:
             path = str(_confine_mcp_session_path(path))
@@ -5200,28 +4990,7 @@ def tg_scan(
     max_evidence_snippets_per_file: int = 1,
     max_evidence_snippet_chars: int = 120,
 ) -> str:
-    """
-    Task-shaped meta-tool: built-in/inline ast-grep ruleset scanning. Composes 2
-    legacy tools:
-
-    - action="scan": execute a ruleset scan (= tg_ruleset_scan). Read-only by default;
-      supplying write_baseline/write_suppressions writes a file to disk.
-    - action="rulesets": built-in ruleset metadata (= tg_rulesets)
-
-    Args:
-        action: One of "scan", "rulesets".
-        For action="scan" only; exactly one of ruleset/inline_rules is required:
-        ruleset: built-in ruleset name. inline_rules: inline ast-grep YAML (`---`-separated
-            docs: id, rule.pattern, optional language/severity/message; <=65536 chars, <=100 rules; bad YAML or
-            language -> invalid_input). language: ruleset override / inline-rule default.
-        path, glob, file_type, max_depth: scan root (confined to the MCP server root) and
-            bounds; allow_broad_generated_scan opts in to temp/cache/system roots.
-        baseline_path / suppressions_path: read-only JSON confined to the scan root (marks
-            known / suppresses matching findings). write_baseline / write_suppressions:
-            WRITE that file; write_suppressions requires justification (recorded per entry).
-        include_evidence_snippets, max_evidence_snippets_per_file (default 1),
-            max_evidence_snippet_chars (default 120): bounded per-finding source evidence.
-    """
+    """AST ruleset scanning: scan (ruleset or inline_rules YAML), rulesets (list built-in)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -5273,32 +5042,7 @@ def tg_audit(
     output_path: str | None = None,
     bundle_path: str | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: rewrite audit manifest and review bundle operations.
-    Composes 5 legacy tools:
-
-    - action="manifest_verify": verify a rewrite audit manifest (= tg_audit_manifest_verify)
-    - action="history": list audit manifest history for a project root (= tg_audit_history)
-    - action="diff": semantic diff between two audit manifests (= tg_audit_diff)
-    - action="bundle_create": create a review bundle (= tg_review_bundle_create)
-      [writes output_path when supplied]
-    - action="bundle_verify": verify review bundle integrity (= tg_review_bundle_verify)
-
-    Args:
-        action: One of "manifest_verify", "history", "diff", "bundle_create", "bundle_verify".
-        manifest_path: Rewrite audit manifest path. Required for manifest_verify/bundle_create.
-        signing_key: Optional HMAC signing key path (manifest_verify); gated by
-            TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ, not path confinement.
-        previous_manifest: Optional previous manifest (manifest_verify/bundle_create);
-            required for diff.
-        current_manifest: Required for diff.
-        path: Project root to inspect (history). Confined to the MCP server root.
-        scan_path: Optional ruleset scan JSON path (bundle_create).
-        checkpoint_id: Optional checkpoint ID to include (bundle_create); opaque identifier,
-            not a path.
-        output_path: Optional file path to write the bundle JSON (bundle_create).
-        bundle_path: Review bundle path. Required for bundle_verify.
-    """
+    """Rewrite audit & review bundles: manifest_verify, history, diff, bundle_create, bundle_verify."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -5371,14 +5115,7 @@ def tg_checkpoint(
     path: str = ".",
     label: str | None = None,
 ) -> str:
-    """Checkpoint lifecycle; paths are confined to the MCP server root.
-
-    - action="create" creates a checkpoint (= tg_checkpoint_create); optional label is trimmed,
-      printable and 1-120 chars, and accepted only for create.
-    - action="list" lists checkpoints (= tg_checkpoint_list).
-    - action="undo" restores a checkpoint (= tg_checkpoint_undo); requires its opaque
-      checkpoint_id and deletes newer files within the stored scope.
-    """
+    """Workspace edit checkpoints: create (optional label), list, undo (checkpoint_id)."""
     try:
         return _self._checkpoint_meta(
             action=action,
@@ -5411,35 +5148,7 @@ def tg_rewrite(
     expected_plan_digest: str | None = None,
     expected_match_count: int | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: native AST rewrite plan/apply/diff. Composes 3 legacy tools:
-
-    - action="plan": native AST rewrite plan JSON, preview only (= tg_rewrite_plan)
-    - action="apply": apply native AST rewrites; THE MUTATION SURFACE (writes files)
-      (= tg_rewrite_apply)
-    - action="diff": unified diff preview without modifying files; REQUIRES a standalone
-      native tg binary and fails closed without one (= tg_rewrite_diff)
-
-    Args:
-        action: One of "plan", "apply", "diff".
-        pattern: AST pattern to rewrite. Required for all 3.
-        replacement: Rewrite template. Required for all 3.
-        lang: Tree-sitter language name. Required for all 3.
-        path: File or directory to scan. Confined to the MCP server root.
-        verify: When true, request post-apply verification (apply).
-        checkpoint: When true, create a rollback checkpoint before applying (apply).
-        audit_manifest: Optional path for a deterministic rewrite audit manifest (apply).
-        audit_signing_key: Optional HMAC signing key path for the audit manifest (apply);
-            gated by TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ, not path confinement.
-        lint_cmd: Optional shell command for post-apply lint validation (apply); refused
-            unless TG_MCP_ALLOW_VALIDATION_COMMANDS=1, same gate as the legacy tool.
-        test_cmd: Optional shell command for post-apply test validation (apply); same gate
-            as lint_cmd.
-        policy: Optional apply policy JSON path (apply).
-        expected_plan_digest: Optional plan_digest from a prior action="plan" call; refuses
-            the apply with code="plan_drift" if the tree has drifted (apply).
-        expected_match_count: Optional expected edit-site count from a prior plan (apply).
-    """
+    """Native AST rewrites (pattern, replacement, lang required): plan (preview), apply (mutates; supports checkpoint/verify/audit), diff (native tg)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -5488,18 +5197,19 @@ _LEGACY_NOTE = (
     "\n\nLegacy per-function tool; meta-tool `{}` (action={}) covers this operation. "
     "Set TG_MCP_LEGACY_TOOLS=off to advertise only the consolidated surface."
 )
-_ACTION_BULLET_RE = re.compile(r'action="(\w+)"(?:(?!\n\s*- action=)[\s\S])*?\(= (tg_\w+)\)')
 
 
 def _annotate_legacy_tools() -> None:
+    from tensor_grep.cli.mcp_tool_discovery import compact_mcp_tool_schemas, legacy_action_for
+
     # Private FastMCP API: if absent, skip the note rather than break import.
     get_tool = getattr(getattr(mcp, "_tool_manager", None), "get_tool", None)
     for meta, spec in _META_MCP_TOOL_CAPABILITIES.items() if get_tool else ():
-        # `composes` is the source of truth; the docstring bullet only supplies the action label.
-        acts = {old: act for act, old in _ACTION_BULLET_RE.findall(globals()[meta].__doc__ or "")}
         for old in cast("list[str]", spec["composes"]):
             if (tool := get_tool(old)) is not None:  # type: ignore[misc]
-                tool.description += _LEGACY_NOTE.format(meta, acts.get(old, "?"))
+                tool.description += _LEGACY_NOTE.format(meta, legacy_action_for(old))
+    if not _legacy_tools_enabled():
+        compact_mcp_tool_schemas(mcp)
 
 
 _annotate_legacy_tools()
