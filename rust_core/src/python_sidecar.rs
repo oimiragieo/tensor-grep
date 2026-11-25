@@ -138,6 +138,7 @@ fn execute_python_passthrough_command_inner(
     // below -- see is_long_running_passthrough_command's doc comment for the exact,
     // explicit, auditable exemption list (mcp / session serve / lsp server mode).
     let is_daemon_launch = is_long_running_passthrough_command(command, &args);
+    let breakaway_policy = passthrough_job_breakaway_policy(command, &args);
 
     let mut child = command_for_executable(&python);
     configure_python_child_environment(&mut child)?;
@@ -186,9 +187,9 @@ fn execute_python_passthrough_command_inner(
         }
     }
 
-    let mut child = child
-        .spawn()
-        .map_err(|err| map_python_spawn_error(&python, err))?;
+    let (_job_handle, mut child) =
+        crate::win_job::spawn_in_kill_on_close_job(&mut child, breakaway_policy)
+            .map_err(|err| map_python_spawn_error(&python, err))?;
 
     if let Some(stdin_bytes) = stdin_bytes {
         let mut stdin = child.stdin.take().ok_or_else(|| SidecarError {
@@ -273,6 +274,24 @@ fn execute_python_passthrough_command_inner(
 ///   blocks on the LSP stdio protocol. `tg lsp --debug-trace LANGUAGE` is the one documented
 ///   one-shot exception -- a health probe that returns instead of starting the server
 ///   (`src/tensor_grep/cli/main.py:11819-11831`) -- and MUST stay bounded.
+fn passthrough_job_breakaway_policy(
+    command: &str,
+    args: &[String],
+) -> crate::win_job::JobBreakawayPolicy {
+    let mut non_flag_args = args
+        .iter()
+        .map(String::as_str)
+        .filter(|arg| !arg.starts_with('-'));
+    if command == "session"
+        && non_flag_args.next() == Some("daemon")
+        && non_flag_args.next() == Some("start")
+    {
+        crate::win_job::JobBreakawayPolicy::AllowBreakaway
+    } else {
+        crate::win_job::JobBreakawayPolicy::DenyBreakaway
+    }
+}
+
 fn is_long_running_passthrough_command(command: &str, args: &[String]) -> bool {
     match command {
         "mcp" => true,
@@ -315,9 +334,11 @@ pub fn execute_python_passthrough_command_captured(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = child
-        .spawn()
-        .map_err(|err| map_python_spawn_error(&python, err))?;
+    let (job_handle, mut child) = crate::win_job::spawn_in_kill_on_close_job(
+        &mut child,
+        crate::win_job::JobBreakawayPolicy::DenyBreakaway,
+    )
+    .map_err(|err| map_python_spawn_error(&python, err))?;
 
     let stdout = child.stdout.take().ok_or_else(|| SidecarError {
         exit_code: 1,
@@ -333,6 +354,7 @@ pub fn execute_python_passthrough_command_captured(
     let stdout_reader = read_all_thread(stdout);
     let stderr_reader = read_all_thread(stderr);
     let wait_outcome = wait_for_passthrough_or_kill(&mut child, passthrough_timeout)?;
+    drop(job_handle);
 
     let stdout_bytes = stdout_reader.join().map_err(|_| SidecarError {
         exit_code: 1,
@@ -420,9 +442,11 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = child
-        .spawn()
-        .map_err(|err| map_python_spawn_error(&python, err))?;
+    let (job_handle, mut child) = crate::win_job::spawn_in_kill_on_close_job(
+        &mut child,
+        crate::win_job::JobBreakawayPolicy::DenyBreakaway,
+    )
+    .map_err(|err| map_python_spawn_error(&python, err))?;
 
     let mut stdin = child.stdin.take().ok_or_else(|| SidecarError {
         exit_code: 1,
@@ -450,6 +474,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     let stderr_reader = read_all_thread(stderr);
 
     let wait_outcome = wait_for_sidecar_or_kill(&mut child, sidecar_timeout)?;
+    drop(job_handle);
 
     let write_result = writer.join().map_err(|_| SidecarError {
         exit_code: 1,

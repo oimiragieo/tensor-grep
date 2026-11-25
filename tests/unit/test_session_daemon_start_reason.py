@@ -433,3 +433,95 @@ def test_child_unavailable_secret_reason_is_reported(monkeypatch: pytest.MonkeyP
 
     assert error.reason_code == "secret_unavailable"
     assert "secret_unavailable" in error.detail
+
+
+def test_spawn_daemon_subprocess_falls_back_when_breakaway_is_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(session_daemon_start_capture.os, "name", "nt")
+    monkeypatch.setattr(session_daemon_start_capture.os, "O_TEMPORARY", 0, raising=False)
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False
+    )
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x00000200,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess,
+        "CREATE_BREAKAWAY_FROM_JOB",
+        0x01000000,
+        raising=False,
+    )
+
+    seen_flags: list[int] = []
+
+    def fake_popen(_argv: object, **kwargs: object) -> object:
+        flags = int(kwargs["creationflags"])  # type: ignore[arg-type]
+        seen_flags.append(flags)
+        if flags & 0x01000000:
+            err = OSError("Access is denied")
+            err.winerror = 5
+            raise err
+        return SimpleNamespace(pid=12345)
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", fake_popen)
+
+    capture_fd, capture_path = session_daemon_start_capture.spawn_daemon_subprocess(
+        project, sessions, lambda _root: None
+    )
+    try:
+        assert seen_flags == [0x08000000 | 0x00000200 | 0x01000000, 0x08000000 | 0x00000200]
+        assert capture_path.exists()
+    finally:
+        session_daemon_start_capture.cleanup_daemon_start_capture(capture_fd, capture_path)
+    assert not capture_path.exists()
+
+
+def test_spawn_daemon_subprocess_fails_closed_when_win_job_no_breakaway_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    sessions = tmp_path / "sessions"
+    monkeypatch.setenv("TG_WIN_JOB_NO_BREAKAWAY", "1")
+    monkeypatch.setattr(session_daemon_start_capture.os, "name", "nt")
+    monkeypatch.setattr(session_daemon_start_capture.os, "O_TEMPORARY", 0, raising=False)
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False
+    )
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x00000200,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        session_daemon_start_capture.subprocess,
+        "CREATE_BREAKAWAY_FROM_JOB",
+        0x01000000,
+        raising=False,
+    )
+
+    seen_flags: list[int] = []
+
+    def fake_popen(_argv: object, **kwargs: object) -> object:
+        flags = int(kwargs["creationflags"])  # type: ignore[arg-type]
+        seen_flags.append(flags)
+        err = OSError("Access is denied")
+        err.winerror = 5
+        raise err
+
+    monkeypatch.setattr(session_daemon_start_capture.subprocess, "Popen", fake_popen)
+
+    with pytest.raises(OSError) as caught:
+        session_daemon_start_capture.spawn_daemon_subprocess(project, sessions, lambda _root: None)
+
+    assert getattr(caught.value, "winerror", None) == 5
+    assert seen_flags == [0x08000000 | 0x00000200 | 0x01000000]
+    assert list(sessions.glob("daemon-start.*.stderr")) == []
