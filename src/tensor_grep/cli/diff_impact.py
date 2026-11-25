@@ -607,28 +607,17 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     return result
 
 
-def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
-    """Return the git top level containing `root`; raise DiffError (fail closed) when unknown.
-
-    `git diff --no-relative` reports top-level-relative paths, so every join, symbol extraction
-    and repo-map scan must be rooted at the top level, not at the caller's working directory.
-    """
+def _run_git_rev_parse(
+    root: Path, args: list[str], deadline_monotonic: float | None = None
+) -> subprocess.CompletedProcess[bytes]:
     timeout = deadline_capped_timeout_seconds(
         configured_git_timeout_seconds(), deadline_monotonic=deadline_monotonic
     )
     if timeout is None:
         raise DiffError("deadline_exceeded")
-    cmd = [
-        "git",
-        "-c",
-        "core.quotepath=false",
-        "-c",
-        "core.fsmonitor=false",
-        "rev-parse",
-        "--show-toplevel",
-    ]
+    cmd = ["git", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", "rev-parse", *args]
     try:
-        proc = run_subprocess(
+        return run_subprocess(
             cmd,
             cwd=str(root),
             stdout=-1,
@@ -641,12 +630,24 @@ def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
         raise DiffError("git_diff_timeout") from exc
     except (OSError, ValueError, TimeoutError) as exc:
         raise DiffError("git_diff_failed", str(exc)) from exc
+
+
+def _git_rev_parse_returncode(
+    root: Path, args: list[str], *, deadline_monotonic: float | None = None
+) -> int | None:
+    try:
+        return _run_git_rev_parse(root, args, deadline_monotonic).returncode
+    except DiffError:
+        return None
+
+
+def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
+    """Return the git top level containing `root`; raise DiffError (fail closed) when unknown."""
+    proc = _run_git_rev_parse(root, ["--show-toplevel"], deadline_monotonic)
     top = os.fsdecode(proc.stdout or b"").removesuffix("\n")
     if proc.returncode != 0 or not top:
-        raise DiffError(
-            "git_diff_failed",
-            decode_diagnostic_output(proc.stderr).strip()[:500] or "no git top level",
-        )
+        msg = decode_diagnostic_output(proc.stderr).strip()[:500] or "no git top level"
+        raise DiffError("git_diff_failed", msg)
     return Path(top).resolve()
 
 

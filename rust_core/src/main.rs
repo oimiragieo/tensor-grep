@@ -12079,12 +12079,10 @@ fn write_audit_manifest_for_plan(
 fn verify_audit_manifest_payload(
     args: &AuditVerifyArgs,
 ) -> anyhow::Result<AuditManifestVerifyJson> {
-    let manifest_path = args.manifest_path.canonicalize().with_context(|| {
-        format!(
-            "failed to resolve audit manifest {}",
-            args.manifest_path.display()
-        )
-    })?;
+    let p = &args.manifest_path;
+    let manifest_path = p
+        .canonicalize()
+        .with_context(|| format!("failed to resolve audit manifest {}", p.display()))?;
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("failed to read audit manifest {}", manifest_path.display()))?;
     let manifest: RewriteAuditManifestRead = serde_json::from_slice(&manifest_bytes)

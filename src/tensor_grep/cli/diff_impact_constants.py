@@ -5,19 +5,13 @@ from __future__ import annotations
 import ast
 import posixpath
 import re
-import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli import diff_impact_git as _dig
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
-from tensor_grep.cli.subprocess_policy import (
-    configured_git_timeout_seconds,
-    deadline_capped_timeout_seconds,
-    run_subprocess,
-)
 
 _PY_SUFFIXES = frozenset({".py", ".pyi"})
 _JS_TS_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"})
@@ -747,6 +741,7 @@ def check_directory_ref(
     root: Path,
     *,
     deadline_monotonic: float | None = None,
+    rev_parse_returncode: Callable[..., int | None] | None = None,
 ) -> str | None:
     """Return an actionable error message if `ref` is an existing directory, not a git revision."""
     if not _is_confined_relative_ref(ref):
@@ -758,36 +753,16 @@ def check_directory_ref(
         is_dir = False
     if not is_dir:
         return None
-    timeout = deadline_capped_timeout_seconds(
-        configured_git_timeout_seconds(), deadline_monotonic=deadline_monotonic
+    if rev_parse_returncode is None:
+        from tensor_grep.cli.diff_impact import _git_rev_parse_returncode
+
+        rev_parse_returncode = _git_rev_parse_returncode
+    rc = rev_parse_returncode(
+        root,
+        ["--verify", "--quiet", "--end-of-options", ref],
+        deadline_monotonic=deadline_monotonic,
     )
-    if timeout is None:
-        return None
-    cmd = [
-        "git",
-        "-c",
-        "core.quotepath=false",
-        "-c",
-        "core.fsmonitor=false",
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        "--end-of-options",
-        ref,
-    ]
-    try:
-        proc = run_subprocess(
-            cmd,
-            cwd=str(root),
-            stdout=-1,
-            stderr=-1,
-            text=False,
-            env=_dig.git_env(),
-            timeout_seconds=timeout,
-        )
-    except (OSError, ValueError, TimeoutError, subprocess.TimeoutExpired):
-        return None
-    if proc.returncode == 0:
+    if rc is None or rc == 0:
         return None
     return (
         f"{ref!r} is a directory path, not a git revision; pass --path or a git ref such as HEAD~1"
