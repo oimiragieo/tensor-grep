@@ -144,6 +144,18 @@ def _has_multiple_sql_statements(query: str) -> bool:
     return False
 
 
+def _available_tables_schema(conn: Any) -> dict[str, list[str]]:
+    """Inspect available SQLite tables and columns dynamically via PRAGMA table_info."""
+    conn.set_authorizer(None)
+    tables: dict[str, list[str]] = {}
+    for (table_name,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+    ):
+        cols = [row[1] for row in conn.execute(f'PRAGMA table_info("{table_name}")')]
+        tables[str(table_name)] = cols
+    return tables
+
+
 def _sql_read_only_authorizer(
     action: int,
     param1: str | None,
@@ -970,19 +982,18 @@ def sql_command(
                 ):
                     err_msg = "Multiple statements are not permitted. Execute a single query."
                 if json_output:
-                    typer.echo(
-                        json.dumps(
-                            {
-                                "error": err_msg,
-                                "rows": [],
-                                "count": 0,
-                                "truncated": False,
-                                "result_incomplete": True,
-                                "incomplete_reason": "query_error",
-                            },
-                            indent=2,
-                        )
-                    )
+                    error_payload: dict[str, Any] = {
+                        "error": err_msg,
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": True,
+                        "incomplete_reason": "query_error",
+                    }
+                    lower_err = err_msg.lower()
+                    if "no such column" in lower_err or "no such table" in lower_err:
+                        error_payload["available_tables"] = _available_tables_schema(conn)
+                    typer.echo(json.dumps(error_payload, indent=2))
                 else:
                     typer.echo(f"SQL error: {err_msg}", err=True)
                 raise typer.Exit(code=1) from exc
