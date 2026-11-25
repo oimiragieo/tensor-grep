@@ -37,6 +37,7 @@ _REVIEW_BUNDLE_COMPONENTS = (
     # other changes to either loop.
     "evidence_receipts",
     "change_slice",
+    "slice_digest",
 )
 _REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
@@ -230,12 +231,16 @@ def create_review_bundle(
     slice_obj: dict[str, Any] | None = None
     slice_digest: str | None = None
     if change_slice is not None:
+        from tensor_grep.cli.tdad_kg_ast import _canonical_slice_bytes, verify_change_slice_digest
+
         if "slice" in change_slice and "slice_digest" in change_slice:
             slice_obj = change_slice["slice"]
             slice_digest = str(change_slice["slice_digest"])
+            if not isinstance(slice_obj, dict) or not verify_change_slice_digest(
+                slice_obj, slice_digest
+            ):
+                raise ValueError("change_slice slice_digest does not match canonical slice bytes.")
         else:
-            from tensor_grep.cli.tdad_kg_ast import _canonical_slice_bytes
-
             slice_obj = dict(change_slice)
             slice_digest = _sha256_hex(_canonical_slice_bytes(slice_obj))
     elif include_change_slice:
@@ -452,6 +457,7 @@ def verify_review_bundle(
     require_trusted: bool = False,
     min_receipts: int = 0,
     expect_key_ids: Sequence[str] | None = None,
+    expected_slice_digest: str | None = None,
     root: str | Path | None = None,
 ) -> dict[str, Any]:
     # Local import: evidence_signing imports FROM this module (_utc_now_iso); a module-level
@@ -608,13 +614,25 @@ def verify_review_bundle(
     slice_digest_valid = True
     embedded_slice = bundle.get("change_slice")
     embedded_slice_digest = bundle.get("slice_digest")
-    if embedded_slice is not None or embedded_slice_digest is not None:
+    normalized_expected_slice_digest = _normalize_optional_str(expected_slice_digest)
+    slice_expected_by_checksums = "change_slice" in checksums or "slice_digest" in checksums
+    if (
+        slice_expected_by_checksums
+        or embedded_slice is not None
+        or embedded_slice_digest is not None
+        or normalized_expected_slice_digest is not None
+    ):
         from tensor_grep.cli.tdad_kg_ast import verify_change_slice_digest
 
         slice_digest_valid = (
             isinstance(embedded_slice, dict)
             and isinstance(embedded_slice_digest, str)
+            and bool(embedded_slice_digest.strip())
             and verify_change_slice_digest(embedded_slice, embedded_slice_digest)
+            and (
+                normalized_expected_slice_digest is None
+                or _digests_equal(embedded_slice_digest.strip(), normalized_expected_slice_digest)
+            )
         )
 
     payload = _envelope(routing_reason="review-bundle-verify")
@@ -631,6 +649,7 @@ def verify_review_bundle(
     payload["checks"] = checks
     payload["bundle_integrity"] = bundle_integrity
     payload["manifest_signature_valid"] = manifest_signature_valid
+    payload["slice_digest_valid"] = slice_digest_valid
     if manifest_signature_error is not None:
         payload["manifest_signature_error"] = manifest_signature_error
     payload["receipts"] = receipt_checks
@@ -659,6 +678,7 @@ def verify_review_bundle_json(
     require_trusted: bool = False,
     min_receipts: int = 0,
     expect_key_ids: Sequence[str] | None = None,
+    expected_slice_digest: str | None = None,
     root: str | Path | None = None,
 ) -> str:
     return json.dumps(
@@ -670,6 +690,7 @@ def verify_review_bundle_json(
             require_trusted=require_trusted,
             min_receipts=min_receipts,
             expect_key_ids=expect_key_ids,
+            expected_slice_digest=expected_slice_digest,
             root=root,
         ),
         indent=2,

@@ -114,7 +114,25 @@ def _compute_repo_fingerprint(repo_root: Path, tracked_files: Sequence[str]) -> 
     hasher.update(_git_head_revision(resolved_root).encode("utf-8"))
     hasher.update(b"\0")
     for rel in sorted({_norm_path(f, repo_root=resolved_root) for f in tracked_files if f}):
-        fp = resolved_root / rel
+        rel_path = Path(rel)
+        if (
+            rel_path.is_absolute()
+            or bool(rel_path.drive)
+            or bool(rel_path.root)
+            or ".." in rel_path.parts
+        ):
+            hasher.update(f"{rel}:unconfined\n".encode())
+            continue
+        fp = resolved_root / rel_path
+        try:
+            validate_confined_parent_prefix(resolved_root, fp)
+            is_link = fp.is_symlink()
+        except (OSError, ValueError):
+            hasher.update(f"{rel}:unconfined\n".encode())
+            continue
+        if is_link:
+            hasher.update(f"{rel}:unconfined\n".encode())
+            continue
         try:
             st = fp.lstat()
         except OSError:
@@ -170,8 +188,29 @@ def _open_tdad_db(repo_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connec
     conn = sqlite3.connect(":memory:")
     _configure_sqlite(conn)
     try:
+        loaded_from_disk = False
         if db_path.exists():
-            conn.deserialize(read_confined(resolved_root, db_path, _TDAD_DB_LIMIT))
+            try:
+                raw_bytes = read_confined(resolved_root, db_path, _TDAD_DB_LIMIT)
+                conn.deserialize(raw_bytes)
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if {"metadata", "source_test_deps"}.issubset(tables):
+                    ver_row = conn.execute(
+                        "SELECT value FROM metadata WHERE key = 'schema_version'"
+                    ).fetchone()
+                    if ver_row is not None and str(ver_row[0]) == str(_TDAD_SCHEMA_VERSION):
+                        loaded_from_disk = True
+            except (sqlite3.Error, ValueError, OSError):
+                loaded_from_disk = False
+            if not loaded_from_disk:
+                conn.close()
+                conn = sqlite3.connect(":memory:")
+                _configure_sqlite(conn)
         with conn:
             conn.execute(
                 """
@@ -250,7 +289,12 @@ def record_tdad_edges(
                     "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
                     [(str(k), str(v)) for k, v in metadata_updates.items()],
                 )
-        publish_confined(resolved_root, db_path, conn.serialize())
+        db_bytes = conn.serialize()
+        if len(db_bytes) > _TDAD_DB_LIMIT:
+            raise ValueError(
+                f"TDAD cache database exceeds {_TDAD_DB_LIMIT} byte limit ({len(db_bytes)} bytes)"
+            )
+        publish_confined(resolved_root, db_path, db_bytes)
         return len(rows)
     finally:
         conn.close()
@@ -501,7 +545,7 @@ def query_tdad_tests(
                         "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
                     },
                 )
-        elif cache_stale and resolved_root.is_dir():
+        elif (cache_stale or (db_path.exists() and not has_fingerprint)) and resolved_root.is_dir():
             build_tdad_dependency_map(resolved_root, repo_map_payload=None, persist=persist)
             if db_path.exists():
                 rows, _, _ = _read_tdad_cache_state(resolved_root)

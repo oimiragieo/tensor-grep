@@ -428,3 +428,166 @@ def test_change_slice_does_not_fabricate_edges_for_unattributed_callers() -> Non
         "kind": "calls",
     } in edges
     assert {"src": "test:tests/test_b.py", "dst": "file:src/b.py", "kind": "covers"} in edges
+
+
+def test_compute_repo_fingerprint_refuses_unconfined_paths_before_lstat(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from tensor_grep.cli import tdad_kg_ast
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    inside = repo / "src" / "inside.py"
+    inside.write_text("x = 1\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("secret = 42\n", encoding="utf-8")
+
+    lstat_calls: list[Path] = []
+    orig_lstat = Path.lstat
+
+    def spy_lstat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        lstat_calls.append(self)
+        return orig_lstat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", spy_lstat)
+
+    fp = tdad_kg_ast._compute_repo_fingerprint(
+        repo,
+        ["src/inside.py", "../outside.py", str(outside), "src/../../outside.py"],
+    )
+    assert len(fp) == 64
+    resolved_outside = outside.resolve()
+    assert not any(
+        "outside.py" in str(p) or p.resolve() == resolved_outside for p in lstat_calls if p.exists()
+    )
+
+
+def test_corrupt_and_wrong_schema_tdad_sqlite_cache_rebuilds_gracefully(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from tensor_grep.cli import tdad_kg_ast
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "billing.py").write_text("def charge(x):\n    return x\n", encoding="utf-8")
+    (repo / "tests" / "test_billing.py").write_text(
+        "from src.billing import charge\n\ndef test_charge():\n    assert charge(1) == 1\n",
+        encoding="utf-8",
+    )
+
+    db_path = repo / TDAD_CACHE_REL_PATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path.write_bytes(b"corrupt-not-sqlite-bytes")
+
+    rebuilt = ensure_tdad_dependency_map(repo, persist=True)
+    assert rebuilt["cache_hit"] is False
+    assert rebuilt["edge_count"] > 0
+
+    # Wrong schema_version -> treated as cache miss and rebuilt
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO metadata(key, value) VALUES ('schema_version', '999')"
+            )
+    finally:
+        conn.close()
+
+    rebuilt_schema = ensure_tdad_dependency_map(repo, persist=True)
+    assert rebuilt_schema["cache_hit"] is False
+
+    # Missing required table -> query_tdad_tests recovers cleanly
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            conn.execute("DROP TABLE source_test_deps")
+    finally:
+        conn.close()
+
+    hits = query_tdad_tests(repo, ["src/billing.py"])
+    assert any(h["test_file"] == "tests/test_billing.py" for h in hits)
+
+    # Publish cap enforced BEFORE publish_confined
+    publish_calls: list[Path] = []
+    orig_publish = tdad_kg_ast.publish_confined
+
+    def spy_publish(root: Path, path: Path, data: bytes, **kwargs: Any) -> Any:
+        publish_calls.append(path)
+        return orig_publish(root, path, data, **kwargs)
+
+    monkeypatch.setattr(tdad_kg_ast, "publish_confined", spy_publish)
+    monkeypatch.setattr(tdad_kg_ast, "_TDAD_DB_LIMIT", 4096)
+    try:
+        try:
+            record_tdad_edges(
+                repo,
+                [("src/billing.py", "charge", "tests/test_billing.py", "import", 1.0)],
+            )
+        except ValueError as exc:
+            assert "byte limit" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError when serialized DB exceeds _TDAD_DB_LIMIT")
+    finally:
+        pass
+    assert not any(p == db_path for p in publish_calls)
+
+
+def test_verify_review_bundle_refuses_change_slice_stripping_and_expected_digest_mismatch(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    (project / "src").mkdir(parents=True)
+    (project / "tests").mkdir(parents=True)
+    (project / "src" / "service.py").write_text("def run():\n    return True\n", encoding="utf-8")
+    (project / "tests" / "test_service.py").write_text(
+        "from src.service import run\n\ndef test_run():\n    assert run()\n", encoding="utf-8"
+    )
+    record_tdad_edges(
+        project,
+        [("src/service.py", "", "tests/test_service.py", "import", 1.0)],
+    )
+    manifest_path = project / ".tensor-grep" / "audit" / "manifest.json"
+    _write_audit_manifest(manifest_path, project_root=project)
+    bundle_path = tmp_path / "review-bundle.json"
+
+    bundle = audit_manifest.create_review_bundle(
+        manifest_path,
+        output_path=bundle_path,
+        include_change_slice=True,
+    )
+    orig_digest = bundle["slice_digest"]
+    assert "change_slice" in bundle["checksums"]
+    assert "slice_digest" in bundle["checksums"]
+    assert (
+        audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest=orig_digest)["valid"]
+        is True
+    )
+    assert (
+        audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest="f" * 64)["valid"]
+        is False
+    )
+
+    # Strip change_slice while keeping checksums -> must fail closed
+    stripped_one = json.loads(bundle_path.read_text(encoding="utf-8"))
+    stripped_one.pop("change_slice")
+    stripped_one["bundle_sha256"] = audit_manifest._sha256_hex(
+        audit_manifest._canonical_review_bundle_bytes(stripped_one)
+    )
+    bundle_path.write_text(json.dumps(stripped_one, indent=2), encoding="utf-8")
+    assert audit_manifest.verify_review_bundle(bundle_path)["valid"] is False
+
+    # Strip change_slice, slice_digest, AND their checksums, recompute bundle_sha256 ->
+    # must fail closed when expected_slice_digest is supplied
+    stripped_all = json.loads(bundle_path.read_text(encoding="utf-8"))
+    stripped_all.pop("slice_digest", None)
+    stripped_all["checksums"].pop("change_slice", None)
+    stripped_all["checksums"].pop("slice_digest", None)
+    stripped_all["bundle_sha256"] = audit_manifest._sha256_hex(
+        audit_manifest._canonical_review_bundle_bytes(stripped_all)
+    )
+    bundle_path.write_text(json.dumps(stripped_all, indent=2), encoding="utf-8")
+    assert (
+        audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest=orig_digest)["valid"]
+        is False
+    )
