@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any
+
+_DYNO_REQUIRED_SCALES: tuple[str, ...] = ("1GB", "5GB")
+_DYNO_REQUIRED_BASELINES: tuple[str, ...] = ("rg", "tg_cpu", "tg_simd")
 
 _DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES: tuple[str, ...] = (
     "python",
@@ -21,6 +25,93 @@ _DOCTOR_LSP_PROOF_REQUIRED_LANGUAGES: tuple[str, ...] = (
 )
 _DOCTOR_LSP_WARM_POOL_LATENCY_BUDGET_SECONDS = 15.0
 _DYNO_RATCHET_REPORT_ENV = "TG_DYNO_RATCHET_REPORT_PATH"
+
+
+def _parse_positive_finite(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        return None
+    return parsed
+
+
+def _baseline_passed(entry: object) -> bool:
+    if not isinstance(entry, dict) or entry.get("status") != "PASS":
+        return False
+    for key in ("exit_code", "returncode"):
+        if key in entry and entry[key] is not None:
+            rc = entry[key]
+            if isinstance(rc, bool) or not isinstance(rc, int) or rc != 0:
+                return False
+    return True
+
+
+def _verify_dyno_promotion_report(payload: dict[str, Any]) -> str | None:
+    """Independently verify 1 GB & 5 GB parity, speedups, and NativeGpuBackend evidence."""
+    if payload.get("sidecar_observed") is True:
+        return "sidecar_observed=True"
+    observed_backends = payload.get("observed_backends")
+    if observed_backends is not None and (
+        not isinstance(observed_backends, list) or set(observed_backends) != {"NativeGpuBackend"}
+    ):
+        return "observed_backends_mismatch"
+
+    rows = payload.get("rows")
+    checks = payload.get("correctness_checks")
+    if not isinstance(rows, list) or not isinstance(checks, list):
+        return "missing_rows_or_correctness_checks"
+
+    rows_by_label = {
+        str(row.get("size_label")): row
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("size_label"), str)
+    }
+    checks_by_label = {
+        str(check.get("size_label")): check
+        for check in checks
+        if isinstance(check, dict) and isinstance(check.get("size_label"), str)
+    }
+
+    for label in _DYNO_REQUIRED_SCALES:
+        row = rows_by_label.get(label)
+        if row is None:
+            return f"missing_scale_row:{label}"
+        tg_gpu = row.get("tg_gpu")
+        if not isinstance(tg_gpu, dict):
+            return f"missing_tg_gpu:{label}"
+        if (
+            tg_gpu.get("status") != "PASS"
+            or tg_gpu.get("routing_backend") != "NativeGpuBackend"
+            or tg_gpu.get("sidecar_used") is not False
+        ):
+            return f"native_gpu_not_verified:{label}"
+        gpu_median = _parse_positive_finite(tg_gpu.get("median_s"))
+        if gpu_median is None:
+            return f"invalid_gpu_timing:{label}"
+
+        for baseline in _DYNO_REQUIRED_BASELINES:
+            base_entry = row.get(baseline)
+            if not _baseline_passed(base_entry):
+                return f"failed_baseline:{baseline}:{label}"
+            assert isinstance(base_entry, dict)
+            base_median = _parse_positive_finite(base_entry.get("median_s"))
+            if base_median is None:
+                return f"invalid_baseline_timing:{baseline}:{label}"
+            if gpu_median >= base_median:
+                return f"slower_than_{baseline}:{label}"
+
+        check = checks_by_label.get(label)
+        if check is None or (
+            check.get("status") != "PASS"
+            or check.get("matches_equal") is not True
+            or check.get("files_equal") is not True
+            or check.get("rg_matches_equal") is not True
+            or check.get("rg_files_equal") is not True
+            or check.get("rg_match_identity_equal") is not True
+        ):
+            return f"parity_unverified:{label}"
+    return None
 
 
 def evaluate_doctor_dyno_promotion_status(search_ready: bool) -> tuple[bool, str]:
@@ -49,6 +140,13 @@ def evaluate_doctor_dyno_promotion_status(search_ready: bool) -> tuple[bool, str
         return (
             False,
             reason or "Dyno-ratchet 1 GB / 5 GB parity and wall-clock speedup gate did not pass.",
+        )
+    evidence_blocker = _verify_dyno_promotion_report(payload)
+    if evidence_blocker is not None:
+        return (
+            False,
+            f"Dyno-ratchet report failed independent evidence verification ({evidence_blocker}); "
+            "GPU search remains experimental.",
         )
     return (
         True,
@@ -88,7 +186,15 @@ def evaluate_lsp_warm_pool_proof(
         latency_ms = entry.get("probe_latency_ms")
         if latency_ms is None:
             latency_ms = entry.get("latency_ms")
-        if isinstance(latency_ms, (int, float)) and float(latency_ms) > budget_ms:
+        if (
+            isinstance(latency_ms, bool)
+            or not isinstance(latency_ms, (int, float))
+            or not math.isfinite(float(latency_ms))
+            or float(latency_ms) < 0.0
+        ):
+            unverified.append(lang)
+            continue
+        if float(latency_ms) > budget_ms:
             latency_violations.append(lang)
             unverified.append(lang)
             continue

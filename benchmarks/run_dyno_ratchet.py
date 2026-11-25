@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import statistics
 import subprocess
@@ -18,6 +19,16 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
+
+_BENCHMARKS_DIR = Path(__file__).resolve().parent
+if str(_BENCHMARKS_DIR) not in sys.path:
+    sys.path.insert(0, str(_BENCHMARKS_DIR))
+
+from gpu_native_bench_support import (  # noqa: E402
+    _extract_rg_json_match_signatures,
+    _extract_tg_match_signatures,
+    _signature_files,
+)
 
 MB = 1024 * 1024
 GB = 1024 * 1024 * 1024
@@ -69,6 +80,26 @@ def _passing_parity_labels(
     return sorted(passing, key=required_labels.index)
 
 
+def _is_valid_positive_finite_seconds(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(float(value))
+        and float(value) > 0.0
+    )
+
+
+def _baseline_entry_passed(entry: object) -> bool:
+    if not isinstance(entry, dict) or entry.get("status") != "PASS":
+        return False
+    for key in ("exit_code", "returncode"):
+        if key in entry and entry[key] is not None:
+            rc = entry[key]
+            if isinstance(rc, bool) or not isinstance(rc, int) or rc != 0:
+                return False
+    return True
+
+
 def evaluate_dyno_promotion_gate(
     rows: list[dict[str, Any]],
     correctness_checks: list[dict[str, Any]],
@@ -81,13 +112,15 @@ def evaluate_dyno_promotion_gate(
     1. Every required scale (default: 1GB and 5GB) is present.
     2. `tg_gpu` executed on `NativeGpuBackend` with `sidecar_used=False` and `status == "PASS"`.
     3. Parity checks pass for every required scale (`rg` & `tg_cpu` match/file identity).
-    4. `tg_gpu` wall-clock `median_s` is strictly faster than all baselines
-       (`rg`, `tg_cpu`, `tg_simd`) at every required scale.
+    4. `tg_gpu` wall-clock `median_s` is finite, positive, and strictly faster than all
+       passing baselines (`rg`, `tg_cpu`, `tg_simd`) at every required scale.
     """
     required_labels = [format_size_label(s) for s in required_corpus_sizes]
     rows_by_label = {
         str(row.get("size_label")): row for row in rows if isinstance(row.get("size_label"), str)
     }
+    passing_parity_scales = _passing_parity_labels(correctness_checks, required_labels)
+    passing_parity_set = set(passing_parity_scales)
 
     blockers: list[str] = []
     sidecar_observed = False
@@ -116,7 +149,7 @@ def evaluate_dyno_promotion_gate(
             blockers.append(f"native_gpu_not_verified:{label}")
 
         gpu_median = tg_gpu.get("median_s")
-        if not isinstance(gpu_median, (int, float)) or float(gpu_median) <= 0.0:
+        if not _is_valid_positive_finite_seconds(gpu_median):
             blockers.append(f"invalid_gpu_timing:{label}")
             continue
 
@@ -124,8 +157,13 @@ def evaluate_dyno_promotion_gate(
         beats_all = True
         for baseline in REQUIRED_BASELINES:
             base_entry = row.get(baseline)
-            base_median = base_entry.get("median_s") if isinstance(base_entry, dict) else None
-            if not isinstance(base_median, (int, float)) or float(base_median) <= 0.0:
+            if not _baseline_entry_passed(base_entry):
+                blockers.append(f"failed_baseline:{baseline}:{label}")
+                beats_all = False
+                continue
+            assert isinstance(base_entry, dict)
+            base_median = base_entry.get("median_s")
+            if not _is_valid_positive_finite_seconds(base_median):
                 blockers.append(f"missing_baseline:{baseline}:{label}")
                 beats_all = False
                 continue
@@ -137,6 +175,7 @@ def evaluate_dyno_promotion_gate(
 
         if (
             beats_all
+            and label in passing_parity_set
             and tg_gpu.get("status") == "PASS"
             and backend == "NativeGpuBackend"
             and not row_sidecar
@@ -151,9 +190,8 @@ def evaluate_dyno_promotion_gate(
             **ratios,
         })
 
-    passing_parity_scales = _passing_parity_labels(correctness_checks, required_labels)
     for label in required_labels:
-        if label not in passing_parity_scales:
+        if label not in passing_parity_set:
             blockers.append(f"parity_unverified:{label}")
 
     blockers = list(dict.fromkeys(blockers))
@@ -217,6 +255,7 @@ def _time_command(cmd: list[str], *, runs: int, warmup: int) -> dict[str, Any]:
     for _ in range(warmup):
         subprocess.run(cmd, capture_output=True, text=True, check=False)
     samples: list[float] = []
+    returncodes: list[int] = []
     last_stdout = ""
     last_rc = 0
     for _ in range(runs):
@@ -224,14 +263,118 @@ def _time_command(cmd: list[str], *, runs: int, warmup: int) -> dict[str, Any]:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         elapsed = time.perf_counter() - t0
         samples.append(elapsed)
+        returncodes.append(proc.returncode)
         last_stdout = proc.stdout
         last_rc = proc.returncode
+    all_zero = bool(returncodes) and all(rc == 0 for rc in returncodes)
     return {
-        "status": "PASS" if last_rc in (0, 1) else "FAIL",
+        "status": "PASS" if all_zero else "FAIL",
         "exit_code": last_rc,
         "samples_s": [round(s, 6) for s in samples],
         "median_s": round(statistics.median(samples), 6) if samples else None,
         "stdout": last_stdout,
+    }
+
+
+def _parse_tg_json_payload(stdout: str) -> dict[str, Any] | None:
+    if not stdout.strip():
+        return None
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _evaluate_scale_parity(
+    *,
+    label: str,
+    gpu_res: dict[str, Any],
+    cpu_res: dict[str, Any],
+    rg_res: dict[str, Any],
+    gpu_payload: dict[str, Any] | None,
+    routing_backend: Any,
+    sidecar_used: bool,
+) -> dict[str, Any]:
+    cpu_payload = _parse_tg_json_payload(str(cpu_res.get("stdout") or ""))
+    rg_stdout = str(rg_res.get("stdout") or "")
+    rg_sigs: list[tuple[str, int, str]] | None = None
+    if rg_stdout.strip():
+        try:
+            rg_sigs = _extract_rg_json_match_signatures(rg_stdout)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            rg_sigs = None
+
+    prereqs_ok = (
+        gpu_res.get("status") == "PASS"
+        and cpu_res.get("status") == "PASS"
+        and rg_res.get("status") == "PASS"
+        and routing_backend == "NativeGpuBackend"
+        and not sidecar_used
+        and gpu_payload is not None
+        and cpu_payload is not None
+        and isinstance(gpu_payload.get("matches"), list)
+        and isinstance(cpu_payload.get("matches"), list)
+        and rg_sigs is not None
+    )
+
+    if not prereqs_ok:
+        return {
+            "size_label": label,
+            "status": "FAIL",
+            "matches_equal": False,
+            "files_equal": False,
+            "rg_matches_equal": False,
+            "rg_files_equal": False,
+            "rg_match_identity_equal": False,
+        }
+
+    assert gpu_payload is not None
+    assert cpu_payload is not None
+    assert rg_sigs is not None
+
+    gpu_sigs = _extract_tg_match_signatures(gpu_payload)
+    cpu_sigs = _extract_tg_match_signatures(cpu_payload)
+    gpu_files = _signature_files(gpu_sigs)
+    cpu_files = _signature_files(cpu_sigs)
+    rg_files = _signature_files(rg_sigs)
+
+    gpu_total_ok = not isinstance(gpu_payload.get("total_matches"), int) or (
+        gpu_payload["total_matches"] == len(gpu_sigs)
+    )
+    cpu_total_ok = not isinstance(cpu_payload.get("total_matches"), int) or (
+        cpu_payload["total_matches"] == len(cpu_sigs)
+    )
+
+    matches_equal = (
+        gpu_total_ok and cpu_total_ok and len(gpu_sigs) == len(cpu_sigs) and gpu_sigs == cpu_sigs
+    )
+    files_equal = len(gpu_files) == len(cpu_files) and gpu_files == cpu_files
+    rg_matches_equal = gpu_total_ok and len(gpu_sigs) == len(rg_sigs)
+    rg_files_equal = len(gpu_files) == len(rg_files) and gpu_files == rg_files
+    rg_match_identity_equal = gpu_total_ok and gpu_sigs == rg_sigs
+    all_equal = (
+        matches_equal
+        and files_equal
+        and rg_matches_equal
+        and rg_files_equal
+        and rg_match_identity_equal
+    )
+
+    return {
+        "size_label": label,
+        "status": "PASS" if all_equal else "FAIL",
+        "matches_equal": matches_equal,
+        "files_equal": files_equal,
+        "rg_matches_equal": rg_matches_equal,
+        "rg_files_equal": rg_files_equal,
+        "rg_match_identity_equal": rg_match_identity_equal,
+        "gpu_match_count": len(gpu_sigs),
+        "cpu_match_count": len(cpu_sigs),
+        "rg_match_count": len(rg_sigs),
+        "gpu_file_count": len(gpu_files),
+        "cpu_file_count": len(cpu_files),
+        "rg_file_count": len(rg_files),
     }
 
 
@@ -301,49 +444,51 @@ def run_dyno_ratchet(
                 else {"status": "UNAVAILABLE", "median_s": None, "stdout": ""}
             )
 
-            gpu_payload: dict[str, Any] = {}
-            if gpu_res.get("stdout"):
-                try:
-                    gpu_payload = json.loads(str(gpu_res["stdout"]))
-                except json.JSONDecodeError:
-                    gpu_payload = {}
-
-            routing_backend = gpu_payload.get("routing_backend")
-            sidecar_used = bool(gpu_payload.get("sidecar_used", False))
+            gpu_payload = _parse_tg_json_payload(str(gpu_res.get("stdout") or ""))
+            routing_backend = gpu_payload.get("routing_backend") if gpu_payload else None
+            sidecar_used = bool(gpu_payload.get("sidecar_used", False)) if gpu_payload else False
             rows.append({
                 "size_label": label,
                 "size_bytes": size_bytes,
-                "rg": {"status": rg_res["status"], "median_s": rg_res.get("median_s")},
-                "tg_cpu": {"status": cpu_res["status"], "median_s": cpu_res.get("median_s")},
-                "tg_simd": {"status": simd_res["status"], "median_s": simd_res.get("median_s")},
+                "rg": {
+                    "status": rg_res["status"],
+                    "exit_code": rg_res.get("exit_code"),
+                    "median_s": rg_res.get("median_s"),
+                },
+                "tg_cpu": {
+                    "status": cpu_res["status"],
+                    "exit_code": cpu_res.get("exit_code"),
+                    "median_s": cpu_res.get("median_s"),
+                },
+                "tg_simd": {
+                    "status": simd_res["status"],
+                    "exit_code": simd_res.get("exit_code"),
+                    "median_s": simd_res.get("median_s"),
+                },
                 "tg_gpu": {
                     "status": "PASS"
                     if gpu_res["status"] == "PASS"
                     and routing_backend == "NativeGpuBackend"
                     and not sidecar_used
                     else "UNSUPPORTED",
+                    "exit_code": gpu_res.get("exit_code"),
                     "median_s": gpu_res.get("median_s"),
                     "routing_backend": routing_backend,
                     "sidecar_used": sidecar_used,
                 },
             })
 
-            matches_equal = bool(
-                gpu_res["status"] == "PASS"
-                and cpu_res["status"] == "PASS"
-                and rg_res["status"] == "PASS"
-                and routing_backend == "NativeGpuBackend"
-                and not sidecar_used
+            correctness_checks.append(
+                _evaluate_scale_parity(
+                    label=label,
+                    gpu_res=gpu_res,
+                    cpu_res=cpu_res,
+                    rg_res=rg_res,
+                    gpu_payload=gpu_payload,
+                    routing_backend=routing_backend,
+                    sidecar_used=sidecar_used,
+                )
             )
-            correctness_checks.append({
-                "size_label": label,
-                "status": "PASS" if matches_equal else "FAIL",
-                "matches_equal": matches_equal,
-                "files_equal": matches_equal,
-                "rg_matches_equal": matches_equal,
-                "rg_files_equal": matches_equal,
-                "rg_match_identity_equal": matches_equal,
-            })
 
     gate = evaluate_dyno_promotion_gate(rows, correctness_checks)
     return {

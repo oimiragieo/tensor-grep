@@ -98,6 +98,44 @@ def test_dyno_promotion_gate_passes_only_when_1gb_and_5gb_parity_and_speedups_pa
             [_passing_check("1GB"), _passing_check("5GB", equal=False)],
             "parity_unverified:5GB",
         ),
+        (
+            [_passing_row("1GB", gpu_s=float("nan")), _passing_row("5GB")],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "invalid_gpu_timing:1GB",
+        ),
+        (
+            [
+                {
+                    **_passing_row("1GB"),
+                    "rg": {"status": "PASS", "median_s": float("inf")},
+                },
+                _passing_row("5GB"),
+            ],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "missing_baseline:rg:1GB",
+        ),
+        (
+            [
+                {
+                    **_passing_row("1GB"),
+                    "tg_cpu": {"status": "FAIL", "exit_code": 2, "median_s": 10.0},
+                },
+                _passing_row("5GB"),
+            ],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "failed_baseline:tg_cpu:1GB",
+        ),
+        (
+            [
+                {
+                    **_passing_row("1GB"),
+                    "rg": {"status": "PASS", "exit_code": 1, "median_s": 10.0},
+                },
+                _passing_row("5GB"),
+            ],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "failed_baseline:rg:1GB",
+        ),
     ],
 )
 def test_dyno_promotion_gate_fails_closed_when_thresholds_unmet(
@@ -132,7 +170,12 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
 
     good_report = tmp_path / "dyno_pass.json"
     good_report.write_text(
-        json.dumps({"promotion_proof": True, "promotion_reason": "1GB & 5GB verified"}),
+        json.dumps({
+            "promotion_proof": True,
+            "promotion_reason": "1GB & 5GB verified",
+            "rows": [_passing_row("1GB"), _passing_row("5GB")],
+            "correctness_checks": [_passing_check("1GB"), _passing_check("5GB")],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(good_report))
@@ -142,6 +185,16 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
     promoted_ok, reason_ok = doctor_report.evaluate_doctor_dyno_promotion_status(True)
     assert promoted_ok is True
     assert "1GB & 5GB verified" in reason_ok
+
+    forged_report = tmp_path / "dyno_forged.json"
+    forged_report.write_text(
+        json.dumps({"promotion_proof": True, "promotion_reason": "1GB & 5GB verified"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(forged_report))
+    promoted_forged, reason_forged = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_forged is False
+    assert "experimental" in reason_forged.lower() or "verification" in reason_forged.lower()
 
 
 def test_lsp_warm_pool_proof_requires_all_10_languages_within_latency_budget() -> None:
@@ -171,6 +224,79 @@ def test_lsp_warm_pool_proof_requires_all_10_languages_within_latency_budget() -
     ok_result = doctor_report.evaluate_lsp_warm_pool_proof(all_ok, max_latency_seconds=5.0)
     assert ok_result["lsp_proof"] is True
     assert ok_result["not_lsp_proof_reason"] is None
+
+    missing_latency = [
+        {"language": lang, "lsp_proof": True}
+        if lang == "go"
+        else {
+            "language": lang,
+            "lsp_proof": True,
+            "latency_ms": 120.0,
+        }
+        for lang in required
+    ]
+    missing_result = doctor_report.evaluate_lsp_warm_pool_proof(missing_latency)
+    assert missing_result["lsp_proof"] is False
+    assert "go" in missing_result["missing_or_unverified_languages"]
+
+    nan_latency = [
+        {"language": lang, "lsp_proof": True, "latency_ms": float("nan") if lang == "c" else 120.0}
+        for lang in required
+    ]
+    nan_result = doctor_report.evaluate_lsp_warm_pool_proof(nan_latency)
+    assert nan_result["lsp_proof"] is False
+    assert "c" in nan_result["missing_or_unverified_languages"]
+
+
+def test_run_dyno_ratchet_rejects_output_parity_mismatch_even_with_exit_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(run_dyno_ratchet.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def _fake_time_command(cmd: list[str], *, runs: int, warmup: int) -> dict[str, object]:
+        del runs, warmup
+        corpus_path = cmd[-1]
+        if cmd[0] == "rg":
+            stdout = json.dumps({
+                "type": "match",
+                "data": {
+                    "path": {"text": corpus_path},
+                    "line_number": 64,
+                    "lines": {"text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok\n"},
+                },
+            })
+            return {"status": "PASS", "exit_code": 0, "median_s": 10.0, "stdout": stdout}
+        if "--gpu" in cmd:
+            stdout = json.dumps({
+                "routing_backend": "NativeGpuBackend",
+                "sidecar_used": False,
+                "matches": [
+                    {
+                        "file": corpus_path,
+                        "line": 999,
+                        "text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok",
+                    }
+                ],
+            })
+            return {"status": "PASS", "exit_code": 0, "median_s": 1.0, "stdout": stdout}
+        stdout = json.dumps({
+            "matches": [
+                {
+                    "file": corpus_path,
+                    "line": 64,
+                    "text": "2026-11-25 INFO DYNO_RATCHET_TARGET worker=0 status=ok",
+                }
+            ]
+        })
+        return {"status": "PASS", "exit_code": 0, "median_s": 8.0, "stdout": stdout}
+
+    monkeypatch.setattr(run_dyno_ratchet, "_time_command", _fake_time_command)
+    report = run_dyno_ratchet.run_dyno_ratchet(corpus_sizes=(1024,), runs=1, warmup=0)
+    assert report["promotion_proof"] is False
+    check = report["correctness_checks"][0]
+    assert check["status"] == "FAIL"
+    assert check["matches_equal"] is False
+    assert check["rg_match_identity_equal"] is False
 
 
 def test_native_embeddings_ready_is_honest(monkeypatch: pytest.MonkeyPatch) -> None:
