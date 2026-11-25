@@ -234,7 +234,9 @@ def _strip_schema_titles(node: Any) -> None:
 
 
 def compact_mcp_tool_schemas(mcp_server_obj: Any) -> None:
-    """Strip redundant JSON-schema titles from registered tool input and output schemas."""
+    """Strip redundant JSON-schema titles and apply TSCG tightening to compact tool schemas."""
+    from tensor_grep.cli.mcp_compact import tighten_mcp_tool_schemas
+
     tool_manager = getattr(mcp_server_obj, "_tool_manager", None)
     list_tools = getattr(tool_manager, "list_tools", None)
     if not callable(list_tools):
@@ -244,6 +246,7 @@ def compact_mcp_tool_schemas(mcp_server_obj: Any) -> None:
             _strip_schema_titles(tool.parameters)
         if isinstance(getattr(tool, "output_schema", None), dict):
             _strip_schema_titles(tool.output_schema)
+    tighten_mcp_tool_schemas(mcp_server_obj)
 
 
 @dataclass(frozen=True)
