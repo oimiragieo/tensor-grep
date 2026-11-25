@@ -41,15 +41,15 @@ from tensor_grep.cli import terminal_output as _terminal_output
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
-from tensor_grep.cli.detail_tier import apply_detail_tier as _apply_detail_tier
-from tensor_grep.cli.detail_tier import compact_option as _compact_option
-from tensor_grep.cli.detail_tier import detail_option as _detail_option
-from tensor_grep.cli.detail_tier import dump_detail_json as _dump_detail_json
-from tensor_grep.cli.detail_tier import resolve_compact_detail as _resolve_compact_detail
-from tensor_grep.cli.formatters.base import OutputFormatter
-from tensor_grep.cli.prepare_service import (
-    _build_prepare_payload,
+from tensor_grep.cli.detail_tier import (
+    apply_detail_tier as _apply_detail_tier,
+    compact_option as _compact_option,
+    detail_option as _detail_option,
+    dump_detail_json as _dump_detail_json,
+    resolve_compact_detail as _resolve_compact_detail,
 )
+from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.prepare_service import _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.root_app import create_root_app
 from tensor_grep.cli.runtime_paths import (
@@ -5831,6 +5831,7 @@ def agent(
         _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
         # Daemon misses or unreliable evidence fall through to the cold build. Requests requiring
         # fresh deadlines or new option contracts use the cold path until daemon schema support.
+        effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
         daemon_payload = (
             _self._maybe_agent_via_running_daemon(
                 path=resolved_path,
@@ -5859,7 +5860,6 @@ def agent(
                 daemon_payload["dependency_grounding"] = daemon_grounding
             else:
                 daemon_payload.pop("dependency_grounding", None)
-            effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
             if json_output:
                 typer.echo(_dump_detail_json(daemon_payload, effective_detail, ensure_ascii=False))
             else:
@@ -5900,7 +5900,6 @@ def agent(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
     # Emit the full capsule before applying the scan-truncation exit contract.
-    effective_detail = _resolve_compact_detail(compact, detail, json_output=json_output)
     if citations:
         _citations.emit_payload_citations(
             _apply_detail_tier(payload, effective_detail) if json_output else payload,
@@ -5994,6 +5993,7 @@ def edit_plan(
         # Skip the warm-daemon fast path entirely when a --deadline was requested (a warm
         # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
         # refs/callers/impact/blast-radius's own daemon gate.
+        edit_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
         daemon_payload = (
             _maybe_edit_plan_via_running_daemon(
                 path=resolved_path,
@@ -6012,7 +6012,6 @@ def edit_plan(
         if daemon_payload is not None:
             # Output-before-exit (Cluster B, 2026-07-06): same exit-2-on-scan-truncation contract as
             # the cold path below -- print the full daemon payload, then exit 2 if it was truncated.
-            edit_detail = _resolve_compact_detail(compact, "standard", json_output=json_output)
             if json_output:
                 typer.echo(_dump_detail_json(daemon_payload, edit_detail))
             else:
