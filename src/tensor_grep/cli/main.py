@@ -13252,7 +13252,7 @@ def main_entry() -> None:
 
         version_verbose = version_invocation_verbose(argv)
         if version_verbose is not None:
-            _print_version(verbose=version_verbose)
+            _self._print_version(verbose=version_verbose)
             sys.exit(0)
 
     from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
