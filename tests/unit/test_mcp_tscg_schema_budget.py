@@ -67,3 +67,28 @@ def test_legacy_tools_opt_in_exposes_full_61_tools() -> None:
     assert "tg_symbol_defs" in names
     assert "tg_search" in names
     assert "tg_discover_tools" in names
+
+
+def test_mutating_tools_preserve_safety_warnings_and_title_property_survives() -> None:
+    from tensor_grep.cli.mcp_compact import _COMPACT_TOOL_DESCRIPTIONS, _strip_property_defaults
+
+    assert "mutates" in _COMPACT_TOOL_DESCRIPTIONS["tg_rewrite"].lower()
+    assert "plan" in _COMPACT_TOOL_DESCRIPTIONS["tg_rewrite"].lower()
+    assert "verify" in _COMPACT_TOOL_DESCRIPTIONS["tg_rewrite"].lower()
+    assert "mutates" in _COMPACT_TOOL_DESCRIPTIONS["tg_checkpoint"].lower()
+    assert "gate" in _COMPACT_TOOL_DESCRIPTIONS["tg_audit"].lower()
+    assert "mutates" in _COMPACT_TOOL_DESCRIPTIONS["tg_session"].lower()
+
+    schema = {
+        "type": "object",
+        "title": "RootSchema",
+        "properties": {
+            "title": {"type": "string", "title": "Title", "default": None},
+            "other": {"type": "integer", "title": "Other"},
+        },
+    }
+    _strip_property_defaults(schema)
+    assert "title" not in schema
+    assert "title" in schema["properties"]
+    assert schema["properties"]["title"] == {"type": "string"}
+    assert schema["properties"]["other"] == {"type": "integer"}

@@ -701,40 +701,41 @@ def _collapse_nullable_anyof(node: Any) -> None:
 
 _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "tg_navigate": "Symbol nav.",
-    "tg_impact": "Impact & blast radius.",
+    "tg_impact": "Impact/blast radius.",
     "tg_query": "Code search.",
     "tg_context": "Context pack/capsule.",
     "tg_explore": "Repo map/orient/doctor.",
-    "tg_session": "Repo-map sessions.",
+    "tg_session": "Sessions (mutates cache).",
     "tg_scan": "Security scans.",
-    "tg_audit": "Audit manifests.",
-    "tg_checkpoint": "Edit checkpoints.",
-    "tg_rewrite": "AST rewrites.",
-    "tg_mcp_capabilities": "MCP capabilities.",
+    "tg_audit": "Audit/signing gates.",
+    "tg_checkpoint": "Checkpoints; mutates files.",
+    "tg_rewrite": "AST rewrites; apply mutates (plan/verify/gate).",
+    "tg_mcp_capabilities": "Capabilities.",
     "tg_classify_logs": "Log anomalies.",
     "tg_batch": (
-        "Batch <=16 $prev/$steps[i] queries; return_final_only. "
-        "Invalid top-level requests error; item errors set result_incomplete=true; "
-        "cap 120 seconds."
+        "Batch <=16 $prev/$steps[i]; return_final_only; "
+        "Invalid top-level requests error; item errors->result_incomplete=true; "
+        "120 seconds."
     ),
     "tg_coverage": "Cache coverage.",
     "tg_discover_tools": "Discover tools.",
 }
 
 
-def _strip_property_defaults(node: Any) -> None:
+def _strip_property_defaults(node: Any, *, _in_properties_map: bool = False) -> None:
     if isinstance(node, dict):
-        node.pop("title", None)
-        props = node.get("properties")
-        if isinstance(props, dict):
-            for prop_schema in props.values():
+        if _in_properties_map:
+            for prop_schema in node.values():
                 if isinstance(prop_schema, dict) and prop_schema.get("default", 0) is None:
                     prop_schema.pop("default", None)
-        for value in node.values():
-            _strip_property_defaults(value)
+                _strip_property_defaults(prop_schema, _in_properties_map=False)
+            return
+        node.pop("title", None)
+        for key, value in node.items():
+            _strip_property_defaults(value, _in_properties_map=(key == "properties"))
     elif isinstance(node, list):
         for item in node:
-            _strip_property_defaults(item)
+            _strip_property_defaults(item, _in_properties_map=False)
 
 
 def tighten_mcp_tool_schemas(mcp_server_obj: Any) -> None:
