@@ -31,6 +31,9 @@ def finish_find(
         if rerank != "off":
             raise ConfigurationError("rerank cannot run after the shared deadline")
     result = apply_cross_encoder(result, query, rerank, deadline_monotonic=deadline_monotonic)
+    if result.total_matches == 0:
+        result.dependency_grounding = None
+        return result
     tokens_used = sum(max(1, len(match.text) // 4) for match in result.matches)
     result.dependency_grounding = dependency_grounding(
         path,
