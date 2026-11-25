@@ -616,9 +616,26 @@ def verify_review_bundle(
     slice_digest_reason: str | None = None
     embedded_slice = bundle.get("change_slice")
     embedded_slice_digest = bundle.get("slice_digest")
-    normalized_expected_slice_digest = _normalize_optional_str(expected_slice_digest)
+    normalized_expected_slice_digest: str | None = None
+    expected_slice_digest_invalid = False
+    if expected_slice_digest is not None:
+        stripped_expected = (
+            expected_slice_digest.strip() if isinstance(expected_slice_digest, str) else ""
+        )
+        if (
+            not isinstance(expected_slice_digest, str)
+            or not stripped_expected
+            or len(stripped_expected) != 64
+            or not all(ch in "0123456789abcdefABCDEF" for ch in stripped_expected)
+        ):
+            expected_slice_digest_invalid = True
+        else:
+            normalized_expected_slice_digest = stripped_expected
     slice_expected_by_checksums = "change_slice" in checksums or "slice_digest" in checksums
-    if (
+    if expected_slice_digest_invalid:
+        slice_digest_valid = False
+        slice_digest_reason = "invalid_expected_slice_digest"
+    elif (
         require_change_slice
         or slice_expected_by_checksums
         or embedded_slice is not None

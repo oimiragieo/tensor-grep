@@ -632,6 +632,29 @@ def test_verify_review_bundle_refuses_change_slice_stripping_and_expected_digest
     assert cli_exp_payload["valid"] is False
     assert cli_exp_payload["slice_digest_valid"] is False
 
+    # Empty/whitespace expected_slice_digest must fail closed (never normalize "" -> None)
+    api_empty = audit_manifest.verify_review_bundle(bundle_path, expected_slice_digest="")
+    assert api_empty["valid"] is False
+    assert api_empty["slice_digest_valid"] is False
+    assert api_empty.get("slice_digest_reason") == "invalid_expected_slice_digest"
+
+    cli_empty = runner.invoke(
+        app,
+        [
+            "review-bundle",
+            "verify",
+            str(bundle_path),
+            "--expect-slice-digest",
+            "",
+            "--json",
+        ],
+    )
+    assert cli_empty.exit_code == 1
+    cli_empty_payload = json.loads(cli_empty.stdout)
+    assert cli_empty_payload["valid"] is False
+    assert cli_empty_payload["slice_digest_valid"] is False
+    assert cli_empty_payload.get("slice_digest_reason") == "invalid_expected_slice_digest"
+
 
 def test_tdad_sqlite_cache_missing_required_columns_rebuilds_gracefully(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
