@@ -329,6 +329,28 @@ def _build_prepare_payload(
         related_call_sites=related_call_sites,
         deadline_monotonic=deadline_monotonic,
     )
+    if target.get("file") and Path(resolved_path).is_dir():
+        try:
+            from tensor_grep.cli.symbol_graph_index import sync_incremental_ego_subgraph
+
+            seed_file = str(target["file"])
+            import_edges = [
+                (str(edge.get("target") or edge.get("file") or ""), "import")
+                for edge in (rm.get("imports") or [])
+                if isinstance(edge, dict) and str(edge.get("file") or "") == seed_file
+            ]
+            seed_file_path = Path(seed_file)
+            seed_bytes = seed_file_path.read_bytes() if seed_file_path.is_file() else b""
+            sync_incremental_ego_subgraph(
+                Path(resolved_path),
+                {seed_file: seed_bytes},
+                lambda _p, _c: [(dst, kind) for dst, kind in import_edges if dst],
+                seed_file,
+                max_hops=1,
+                max_nodes=16,
+            )
+        except Exception:
+            pass
 
     symbol = str(target.get("symbol") or "")
     claim_argv: list[object] = ["tg", "ledger", "claim", resolved_path]

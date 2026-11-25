@@ -47,8 +47,8 @@ def test_sync_graph_edges_skips_unchanged_and_updates_dirty(tmp_path: Path) -> N
     assert db_path.exists()
     conn = sqlite3.connect(str(db_path))
     try:
-        mode = conn.execute("PRAGMA journal_mode").fetchone()
-        assert mode is not None and str(mode[0]).lower() == "wal"
+        check = conn.execute("PRAGMA quick_check").fetchone()
+        assert check == ("ok",)
     finally:
         conn.close()
 
@@ -177,3 +177,15 @@ def test_incremental_graph_sync_rejects_symlink_or_junction_cache_paths(tmp_path
     finally:
         if os.name == "nt" and tg_cache.exists() and not tg_cache.is_symlink():
             subprocess.run(["cmd", "/c", "rmdir", str(tg_cache)], check=False)
+
+
+def test_extract_ego_subgraph_handles_multiple_edge_kinds_per_dst(tmp_path: Path) -> None:
+    def _multi_edges(path: str, _content: str) -> list[tuple[str, str]]:
+        if path == "a.py":
+            return [("b.py", "import"), ("b.py", "call"), ("b.py", "type"), ("c.py", "import")]
+        return []
+
+    sync_graph_edges(tmp_path, {"a.py": "1", "b.py": "2", "c.py": "3"}, _multi_edges)
+    sub = extract_ego_subgraph(tmp_path, "a.py", max_hops=1, max_nodes=3)
+    assert sub["nodes"] == ["a.py", "b.py", "c.py"]
+    assert sub["truncated"] is False

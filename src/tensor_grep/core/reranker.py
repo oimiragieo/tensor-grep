@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import stat
 import sys
 import threading
 from collections import defaultdict
@@ -239,22 +238,24 @@ def rerank_by_bm25(
     return dataclasses.replace(result, matches=reranked)
 
 
-def _resolve_confined_hybrid_db_path(cache_root: Path) -> Path:
+def _open_confined_hybrid_index(
+    cache_root: Path | None,
+) -> tuple[HybridSQLiteIndex, Path | None, Path | None]:
+    if cache_root is None:
+        return HybridSQLiteIndex(":memory:"), None, None
+    from tensor_grep.io.confined import read_confined
+
     resolved_root = Path(cache_root).resolve()
     db_path = resolved_root / HYBRID_INDEX_REL_PATH
-    for candidate in (resolved_root / ".tg_cache", db_path.parent, db_path):
-        if candidate.is_symlink():
-            raise OSError(f"hybrid index refuses symlink path: {candidate}")
     prepare_directory(resolved_root, db_path.parent)
-    if db_path.is_symlink():
-        raise OSError(f"hybrid index refuses symlink leaf: {db_path}")
-    if db_path.exists():
-        info = db_path.lstat()
-        if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
-            raise OSError(f"hybrid index refuses non-regular leaf: {db_path}")
-    if not db_path.resolve().is_relative_to(resolved_root):
-        raise OSError(f"hybrid index path escapes cache_root: {db_path}")
-    return db_path
+    index = HybridSQLiteIndex(":memory:")
+    try:
+        if db_path.exists():
+            index._conn.deserialize(read_confined(resolved_root, db_path, 64 * 1024 * 1024))
+    except BaseException:
+        index.close()
+        raise
+    return index, resolved_root, db_path
 
 
 def hybrid_rerank(
@@ -269,14 +270,16 @@ def hybrid_rerank(
     """Rank chunks using ``HybridSQLiteIndex`` (FTS5 + adaptive IDF-weighted RRF)."""
     if not chunks:
         return []
-    db_target: str | Path = (
-        _resolve_confined_hybrid_db_path(cache_root) if cache_root is not None else ":memory:"
-    )
-    with HybridSQLiteIndex(db_target) as index:
+    index, resolved_root, db_path = _open_confined_hybrid_index(cache_root)
+    with index:
         doc_rows = [(str(i), chunk.text, None) for i, chunk in enumerate(chunks)]
         index.upsert_documents(doc_rows)
         if cache_root is not None:
             index.remove_missing([doc_id for doc_id, _text, _emb in doc_rows])
+            if resolved_root is not None and db_path is not None:
+                from tensor_grep.io.confined import publish_confined
+
+                publish_confined(resolved_root, db_path, index._conn.serialize())
         if dense_index is None:
             results = index.search(query, limit=len(chunks), k=k, idf_weight=idf_weight)
             return [int(row["doc_id"]) for row in results]

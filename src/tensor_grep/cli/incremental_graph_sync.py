@@ -4,49 +4,38 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-import stat
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.io.confined import prepare_directory, validate_confined_parent_prefix
+from tensor_grep.io.confined import (
+    prepare_directory,
+    publish_confined,
+    read_confined,
+    validate_confined_parent_prefix,
+)
 
 GRAPH_SYNC_REL_PATH = Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3"
+_GRAPH_DB_LIMIT = 64 * 1024 * 1024
 
 
 def _blake2b_hex(data: bytes) -> str:
     return hashlib.blake2b(data, digest_size=32).hexdigest()
 
 
-def _resolve_confined_graph_db_path(cache_root: Path, *, create_dirs: bool) -> Path:
+def _open_graph_db(cache_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connection, Path]:
     resolved_root = Path(cache_root).resolve()
     db_path = resolved_root / GRAPH_SYNC_REL_PATH
-    for candidate in (resolved_root / ".tg_cache", db_path.parent, db_path):
-        if candidate.is_symlink():
-            raise OSError(f"incremental graph refuses symlink path: {candidate}")
     if create_dirs:
         prepare_directory(resolved_root, db_path.parent)
     else:
         validate_confined_parent_prefix(resolved_root, db_path)
-    if db_path.is_symlink():
-        raise OSError(f"incremental graph refuses symlink leaf: {db_path}")
-    if db_path.exists():
-        info = db_path.lstat()
-        if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
-            raise OSError(f"incremental graph refuses non-regular leaf: {db_path}")
-    if not db_path.resolve().is_relative_to(resolved_root):
-        raise OSError(f"incremental graph path escapes cache_root: {db_path}")
-    return db_path
-
-
-def _open_graph_db(cache_root: Path) -> sqlite3.Connection:
-    db_path = _resolve_confined_graph_db_path(cache_root, create_dirs=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(":memory:")
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        if db_path.exists():
+            conn.deserialize(read_confined(resolved_root, db_path, _GRAPH_DB_LIMIT))
         with conn:
             conn.execute(
                 """
@@ -72,7 +61,7 @@ def _open_graph_db(cache_root: Path) -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
-    return conn
+    return conn, db_path
 
 
 def sync_graph_edges(
@@ -80,13 +69,9 @@ def sync_graph_edges(
     current_files: Mapping[str, bytes | str],
     extract_edges_fn: Callable[[str, str], list[tuple[str, str]]],
 ) -> dict[str, int]:
-    """Incrementally sync file hashes and extracted code edges in SQLite WAL mode.
-
-    Unchanged files (matching BLAKE2b content hash) are skipped in O(1).
-    Dirty files have their edges replaced and deleted files are pruned within
-    a single transaction.
-    """
-    conn = _open_graph_db(cache_root)
+    """Incrementally sync file hashes and extracted code edges in confined SQLite storage."""
+    resolved_root = Path(cache_root).resolve()
+    conn, db_path = _open_graph_db(resolved_root, create_dirs=True)
     try:
         existing_hashes = {
             str(row[0]): str(row[1])
@@ -140,6 +125,8 @@ def sync_graph_edges(
                     (path, digest, now),
                 )
 
+        if dirty_entries or deleted_paths or not db_path.exists():
+            publish_confined(resolved_root, db_path, conn.serialize())
         return {
             "skipped": skipped,
             "updated": updated,
@@ -167,17 +154,16 @@ def extract_ego_subgraph(
             "truncated": True,
         }
 
-    db_path = _resolve_confined_graph_db_path(cache_root, create_dirs=False)
-    if not db_path.exists():
-        return {
-            "seed": seed_file,
-            "nodes": [seed_file],
-            "edges": [],
-            "truncated": False,
-        }
-
-    conn = _open_graph_db(cache_root)
+    resolved_root = Path(cache_root).resolve()
+    conn, db_path = _open_graph_db(resolved_root, create_dirs=False)
     try:
+        if not db_path.exists():
+            return {
+                "seed": seed_file,
+                "nodes": [seed_file],
+                "edges": [],
+                "truncated": False,
+            }
         visited: set[str] = {seed_file}
         ordered_nodes: list[str] = [seed_file]
         collected_edges: list[dict[str, str]] = []
@@ -189,14 +175,13 @@ def extract_ego_subgraph(
             current, depth = queue.popleft()
             if depth >= max_hops:
                 continue
-            rows = conn.execute(
-                "SELECT src, dst, kind FROM edges WHERE src = ? ORDER BY dst ASC, kind ASC LIMIT ?",
+            dst_rows = conn.execute(
+                "SELECT DISTINCT dst FROM edges WHERE src = ? ORDER BY dst ASC LIMIT ?",
                 (current, max_nodes + 1),
             ).fetchall()
-            for row_src, row_dst, row_kind in rows:
-                src = str(row_src)
+            kept_dsts: list[str] = []
+            for (row_dst,) in dst_rows:
                 dst = str(row_dst)
-                kind = str(row_kind)
                 if dst not in visited:
                     if len(ordered_nodes) >= max_nodes:
                         truncated = True
@@ -204,10 +189,17 @@ def extract_ego_subgraph(
                     visited.add(dst)
                     ordered_nodes.append(dst)
                     queue.append((dst, depth + 1))
-                edge_key = (src, dst, kind)
-                if dst in visited and edge_key not in seen_edges:
-                    seen_edges.add(edge_key)
-                    collected_edges.append({"src": src, "dst": dst, "kind": kind})
+                kept_dsts.append(dst)
+            for dst in kept_dsts:
+                kind_rows = conn.execute(
+                    "SELECT kind FROM edges WHERE src = ? AND dst = ? ORDER BY kind ASC",
+                    (current, dst),
+                ).fetchall()
+                for (row_kind,) in kind_rows:
+                    edge_key = (current, dst, str(row_kind))
+                    if edge_key not in seen_edges:
+                        seen_edges.add(edge_key)
+                        collected_edges.append({"src": current, "dst": dst, "kind": str(row_kind)})
 
         return {
             "seed": seed_file,

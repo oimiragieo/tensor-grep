@@ -183,3 +183,32 @@ def test_hybrid_rerank_route_labels_and_init_error_closes_connection(
     with pytest.raises(RuntimeError, match="boom"):
         HybridSQLiteIndex(":memory:")
     assert closed is True
+
+
+def test_hybrid_rerank_rejects_symlink_cache_dir(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    tg_cache = root / ".tg_cache"
+    try:
+        os.symlink(outside, tg_cache, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(tg_cache), str(outside)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            pytest.skip("symlink creation unavailable")
+    chunks = [Chunk(file_path="a.py", start_line=1, end_line=1, text="def hello(): pass")]
+    try:
+        with pytest.raises(OSError):
+            hybrid_rerank("hello", chunks, cache_root=root)
+    finally:
+        if os.name == "nt" and tg_cache.exists() and not tg_cache.is_symlink():
+            subprocess.run(["cmd", "/c", "rmdir", str(tg_cache)], check=False)
