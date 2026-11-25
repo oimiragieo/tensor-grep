@@ -130,12 +130,33 @@ def test_dyno_promotion_gate_passes_only_when_1gb_and_5gb_parity_and_speedups_pa
             [
                 {
                     **_passing_row("1GB"),
-                    "rg": {"status": "PASS", "median_s": float("inf")},
+                    "rg": {"status": "PASS", "exit_code": 0, "median_s": float("inf")},
                 },
                 _passing_row("5GB"),
             ],
             [_passing_check("1GB"), _passing_check("5GB")],
             "missing_baseline:rg:1GB",
+        ),
+        (
+            [
+                {
+                    **_passing_row("1GB"),
+                    "rg": {"status": "PASS", "median_s": 10.0},
+                },
+                _passing_row("5GB"),
+            ],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "failed_baseline:rg:1GB",
+        ),
+        (
+            [_passing_row("1GB", gpu_s=99.0), _passing_row("1GB"), _passing_row("5GB")],
+            [_passing_check("1GB"), _passing_check("5GB")],
+            "duplicate_scale_row:1GB",
+        ),
+        (
+            [_passing_row("1GB"), _passing_row("5GB")],
+            [_passing_check("1GB", equal=False), _passing_check("1GB"), _passing_check("5GB")],
+            "duplicate_scale_check:1GB",
         ),
         (
             [
@@ -373,6 +394,13 @@ def test_doctor_dyno_promotion_status_rejects_symlink_and_oversized_report(
     promoted_link, reason_link = doctor_report.evaluate_doctor_dyno_promotion_status(True)
     assert promoted_link is False
     assert "symlink" in reason_link.lower() or "regular" in reason_link.lower()
+
+    hardlink_path = tmp_path / "hardlinked_report.json"
+    hardlink_path.hardlink_to(target)
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(hardlink_path))
+    promoted_hardlink, reason_hardlink = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_hardlink is False
+    assert "hardlink" in reason_hardlink.lower()
 
 
 def test_lsp_warm_pool_proof_requires_all_10_languages_within_latency_budget() -> None:

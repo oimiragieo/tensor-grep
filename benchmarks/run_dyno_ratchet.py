@@ -97,11 +97,13 @@ def _is_valid_positive_finite_seconds(value: object) -> bool:
 def _baseline_entry_passed(entry: object) -> bool:
     if not isinstance(entry, dict) or entry.get("status") != "PASS":
         return False
-    for key in ("exit_code", "returncode"):
-        if key in entry and entry[key] is not None:
-            rc = entry[key]
-            if isinstance(rc, bool) or not isinstance(rc, int) or rc != 0:
-                return False
+    rc = entry.get("exit_code")
+    if isinstance(rc, bool) or not isinstance(rc, int) or rc != 0:
+        return False
+    if "returncode" in entry and entry["returncode"] is not None:
+        returncode = entry["returncode"]
+        if isinstance(returncode, bool) or not isinstance(returncode, int) or returncode != 0:
+            return False
     return True
 
 
@@ -121,13 +123,37 @@ def evaluate_dyno_promotion_gate(
        passing baselines (`rg`, `tg_cpu`, `tg_simd`) at every required scale.
     """
     required_labels = [format_size_label(s) for s in required_corpus_sizes]
-    rows_by_label = {
-        str(row.get("size_label")): row for row in rows if isinstance(row.get("size_label"), str)
-    }
-    passing_parity_scales = _passing_parity_labels(correctness_checks, required_labels)
+    blockers: list[str] = []
+
+    rows_by_label: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        label = row.get("size_label") if isinstance(row, dict) else None
+        if not isinstance(label, str) or not label:
+            continue
+        if label in rows_by_label:
+            blockers.append(f"duplicate_scale_row:{label}")
+            continue
+        rows_by_label[label] = row
+
+    seen_check_labels: set[str] = set()
+    duplicate_check_labels: set[str] = set()
+    for check in correctness_checks:
+        label = check.get("size_label") if isinstance(check, dict) else None
+        if not isinstance(label, str) or not label:
+            continue
+        if label in seen_check_labels:
+            blockers.append(f"duplicate_scale_check:{label}")
+            duplicate_check_labels.add(label)
+            continue
+        seen_check_labels.add(label)
+
+    passing_parity_scales = [
+        label
+        for label in _passing_parity_labels(correctness_checks, required_labels)
+        if label not in duplicate_check_labels
+    ]
     passing_parity_set = set(passing_parity_scales)
 
-    blockers: list[str] = []
     sidecar_observed = False
     observed_backends: set[str] = set()
     passing_speed_scales: list[str] = []

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli.symbols_cache_auth import load_machine_key
+from tensor_grep.io.confined import read_confined
 
 _DYNO_REQUIRED_SCALES: tuple[str, ...] = ("1GB", "5GB")
 _DYNO_MIN_SIZE_BYTES: dict[str, int] = {
@@ -69,20 +70,25 @@ def sign_dyno_promotion_report(
 
 def _read_dyno_report_bytes(report_path: Path) -> bytes:
     st = os.lstat(report_path)
-    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+    if (
+        stat.S_ISLNK(st.st_mode)
+        or not stat.S_ISREG(st.st_mode)
+        or getattr(st, "st_file_attributes", 0) & 0x400
+    ):
         raise OSError("dyno-ratchet report path must be a regular non-symlink file")
-    if st.st_size > _DYNO_REPORT_MAX_BYTES:
-        raise OSError(f"dyno-ratchet report exceeds {_DYNO_REPORT_MAX_BYTES} byte limit")
-    with report_path.open("rb") as handle:
-        fst = os.fstat(handle.fileno())
-        if not stat.S_ISREG(fst.st_mode):
-            raise OSError("dyno-ratchet report path must be a regular file")
-        if fst.st_size > _DYNO_REPORT_MAX_BYTES:
-            raise OSError(f"dyno-ratchet report exceeds {_DYNO_REPORT_MAX_BYTES} byte limit")
-        raw = handle.read(_DYNO_REPORT_MAX_BYTES + 1)
-    if len(raw) > _DYNO_REPORT_MAX_BYTES:
-        raise OSError(f"dyno-ratchet report exceeds {_DYNO_REPORT_MAX_BYTES} byte limit")
-    return raw
+    if st.st_nlink > 1:
+        raise OSError("dyno-ratchet report path must not be a hardlink")
+    data = read_confined(report_path.parent, report_path, _DYNO_REPORT_MAX_BYTES)
+    post_st = os.lstat(report_path)
+    if (
+        stat.S_ISLNK(post_st.st_mode)
+        or not stat.S_ISREG(post_st.st_mode)
+        or getattr(post_st, "st_file_attributes", 0) & 0x400
+        or post_st.st_nlink > 1
+        or (post_st.st_dev, post_st.st_ino) != (st.st_dev, st.st_ino)
+    ):
+        raise OSError("dyno-ratchet report path changed or is a hardlink")
+    return data
 
 
 def _parse_positive_finite(value: object) -> float | None:
