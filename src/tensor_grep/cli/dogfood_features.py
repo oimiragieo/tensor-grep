@@ -48,10 +48,12 @@ def _run(args: list[str], *, extra_env: dict[str, str] | None = None) -> tuple[i
     remaining = _DEADLINE - time.monotonic()
     if remaining <= 0:
         return 124, "", "shared dogfood deadline exceeded"
+    clean_env = dict(os.environ)
+    clean_env.pop("TG_FRONTDOOR_HOPS", None)
     try:
         proc = subprocess.Popen(
             [TG, *args],
-            env={**os.environ, "TG_SESSION_DAEMON_AUTOSTART": "0", **(extra_env or {})},
+            env={**clean_env, "TG_SESSION_DAEMON_AUTOSTART": "0", **(extra_env or {})},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
