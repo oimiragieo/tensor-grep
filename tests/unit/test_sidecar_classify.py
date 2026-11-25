@@ -449,3 +449,19 @@ def test_sidecar_classify_reports_hf_cache_and_offline_status(monkeypatch, tmp_p
         "offline": {"enabled": True, "sources": ["HF_HUB_OFFLINE"]},
         "local_files_only": True,
     }
+
+
+def test_python_cli_classify_json_flag_and_conflict(monkeypatch) -> None:
+    from tensor_grep.cli.main import app
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    ok = CliRunner().invoke(app, ["classify", "--json", "--text", "CRITICAL OutOfMemoryError"])
+    assert ok.exit_code == 0, ok.output
+    payload = json.loads(ok.stdout)
+    assert payload["classifications"][0]["label"] == "critical"
+
+    conflict = CliRunner().invoke(
+        app, ["classify", "--json", "--format", "text", "--text", "INFO ok"]
+    )
+    assert conflict.exit_code == 2
+    assert "cannot be combined" in conflict.stderr

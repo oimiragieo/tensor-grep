@@ -127,3 +127,34 @@ def test_trace_beats_debug_keyword_order() -> None:
     """trace check comes before debug in the chain; a line with 'trace' → 'trace'."""
     result = _classify_single("TRACE debug-level detail")
     assert result["label"] == "trace"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "CRITICAL OutOfMemoryError: Java heap space",
+        "2026-01-01 CRIT disk full",
+        "PANIC: kernel unable to handle paging request",
+        "EMERG system halting",
+        "EMERGENCY shutdown initiated",
+        "ALERT database replication lost",
+        "OOM killer invoked on pid 1234",
+        "java.lang.OutOfMemoryError: GC overhead limit exceeded",
+    ],
+)
+def test_high_severity_lines_classify_as_critical(line: str) -> None:
+    result = _classify_single(line)
+    assert result["label"] == "critical"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "NullPointerException at Main.java:42",
+        "KeyError: 'missing_key'",
+        "Traceback (most recent call last):",
+    ],
+)
+def test_compound_error_tokens_classify_as_error(line: str) -> None:
+    result = _classify_single(line)
+    assert result["label"] == "error"

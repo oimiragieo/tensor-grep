@@ -9715,24 +9715,15 @@ def classify(
     file_path: str | None = typer.Argument(
         None, help="The log file to classify (omit when using --stdin or --text)."
     ),
-    format_type: str = typer.Option("json", "--format", help="Output format"),
+    format_type: str | None = typer.Option(None, "--format", help="Output format"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON output"),
     max_lines: int = typer.Option(
         DEFAULT_CLASSIFY_MAX_LINES,
         "--max-lines",
         help="Maximum input lines to emit in JSON output (0 disables the cap).",
     ),
-    stdin_flag: bool = typer.Option(
-        False,
-        "--stdin",
-        help="Read the text to classify from stdin instead of a file "
-        "(mutually exclusive with --text).",
-    ),
-    text: str | None = typer.Option(
-        None,
-        "--text",
-        help="Classify a literal string instead of a file or stdin "
-        "(mutually exclusive with --stdin).",
-    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read text from stdin."),
+    text: str | None = typer.Option(None, "--text", help="Classify a literal string."),
 ) -> None:
     """Run log classification with local heuristics or an explicit cyBERT provider."""
     import json
@@ -9744,6 +9735,9 @@ def classify(
         _enrich_classifications,
     )
 
+    if json_output and format_type is not None and format_type != "json":
+        typer.echo("Error: tg classify --json cannot be combined with --format", err=True)
+        raise typer.Exit(2)
     if stdin_flag and text is not None:
         typer.echo("Error: tg classify --stdin cannot be combined with --text", err=True)
         raise typer.Exit(1)
@@ -9803,7 +9797,7 @@ def classify(
     budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
 
-    if format_type == "json":
+    if json_output or format_type in (None, "json"):
         data = {
             "version": _json_output_version(),
             "schema_version": _json_output_version(),

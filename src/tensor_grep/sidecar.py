@@ -41,7 +41,15 @@ def _heuristic_classify_lines(lines: list[str]) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for line in lines:
         line_lower = line.lower()
-        if re.search(r"\berror\b|\bfail(?:ed|ure)?\b|\bfatal\b|\bexception\b", line_lower):
+        if re.search(
+            r"\bcritical\b|\bcrit\b|\bpanic\b|\bemerg(?:ency)?\b|\balert\b|\boom\b|\boutofmemoryerror\b",
+            line_lower,
+        ):
+            results.append({"label": "critical", "confidence": 0.95})
+        elif re.search(
+            r"\b[a-z0-9_]*(?:error|exception)\b|\bfail(?:ed|ure)?\b|\bfatal\b|\btraceback\b",
+            line_lower,
+        ):
             results.append({"label": "error", "confidence": 0.95})
         elif re.search(r"\bwarn(?:ing)?\b|\bdegraded\b|\bslow\b", line_lower):
             results.append({"label": "warn", "confidence": 0.85})

@@ -1823,3 +1823,29 @@ def test_unknown_command_refusal_parity_across_launchers(
             assert actual == first_help, (
                 f"{launcher} {args}: help-form nearest diverged {actual} vs {first_help}"
             )
+
+
+def test_classify_json_flag_parity() -> None:
+    native_tg = resolve_native_tg_binary()
+    if native_tg is None:
+        pytest.skip("native tg binary not built")
+    args = ["classify", "--json", "--text", "CRITICAL OutOfMemoryError"]
+    py_res = _run_and_decode([sys.executable, "-m", "tensor_grep", *args])
+    rs_res = _run_and_decode([str(native_tg), *args])
+    assert py_res.returncode == 0, py_res.stderr
+    assert rs_res.returncode == 0, rs_res.stderr
+    assert (
+        json.loads(py_res.stdout)["classifications"][0]["label"]
+        == json.loads(rs_res.stdout)["classifications"][0]["label"]
+        == "critical"
+    )
+    bad = _run_and_decode([
+        str(native_tg),
+        "classify",
+        "--json",
+        "--format",
+        "text",
+        "--text",
+        "INFO ok",
+    ])
+    assert bad.returncode == 2

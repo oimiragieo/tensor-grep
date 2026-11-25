@@ -688,8 +688,12 @@ pub struct AuditVerifyArgs {
 #[derive(Args, Debug, Clone)]
 pub struct ClassifyArgs {
     /// Output format
-    #[arg(long = "format", default_value = "json")]
-    pub format: String,
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    /// Emit JSON output
+    #[arg(long = "json")]
+    pub json: bool,
 
     /// Maximum input lines to emit in JSON output (0 disables the cap)
     #[arg(long = "max-lines", default_value_t = 500)]
@@ -5179,6 +5183,13 @@ mod tests {
 
         assert!(parse_default_search_frontdoor_args(&raw_args).is_none());
         assert_eq!(search_format_python_passthrough_args(&raw_args), None);
+    }
+
+    #[test]
+    fn classify_args_accepts_json_and_rejects_conflicting_format() {
+        let Commands::Classify(args) = CommandCli::try_parse_from(["tg", "classify", "--json", "--text", "CRITICAL OOM"]).unwrap().command else { panic!() };
+        assert!(args.json && resolve_classify_format(args.json, args.format.as_deref()) == Ok("json".to_string()));
+        assert!(resolve_classify_format(true, Some("text")).is_err());
     }
 
     #[test]
@@ -13991,6 +14002,13 @@ fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<Strin
 // (sidecar.py:_classify_payload already prefers payload content over the positional file
 // argument) -- no new IPC protocol, just wiring these two flags into the existing Optional
 // payload parameter that execute_sidecar_command has always accepted.
+fn resolve_classify_format(json: bool, format: Option<&str>) -> Result<String, &'static str> {
+    if json && format.is_some_and(|fmt| fmt != "json") {
+        return Err("Error: tg classify --json cannot be combined with --format");
+    }
+    Ok(if json { "json" } else { format.unwrap_or("json") }.to_string())
+}
+
 fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
     if args.stdin_flag && args.text.is_some() {
         anyhow::bail!("tg classify --stdin cannot be combined with --text");
@@ -14002,9 +14020,13 @@ fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
         anyhow::bail!("tg classify --text cannot be combined with a file path argument");
     }
 
+    let format = resolve_classify_format(args.json, args.format.as_deref()).unwrap_or_else(|msg| {
+        eprintln!("{msg}");
+        std::process::exit(2);
+    });
     let sidecar_args = vec![
         "--format".to_string(),
-        args.format,
+        format,
         "--max-lines".to_string(),
         args.max_lines.to_string(),
     ];
