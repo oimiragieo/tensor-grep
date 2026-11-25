@@ -15,7 +15,8 @@ import hashlib
 import hmac
 import json
 import sqlite3
-from collections.abc import Iterable, Mapping, Sequence
+import subprocess
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +33,93 @@ _TDAD_SCHEMA_VERSION = 1
 _SLICE_SCHEMA_VERSION = 1
 
 
-def _norm_path(path_value: str | Path) -> str:
-    return str(path_value).replace("\\", "/").lstrip("./")
+def _norm_path(path_value: str | Path, *, repo_root: Path | None = None) -> str:
+    raw = str(path_value).replace("\\", "/")
+    if repo_root is not None:
+        p = Path(path_value)
+        if p.is_absolute():
+            try:
+                rel = p.resolve().relative_to(repo_root.resolve())
+                return str(rel).replace("\\", "/").lstrip("./")
+            except (OSError, ValueError):
+                pass
+    return raw.lstrip("./")
+
+
+def _iter_import_records(
+    raw_imports: Any,
+    *,
+    repo_root: Path | None = None,
+) -> Iterator[tuple[str, Sequence[Any]]]:
+    """Yield (normalized_file, import_targets) from either Mapping or list-of-records."""
+    if isinstance(raw_imports, Mapping):
+        for file_raw, targets in raw_imports.items():
+            if isinstance(targets, Sequence) and not isinstance(targets, (str, bytes)):
+                norm_file = _norm_path(str(file_raw), repo_root=repo_root)
+                if norm_file:
+                    yield norm_file, targets
+    elif isinstance(raw_imports, Sequence) and not isinstance(raw_imports, (str, bytes)):
+        for entry in raw_imports:
+            if not isinstance(entry, Mapping):
+                continue
+            file_raw = entry.get("file")
+            targets = entry.get("imports")
+            if targets is None:
+                targets = entry.get("targets")
+            if file_raw and isinstance(targets, Sequence) and not isinstance(targets, (str, bytes)):
+                norm_file = _norm_path(str(file_raw), repo_root=repo_root)
+                if norm_file:
+                    yield norm_file, targets
+
+
+def _git_head_revision(repo_root: Path) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        if proc.returncode == 0:
+            rev = proc.stdout.strip()
+            if rev:
+                return rev
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return "no-git"
+
+
+def _collect_repo_map_file_paths(
+    repo_map_payload: Mapping[str, Any],
+    repo_root: Path,
+) -> list[str]:
+    files: set[str] = set()
+    for key in ("files", "tests"):
+        for item in repo_map_payload.get(key) or ():
+            if isinstance(item, (str, Path)) and str(item):
+                files.add(_norm_path(item, repo_root=repo_root))
+    for imp_file, _ in _iter_import_records(repo_map_payload.get("imports"), repo_root=repo_root):
+        files.add(imp_file)
+    for sym in repo_map_payload.get("symbols") or ():
+        if isinstance(sym, Mapping) and sym.get("file"):
+            files.add(_norm_path(str(sym["file"]), repo_root=repo_root))
+    return sorted(f for f in files if f)
+
+
+def _compute_repo_fingerprint(repo_root: Path, tracked_files: Sequence[str]) -> str:
+    hasher = hashlib.blake2b(digest_size=32)
+    hasher.update(_git_head_revision(repo_root).encode("utf-8"))
+    hasher.update(b"\0")
+    for rel in sorted({_norm_path(f, repo_root=repo_root) for f in tracked_files if f}):
+        fp = repo_root / rel
+        try:
+            st = fp.lstat()
+            entry = f"{rel}:{int(st.st_mtime_ns)}:{int(st.st_size)}\n"
+        except OSError:
+            entry = f"{rel}:missing\n"
+        hasher.update(entry.encode("utf-8"))
+    return hasher.hexdigest()
 
 
 def is_test_path(path_str: str) -> bool:
@@ -120,20 +206,22 @@ def record_tdad_edges(
     edges: Iterable[tuple[str, str, str, str, float]],
     *,
     replace: bool = False,
+    metadata_updates: Mapping[str, str] | None = None,
 ) -> int:
     """Persist explicit (source_file, source_symbol, test_file, edge_kind, weight) rows."""
+    resolved_root = Path(repo_root).expanduser().resolve()
     rows = [
         (
-            _norm_path(src_file),
+            _norm_path(src_file, repo_root=resolved_root),
             str(src_sym),
-            _norm_path(test_file),
+            _norm_path(test_file, repo_root=resolved_root),
             str(edge_kind),
             float(weight),
         )
         for src_file, src_sym, test_file, edge_kind, weight in edges
         if src_file and test_file
     ]
-    conn, resolved_root, db_path = _open_tdad_db(repo_root, create_dirs=True)
+    conn, resolved_root, db_path = _open_tdad_db(resolved_root, create_dirs=True)
     try:
         with conn:
             if replace:
@@ -149,6 +237,11 @@ def record_tdad_edges(
                     """,
                     rows,
                 )
+            if metadata_updates:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                    [(str(k), str(v)) for k, v in metadata_updates.items()],
+                )
         publish_confined(resolved_root, db_path, conn.serialize())
         return len(rows)
     finally:
@@ -157,19 +250,31 @@ def record_tdad_edges(
 
 def _extract_tdad_edges_from_repo_map(
     repo_map_payload: Mapping[str, Any],
+    *,
+    repo_root: Path | None = None,
 ) -> list[tuple[str, str, str, str, float]]:
     """Derive source-to-test edges from repo_map files, symbols, imports, and tests."""
     raw_files = [
-        _norm_path(str(f))
+        _norm_path(str(f), repo_root=repo_root)
         for f in (repo_map_payload.get("files") or [])
         if isinstance(f, (str, Path))
     ]
     explicit_tests = {
-        _norm_path(str(t))
+        _norm_path(str(t), repo_root=repo_root)
         for t in (repo_map_payload.get("tests") or [])
         if isinstance(t, (str, Path))
     }
-    test_files = sorted({f for f in raw_files if is_test_path(f)} | explicit_tests)
+    import_files = {
+        imp_file
+        for imp_file, _ in _iter_import_records(
+            repo_map_payload.get("imports"), repo_root=repo_root
+        )
+    }
+    test_files = sorted(
+        {f for f in raw_files if is_test_path(f)}
+        | explicit_tests
+        | {f for f in import_files if is_test_path(f)}
+    )
     source_files = sorted(f for f in raw_files if f and f not in test_files and not is_test_path(f))
 
     # Build stem -> source_file lookup for naming-convention and import matching
@@ -184,7 +289,7 @@ def _extract_tdad_edges_from_repo_map(
     for sym in repo_map_payload.get("symbols") or []:
         if not isinstance(sym, Mapping):
             continue
-        s_file = _norm_path(str(sym.get("file", "")))
+        s_file = _norm_path(str(sym.get("file", "")), repo_root=repo_root)
         s_name = str(sym.get("name", ""))
         if s_file and s_name and not is_test_path(s_file):
             symbol_to_sources.setdefault(s_name, set()).add(s_file)
@@ -196,25 +301,35 @@ def _extract_tdad_edges_from_repo_map(
         edges[key] = max(edges.get(key, 0.0), weight)
 
     # 1. Import edges from test files to source modules
-    raw_imports = repo_map_payload.get("imports")
-    if isinstance(raw_imports, Mapping):
-        for test_file_raw, targets in raw_imports.items():
-            t_file = _norm_path(str(test_file_raw))
-            if not is_test_path(t_file) or not isinstance(targets, Sequence):
-                continue
-            for target in targets:
+    for t_file, targets in _iter_import_records(
+        repo_map_payload.get("imports"), repo_root=repo_root
+    ):
+        if not is_test_path(t_file):
+            continue
+        for target in targets:
+            if isinstance(target, Mapping):
+                target_str = str(target.get("module") or target.get("name") or "").strip()
+            else:
                 target_str = str(target).strip()
-                if not target_str:
-                    continue
-                target_norm = _norm_path(target_str)
-                last_token = target_str.replace("/", ".").split(".")[-1].lower()
-                for src in source_files:
-                    if src == target_norm or src.endswith(f"/{target_norm}"):
-                        add_edge(src, "", t_file, "import", 1.0)
+            if not target_str:
+                continue
+            target_norm = _norm_path(target_str)
+            dotted_parts = [p.lower() for p in target_str.replace("/", ".").split(".") if p]
+            last_token = dotted_parts[-1] if dotted_parts else ""
+            for src in source_files:
+                if src == target_norm or src.endswith(f"/{target_norm}"):
+                    add_edge(src, "", t_file, "import", 1.0)
+            if last_token:
                 for src in stem_to_sources.get(last_token, ()):
                     add_edge(src, "", t_file, "import", 0.9)
-                for src in symbol_to_sources.get(target_str, ()):
-                    add_edge(src, target_str, t_file, "symbol_import", 1.0)
+            for src in symbol_to_sources.get(target_str, ()):
+                add_edge(src, target_str, t_file, "symbol_import", 1.0)
+            if "." in target_str:
+                sym_token = target_str.rsplit(".", 1)[-1]
+                for src in symbol_to_sources.get(sym_token, ()):
+                    src_stem = Path(src).stem.lower()
+                    if src_stem in dotted_parts:
+                        add_edge(src, sym_token, t_file, "symbol_import", 1.0)
 
     # 2. Naming convention coupling (e.g. foo.py <-> test_foo.py / foo_test.py)
     for t_file in test_files:
@@ -246,17 +361,87 @@ def build_tdad_dependency_map(
 
         payload = _repo_map.build_repo_map(resolved_root)
 
-    edges = _extract_tdad_edges_from_repo_map(payload)
+    edges = _extract_tdad_edges_from_repo_map(payload, repo_root=resolved_root)
+    tracked_files = _collect_repo_map_file_paths(payload, resolved_root)
+    fingerprint = _compute_repo_fingerprint(resolved_root, tracked_files)
     persisted = False
     if persist and resolved_root.is_dir():
-        record_tdad_edges(resolved_root, edges, replace=True)
+        record_tdad_edges(
+            resolved_root,
+            edges,
+            replace=True,
+            metadata_updates={
+                "repo_fingerprint": fingerprint,
+                "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
+            },
+        )
         persisted = True
 
     return {
         "edge_count": len(edges),
         "persisted": persisted,
+        "repo_fingerprint": fingerprint,
         "cache_path": str(resolved_root / TDAD_CACHE_REL_PATH).replace("\\", "/"),
     }
+
+
+def _read_tdad_cache_state(
+    resolved_root: Path,
+) -> tuple[list[tuple[str, str, str, str, float]], str | None, list[str]]:
+    conn, _, _ = _open_tdad_db(resolved_root, create_dirs=False)
+    try:
+        rows = conn.execute(
+            "SELECT source_file, source_symbol, test_file, edge_kind, weight FROM source_test_deps"
+        ).fetchall()
+        meta_rows = dict(conn.execute("SELECT key, value FROM metadata").fetchall())
+    finally:
+        conn.close()
+    stored_fp = meta_rows.get("repo_fingerprint")
+    tracked_files: list[str] = []
+    raw_tracked = meta_rows.get("tracked_files")
+    if raw_tracked:
+        try:
+            parsed = json.loads(raw_tracked)
+            if isinstance(parsed, list):
+                tracked_files = [str(x) for x in parsed if isinstance(x, str)]
+        except ValueError:
+            tracked_files = []
+    return rows, stored_fp, tracked_files
+
+
+def ensure_tdad_dependency_map(
+    repo_root: Path,
+    repo_map_payload: Mapping[str, Any] | None = None,
+    *,
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Refresh TDAD cache only if missing or invalidated by revision/file-stat changes."""
+    resolved_root = Path(repo_root).expanduser().resolve()
+    db_path = resolved_root / TDAD_CACHE_REL_PATH
+    if db_path.exists():
+        rows, stored_fp, tracked_files = _read_tdad_cache_state(resolved_root)
+        if stored_fp:
+            files_to_check = (
+                _collect_repo_map_file_paths(repo_map_payload, resolved_root)
+                if repo_map_payload is not None
+                else tracked_files
+            )
+            current_fp = _compute_repo_fingerprint(resolved_root, files_to_check)
+            if current_fp == stored_fp:
+                return {
+                    "edge_count": len(rows),
+                    "persisted": True,
+                    "cache_hit": True,
+                    "repo_fingerprint": stored_fp,
+                    "cache_path": str(db_path).replace("\\", "/"),
+                }
+    result = build_tdad_dependency_map(
+        resolved_root,
+        repo_map_payload=repo_map_payload,
+        persist=persist,
+    )
+    result["cache_hit"] = False
+    return result
 
 
 def query_tdad_tests(
@@ -270,29 +455,48 @@ def query_tdad_tests(
     """Query covering test files for changed_files / changed_symbols from TDAD cache."""
     resolved_root = Path(repo_root).expanduser().resolve()
     db_path = resolved_root / TDAD_CACHE_REL_PATH
-    norm_files = sorted({_norm_path(f) for f in changed_files if f})
+    norm_files = sorted({_norm_path(f, repo_root=resolved_root) for f in changed_files if f})
     sym_names = sorted({str(s.get("name", "")) for s in (changed_symbols or ()) if s.get("name")})
 
     if not norm_files and not sym_names:
         return []
 
     rows: list[tuple[str, str, str, str, float]] = []
+    cache_stale = False
+    has_fingerprint = False
     if db_path.exists():
-        conn, _, _ = _open_tdad_db(resolved_root, create_dirs=False)
-        try:
-            row_count_row = conn.execute("SELECT COUNT(*) FROM source_test_deps").fetchone()
-            if row_count_row and int(row_count_row[0]) > 0:
-                rows = conn.execute(
-                    "SELECT source_file, source_symbol, test_file, edge_kind, weight "
-                    "FROM source_test_deps"
-                ).fetchall()
-        finally:
-            conn.close()
+        rows, stored_fp, tracked_files = _read_tdad_cache_state(resolved_root)
+        if stored_fp:
+            has_fingerprint = True
+            files_to_check = (
+                _collect_repo_map_file_paths(repo_map_payload, resolved_root)
+                if repo_map_payload is not None
+                else sorted(set(tracked_files) | set(norm_files))
+            )
+            current_fp = _compute_repo_fingerprint(resolved_root, files_to_check)
+            if current_fp != stored_fp:
+                cache_stale = True
+                rows = []
 
-    if not rows and repo_map_payload is not None:
-        rows = _extract_tdad_edges_from_repo_map(repo_map_payload)
-        if persist and resolved_root.is_dir() and rows:
-            record_tdad_edges(resolved_root, rows, replace=True)
+    if cache_stale or (not db_path.exists()) or (not rows and not has_fingerprint):
+        if repo_map_payload is not None:
+            rows = _extract_tdad_edges_from_repo_map(repo_map_payload, repo_root=resolved_root)
+            if persist and resolved_root.is_dir():
+                tracked_files = _collect_repo_map_file_paths(repo_map_payload, resolved_root)
+                fingerprint = _compute_repo_fingerprint(resolved_root, tracked_files)
+                record_tdad_edges(
+                    resolved_root,
+                    rows,
+                    replace=True,
+                    metadata_updates={
+                        "repo_fingerprint": fingerprint,
+                        "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
+                    },
+                )
+        elif cache_stale and resolved_root.is_dir():
+            build_tdad_dependency_map(resolved_root, repo_map_payload=None, persist=persist)
+            if db_path.exists():
+                rows, _, _ = _read_tdad_cache_state(resolved_root)
 
     changed_file_set = set(norm_files)
     changed_sym_set = set(sym_names)
@@ -359,9 +563,10 @@ def score_kg_ast_commit_risk(
     *,
     changed_line_counts: Mapping[str, int] | None = None,
     repo_map_payload: Mapping[str, Any] | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Compute deterministic KG-AST commit-risk features and prioritized test slice."""
-    norm_changed = sorted({_norm_path(f) for f in changed_files if f})
+    norm_changed = sorted({_norm_path(f, repo_root=repo_root) for f in changed_files if f})
     if not norm_changed:
         return {
             "risk_score": 0.0,
@@ -384,17 +589,19 @@ def score_kg_ast_commit_risk(
     )
     churn_size = min(1.0, round(total_lines / 200.0, 4))
 
-    caller_files = {_norm_path(str(c.get("file", ""))) for c in callers if c.get("file")}
+    caller_files = {
+        _norm_path(str(c.get("file", "")), repo_root=repo_root) for c in callers if c.get("file")
+    }
     fan_in = min(1.0, round(len(callers) / 10.0, 4))
 
     out_edges = 0
     if isinstance(repo_map_payload, Mapping):
-        raw_imports = repo_map_payload.get("imports")
-        if isinstance(raw_imports, Mapping):
-            for f in norm_changed:
-                targets = raw_imports.get(f) or raw_imports.get(f"./{f}") or []
-                if isinstance(targets, Sequence):
-                    out_edges += len(targets)
+        changed_set = set(norm_changed)
+        for imp_file, targets in _iter_import_records(
+            repo_map_payload.get("imports"), repo_root=repo_root
+        ):
+            if imp_file in changed_set or any(imp_file.endswith(f"/{cf}") for cf in changed_set):
+                out_edges += len(targets)
     fan_out_count = max(len(set(affected_files) - set(norm_changed)), out_edges)
     fan_out = min(1.0, round(fan_out_count / 10.0, 4))
 
@@ -482,6 +689,7 @@ def extract_change_directed_slice(
     *,
     max_nodes: int = 128,
     max_edges: int = 256,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Extract a minimal deterministic change-directed graph slice with SHA-256 digest."""
     nodes_map: dict[str, dict[str, str]] = {}
@@ -496,12 +704,14 @@ def extract_change_directed_slice(
                 "symbol": symbol,
             }
 
-    norm_changed = sorted({_norm_path(f) for f in changed_files if f})
+    norm_changed = sorted({_norm_path(f, repo_root=repo_root) for f in changed_files if f})
+    norm_changed_set = set(norm_changed)
     for f in norm_changed:
         add_node(f"file:{f}", "source", f)
 
+    symbol_files_by_name: dict[str, list[str]] = {}
     for sym in changed_symbols:
-        s_file = _norm_path(str(sym.get("file", "")))
+        s_file = _norm_path(str(sym.get("file", "")), repo_root=repo_root)
         s_name = str(sym.get("name", ""))
         if not s_file or not s_name:
             continue
@@ -509,41 +719,52 @@ def extract_change_directed_slice(
         add_node(f"file:{s_file}", "source", s_file)
         add_node(sym_id, "symbol", s_file, s_name)
         edges_set.add((f"file:{s_file}", sym_id, "defines"))
+        symbol_files_by_name.setdefault(s_name, []).append(s_file)
 
     for caller in callers:
-        c_file = _norm_path(str(caller.get("file", "")))
+        c_file = _norm_path(str(caller.get("file", "")), repo_root=repo_root)
         c_sym = str(caller.get("caller", caller.get("name", "")))
-        target_sym = str(caller.get("target", caller.get("callee", "")))
+        target_sym = str(caller.get("target", caller.get("callee", caller.get("symbol", ""))))
+        raw_target_file = caller.get("target_file")
+        target_file = (
+            _norm_path(str(raw_target_file), repo_root=repo_root) if raw_target_file else ""
+        )
         if not c_file:
             continue
         c_id = f"sym:{c_file}::{c_sym}" if c_sym else f"file:{c_file}"
-        add_node(c_id, "symbol" if c_sym else "source", c_file, c_sym)
+        matched_edge = False
         if target_sym:
-            for sym in changed_symbols:
-                if str(sym.get("name", "")) == target_sym:
-                    s_file = _norm_path(str(sym.get("file", "")))
-                    edges_set.add((c_id, f"sym:{s_file}::{target_sym}", "calls"))
-        elif norm_changed:
-            edges_set.add((c_id, f"file:{norm_changed[0]}", "calls"))
+            for s_file in symbol_files_by_name.get(target_sym, ()):
+                if target_file and s_file != target_file:
+                    continue
+                add_node(c_id, "symbol" if c_sym else "source", c_file, c_sym)
+                edges_set.add((c_id, f"sym:{s_file}::{target_sym}", "calls"))
+                matched_edge = True
+        if not matched_edge and target_file and target_file in norm_changed_set:
+            add_node(c_id, "symbol" if c_sym else "source", c_file, c_sym)
+            edges_set.add((c_id, f"file:{target_file}", "calls"))
 
     for t in tdad_tests:
-        t_file = _norm_path(str(t.get("test_file", "")))
+        t_file = _norm_path(str(t.get("test_file", "")), repo_root=repo_root)
         if not t_file:
             continue
         t_id = f"test:{t_file}"
         add_node(t_id, "test", t_file)
-        matched = t.get("matched_sources") or norm_changed[:1]
+        matched = t.get("matched_sources") or ()
         for src in matched:
-            nsrc = _norm_path(str(src))
+            nsrc = _norm_path(str(src), repo_root=repo_root)
             if nsrc:
                 add_node(f"file:{nsrc}", "source", nsrc)
                 edges_set.add((t_id, f"file:{nsrc}", "covers"))
+        if not matched:
+            for sym_name in t.get("matched_symbols") or ():
+                for s_file in symbol_files_by_name.get(str(sym_name), ()):
+                    add_node(f"file:{s_file}", "source", s_file)
+                    edges_set.add((t_id, f"file:{s_file}", "covers"))
 
-    for f in sorted({_norm_path(af) for af in affected_files if af}):
+    for f in sorted({_norm_path(af, repo_root=repo_root) for af in affected_files if af}):
         if is_test_path(f):
             add_node(f"test:{f}", "test", f)
-            if norm_changed:
-                edges_set.add((f"test:{f}", f"file:{norm_changed[0]}", "covers"))
 
     sorted_nodes = [nodes_map[k] for k in sorted(nodes_map)]
     sorted_edges = [{"src": s, "dst": d, "kind": k} for s, d, k in sorted(edges_set)]
@@ -606,6 +827,7 @@ def enrich_diff_impact_payload(
         affected_files,
         tdad_tests,
         repo_map_payload=repo_map_payload,
+        repo_root=root,
     )
     slice_bundle = extract_change_directed_slice(
         changed_files,
@@ -613,6 +835,7 @@ def enrich_diff_impact_payload(
         callers,
         affected_files,
         tdad_tests,
+        repo_root=root,
     )
     payload["tdad_tests"] = tdad_tests
     payload["kg_ast_risk"] = kg_ast_risk

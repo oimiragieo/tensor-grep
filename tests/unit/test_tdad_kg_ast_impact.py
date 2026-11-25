@@ -16,6 +16,7 @@ from tensor_grep.cli.main import app
 from tensor_grep.cli.tdad_kg_ast import (
     TDAD_CACHE_REL_PATH,
     build_tdad_dependency_map,
+    ensure_tdad_dependency_map,
     extract_change_directed_slice,
     query_tdad_tests,
     record_tdad_edges,
@@ -243,3 +244,143 @@ def test_review_bundle_create_binds_change_slice_and_verifies(tmp_path: Path) ->
     bundle_path.write_text(json.dumps(tampered, indent=2), encoding="utf-8")
     failed = audit_manifest.verify_review_bundle(bundle_path)
     assert failed["valid"] is False
+
+
+def test_tdad_and_kg_ast_handle_real_build_repo_map_list_imports(tmp_path: Path) -> None:
+    from tensor_grep.cli.repo_map import build_repo_map
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "ledger.py").write_text(
+        "import json\nimport hashlib\n\ndef post_entry(x):\n    return json.dumps({'x': x})\n",
+        encoding="utf-8",
+    )
+    (repo / "tests" / "test_ledger_integration.py").write_text(
+        "from src.ledger import post_entry\n\n"
+        "def test_post_entry():\n"
+        "    assert '1' in post_entry(1)\n",
+        encoding="utf-8",
+    )
+
+    real_rm = build_repo_map(repo)
+    assert isinstance(real_rm["imports"], list)
+
+    build_info = build_tdad_dependency_map(repo, repo_map_payload=real_rm, persist=True)
+    assert build_info["persisted"] is True
+    assert build_info["edge_count"] > 0
+
+    hits = query_tdad_tests(
+        repo,
+        ["src/ledger.py"],
+        [{"file": "src/ledger.py", "name": "post_entry"}],
+        repo_map_payload=real_rm,
+    )
+    assert any(h["test_file"] == "tests/test_ledger_integration.py" for h in hits)
+
+    risk = score_kg_ast_commit_risk(
+        changed_files=["src/ledger.py"],
+        changed_symbols=[{"file": "src/ledger.py", "name": "post_entry"}],
+        callers=[],
+        affected_files=["src/ledger.py"],
+        tdad_tests=hits,
+        repo_map_payload=real_rm,
+        repo_root=repo,
+    )
+    assert risk["features"]["fan_out"] > 0.0
+
+
+def test_tdad_cache_invalidates_on_file_change_and_git_head_change(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    import os
+
+    from tensor_grep.cli import tdad_kg_ast
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    src_file = repo / "src" / "alpha.py"
+    beta_file = repo / "src" / "beta.py"
+    test_file = repo / "tests" / "test_suite_one.py"
+    src_file.write_text("def fn_a():\n    return 1\n", encoding="utf-8")
+    beta_file.write_text("def fn_b():\n    return 2\n", encoding="utf-8")
+    test_file.write_text("from src.alpha import fn_a\n", encoding="utf-8")
+
+    rev = ["rev-1"]
+    monkeypatch.setattr(tdad_kg_ast, "_git_head_revision", lambda _root: rev[0])
+
+    first = ensure_tdad_dependency_map(repo, persist=True)
+    assert first["cache_hit"] is False
+    second = ensure_tdad_dependency_map(repo, persist=True)
+    assert second["cache_hit"] is True
+
+    # Modify test_file on disk so it now imports beta instead of alpha
+    test_file.write_text(
+        "from src.beta import fn_b\n\ndef test_b():\n    assert fn_b() == 2\n", encoding="utf-8"
+    )
+    stat = test_file.stat()
+    os.utime(test_file, ns=(stat.st_atime_ns + 1_000_000, stat.st_mtime_ns + 1_000_000))
+
+    beta_hits = query_tdad_tests(repo, ["src/beta.py"], repo_map_payload=None)
+    assert any(h["test_file"] == "tests/test_suite_one.py" for h in beta_hits)
+    alpha_hits = query_tdad_tests(repo, ["src/alpha.py"], repo_map_payload=None)
+    assert not any(h["test_file"] == "tests/test_suite_one.py" for h in alpha_hits)
+
+    # Now bump git HEAD revision without touching files -> must invalidate
+    rev[0] = "rev-2"
+    third = ensure_tdad_dependency_map(repo, persist=True)
+    assert third["cache_hit"] is False
+
+
+def test_prepare_populates_tdad_cache(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "worker.py").write_text("def run_job():\n    return 42\n", encoding="utf-8")
+    (repo / "tests" / "test_worker.py").write_text(
+        "from src.worker import run_job\n\ndef test_run_job():\n    assert run_job() == 42\n",
+        encoding="utf-8",
+    )
+
+    res = runner.invoke(app, ["prepare", "run_job", str(repo), "--json"])
+    assert res.exit_code == 0, res.output
+    db_path = repo / TDAD_CACHE_REL_PATH
+    assert db_path.exists()
+    hits = query_tdad_tests(repo, ["src/worker.py"])
+    assert any(h["test_file"] == "tests/test_worker.py" for h in hits)
+
+
+def test_change_slice_does_not_fabricate_edges_for_unattributed_callers() -> None:
+    bundle = extract_change_directed_slice(
+        changed_files=["src/a.py", "src/b.py"],
+        changed_symbols=[{"file": "src/b.py", "name": "beta"}],
+        callers=[
+            {"file": "src/unattributed.py", "caller": "mystery_caller"},
+            {"file": "src/real_caller.py", "caller": "call_beta", "target": "beta"},
+            {"file": "src/file_caller.py", "caller": "call_b_file", "target_file": "src/b.py"},
+        ],
+        affected_files=["src/unattributed.py", "tests/test_extra.py"],
+        tdad_tests=[{"test_file": "tests/test_b.py", "matched_sources": ["src/b.py"]}],
+    )
+    edges = bundle["slice"]["edges"]
+    # No fabricated edge to src/a.py for unattributed caller or affected test
+    assert not any(
+        e["src"] == "sym:src/unattributed.py::mystery_caller" and e["dst"] == "file:src/a.py"
+        for e in edges
+    )
+    assert not any(
+        e["src"] == "test:tests/test_extra.py" and e["dst"] == "file:src/a.py" for e in edges
+    )
+    # Real target matches are preserved
+    assert {
+        "src": "sym:src/real_caller.py::call_beta",
+        "dst": "sym:src/b.py::beta",
+        "kind": "calls",
+    } in edges
+    assert {
+        "src": "sym:src/file_caller.py::call_b_file",
+        "dst": "file:src/b.py",
+        "kind": "calls",
+    } in edges
+    assert {"src": "test:tests/test_b.py", "dst": "file:src/b.py", "kind": "covers"} in edges
