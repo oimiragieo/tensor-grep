@@ -3,11 +3,12 @@ use anyhow::Context;
 use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
 use hmac::{Hmac, Mac};
+#[allow(dead_code)]
 mod cli_invocations;
 mod native_checkpoint_publication;
 mod native_multi_pattern;
 mod validation_rollback;
-use cli_invocations::is_search_version_invocation;
+mod version_info;
 use native_multi_pattern::collect_native_multi_pattern_matches;
 use validation_rollback::{
     collect_validation_rollback_snapshots, emit_rollback_status,
@@ -1230,8 +1231,8 @@ fn main_inner() -> anyhow::Result<()> {
         std::process::exit(2);
     }
 
-    if is_top_level_version_invocation(&raw_args) || is_search_version_invocation(&raw_args) {
-        println!("tg {}", env!("CARGO_PKG_VERSION"));
+    if let Some(verbose) = version_info::version_invocation_verbose(&raw_args) {
+        version_info::print_version(verbose);
         return Ok(());
     }
 
@@ -1389,14 +1390,6 @@ fn require_ripgrep_or_exit(rg_available: bool, context: &str) {
         );
         std::process::exit(2);
     }
-}
-
-fn is_top_level_version_invocation(raw_args: &[OsString]) -> bool {
-    raw_args.len() == 2
-        && matches!(
-            raw_args.get(1).and_then(|arg| arg.to_str()),
-            Some("--version" | "-V")
-        )
 }
 
 fn is_top_level_pcre2_version_invocation(raw_args: &[OsString]) -> bool {
@@ -9578,7 +9571,7 @@ fn run_native_search_with_optional_rg_fallback(
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     if args.version {
-        println!("tg {}", env!("CARGO_PKG_VERSION"));
+        version_info::print_version(args.verbose);
         return Ok(());
     }
     if args.pcre2_version {

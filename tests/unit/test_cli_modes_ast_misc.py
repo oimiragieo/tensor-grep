@@ -1057,8 +1057,8 @@ def test_main_entry_should_keep_verbose_version_details_when_requested(monkeypat
     output = capsys.readouterr().out
     assert excinfo.value.code == 0
     assert output.startswith("tensor-grep 0.31.4\n\n")
-    assert "features:+gpu-cudf,+gpu-torch,+rust-core" in output
-    assert "Arrow Zero-Copy IPC is available" in output
+    assert "features:" in output
+    assert "Arrow Zero-Copy IPC: " in output
 
 
 @pytest.mark.parametrize(

@@ -2780,8 +2780,8 @@ def test_main_entry_should_keep_verbose_version_details_without_loading_full_cli
     output = capsys.readouterr().out
     assert excinfo.value.code == 0
     assert output.startswith("tensor-grep 9.9.9\n\n")
-    assert "features:+gpu-cudf,+gpu-torch,+rust-core" in output
-    assert "Arrow Zero-Copy IPC is available" in output
+    assert "features:" in output
+    assert "Arrow Zero-Copy IPC: " in output
 
 
 def test_python_module_help_should_use_public_tg_program_name() -> None:

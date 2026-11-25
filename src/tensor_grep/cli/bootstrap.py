@@ -357,7 +357,7 @@ def _read_project_version_fallback() -> str:
     return "0.0.0-unavailable"  # == main._VERSION_UNAVAILABLE_SENTINEL (test-pinned)
 
 
-def _print_version() -> None:
+def _print_version(*, verbose: bool | None = None) -> None:
     try:
         from importlib.metadata import version
 
@@ -366,13 +366,12 @@ def _print_version() -> None:
         pkg_version = _read_project_version_fallback()
 
     print(f"tensor-grep {pkg_version}")
-    if any(arg in {"--verbose", "-v"} for arg in sys.argv[2:]):
-        print()
-        print("features:+gpu-cudf,+gpu-torch,+rust-core")
-        print("simd(compile):+SSE2,-SSSE3,-AVX2")
-        print("simd(runtime):+SSE2,+SSSE3,+AVX2")
-        print()
-        print("Arrow Zero-Copy IPC is available")
+    if verbose is False:
+        return
+    from tensor_grep.cli.version_info import version_detail_lines, version_invocation_verbose
+
+    if verbose or version_invocation_verbose(sys.argv[1:]):
+        print("\n".join(version_detail_lines()))
 
 
 def _normalize_search_invocation(argv: list[str]) -> list[str] | None:
@@ -1341,9 +1340,12 @@ def main_entry() -> None:
 
     _force_utf8_streams()
     argv = sys.argv[1:]
-    if argv and argv[0] in {"--version", "-V"}:
-        _print_version()
-        raise SystemExit(0)
+    if argv and len(argv) <= 3 and ("--version" in argv or "-V" in argv):
+        from tensor_grep.cli.version_info import version_invocation_verbose
+
+        if (version_verbose := version_invocation_verbose(argv)) is not None:
+            _print_version(verbose=version_verbose)
+            raise SystemExit(0)
     if _is_public_help_invocation(argv):
         _run_full_cli()
         return

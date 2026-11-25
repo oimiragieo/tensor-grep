@@ -511,14 +511,9 @@ _MAX_NATIVE_ASSET_DOWNLOAD_BYTES = 512 * 1024 * 1024
 
 
 def _version_detail_lines() -> tuple[str, ...]:
-    return (
-        "",
-        "features:+gpu-cudf,+gpu-torch,+rust-core",
-        "simd(compile):+SSE2,-SSSE3,-AVX2",
-        "simd(runtime):+SSE2,+SSSE3,+AVX2",
-        "",
-        "Arrow Zero-Copy IPC is available",
-    )
+    from tensor_grep.cli.version_info import version_detail_lines
+
+    return version_detail_lines()
 
 
 def _print_version(*, verbose: bool = False) -> None:
@@ -13205,58 +13200,61 @@ def main_entry() -> None:
     # To act exactly like ripgrep (`rg pattern`), we dynamically inject the `search`
     # subcommand into sys.argv if the user didn't provide any recognized subcommand.
 
-    # Check for version flag first
-    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V", "--pcre2-version"):
-        first_arg = sys.argv[1]
+    # Check for --pcre2-version or --version/-V invocations first
+    if len(sys.argv) > 1 and sys.argv[1] == "--pcre2-version":
+        from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
 
-        if first_arg == "--pcre2-version":
-            from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+        pcre2_env, pcre2_refusal = child_env_or_refusal()
+        if pcre2_env is None:
+            sys.exit(pcre2_refusal)
+        from tensor_grep.cli.subprocess_policy import (
+            decode_diagnostic_output,
+            decode_protocol_output,
+        )
 
-            pcre2_env, pcre2_refusal = child_env_or_refusal()
-            if pcre2_env is None:
-                sys.exit(pcre2_refusal)
-            from tensor_grep.cli.subprocess_policy import (
-                decode_diagnostic_output,
-                decode_protocol_output,
+        # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
+        native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+        candidates = [native, _self.resolve_ripgrep_binary()]
+        last_completed: subprocess.CompletedProcess[bytes] | None = None
+        for candidate in candidates:
+            if not candidate or not candidate.exists():
+                continue
+            completed = subprocess.run(
+                [str(candidate), "--pcre2-version"],
+                capture_output=True,
+                text=False,
+                env=pcre2_env,
             )
-
-            # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
-            native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
-            candidates = [native, _self.resolve_ripgrep_binary()]
-            last_completed: subprocess.CompletedProcess[bytes] | None = None
-            for candidate in candidates:
-                if not candidate or not candidate.exists():
-                    continue
-                completed = subprocess.run(
-                    [str(candidate), "--pcre2-version"],
-                    capture_output=True,
-                    text=False,
-                    env=pcre2_env,
-                )
-                last_completed = completed
-                if completed.returncode == 0:
-                    try:
-                        output = decode_protocol_output(completed.stdout)
-                    except UnicodeDecodeError:
-                        print("PCRE2 version output was not valid UTF-8.", file=sys.stderr)
-                        sys.exit(1)
-                    print(output.strip())
-                    sys.exit(0)
-            if last_completed is not None:
-                output = decode_diagnostic_output(last_completed.stderr).strip() or (
-                    decode_diagnostic_output(last_completed.stdout).strip()
-                )
-                if output:
-                    print(output, file=sys.stderr)
-                sys.exit(last_completed.returncode or 1)
-            print(
-                "PCRE2 version unavailable: no native tg or ripgrep binary found.",
-                file=sys.stderr,
+            last_completed = completed
+            if completed.returncode == 0:
+                try:
+                    output = decode_protocol_output(completed.stdout)
+                except UnicodeDecodeError:
+                    print("PCRE2 version output was not valid UTF-8.", file=sys.stderr)
+                    sys.exit(1)
+                print(output.strip())
+                sys.exit(0)
+        if last_completed is not None:
+            output = decode_diagnostic_output(last_completed.stderr).strip() or (
+                decode_diagnostic_output(last_completed.stdout).strip()
             )
-            sys.exit(1)
+            if output:
+                print(output, file=sys.stderr)
+            sys.exit(last_completed.returncode or 1)
+        print(
+            "PCRE2 version unavailable: no native tg or ripgrep binary found.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-        _print_version(verbose=any(arg in {"--verbose", "-v"} for arg in sys.argv[2:]))
-        sys.exit(0)
+    argv = sys.argv[1:]
+    if argv and len(argv) <= 3 and ("--version" in argv or "-V" in argv):
+        from tensor_grep.cli.version_info import version_invocation_verbose
+
+        version_verbose = version_invocation_verbose(argv)
+        if version_verbose is not None:
+            _print_version(verbose=version_verbose)
+            sys.exit(0)
 
     from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
 
