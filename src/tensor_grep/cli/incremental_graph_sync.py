@@ -4,46 +4,74 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import stat
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-GRAPH_SYNC_REL_PATH = Path(".tg_cache") / "graph_v1" / "edges.sqlite3"
+from tensor_grep.io.confined import prepare_directory, validate_confined_parent_prefix
+
+GRAPH_SYNC_REL_PATH = Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3"
 
 
 def _blake2b_hex(data: bytes) -> str:
     return hashlib.blake2b(data, digest_size=32).hexdigest()
 
 
-def _open_graph_db(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+def _resolve_confined_graph_db_path(cache_root: Path, *, create_dirs: bool) -> Path:
+    resolved_root = Path(cache_root).resolve()
+    db_path = resolved_root / GRAPH_SYNC_REL_PATH
+    for candidate in (resolved_root / ".tg_cache", db_path.parent, db_path):
+        if candidate.is_symlink():
+            raise OSError(f"incremental graph refuses symlink path: {candidate}")
+    if create_dirs:
+        prepare_directory(resolved_root, db_path.parent)
+    else:
+        validate_confined_parent_prefix(resolved_root, db_path)
+    if db_path.is_symlink():
+        raise OSError(f"incremental graph refuses symlink leaf: {db_path}")
+    if db_path.exists():
+        info = db_path.lstat()
+        if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+            raise OSError(f"incremental graph refuses non-regular leaf: {db_path}")
+    if not db_path.resolve().is_relative_to(resolved_root):
+        raise OSError(f"incremental graph path escapes cache_root: {db_path}")
+    return db_path
+
+
+def _open_graph_db(cache_root: Path) -> sqlite3.Connection:
+    db_path = _resolve_confined_graph_db_path(cache_root, create_dirs=True)
     conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    with conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS files (
-                path TEXT PRIMARY KEY,
-                content_hash TEXT NOT NULL,
-                updated_at REAL NOT NULL
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        with conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS files (
+                    path TEXT PRIMARY KEY,
+                    content_hash TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS edges (
-                src TEXT NOT NULL,
-                dst TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                PRIMARY KEY (src, dst, kind)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS edges (
+                    src TEXT NOT NULL,
+                    dst TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    PRIMARY KEY (src, dst, kind)
+                )
+                """
             )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_src ON edges(src)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_dst ON edges(dst)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_src ON edges(src)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_graph_edges_dst ON edges(dst)")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
@@ -58,8 +86,7 @@ def sync_graph_edges(
     Dirty files have their edges replaced and deleted files are pruned within
     a single transaction.
     """
-    db_path = Path(cache_root) / GRAPH_SYNC_REL_PATH
-    conn = _open_graph_db(db_path)
+    conn = _open_graph_db(cache_root)
     try:
         existing_hashes = {
             str(row[0]): str(row[1])
@@ -140,7 +167,7 @@ def extract_ego_subgraph(
             "truncated": True,
         }
 
-    db_path = Path(cache_root) / GRAPH_SYNC_REL_PATH
+    db_path = _resolve_confined_graph_db_path(cache_root, create_dirs=False)
     if not db_path.exists():
         return {
             "seed": seed_file,
@@ -149,7 +176,7 @@ def extract_ego_subgraph(
             "truncated": False,
         }
 
-    conn = _open_graph_db(db_path)
+    conn = _open_graph_db(cache_root)
     try:
         visited: set[str] = {seed_file}
         ordered_nodes: list[str] = [seed_file]
@@ -163,8 +190,8 @@ def extract_ego_subgraph(
             if depth >= max_hops:
                 continue
             rows = conn.execute(
-                "SELECT src, dst, kind FROM edges WHERE src = ? ORDER BY dst ASC, kind ASC",
-                (current,),
+                "SELECT src, dst, kind FROM edges WHERE src = ? ORDER BY dst ASC, kind ASC LIMIT ?",
+                (current, max_nodes + 1),
             ).fetchall()
             for row_src, row_dst, row_kind in rows:
                 src = str(row_src)

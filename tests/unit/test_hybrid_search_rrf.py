@@ -13,7 +13,7 @@ from tensor_grep.core.hybrid_rrf import (
     adaptive_idf_rrf_score,
     escape_fts5_query,
 )
-from tensor_grep.core.reranker import hybrid_rerank
+from tensor_grep.core.reranker import HYBRID_INDEX_REL_PATH, hybrid_rerank, route_labels
 from tensor_grep.core.retrieval_chunker import Chunk
 
 
@@ -111,6 +111,8 @@ def test_hybrid_rerank_and_tg_find_hybrid_cli(tmp_path: Path) -> None:
     payload = json.loads(res.stdout)
     assert payload["matches"]
     assert payload["matches"][0]["file"].endswith("alpha.py")
+    assert payload["routing_reason"] == "hybrid-fts5-rrf"
+    assert (tmp_path / HYBRID_INDEX_REL_PATH).exists()
 
 
 def test_escaped_query_does_not_leak_sqlite_error() -> None:
@@ -123,3 +125,61 @@ def test_escaped_query_does_not_leak_sqlite_error() -> None:
             index.search('"')
         except sqlite3.OperationalError as exc:  # pragma: no cover - regression guard
             pytest.fail(f"FTS5 query raised OperationalError: {exc}")
+
+
+def test_escape_fts5_query_strips_nul_bytes() -> None:
+    assert escape_fts5_query("\x00") == ""
+    assert escape_fts5_query("foo\x00bar \x00 baz") == '"foobar" "baz"'
+
+    with HybridSQLiteIndex(":memory:") as index:
+        index.upsert_documents([
+            ("d1", "foobar baz helper", None),
+            ("d2", "other content", None),
+        ])
+        assert index.search("\x00") == []
+        matched = index.search("foo\x00bar\x00 baz")
+        assert [row["doc_id"] for row in matched] == ["d1"]
+
+
+def test_hybrid_rerank_route_labels_and_init_error_closes_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend, reason, _install_state = route_labels(None, hybrid=True)
+    assert backend == "HybridFindBackend"
+    assert reason == "hybrid-fts5-rrf"
+
+    chunks = [
+        Chunk(file_path="a.py", start_line=1, end_line=2, text="def first_fn(): pass"),
+        Chunk(file_path="b.py", start_line=1, end_line=2, text="def second_fn(): pass"),
+    ]
+    order = hybrid_rerank("second_fn", chunks, cache_root=tmp_path)
+    assert order == [1]
+    assert (tmp_path / HYBRID_INDEX_REL_PATH).exists()
+
+    closed = False
+    real_connect = sqlite3.connect
+
+    class _TrackingConn:
+        def __init__(self, inner: sqlite3.Connection) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str):
+            return getattr(self._inner, name)
+
+        def close(self) -> None:
+            nonlocal closed
+            closed = True
+            self._inner.close()
+
+    monkeypatch.setattr(
+        "tensor_grep.core.hybrid_rrf.sqlite3.connect",
+        lambda *args, **kwargs: _TrackingConn(real_connect(*args, **kwargs)),
+    )
+    monkeypatch.setattr(
+        HybridSQLiteIndex,
+        "_init_schema",
+        lambda _self: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        HybridSQLiteIndex(":memory:")
+    assert closed is True

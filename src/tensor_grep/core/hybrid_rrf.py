@@ -15,22 +15,17 @@ try:
 except ImportError:  # pragma: no cover - pure-Python fallback is always available
     np = None  # type: ignore[assignment]
 
-try:
-    import sqlite_vec as _sqlite_vec
-except ImportError:
-    _sqlite_vec = None  # type: ignore[assignment]
-
 _IDENTIFIER_TOKEN_RE = re.compile(r"[A-Za-z0-9_]*[_.A-Z0-9][A-Za-z0-9_]*")
 
 
 def escape_fts5_query(query: str) -> str:
     """Quote each whitespace-delimited term as an FTS5 string literal.
 
-    Doubles embedded ``"`` characters so Boolean operators (``AND``, ``OR``,
-    ``NOT``) and punctuation (``*``, ``:``, ``-``, ``^``) in code queries
-    cannot trigger FTS5 syntax errors.
+    Strips embedded NUL bytes and doubles embedded ``"`` characters so Boolean
+    operators (``AND``, ``OR``, ``NOT``) and punctuation (``*``, ``:``, ``-``,
+    ``^``) in code queries cannot trigger FTS5 syntax errors.
     """
-    tokens = query.split()
+    tokens = query.replace("\x00", "").split()
     if not tokens:
         return ""
     escaped_tokens = [f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens]
@@ -110,30 +105,22 @@ class HybridSQLiteIndex:
         if not self._is_memory:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
-        self._sqlite_vec_enabled = False
-        if _sqlite_vec is not None:
-            try:
-                self._conn.enable_load_extension(True)
-                _sqlite_vec.load(self._conn)
-                self._sqlite_vec_enabled = True
-            except (AttributeError, sqlite3.Error):
-                self._sqlite_vec_enabled = False
-            finally:
-                try:
-                    self._conn.enable_load_extension(False)
-                except (AttributeError, sqlite3.Error):
-                    pass
-        if not self._is_memory:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._init_schema()
+        try:
+            if not self._is_memory:
+                self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._init_schema()
+        except BaseException:
+            self._conn.close()
+            raise
 
     def _init_schema(self) -> None:
         with self._conn:
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS documents (
-                    doc_id TEXT PRIMARY KEY,
+                    id INTEGER PRIMARY KEY,
+                    doc_id TEXT UNIQUE NOT NULL,
                     content TEXT NOT NULL,
                     embedding_json TEXT
                 )
@@ -187,10 +174,16 @@ class HybridSQLiteIndex:
                     """,
                     (doc_id, content, emb_json),
                 )
-                self._conn.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
+                row = self._conn.execute(
+                    "SELECT id FROM documents WHERE doc_id = ?", (doc_id,)
+                ).fetchone()
+                if row is None:  # pragma: no cover - defensive invariant
+                    raise sqlite3.DatabaseError(f"Missing rowid for doc_id={doc_id!r}")
+                row_id = int(row[0])
+                self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
                 self._conn.execute(
-                    "INSERT INTO documents_fts (doc_id, content) VALUES (?, ?)",
-                    (doc_id, content),
+                    "INSERT INTO documents_fts (rowid, doc_id, content) VALUES (?, ?, ?)",
+                    (row_id, doc_id, content),
                 )
         return len(normalized)
 
@@ -198,16 +191,17 @@ class HybridSQLiteIndex:
         """Delete any indexed documents whose ``doc_id`` is not in ``active_doc_ids``."""
         active = {str(doc_id) for doc_id in active_doc_ids}
         existing = [
-            str(row[0]) for row in self._conn.execute("SELECT doc_id FROM documents").fetchall()
+            (int(row[0]), str(row[1]))
+            for row in self._conn.execute("SELECT id, doc_id FROM documents").fetchall()
         ]
-        stale = [doc_id for doc_id in existing if doc_id not in active]
-        if not stale:
+        stale_ids = [row_id for row_id, doc_id in existing if doc_id not in active]
+        if not stale_ids:
             return 0
         with self._conn:
-            for doc_id in stale:
-                self._conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
-                self._conn.execute("DELETE FROM documents_fts WHERE doc_id = ?", (doc_id,))
-        return len(stale)
+            for row_id in stale_ids:
+                self._conn.execute("DELETE FROM documents WHERE id = ?", (row_id,))
+                self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
+        return len(stale_ids)
 
     def _fts_rankings(self, query: str) -> dict[str, int]:
         escaped = escape_fts5_query(query)

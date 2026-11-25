@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,11 @@ from tensor_grep.cli.incremental_graph_sync import (
     GRAPH_SYNC_REL_PATH,
     extract_ego_subgraph,
     sync_graph_edges,
+)
+from tensor_grep.cli.symbol_graph_index import (
+    GRAPH_CACHE_REL_PATH,
+    SymbolGraphIndex,
+    sync_incremental_ego_subgraph,
 )
 
 
@@ -118,3 +125,55 @@ def test_extract_ego_subgraph_bounded_hops_and_nodes(tmp_path: Path) -> None:
     capped = extract_ego_subgraph(tmp_path, "a.py", max_hops=3, max_nodes=2)
     assert len(capped["nodes"]) == 2
     assert capped["truncated"] is True
+
+
+def test_incremental_graph_does_not_collide_with_symbol_graph_cache(tmp_path: Path) -> None:
+    assert GRAPH_SYNC_REL_PATH != GRAPH_CACHE_REL_PATH
+    with SymbolGraphIndex(merkle_root="m1") as sym_idx:
+        sym_idx.save_to_cache(tmp_path)
+
+    result = sync_incremental_ego_subgraph(
+        tmp_path,
+        {"a.py": "import b.py\n"},
+        _extract_imports,
+        "a.py",
+        max_hops=1,
+        max_nodes=8,
+    )
+    assert result["nodes"] == ["a.py", "b.py"]
+    assert result["sync"] == {"skipped": 0, "updated": 1, "deleted": 0}
+    assert (tmp_path / GRAPH_CACHE_REL_PATH).exists()
+    assert (tmp_path / GRAPH_SYNC_REL_PATH).exists()
+
+    loaded = SymbolGraphIndex.load_from_cache(tmp_path, expected_merkle_root="m1")
+    assert loaded is not None
+    loaded.close()
+
+
+def test_incremental_graph_sync_rejects_symlink_or_junction_cache_paths(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    tg_cache = root / ".tg_cache"
+
+    try:
+        os.symlink(outside, tg_cache, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(tg_cache), str(outside)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            pytest.skip("symlink creation unavailable")
+
+    try:
+        with pytest.raises(OSError):
+            sync_graph_edges(root, {"a.py": "import b.py\n"}, _extract_imports)
+        with pytest.raises(OSError):
+            extract_ego_subgraph(root, "a.py")
+    finally:
+        if os.name == "nt" and tg_cache.exists() and not tg_cache.is_symlink():
+            subprocess.run(["cmd", "/c", "rmdir", str(tg_cache)], check=False)

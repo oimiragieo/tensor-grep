@@ -1584,6 +1584,7 @@ def _execute_find(
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
             hybrid=hybrid,
+            cache_root=root if hybrid else None,
             **retrieval_symbols.evidence_options(result),
         )
     except DenseUnavailableError as exc:
@@ -1613,10 +1614,11 @@ def _execute_find(
             dense_weight=_find_dense_weight(query),
             combine=_find_combine_mode(query),
             hybrid=hybrid,
+            cache_root=root if hybrid else None,
             **retrieval_symbols.evidence_options(result),
         )
     result.routing_backend, result.routing_reason, result.install_state = route_labels(
-        dense_index, result.rank_fusion
+        dense_index, result.rank_fusion, hybrid=hybrid
     )
     if late_fallback_reason:
         result.rank_fallback_reason = (

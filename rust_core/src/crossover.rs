@@ -183,7 +183,7 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
                 )
             })
             .collect::<Result<Vec<_>>>()?;
-        return summarize_measurements(mocked.device_name, measurements, now_timestamp, false);
+        return summarize_measurements(mocked.device_name, measurements, now_timestamp);
     }
 
     let cache_dir = resolve_crossover_cache_dir();
@@ -208,12 +208,7 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
         )?);
     }
 
-    summarize_measurements(
-        device_name,
-        measurements,
-        now_timestamp,
-        cfg!(feature = "cuda"),
-    )
+    summarize_measurements(device_name, measurements, now_timestamp)
 }
 
 pub fn write_crossover_config(
@@ -251,7 +246,6 @@ fn summarize_measurements(
     device_name: String,
     measurements: Vec<CalibrationMeasurement>,
     calibration_timestamp: u64,
-    native_gpu_executed: bool,
 ) -> Result<CrossoverConfig> {
     if measurements.is_empty() {
         bail!("crossover calibration did not produce any measurements");
@@ -281,18 +275,14 @@ fn summarize_measurements(
         "cpu_always".to_string()
     };
 
-    let parity_verified = crate::gpu_bitparallel::verify_default_bitparallel_parity().is_ok();
-    let backend_kind = if native_gpu_executed {
-        crate::gpu_bitparallel::ExecutionBackendKind::NativeGpuKernel
-    } else {
-        crate::gpu_bitparallel::ExecutionBackendKind::CpuFallback
-    };
+    // BitParallelMatcher is currently a CPU Shift-Or engine and crossover
+    // calibration does not verify GPU-vs-CPU match parity on the calibrated
+    // workload output, so never infer native GPU execution or promotion proof
+    // from `cfg!(feature = "cuda")` or timing alone.
     let bitparallel_calibration = Some(
-        crate::gpu_bitparallel::CrossoverCalibrationReport::evaluate(
-            backend_kind,
-            winner.as_ref().map(|m| m.size_bytes),
-            parity_verified,
-            winner.is_some(),
+        crate::gpu_bitparallel::CrossoverCalibrationReport::cpu_fallback(
+            false,
+            "native GPU bit-parallel kernel execution and calibrated workload output parity were not observed; BitParallelMatcher runs on CPU",
         ),
     );
 
@@ -591,7 +581,9 @@ impl std::error::Error for NoCudaBuildError {}
 /// path. Pulled out as a pure, allocation-only function (no `process::exit`, no I/O) so the
 /// JSON shape is unit-testable without spawning a subprocess to observe the real exit code.
 pub fn skip_signal_payload(err: &NoCudaBuildError) -> serde_json::Value {
-    let parity_verified = crate::gpu_bitparallel::verify_default_bitparallel_parity().is_ok();
+    let parity_verified = crate::gpu_bitparallel::verify_default_bitparallel_parity()
+        .map(|report| report.parity_verified)
+        .unwrap_or(false);
     let report = crate::gpu_bitparallel::CrossoverCalibrationReport::cpu_fallback(
         parity_verified,
         "no CUDA support compiled in; CPU fallback only",
@@ -735,6 +727,41 @@ mod tests {
             payload["remediation"],
             serde_json::json!(no_cuda.remediation)
         );
+        assert_eq!(
+            payload["bitparallel_calibration"]["native_gpu_executed"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["bitparallel_calibration"]["promotion_proof"],
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn summarize_measurements_reports_cpu_fallback_without_observed_gpu_kernel_and_parity() {
+        let measurements = vec![CalibrationMeasurement::from_samples(
+            100 * 1024 * 1024,
+            vec![20.0, 21.0, 19.0],
+            vec![5.0, 5.5, 4.5],
+        )
+        .expect("valid samples")];
+
+        let config = summarize_measurements("Test GPU".to_string(), measurements, 1_700_000_000)
+            .expect("summarize_measurements should succeed");
+
+        assert_eq!(config.recommendation, "gpu_above_100mb");
+        let report = config
+            .bitparallel_calibration
+            .expect("bitparallel_calibration must be present");
+        assert_eq!(
+            report.execution_path,
+            crate::gpu_bitparallel::ExecutionBackendKind::CpuFallback
+        );
+        assert!(!report.native_gpu_executed);
+        assert!(!report.promotion_proof);
+        assert_eq!(report.crossover_threshold_bytes, None);
+        assert!(!report.parity_verified);
+        assert!(report.reason.contains("not observed"));
     }
 
     // Mirror check for the cuda-enabled arm: it must keep its OWN, scenario-correct

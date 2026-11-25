@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import stat
 import sys
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Literal
 
 from tensor_grep.core import retrieval_symbols
@@ -31,6 +33,9 @@ from tensor_grep.core.retrieval_dense import DenseIndex
 from tensor_grep.core.retrieval_fusion import DEFAULT_K, reciprocal_rank_fusion
 from tensor_grep.core.retrieval_late import LateReranker, LateRerankUnavailableError
 from tensor_grep.core.retrieval_lexical import split_terms
+from tensor_grep.io.confined import prepare_directory
+
+HYBRID_INDEX_REL_PATH = Path(".tg_cache") / "hybrid_v1" / "index.sqlite3"
 
 # PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
 # filename-token overlap with the query -- a precision signal (a query mentioning "invoice" should
@@ -234,6 +239,24 @@ def rerank_by_bm25(
     return dataclasses.replace(result, matches=reranked)
 
 
+def _resolve_confined_hybrid_db_path(cache_root: Path) -> Path:
+    resolved_root = Path(cache_root).resolve()
+    db_path = resolved_root / HYBRID_INDEX_REL_PATH
+    for candidate in (resolved_root / ".tg_cache", db_path.parent, db_path):
+        if candidate.is_symlink():
+            raise OSError(f"hybrid index refuses symlink path: {candidate}")
+    prepare_directory(resolved_root, db_path.parent)
+    if db_path.is_symlink():
+        raise OSError(f"hybrid index refuses symlink leaf: {db_path}")
+    if db_path.exists():
+        info = db_path.lstat()
+        if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+            raise OSError(f"hybrid index refuses non-regular leaf: {db_path}")
+    if not db_path.resolve().is_relative_to(resolved_root):
+        raise OSError(f"hybrid index path escapes cache_root: {db_path}")
+    return db_path
+
+
 def hybrid_rerank(
     query: str,
     chunks: list[Chunk],
@@ -241,12 +264,19 @@ def hybrid_rerank(
     dense_index: DenseIndex | None = None,
     k: int = DEFAULT_K,
     idf_weight: float | None = None,
+    cache_root: Path | None = None,
 ) -> list[int]:
     """Rank chunks using ``HybridSQLiteIndex`` (FTS5 + adaptive IDF-weighted RRF)."""
     if not chunks:
         return []
-    with HybridSQLiteIndex(":memory:") as index:
-        index.upsert_documents([(str(i), chunk.text, None) for i, chunk in enumerate(chunks)])
+    db_target: str | Path = (
+        _resolve_confined_hybrid_db_path(cache_root) if cache_root is not None else ":memory:"
+    )
+    with HybridSQLiteIndex(db_target) as index:
+        doc_rows = [(str(i), chunk.text, None) for i, chunk in enumerate(chunks)]
+        index.upsert_documents(doc_rows)
+        if cache_root is not None:
+            index.remove_missing([doc_id for doc_id, _text, _emb in doc_rows])
         if dense_index is None:
             results = index.search(query, limit=len(chunks), k=k, idf_weight=idf_weight)
             return [int(row["doc_id"]) for row in results]
@@ -294,6 +324,7 @@ def rank_chunks(
     combine: Literal["sum", "max"] = "max",
     evidence: dict[str, Any] | None = None,
     hybrid: bool = False,
+    cache_root: Path | None = None,
 ) -> tuple[list[int], str | None]:
     """Fuse BM25 [+ dense] [+ path] chunk rankings via RRF, then optionally MaxSim-rerank the head
     via ``late_reranker`` -- the pure, fail-closed rank core shared by :func:`rerank_hybrid` and
@@ -348,7 +379,9 @@ def rank_chunks(
     total = max(1, len(chunks))
     symbol_reason: str | None = None
     if hybrid:
-        fused_order = hybrid_rerank(query, chunks, dense_index=dense_index, k=k)
+        fused_order = hybrid_rerank(
+            query, chunks, dense_index=dense_index, k=k, cache_root=cache_root
+        )
     else:
         bm25_ranking = [chunk_idx for chunk_idx, _ in bm25_index.query(query, top_k=total)]
         rankings: list[list[int]] = [bm25_ranking]
@@ -580,13 +613,23 @@ def rerank_hybrid(
 
 
 def route_labels(
-    dense_index: object | None, fusion: dict[str, object] | None = None
+    dense_index: object | None,
+    fusion: dict[str, object] | None = None,
+    *,
+    hybrid: bool = False,
 ) -> tuple[str, str, str]:
     """(routing_backend, routing_reason, install_state) for `_execute_find`'s envelope, keyed on
     whether the dense leg is present. Both `routing_backend`/`routing_reason` are `required`/
     minLength-1 in the shared envelope `tg find` reuses; `install_state` is the S6 explicit-state
     field so a caller never has to infer readiness from the other two.
     """
+    if hybrid:
+        install_state = (
+            "dense_ready"
+            if dense_index is not None
+            else "fts5_rrf_ready (dense unavailable; run tg install-dense)"
+        )
+        return "HybridFindBackend", "hybrid-fts5-rrf", install_state
     symbols = (fusion or {}).get("ast_symbols")
     if isinstance(symbols, dict) and symbols.get("ranked_chunks"):
         if dense_index is not None:

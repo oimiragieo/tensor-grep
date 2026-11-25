@@ -4,6 +4,12 @@
 //! pattern) to scan input bytes in a single pass, supporting case-sensitive and
 //! case-insensitive matching, overlapping matches, and exact 1-based
 //! line/column extraction.
+//!
+//! **Byte-level (ASCII) semantics:** Wildcards (`.`) and character classes
+//! (`[...]`, `[^...]`, `\d`, `\w`, `\s`, `\D`, `\W`, `\S`) operate on single
+//! bytes rather than multi-byte Unicode scalar values. For example, `.` matches
+//! a single non-`\n` byte (and results are filtered to UTF-8 char boundaries),
+//! so `.` does not match a multi-byte UTF-8 character such as `é`.
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -36,12 +42,14 @@ struct CompiledPattern {
     len: usize,
     /// Bit mask with bit `len - 1` set to `1`.
     accept_bit: u64,
+    /// Whether this pattern uses single-byte wildcards (`.`) or character classes.
+    has_wildcard_or_char_class: bool,
 }
 
 impl CompiledPattern {
     fn compile(pattern: &str, case_insensitive: bool, literal_only: bool) -> Result<Self, String> {
-        let positions = if literal_only {
-            parse_literal_positions(pattern)?
+        let (positions, has_wildcard_or_char_class) = if literal_only {
+            (parse_literal_positions(pattern)?, false)
         } else {
             parse_pattern_positions(pattern, case_insensitive)?
         };
@@ -78,6 +86,7 @@ impl CompiledPattern {
             masks,
             len,
             accept_bit,
+            has_wildcard_or_char_class,
         })
     }
 }
@@ -95,15 +104,17 @@ fn parse_literal_positions(pattern: &str) -> Result<Vec<[bool; 256]>, String> {
 fn parse_pattern_positions(
     pattern: &str,
     case_insensitive: bool,
-) -> Result<Vec<[bool; 256]>, String> {
+) -> Result<(Vec<[bool; 256]>, bool), String> {
     let bytes = pattern.as_bytes();
     let mut i = 0;
     let mut positions = Vec::new();
+    let mut has_wildcard_or_char_class = false;
 
     while i < bytes.len() {
         let mut allowed = [false; 256];
         match bytes[i] {
             b'.' => {
+                has_wildcard_or_char_class = true;
                 for (idx, slot) in allowed.iter_mut().enumerate() {
                     *slot = idx as u8 != b'\n';
                 }
@@ -114,10 +125,14 @@ fn parse_pattern_positions(
                 if i >= bytes.len() {
                     return Err("trailing backslash in pattern".to_string());
                 }
+                if matches!(bytes[i], b'd' | b'w' | b's' | b'D' | b'W' | b'S') {
+                    has_wildcard_or_char_class = true;
+                }
                 apply_escape(bytes[i], &mut allowed);
                 i += 1;
             }
             b'[' => {
+                has_wildcard_or_char_class = true;
                 i += 1;
                 let negated = if i < bytes.len() && bytes[i] == b'^' {
                     i += 1;
@@ -198,7 +213,7 @@ fn parse_pattern_positions(
         positions.push(allowed);
     }
 
-    Ok(positions)
+    Ok((positions, has_wildcard_or_char_class))
 }
 
 fn decode_escaped_literal(b: u8) -> u8 {
@@ -274,7 +289,8 @@ impl BitParallelMatcher {
     ///
     /// Supports `.`, `\d`, `\w`, `\s`, `\D`, `\W`, `\S`, `[a-z]`, `[^...]`,
     /// and backslash escapes, up to [`MAX_PATTERN_POSITIONS`] (64) positions per
-    /// pattern.
+    /// pattern. Wildcards (`.`) and character classes operate on single bytes
+    /// (ASCII semantics), not multi-byte Unicode scalar values.
     pub fn new(patterns: &[&str], case_insensitive: bool) -> Result<Self, String> {
         let mut compiled = Vec::with_capacity(patterns.len());
         for &pat in patterns {
@@ -481,6 +497,11 @@ impl BitParallelMatcher {
     /// Verify byte-identical match parity (`dyno-ratchet` invariant) between the
     /// bit-parallel Shift-Or matcher and the scalar reference matcher across
     /// overlapping, non-overlapping, and pattern-index modes.
+    ///
+    /// Because `.` and character classes use single-byte (ASCII) semantics,
+    /// `parity_verified` is set to `false` when any pattern contains `.` or a
+    /// character class and `text` contains non-ASCII multi-byte UTF-8, so it
+    /// never claims Unicode regex equivalence for byte-level wildcards/classes.
     pub fn verify_byte_parity(&self, text: &str) -> Result<BitParallelParityReport, String> {
         let bp_all = self.search(text);
         let sc_all = self.search_scalar(text);
@@ -512,11 +533,15 @@ impl BitParallelMatcher {
             ));
         }
 
+        let has_byte_wildcard_or_class = self.patterns.iter().any(|p| p.has_wildcard_or_char_class);
+        let parity_verified = !has_byte_wildcard_or_class || text.is_ascii();
+
         Ok(BitParallelParityReport {
             overlapping_match_count: bp_all.len(),
             non_overlapping_match_count: bp_non.len(),
             matching_pattern_indices: bp_indices,
             byte_identical: true,
+            parity_verified,
         })
     }
 }
@@ -528,6 +553,7 @@ pub struct BitParallelParityReport {
     pub non_overlapping_match_count: usize,
     pub matching_pattern_indices: Vec<usize>,
     pub byte_identical: bool,
+    pub parity_verified: bool,
 }
 
 /// Execution path used to evaluate the GPU side of crossover calibration.
@@ -614,10 +640,12 @@ impl CrossoverCalibrationReport {
     pub fn calibrate_cpu_fallback(corpus: &str, patterns: &[&str]) -> Result<Self, String> {
         let matcher = BitParallelMatcher::new(patterns, false)?;
         let parity = matcher.verify_byte_parity(corpus)?;
-        Ok(Self::cpu_fallback(
-            parity.byte_identical,
-            "CPU bit-parallel fallback verified byte-identical parity; native GPU kernel not executed",
-        ))
+        let reason = if parity.parity_verified {
+            "CPU bit-parallel fallback verified byte-identical parity; native GPU kernel not executed"
+        } else {
+            "CPU bit-parallel fallback matched scalar byte semantics, but Unicode regex parity is unverified for byte-level wildcards/classes on non-ASCII UTF-8; native GPU kernel not executed"
+        };
+        Ok(Self::cpu_fallback(parity.parity_verified, reason))
     }
 }
 
@@ -827,6 +855,46 @@ line 4: ok00 WARN_Zy foo-bar
 
         let default_report = verify_default_bitparallel_parity().expect("default parity");
         assert!(default_report.byte_identical);
+        assert!(!default_report.parity_verified);
+    }
+
+    #[test]
+    fn verify_byte_parity_rejects_non_ascii_wildcard_or_char_class_parity() {
+        // `.` and character classes operate on single bytes (ASCII semantics), so `.`
+        // does not match the 2-byte UTF-8 sequence `é`.
+        let dot = BitParallelMatcher::new(&["."], false).expect("valid dot");
+        assert!(dot.search("é").is_empty());
+        let dot_non_ascii = dot.verify_byte_parity("é").expect("byte parity holds");
+        assert!(dot_non_ascii.byte_identical);
+        assert!(!dot_non_ascii.parity_verified);
+
+        let class_matcher = BitParallelMatcher::new(&["[a-z]", "\\d", "[^x]"], false)
+            .expect("valid class patterns");
+        let class_non_ascii = class_matcher
+            .verify_byte_parity("café 1")
+            .expect("byte parity holds");
+        assert!(class_non_ascii.byte_identical);
+        assert!(!class_non_ascii.parity_verified);
+
+        // Pure ASCII text with wildcard/class patterns still verifies parity.
+        let dot_ascii = dot.verify_byte_parity("ab").expect("ascii byte parity");
+        assert!(dot_ascii.byte_identical);
+        assert!(dot_ascii.parity_verified);
+
+        // Pure literals on non-ASCII UTF-8 do not use byte wildcards/classes.
+        let literal_dot = BitParallelMatcher::from_literals(&["."], false).expect("literal dot");
+        let literal_report = literal_dot
+            .verify_byte_parity("é.")
+            .expect("literal byte parity");
+        assert!(literal_report.byte_identical);
+        assert!(literal_report.parity_verified);
+
+        let fallback_non_ascii =
+            CrossoverCalibrationReport::calibrate_cpu_fallback("café 1", &["."])
+                .expect("cpu fallback calibration");
+        assert!(!fallback_non_ascii.native_gpu_executed);
+        assert!(!fallback_non_ascii.promotion_proof);
+        assert!(!fallback_non_ascii.parity_verified);
     }
 
     #[test]
