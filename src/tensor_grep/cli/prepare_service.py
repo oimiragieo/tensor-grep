@@ -22,9 +22,13 @@ module already produces, without that future work needing to re-parse `_build_pr
 untyped dict shape by hand.
 """
 
+import hashlib
+import hmac
+import json
 import sqlite3
+import stat
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +43,548 @@ from tensor_grep.cli import prepare_protocol as _prepare_protocol
 # because tests may still reference the historical names on this module.
 _KNOWN_VALIDATION_RECIPES = _prepare_protocol._KNOWN_VALIDATION_RECIPES
 _select_validation_argv = _prepare_protocol._select_validation_argv
+
+_PREPARE_CACHE_REL_PATH = Path(".tg_cache") / "prepare_v1" / "repo_map_cache.json"
+_PREPARE_CACHE_MAX_BYTES = 32 * 1024 * 1024
+_PREPARE_CACHE_SCHEMA = 1
+_PROJECT_CONFIG_FILES = (
+    "pyproject.toml",
+    "tsconfig.json",
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+)
+
+
+def _sign_prepare_cache(secret: bytes, payload_json: str) -> str:
+    return hmac.new(
+        secret,
+        b"tg-prepare-v1\0" + payload_json.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _lstat_regular_file(path: Path) -> tuple[int, int, int] | None:
+    try:
+        st = path.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode) or (getattr(st, "st_file_attributes", 0) & 0x400):
+        return None
+    return (int(st.st_mtime_ns), int(st.st_ctime_ns), int(st.st_size))
+
+
+def _prepare_cache_context(
+    path: str,
+) -> tuple[Path, Path, bytes] | None:
+    from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.cli.repo_map_fast_cache import canonical_symbol_cache_root
+    from tensor_grep.cli.symbols_cache import authenticated_content_root
+    from tensor_grep.cli.symbols_cache_auth import load_machine_key
+
+    root = _repo_map._resolved_input_path(path)
+    cache_root = canonical_symbol_cache_root(
+        root, _repo_map._infer_project_root, authenticated_content_root()
+    )
+    signing_key = load_machine_key(cache_root)
+    if signing_key is None:
+        return None
+    return root, cache_root, signing_key
+
+
+def _build_config_meta(
+    context_root: Path,
+    cache_root: Path,
+    max_bytes: int,
+) -> dict[str, dict[str, Any]]:
+    from tensor_grep.io.confined import read_confined
+
+    roots = [context_root]
+    if cache_root != context_root:
+        roots.append(cache_root)
+    meta: dict[str, dict[str, Any]] = {}
+    for base in roots:
+        for cfg_name in _PROJECT_CONFIG_FILES:
+            cfg_path = base / cfg_name
+            stat_key = _lstat_regular_file(cfg_path)
+            if stat_key is None:
+                continue
+            key = str(cfg_path)
+            if stat_key[2] > max_bytes:
+                meta[key] = {
+                    "mtime_ns": stat_key[0],
+                    "ctime_ns": stat_key[1],
+                    "size": stat_key[2],
+                    "oversized": True,
+                }
+                continue
+            try:
+                content = read_confined(cache_root, cfg_path, max_bytes)
+                digest = hashlib.sha256(content).hexdigest()
+            except OSError:
+                meta[key] = {"unreadable": True}
+                continue
+            meta[key] = {
+                "mtime_ns": stat_key[0],
+                "ctime_ns": stat_key[1],
+                "size": stat_key[2],
+                "sha256": digest,
+            }
+    return meta
+
+
+def _build_file_meta(
+    file_paths: Iterable[str],
+    *,
+    cache_root: Path,
+    max_bytes: int,
+    deadline_monotonic: float | None = None,
+) -> dict[str, dict[str, Any]] | None:
+    from tensor_grep.io.confined import read_confined
+
+    meta: dict[str, dict[str, Any]] = {}
+    for f_str in file_paths:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return None
+        fp = Path(f_str)
+        stat_key = _lstat_regular_file(fp)
+        if stat_key is None:
+            return None
+        if stat_key[2] > max_bytes:
+            meta[f_str] = {
+                "mtime_ns": stat_key[0],
+                "ctime_ns": stat_key[1],
+                "size": stat_key[2],
+                "oversized": True,
+            }
+            continue
+        try:
+            content = read_confined(cache_root, fp, max_bytes)
+            digest = hashlib.sha256(content).hexdigest()
+        except OSError:
+            return None
+        meta[f_str] = {
+            "mtime_ns": stat_key[0],
+            "ctime_ns": stat_key[1],
+            "size": stat_key[2],
+            "sha256": digest,
+        }
+    return meta
+
+
+def _capture_pre_build_stats(
+    path: str,
+    max_repo_files: int,
+    deadline_monotonic: float | None,
+) -> tuple[dict[str, tuple[int, int, int, str | None]], dict[str, dict[str, Any]]] | None:
+    from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.io.confined import read_confined
+
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return None
+    ctx = _prepare_cache_context(path)
+    if ctx is None:
+        return None
+    root, cache_root, _signing_key = ctx
+    if not _repo_map._path_exists_with_receipt(root):
+        return None
+    context_root = root if _repo_map._is_dir_with_receipt(root) else root.parent
+    max_parse_bytes = _repo_map._max_parse_bytes()
+    config_meta = _build_config_meta(context_root, cache_root, max_parse_bytes)
+    walk_deadline = _repo_map._DeadlineBreakFlag()
+    walk_unreadable = _repo_map._UnreadablePathFlag()
+    all_files = _repo_map._iter_repo_files(
+        root,
+        max_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=walk_deadline,
+        unreadable_hit=walk_unreadable,
+    )
+    if walk_deadline.hit or walk_unreadable.hit:
+        return None
+    stats: dict[str, tuple[int, int, int, str | None]] = {}
+    for current in all_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return None
+        if not _repo_map._is_repo_context_file(current, context_root):
+            continue
+        stat_key = _lstat_regular_file(current)
+        if stat_key is None:
+            return None
+        if stat_key[2] > max_parse_bytes:
+            stats[str(current)] = (stat_key[0], stat_key[1], stat_key[2], None)
+            continue
+        try:
+            content = read_confined(cache_root, current, max_parse_bytes)
+            digest = hashlib.sha256(content).hexdigest()
+        except OSError:
+            return None
+        stats[str(current)] = (stat_key[0], stat_key[1], stat_key[2], digest)
+    return stats, config_meta
+
+
+def _load_warm_prepare_cache(
+    path: str,
+    max_repo_files: int,
+    deadline_monotonic: float | None,
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], dict[str, dict[str, Any]], bool]:
+    """Load and ``(mtime_ns, ctime_ns, size)`` stat-first reconcile the signed warm repo-map cache.
+
+    Stat-first freshness contract:
+    Each cached file stores ``(mtime_ns, ctime_ns, size, sha256)`` (or ``oversized: True`` when
+    above ``_max_parse_bytes()``). Including ``ctime_ns`` ensures NTFS/POSIX content writes with
+    restored ``mtime_ns`` still trigger confined hash verification. Unchanged stat tuples skip
+    reading and parsing; changed stat tuples are read via ``read_confined(..., _max_parse_bytes())``
+    and re-parsed only when the content hash changed, with post-parse stat+hash verification to
+    reject leaf-swap TOCTOU races.
+
+    Returns ``(repo_map, cached_floors, file_meta, cache_dirty)``.
+    """
+    from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.cli.incompleteness import budget_remediable
+    from tensor_grep.io.confined import read_confined
+
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return None, {}, {}, False
+    ctx = _prepare_cache_context(path)
+    if ctx is None:
+        return None, {}, {}, False
+    root, cache_root, signing_key = ctx
+    cache_path = cache_root / _PREPARE_CACHE_REL_PATH
+    if not cache_path.exists():
+        return None, {}, {}, False
+    try:
+        raw_bytes = read_confined(cache_root, cache_path, _PREPARE_CACHE_MAX_BYTES)
+        envelope = json.loads(raw_bytes.decode("utf-8"))
+        if not isinstance(envelope, dict):
+            return None, {}, {}, False
+        payload_json = envelope.get("payload")
+        mac = envelope.get("mac")
+        if not isinstance(payload_json, str) or not isinstance(mac, str):
+            return None, {}, {}, False
+        if not hmac.compare_digest(_sign_prepare_cache(signing_key, payload_json), mac):
+            return None, {}, {}, False
+        data = json.loads(payload_json)
+    except (OSError, ValueError, TypeError):
+        return None, {}, {}, False
+
+    max_parse_bytes = _repo_map._max_parse_bytes()
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != _PREPARE_CACHE_SCHEMA
+        or data.get("scope") != str(root)
+        or data.get("max_repo_files") != max_repo_files
+        or data.get("max_parse_bytes") != max_parse_bytes
+    ):
+        return None, {}, {}, False
+
+    cached_rm = data.get("repo_map")
+    cached_meta = data.get("file_meta")
+    cached_floors = data.get("floors")
+    cached_config_meta = data.get("config_meta")
+    if (
+        not isinstance(cached_rm, dict)
+        or not isinstance(cached_meta, dict)
+        or not isinstance(cached_config_meta, dict)
+    ):
+        return None, {}, {}, False
+    if not isinstance(cached_floors, dict):
+        cached_floors = {}
+
+    if not _repo_map._path_exists_with_receipt(root):
+        return None, {}, {}, False
+    context_root = root if _repo_map._is_dir_with_receipt(root) else root.parent
+    if _build_config_meta(context_root, cache_root, max_parse_bytes) != cached_config_meta:
+        return None, {}, {}, False
+
+    _repo_map._load_gitignore_matcher.cache_clear()
+    walk_deadline = _repo_map._DeadlineBreakFlag()
+    walk_unreadable = _repo_map._UnreadablePathFlag()
+    all_files = _repo_map._iter_repo_files(
+        root,
+        max_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+        deadline_hit=walk_deadline,
+        unreadable_hit=walk_unreadable,
+    )
+    if walk_deadline.hit or walk_unreadable.hit:
+        return None, {}, {}, False
+
+    context_files = [
+        current for current in all_files if _repo_map._is_repo_context_file(current, context_root)
+    ]
+    current_paths = [str(current) for current in context_files]
+    current_path_set = set(current_paths)
+    cached_path_set = set(cached_meta.keys())
+
+    scan_limit = cached_rm.get("scan_limit")
+    possibly_truncated = isinstance(scan_limit, dict) and bool(scan_limit.get("possibly_truncated"))
+    if possibly_truncated and current_path_set != cached_path_set:
+        return None, {}, {}, False
+
+    new_meta: dict[str, dict[str, Any]] = {}
+    dirty_paths: set[str] = set()
+    dirty_expected: dict[str, tuple[tuple[int, int, int], str]] = {}
+    stat_only_updates = False
+
+    for current in context_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return None, {}, {}, False
+        p_str = str(current)
+        stat_key = _lstat_regular_file(current)
+        if stat_key is None:
+            return None, {}, {}, False
+        prev = cached_meta.get(p_str)
+        if (
+            isinstance(prev, dict)
+            and prev.get("mtime_ns") == stat_key[0]
+            and prev.get("ctime_ns") == stat_key[1]
+            and prev.get("size") == stat_key[2]
+            and (prev.get("oversized") is True or isinstance(prev.get("sha256"), str))
+        ):
+            new_meta[p_str] = prev
+            continue
+        if stat_key[2] > max_parse_bytes:
+            new_meta[p_str] = {
+                "mtime_ns": stat_key[0],
+                "ctime_ns": stat_key[1],
+                "size": stat_key[2],
+                "oversized": True,
+            }
+            if isinstance(prev, dict) and prev.get("oversized") is True:
+                stat_only_updates = True
+            else:
+                dirty_paths.add(p_str)
+            continue
+        try:
+            content = read_confined(cache_root, current, max_parse_bytes)
+            digest = hashlib.sha256(content).hexdigest()
+        except OSError:
+            return None, {}, {}, False
+        new_meta[p_str] = {
+            "mtime_ns": stat_key[0],
+            "ctime_ns": stat_key[1],
+            "size": stat_key[2],
+            "sha256": digest,
+        }
+        if isinstance(prev, dict) and prev.get("sha256") == digest:
+            stat_only_updates = True
+        else:
+            dirty_paths.add(p_str)
+            dirty_expected[p_str] = (stat_key, digest)
+
+    capped_count = len(all_files)
+    _capped = capped_count >= max_repo_files
+    _cause = (
+        _repo_map._scan_limit_cause(all_files, context_root, capped_count, max_repo_files)
+        if _capped
+        else "project-files"
+    )
+    current_truncated = _capped and _cause == "project-files"
+    expected_cause = _cause if _capped else None
+    scan_meta_matches = (
+        isinstance(scan_limit, dict)
+        and scan_limit.get("scanned_files") == capped_count
+        and scan_limit.get("truncation_cause") == expected_cause
+        and bool(scan_limit.get("possibly_truncated")) == current_truncated
+        and len(cached_rm.get("related_paths") or []) == len(context_files)
+        and ("total_files" not in cached_rm or cached_rm.get("total_files") == len(context_files))
+        and ("total_files" not in scan_limit or scan_limit.get("total_files") == capped_count)
+    )
+
+    deleted_paths = cached_path_set - current_path_set
+    if not dirty_paths and not deleted_paths and scan_meta_matches:
+        return cached_rm, cached_floors, new_meta, stat_only_updates
+
+    if possibly_truncated or current_truncated:
+        return None, {}, {}, False
+
+    # Incremental update: reuse symbols/imports for unchanged files, parse only dirty/added files.
+    _repo_map._clear_all_source_caches()
+    _repo_map._load_gitignore_matcher.cache_clear()
+    _repo_map._prime_all_language_repo_contexts(context_root)
+
+    old_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
+    for sym in cached_rm.get("symbols") or []:
+        if isinstance(sym, dict) and isinstance(sym.get("file"), str):
+            f_key = sym["file"]
+            if f_key in current_path_set and f_key not in dirty_paths:
+                old_symbols_by_file.setdefault(f_key, []).append(sym)
+
+    old_imports_by_file: dict[str, dict[str, Any]] = {}
+    for imp in cached_rm.get("imports") or []:
+        if isinstance(imp, dict) and isinstance(imp.get("file"), str):
+            f_key = imp["file"]
+            if f_key in current_path_set and f_key not in dirty_paths:
+                old_imports_by_file[f_key] = imp
+
+    tests = [str(current) for current in context_files if _repo_map._is_test_file(current)]
+    non_test = [str(current) for current in context_files if not _repo_map._is_test_file(current)]
+    source_files = non_test or tests
+
+    new_symbols: list[dict[str, Any]] = []
+    new_imports: list[dict[str, Any]] = []
+    for current in context_files:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            return None, {}, {}, False
+        p_str = str(current)
+        if p_str in dirty_paths:
+            cur_imports: list[str]
+            cur_symbols: list[dict[str, Any]]
+            if new_meta.get(p_str, {}).get("oversized") is True:
+                cur_imports, cur_symbols = [], []
+            else:
+                expected = dirty_expected.get(p_str)
+                if expected is None:
+                    return None, {}, {}, False
+                expected_stat, expected_digest = expected
+                if _lstat_regular_file(current) != expected_stat:
+                    return None, {}, {}, False
+                cur_imports, cur_symbols = _repo_map._imports_and_symbols_for_path(current)
+                if _lstat_regular_file(current) != expected_stat:
+                    return None, {}, {}, False
+                try:
+                    post_content = read_confined(cache_root, current, max_parse_bytes)
+                except OSError:
+                    return None, {}, {}, False
+                if hashlib.sha256(post_content).hexdigest() != expected_digest:
+                    return None, {}, {}, False
+            if cur_imports:
+                new_imports.append({
+                    "file": p_str,
+                    "imports": cur_imports,
+                    "provenance": _repo_map._symbol_navigation_provenance_for_path(p_str),
+                })
+            new_symbols.extend(cur_symbols)
+        else:
+            if p_str in old_imports_by_file:
+                new_imports.append(old_imports_by_file[p_str])
+            new_symbols.extend(old_symbols_by_file.get(p_str, []))
+
+    updated_rm = dict(cached_rm)
+    updated_rm["files"] = source_files
+    updated_rm["tests"] = tests
+    updated_rm["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+    updated_rm["symbols"] = new_symbols
+    updated_rm["imports"] = new_imports
+    updated_rm["scan_limit"] = {
+        "max_repo_files": max_repo_files,
+        "scanned_files": capped_count,
+        "possibly_truncated": current_truncated,
+        "truncation_cause": _cause if _capped else None,
+        **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
+    }
+    updated_rm["scan_remediation"] = (
+        _repo_map._SCAN_LIMIT_TRUNCATED_REMEDIATION if current_truncated else None
+    )
+    return updated_rm, {}, new_meta, True
+
+
+def _save_warm_prepare_cache(
+    path: str,
+    max_repo_files: int,
+    rm: dict[str, Any],
+    floors: dict[str, dict[str, Any]],
+    file_meta: dict[str, dict[str, Any]] | None,
+    deadline_monotonic: float | None,
+    *,
+    pre_build_stats: (
+        tuple[dict[str, tuple[int, int, int, str | None]], dict[str, dict[str, Any]]] | None
+    ) = None,
+) -> None:
+    from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.cli.symbols_cache_io import cache_lock
+    from tensor_grep.io.confined import (
+        prepare_directory,
+        publish_confined,
+        read_confined,
+    )
+
+    if rm.get("partial") or rm.get("unreadable_paths"):
+        return
+    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+        return
+    ctx = _prepare_cache_context(path)
+    if ctx is None:
+        return
+    root, cache_root, signing_key = ctx
+    context_root = root if _repo_map._is_dir_with_receipt(root) else root.parent
+    max_parse_bytes = _repo_map._max_parse_bytes()
+    related_paths = list(rm.get("related_paths") or [])
+    if file_meta is None:
+        if pre_build_stats is None:
+            return
+        file_meta = _build_file_meta(
+            related_paths,
+            cache_root=cache_root,
+            max_bytes=max_parse_bytes,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if file_meta is None:
+            return
+    config_meta = _build_config_meta(context_root, cache_root, max_parse_bytes)
+    if pre_build_stats is not None:
+        pre_file_stats, pre_config_meta = pre_build_stats
+        if config_meta != pre_config_meta:
+            return
+        for p_str in related_paths:
+            pre_stat = pre_file_stats.get(p_str)
+            meta = file_meta.get(p_str)
+            if pre_stat is None or meta is None:
+                return
+            meta_digest = None if meta.get("oversized") is True else meta.get("sha256")
+            if (meta.get("mtime_ns"), meta.get("ctime_ns"), meta.get("size"), meta_digest) != (
+                pre_stat
+            ):
+                return
+    payload_obj = {
+        "version": _PREPARE_CACHE_SCHEMA,
+        "scope": str(root),
+        "max_repo_files": max_repo_files,
+        "max_parse_bytes": max_parse_bytes,
+        "repo_map": rm,
+        "file_meta": file_meta,
+        "config_meta": config_meta,
+        "floors": floors,
+    }
+    payload_json = json.dumps(payload_obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    envelope = json.dumps(
+        {"payload": payload_json, "mac": _sign_prepare_cache(signing_key, payload_json)},
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    if len(envelope) > _PREPARE_CACHE_MAX_BYTES:
+        return
+    cache_path = cache_root / _PREPARE_CACHE_REL_PATH
+    try:
+        prepare_directory(cache_root, cache_path.parent)
+        ignore_path = cache_path.parent / ".gitignore"
+        try:
+            publish_confined(cache_root, ignore_path, b"*\n", only_if_missing=True)
+        except FileExistsError:
+            read_confined(cache_root, ignore_path, 65536)
+        with cache_lock(cache_root, cache_path, deadline_monotonic):
+            if _build_config_meta(context_root, cache_root, max_parse_bytes) != config_meta:
+                return
+            for p_str, meta in file_meta.items():
+                fp = Path(p_str)
+                cur_stat = _lstat_regular_file(fp)
+                if cur_stat != (
+                    meta.get("mtime_ns"),
+                    meta.get("ctime_ns"),
+                    meta.get("size"),
+                ):
+                    return
+                if meta.get("oversized") is True:
+                    if cur_stat[2] <= max_parse_bytes:
+                        return
+                else:
+                    cur_content = read_confined(cache_root, fp, max_parse_bytes)
+                    if hashlib.sha256(cur_content).hexdigest() != meta.get("sha256"):
+                        return
+            publish_confined(cache_root, cache_path, envelope)
+    except (OSError, ValueError):
+        return
 
 
 def _build_prepare_blast_radius_floor(
@@ -295,8 +841,19 @@ def _build_prepare_payload(
     paying a second ``build_repo_map`` walk+parse for the common natural-language-query CUJ.
     ``build_agent_capsule``'s own public contract/return is completely untouched by this --
     `tg agent` / MCP / its existing tests keep calling it directly, exactly as before."""
+    from tensor_grep.cli import repo_map as _repo_map
     from tensor_grep.cli.agent_capsule import _command_ref, build_agent_capsule_from_map
-    from tensor_grep.cli.repo_map import _copy_scan_limit
+    from tensor_grep.cli.symbols_cache import content_receipts_active
+
+    max_repo_files = _repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
+    cached_floors: dict[str, dict[str, Any]] = {}
+    cached_file_meta: dict[str, dict[str, Any]] | None = None
+    cache_dirty = False
+    can_use_warm_cache = repo_map is None and not content_receipts_active()
+    warm_rm: dict[str, Any] | None = None
+    pre_build_stats: (
+        tuple[dict[str, tuple[int, int, int, str | None]], dict[str, dict[str, Any]]] | None
+    ) = None
 
     if repo_map is not None:
         # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): a caller that
@@ -306,13 +863,22 @@ def _build_prepare_payload(
         # responsibility, never re-derived here.
         rm = repo_map
     else:
-        from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT, build_repo_map
-
-        rm = build_repo_map(
-            path,
-            max_repo_files=DEFAULT_AGENT_REPO_MAP_LIMIT,
-            deadline_monotonic=deadline_monotonic,
-        )
+        if can_use_warm_cache:
+            warm_rm, cached_floors, cached_file_meta, cache_dirty = _load_warm_prepare_cache(
+                path, max_repo_files, deadline_monotonic
+            )
+        if warm_rm is not None:
+            rm = warm_rm
+        else:
+            if can_use_warm_cache:
+                pre_build_stats = _capture_pre_build_stats(path, max_repo_files, deadline_monotonic)
+            rm = _repo_map.build_repo_map(
+                path,
+                max_repo_files=max_repo_files,
+                deadline_monotonic=deadline_monotonic,
+            )
+            cached_file_meta = None
+            cache_dirty = True
     capsule = build_agent_capsule_from_map(
         rm, query, deadline_monotonic=deadline_monotonic, _rescue_call_site_evidence=True
     )
@@ -322,17 +888,13 @@ def _build_prepare_payload(
     related_call_sites = list(capsule.get("related_call_sites") or [])
     resolved_path = str(capsule.get("path") or path)
     resolved_query = str(capsule.get("query") or query)
-    floor, floor_deadline_partial = _build_prepare_blast_radius_floor(
-        path=resolved_path,
-        rm=rm,
-        target=target,
-        call_site_evidence=call_site_evidence,
-        related_call_sites=related_call_sites,
-        deadline_monotonic=deadline_monotonic,
-    )
+
+    ego_subgraph: dict[str, Any] | None = None
     if target.get("file") and Path(resolved_path).is_dir():
         try:
-            from tensor_grep.cli.symbol_graph_index import sync_incremental_ego_subgraph
+            from tensor_grep.cli.symbol_graph_index import (
+                sync_incremental_ego_subgraph_from_paths,
+            )
 
             seed_file = str(target["file"])
             edges_by_file: dict[str, list[tuple[str, str]]] = {}
@@ -343,22 +905,85 @@ def _build_prepare_payload(
                 raw_imps = entry.get("imports") or []
                 if src and isinstance(raw_imps, list):
                     edges_by_file[src] = [(str(dst), "import") for dst in raw_imps if dst]
-            repo_files: dict[str, bytes] = {}
-            for f_str in rm.get("files") or [seed_file]:
-                fp = Path(str(f_str))
-                repo_files[str(f_str)] = fp.read_bytes() if fp.is_file() else b""
-            sync_incremental_ego_subgraph(
+            rm_context_digest = hashlib.blake2b(
+                json.dumps(
+                    {
+                        "files": rm.get("files") or [],
+                        "imports": rm.get("imports") or [],
+                        "exports": rm.get("exports") or [],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                ).encode("utf-8"),
+                digest_size=32,
+            ).hexdigest()
+            ego_subgraph = sync_incremental_ego_subgraph_from_paths(
                 Path(resolved_path),
-                repo_files,
+                rm.get("files") or [seed_file],
                 lambda p, _c: edges_by_file.get(p, []),
                 seed_file,
                 max_hops=1,
                 max_nodes=16,
+                deadline_monotonic=deadline_monotonic,
+                context_digest=rm_context_digest,
             )
         except (OSError, ValueError, sqlite3.Error):
-            pass
+            ego_subgraph = None
 
     symbol = str(target.get("symbol") or "")
+    floor_cache_key = (
+        f"{symbol}\0{target.get('file') or ''}\0{call_site_evidence.get('status') or ''}"
+    )
+    ego_sync = (ego_subgraph or {}).get("sync") or {}
+    graph_unchanged = (
+        ego_subgraph is not None
+        and int(ego_sync.get("complete", 0)) == 1
+        and int(ego_sync.get("updated", 1)) == 0
+        and int(ego_sync.get("deleted", 1)) == 0
+    )
+    rm_truncated = bool((rm.get("scan_limit") or {}).get("possibly_truncated")) or bool(
+        rm.get("possibly_truncated")
+    )
+    cached_floor_entry = (
+        cached_floors.get(floor_cache_key)
+        if can_use_warm_cache and not cache_dirty and not rm_truncated and graph_unchanged
+        else None
+    )
+    if isinstance(cached_floor_entry, dict):
+        floor = dict(cached_floor_entry)
+        floor_deadline_partial = False
+    else:
+        floor, floor_deadline_partial = _build_prepare_blast_radius_floor(
+            path=resolved_path,
+            rm=rm,
+            target=target,
+            call_site_evidence=call_site_evidence,
+            related_call_sites=related_call_sites,
+            deadline_monotonic=deadline_monotonic,
+        )
+        if (
+            can_use_warm_cache
+            and not floor_deadline_partial
+            and not floor.get("possibly_incomplete")
+        ):
+            cached_floors[floor_cache_key] = dict(floor)
+            cache_dirty = True
+
+    if ego_subgraph is not None:
+        floor["ego_nodes"] = list(ego_subgraph.get("nodes") or [])
+        floor["ego_edges"] = list(ego_subgraph.get("edges") or [])
+
+    if can_use_warm_cache and cache_dirty:
+        _save_warm_prepare_cache(
+            path,
+            max_repo_files,
+            rm,
+            cached_floors,
+            cached_file_meta,
+            deadline_monotonic,
+            pre_build_stats=pre_build_stats,
+        )
     claim_argv: list[object] = ["tg", "ledger", "claim", resolved_path]
     if symbol:
         claim_argv += ["--symbol", symbol]
@@ -497,7 +1122,7 @@ def _build_prepare_payload(
         "blast_radius_floor": floor,
         "coordination": {"claim": claim_hook, "evidence": evidence_hook},
     }
-    _copy_scan_limit(result, capsule)
+    _repo_map._copy_scan_limit(result, capsule)
 
     if include_next_action:
         target_path = str(target.get("file") or path)
