@@ -8,7 +8,11 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli.incremental_graph_sync import extract_ego_subgraph, sync_graph_edges
+from tensor_grep.cli.incremental_graph_sync import (
+    extract_ego_subgraph,
+    sync_graph_edges,
+    sync_graph_edges_from_paths,
+)
 from tensor_grep.cli.symbols_cache_io import (
     cache_lock,
     prepare_directory,
@@ -352,6 +356,36 @@ def sync_incremental_ego_subgraph(
 ) -> dict[str, Any]:
     """Incrementally sync file edges and extract a bounded ego subgraph around ``seed_file``."""
     sync_stats = sync_graph_edges(cache_root, current_files, extract_edges_fn)
+    subgraph = extract_ego_subgraph(
+        cache_root,
+        seed_file,
+        max_hops=max_hops,
+        max_nodes=max_nodes,
+    )
+    return {**subgraph, "sync": sync_stats}
+
+
+def sync_incremental_ego_subgraph_from_paths(
+    cache_root: Path,
+    file_paths: Iterable[str | Path],
+    extract_edges_fn: Callable[[str, str], list[tuple[str, str]]],
+    seed_file: str,
+    *,
+    max_hops: int = 2,
+    max_nodes: int = 32,
+    deadline_monotonic: float | None = None,
+    force_refresh: bool = False,
+    context_digest: str | None = None,
+) -> dict[str, Any]:
+    """Incrementally sync file edges via stat+hash reconciliation and extract an ego subgraph."""
+    sync_stats = sync_graph_edges_from_paths(
+        cache_root,
+        file_paths,
+        extract_edges_fn,
+        deadline_monotonic=deadline_monotonic,
+        force_refresh=force_refresh,
+        context_digest=context_digest,
+    )
     subgraph = extract_ego_subgraph(
         cache_root,
         seed_file,
