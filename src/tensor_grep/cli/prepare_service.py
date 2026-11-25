@@ -890,13 +890,30 @@ def _build_prepare_payload(
     resolved_query = str(capsule.get("query") or query)
 
     ego_subgraph: dict[str, Any] | None = None
-    if target.get("file") and Path(resolved_path).is_dir():
+    manifest_fresh = False
+    resolved_root_path = Path(resolved_path)
+    if target.get("file") and resolved_root_path.is_dir():
         try:
+            from tensor_grep.cli.incremental_graph_sync import extract_ego_subgraph
             from tensor_grep.cli.symbol_graph_index import (
                 sync_incremental_ego_subgraph_from_paths,
             )
+            from tensor_grep.cli.unified_cache import (
+                build_source_address_contract,
+                check_view_freshness,
+                load_unified_manifest,
+                update_view_states,
+            )
 
-            seed_file = str(target["file"])
+            seed_files: list[str] = [str(target["file"])]
+            for alt in capsule.get("alternative_targets") or []:
+                if isinstance(alt, dict) and alt.get("file"):
+                    alt_file = str(alt["file"])
+                    if alt_file not in seed_files:
+                        seed_files.append(alt_file)
+                        if len(seed_files) >= 3:
+                            break
+
             edges_by_file: dict[str, list[tuple[str, str]]] = {}
             for entry in rm.get("imports") or []:
                 if not isinstance(entry, dict):
@@ -905,12 +922,39 @@ def _build_prepare_payload(
                 raw_imps = entry.get("imports") or []
                 if src and isinstance(raw_imps, list):
                     edges_by_file[src] = [(str(dst), "import") for dst in raw_imps if dst]
+            for cs in related_call_sites:
+                if isinstance(cs, dict) and cs.get("file"):
+                    cs_file = str(cs["file"])
+                    if cs_file != seed_files[0]:
+                        edges_by_file.setdefault(cs_file, []).append((seed_files[0], "call"))
+            for tf in rm.get("tests") or []:
+                tf_str = str(tf)
+                tf_stem = Path(tf_str).stem
+                for sf in seed_files:
+                    sf_stem = Path(sf).stem
+                    if sf_stem and sf_stem in tf_stem and tf_str != sf:
+                        edges_by_file.setdefault(sf, []).append((tf_str, "test"))
+                        break
+
+            repo_files = list(rm.get("related_paths") or rm.get("files") or seed_files)
+            merkle_root, source_address = build_source_address_contract(
+                resolved_root_path, repo_files
+            )
+            manifest = (
+                load_unified_manifest(resolved_root_path, deadline_monotonic=deadline_monotonic)
+                if can_use_warm_cache
+                else None
+            )
+            view_fresh = check_view_freshness(manifest, merkle_root, ("symbols_v1", "graph_v1"))
+            manifest_fresh = all(view_fresh.values())
+
             rm_context_digest = hashlib.blake2b(
                 json.dumps(
                     {
                         "files": rm.get("files") or [],
                         "imports": rm.get("imports") or [],
                         "exports": rm.get("exports") or [],
+                        "merkle_root": merkle_root,
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -919,15 +963,56 @@ def _build_prepare_payload(
                 digest_size=32,
             ).hexdigest()
             ego_subgraph = sync_incremental_ego_subgraph_from_paths(
-                Path(resolved_path),
-                rm.get("files") or [seed_file],
+                resolved_root_path,
+                rm.get("files") or seed_files,
                 lambda p, _c: edges_by_file.get(p, []),
-                seed_file,
-                max_hops=1,
-                max_nodes=16,
+                seed_files[0],
+                max_hops=2,
+                max_nodes=24,
                 deadline_monotonic=deadline_monotonic,
                 context_digest=rm_context_digest,
             )
+            if len(seed_files) > 1 and ego_subgraph is not None:
+                merged_nodes = list(ego_subgraph.get("nodes") or [])
+                seen_nodes = set(merged_nodes)
+                merged_edges = list(ego_subgraph.get("edges") or [])
+                seen_edges = {
+                    (e.get("src"), e.get("dst"), e.get("kind"))
+                    for e in merged_edges
+                    if isinstance(e, dict)
+                }
+                for extra_seed in seed_files[1:]:
+                    if len(merged_nodes) >= 24:
+                        break
+                    extra = extract_ego_subgraph(
+                        resolved_root_path, extra_seed, max_hops=2, max_nodes=24
+                    )
+                    for node in extra.get("nodes") or []:
+                        if node not in seen_nodes and len(merged_nodes) < 24:
+                            seen_nodes.add(node)
+                            merged_nodes.append(node)
+                    for edge in extra.get("edges") or []:
+                        if isinstance(edge, dict):
+                            ekey = (edge.get("src"), edge.get("dst"), edge.get("kind"))
+                            if ekey not in seen_edges:
+                                seen_edges.add(ekey)
+                                merged_edges.append(edge)
+                ego_subgraph["nodes"] = merged_nodes
+                ego_subgraph["edges"] = merged_edges
+                ego_subgraph["seed_files"] = seed_files
+            if (
+                can_use_warm_cache
+                and not manifest_fresh
+                and ego_subgraph is not None
+                and int((ego_subgraph.get("sync") or {}).get("complete", 0)) == 1
+            ):
+                update_view_states(
+                    resolved_root_path,
+                    merkle_root,
+                    {"symbols_v1": (True, 1), "graph_v1": (True, 1)},
+                    source_address=source_address,
+                    deadline_monotonic=deadline_monotonic,
+                )
         except (OSError, ValueError, sqlite3.Error):
             ego_subgraph = None
 

@@ -1,0 +1,200 @@
+"""Unit tests for CodeNib-style unified cache manifest and LARGER lazy graph expansion."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from tensor_grep.cli import prepare_service, repo_map
+from tensor_grep.cli.unified_cache import (
+    CACHE_VIEWS,
+    MANIFEST_REL_PATH,
+    build_source_address_contract,
+    check_view_freshness,
+    compute_generation_merkle_root,
+    is_manifest_fresh,
+    load_unified_manifest,
+    save_unified_manifest,
+    update_view_states,
+)
+
+
+def _make_repo(root: Path) -> tuple[Path, Path, Path, Path]:
+    a_py = root / "billing.py"
+    b_py = root / "tax.py"
+    c_py = root / "ledger.py"
+    t_py = root / "test_billing.py"
+    a_py.write_text(
+        "from tax import compute_tax\n\ndef compute_invoice_total(amount):\n    return amount + compute_tax(amount)\n",
+        encoding="utf-8",
+    )
+    b_py.write_text(
+        "from ledger import record_entry\n\ndef compute_tax(amount):\n    record_entry(amount)\n    return amount * 0.1\n",
+        encoding="utf-8",
+    )
+    c_py.write_text("def record_entry(val):\n    return val\n", encoding="utf-8")
+    t_py.write_text(
+        "from billing import compute_invoice_total\n\ndef test_total():\n    assert compute_invoice_total(10) == 11\n",
+        encoding="utf-8",
+    )
+    return a_py, b_py, c_py, t_py
+
+
+def test_unified_manifest_creation_and_cross_view_freshness(tmp_path: Path) -> None:
+    files = list(_make_repo(tmp_path))
+    merkle_root, source_address = build_source_address_contract(tmp_path, files)
+    assert len(merkle_root) == 64
+    assert source_address["file_count"] == 4
+
+    assert update_view_states(
+        tmp_path,
+        merkle_root,
+        {
+            "symbols_v1": (True, 1),
+            "graph_v1": (True, 1),
+            "hybrid_v1": (True, 2),
+            "index_v1": (False, 1),
+        },
+        source_address=source_address,
+    )
+    manifest_path = tmp_path / MANIFEST_REL_PATH
+    assert manifest_path.is_file()
+
+    loaded = load_unified_manifest(tmp_path)
+    assert loaded is not None
+    assert loaded["merkle_root"] == merkle_root
+    freshness = check_view_freshness(loaded, merkle_root, CACHE_VIEWS)
+    assert freshness == {
+        "symbols_v1": True,
+        "graph_v1": True,
+        "hybrid_v1": True,
+        "index_v1": False,
+    }
+    assert is_manifest_fresh(loaded, merkle_root, ("symbols_v1", "graph_v1"))
+    assert not is_manifest_fresh(loaded, merkle_root, ("index_v1",))
+
+
+def test_unified_manifest_merkle_invalidation_on_file_change(tmp_path: Path) -> None:
+    a_py, b_py, c_py, t_py = _make_repo(tmp_path)
+    files = [a_py, b_py, c_py, t_py]
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+    assert save_unified_manifest(
+        tmp_path,
+        m1,
+        source_address=addr1,
+        views={"symbols_v1": {"name": "symbols_v1", "merkle_root": m1, "ready": True}},
+    )
+
+    b_py.write_text(
+        "def compute_tax(amount):\n    return amount * 0.25\n",
+        encoding="utf-8",
+    )
+    st = b_py.stat()
+    os.utime(b_py, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+
+    m2 = compute_generation_merkle_root(tmp_path, files)
+    assert m2 != m1
+    loaded = load_unified_manifest(tmp_path)
+    assert not is_manifest_fresh(loaded, m2, ("symbols_v1",))
+    assert check_view_freshness(loaded, m2, ("symbols_v1",)) == {"symbols_v1": False}
+
+
+def test_unified_manifest_rejects_tampered_and_unsigned_checkout_manifests(
+    tmp_path: Path,
+) -> None:
+    files = list(_make_repo(tmp_path))
+    m1, addr1 = build_source_address_contract(tmp_path, files)
+    assert save_unified_manifest(tmp_path, m1, source_address=addr1)
+
+    manifest_path = tmp_path / MANIFEST_REL_PATH
+    envelope = json.loads(manifest_path.read_text(encoding="utf-8"))
+    envelope["mac"] = "0" * 64
+    manifest_path.write_text(json.dumps(envelope), encoding="utf-8")
+    assert load_unified_manifest(tmp_path) is None
+
+    # Unsigned plain JSON payload without mac envelope also fails closed.
+    manifest_path.write_text(
+        json.dumps({"schema_version": 1, "merkle_root": m1, "source_address": addr1, "views": {}}),
+        encoding="utf-8",
+    )
+    assert load_unified_manifest(tmp_path) is None
+
+
+def test_unified_manifest_refuses_symlink_or_junction_cache_dir(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "a.py").write_text("x = 1\n", encoding="utf-8")
+    tg_cache = root / ".tg_cache"
+    try:
+        os.symlink(outside, tg_cache, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(tg_cache), str(outside)],
+                check=True,
+                capture_output=True,
+            )
+        else:
+            pytest.skip("symlink creation unavailable")
+
+    try:
+        m1, addr1 = build_source_address_contract(root, [root / "a.py"])
+        assert save_unified_manifest(root, m1, source_address=addr1) is False
+        assert load_unified_manifest(root) is None
+    finally:
+        if os.name == "nt" and tg_cache.exists() and not tg_cache.is_symlink():
+            subprocess.run(["cmd", "/c", "rmdir", str(tg_cache)], check=False)
+
+
+def test_warm_prepare_reuses_unified_manifest_and_expands_larger_neighborhood(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _make_repo(tmp_path)
+
+    build_calls = 0
+    orig_build = repo_map.build_repo_map
+
+    def spy_build(*args, **kwargs):
+        nonlocal build_calls
+        build_calls += 1
+        return orig_build(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "build_repo_map", spy_build)
+
+    cold = prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    assert build_calls >= 1
+    manifest_path = tmp_path / MANIFEST_REL_PATH
+    assert manifest_path.is_file()
+    manifest = load_unified_manifest(tmp_path)
+    assert manifest is not None
+    assert manifest["views"]["symbols_v1"]["ready"] is True
+    assert manifest["views"]["graph_v1"]["ready"] is True
+    cold_updated_at = manifest["views"]["graph_v1"]["updated_at"]
+
+    # 2-hop LARGER expansion should surface test_billing.py or tax.py in ego_nodes.
+    ego_nodes = cold["blast_radius_floor"]["ego_nodes"]
+    assert any("billing.py" in n for n in ego_nodes)
+    assert any("test_billing.py" in n or "tax.py" in n for n in ego_nodes)
+
+    # Warm run reuses warm cache + unified manifest with 0 build_repo_map calls.
+    build_calls = 0
+    warm = prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="invoice total calculation",
+        claim=False,
+    )
+    assert build_calls == 0
+    assert warm["primary_target"] == cold["primary_target"]
+    warm_manifest = load_unified_manifest(tmp_path)
+    assert warm_manifest is not None
+    assert warm_manifest["views"]["graph_v1"]["updated_at"] == cold_updated_at

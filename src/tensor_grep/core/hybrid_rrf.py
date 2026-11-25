@@ -192,6 +192,68 @@ def _unpack_embedding_py(blob: bytes | memoryview) -> list[float]:
     return list(struct.unpack(f"<{count}e", raw))
 
 
+def pack_heaviside_1bit(emb: Sequence[float] | None) -> bytes | None:
+    """Pack a float vector into a 4-byte dimension header + Heaviside 1-bit packed bytes."""
+    if emb is None:
+        return None
+    dim = len(emb)
+    header = struct.pack("<I", dim)
+    if dim == 0:
+        return header
+    if np is not None:
+        arr = np.asarray(emb, dtype=np.float64)
+        bits = np.where(np.isfinite(arr) & (arr >= 0.0), 1, 0).astype(np.uint8)
+        packed = np.packbits(bits, bitorder="little")
+        return header + bytes(packed.tobytes())
+    buf = bytearray((dim + 7) // 8)
+    for idx, val in enumerate(emb):
+        fval = float(val)
+        if math.isfinite(fval) and fval >= 0.0:
+            buf[idx >> 3] |= 1 << (idx & 7)
+    return header + bytes(buf)
+
+
+def unpack_heaviside_1bit(blob: bytes | memoryview) -> list[int]:
+    """Unpack a Heaviside 1-bit packed BLOB back into ``{0, 1}`` bits."""
+    raw = bytes(blob)
+    if len(raw) < 4:
+        raise ValueError(f"corrupt 1-bit embedding header length: {len(raw)}")
+    (dim,) = struct.unpack("<I", raw[:4])
+    payload = raw[4:]
+    expected_bytes = (dim + 7) // 8
+    if len(payload) != expected_bytes:
+        raise ValueError(
+            f"corrupt 1-bit embedding payload length: expected {expected_bytes}, got {len(payload)}"
+        )
+    if dim == 0:
+        return []
+    if np is not None:
+        unpacked = np.unpackbits(np.frombuffer(payload, dtype=np.uint8), bitorder="little")
+        return [int(b) for b in unpacked[:dim]]
+    return [(payload[idx >> 3] >> (idx & 7)) & 1 for idx in range(dim)]
+
+
+def hamming_similarity_1bit(a_blob: bytes | memoryview, b_blob: bytes | memoryview) -> float | None:
+    """Return normalized Hamming similarity in ``[-1.0, 1.0]`` for two 1-bit blobs."""
+    raw_a = bytes(a_blob)
+    raw_b = bytes(b_blob)
+    if len(raw_a) < 4 or len(raw_b) < 4:
+        return None
+    (dim_a,) = struct.unpack("<I", raw_a[:4])
+    (dim_b,) = struct.unpack("<I", raw_b[:4])
+    if dim_a != dim_b or dim_a == 0:
+        return None
+    pay_a = raw_a[4:]
+    pay_b = raw_b[4:]
+    expected_bytes = (dim_a + 7) // 8
+    if len(pay_a) != expected_bytes or len(pay_b) != expected_bytes:
+        return None
+    int_a = int.from_bytes(pay_a, "little")
+    int_b = int.from_bytes(pay_b, "little")
+    dist = (int_a ^ int_b).bit_count()
+    return float(1.0 - (2.0 * dist / int(dim_a)))
+
+
 class HybridSQLiteIndex:
     """Single-file SQLite WAL index combining FTS5 and vector cosine similarity."""
 
@@ -247,10 +309,16 @@ class HybridSQLiteIndex:
                     content TEXT NOT NULL,
                     alias_tokens TEXT NOT NULL DEFAULT '',
                     content_hash TEXT,
-                    embedding_blob BLOB
+                    embedding_blob BLOB,
+                    binary_blob BLOB
                 )
                 """
             )
+            doc_cols = {
+                str(r[1]) for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()
+            }
+            if "binary_blob" not in doc_cols:
+                self._conn.execute("ALTER TABLE documents ADD COLUMN binary_blob BLOB")
             self._conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -303,9 +371,11 @@ class HybridSQLiteIndex:
     def upsert_documents(
         self,
         docs: Sequence[tuple[str, str, Sequence[float] | None] | Mapping[str, Any]],
+        *,
+        quantize_only: bool = False,
     ) -> int:
         """Insert or update documents and their FTS5 + optional vector entries."""
-        normalized: list[tuple[str, str, str, bytes | None]] = []
+        normalized: list[tuple[str, str, str, bytes | None, bytes | None]] = []
         for item in docs:
             if isinstance(item, Mapping):
                 doc_id = str(item.get("doc_id", item.get("id", "")))
@@ -316,34 +386,43 @@ class HybridSQLiteIndex:
                 doc_id = str(doc_id)
                 content = str(content)
             c_hash = _content_hash(content)
-            emb_blob = _pack_embedding(emb)
-            normalized.append((doc_id, content, c_hash, emb_blob))
+            emb_blob = None if quantize_only else _pack_embedding(emb)
+            bin_blob = pack_heaviside_1bit(emb)
+            normalized.append((doc_id, content, c_hash, emb_blob, bin_blob))
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
             existing_rows = self._conn.execute(
-                "SELECT doc_id, content_hash, length(embedding_blob) FROM documents"
+                "SELECT doc_id, content_hash, length(embedding_blob), length(binary_blob) "
+                "FROM documents"
             ).fetchall()
-            existing: dict[str, tuple[str | None, int | None, bytes | None]] = {
+            existing: dict[str, tuple[str | None, int | None, int | None, bytes | None]] = {
                 str(r[0]): (
                     str(r[1]) if r[1] is not None else None,
                     int(r[2]) if r[2] is not None else None,
+                    int(r[3]) if r[3] is not None else None,
                     None,
                 )
                 for r in existing_rows
             }
-            for doc_id, content, c_hash, emb_blob in normalized:
+            for doc_id, content, c_hash, emb_blob, bin_blob in normalized:
                 emb_len = len(emb_blob) if emb_blob is not None else None
+                bin_len = len(bin_blob) if bin_blob is not None else None
                 prev = existing.get(doc_id)
                 if prev is not None:
-                    prev_hash, prev_len, prev_blob = prev
+                    prev_hash, prev_len, prev_bin_len, prev_blob = prev
                     if prev_hash == c_hash:
-                        if emb_blob is None and prev_len is None:
+                        if (
+                            emb_blob is None
+                            and prev_len is None
+                            and bin_blob is None
+                            and prev_bin_len is None
+                        ):
                             continue
-                        if emb_blob is not None and prev_len == emb_len:
+                        if prev_len == emb_len and prev_bin_len == bin_len:
                             if prev_blob is None:
                                 row = self._conn.execute(
-                                    "SELECT embedding_blob FROM documents WHERE doc_id = ?",
+                                    "SELECT embedding_blob, binary_blob FROM documents WHERE doc_id = ?",
                                     (doc_id,),
                                 ).fetchone()
                                 prev_blob = (
@@ -351,29 +430,39 @@ class HybridSQLiteIndex:
                                     if row is not None and row[0] is not None
                                     else None
                                 )
-                            if prev_blob == emb_blob:
-                                existing[doc_id] = (c_hash, emb_len, prev_blob)
+                                prev_bin = (
+                                    bytes(row[1])
+                                    if row is not None and row[1] is not None
+                                    else None
+                                )
+                            else:
+                                prev_bin = bin_blob
+                            if prev_blob == emb_blob and prev_bin == bin_blob:
+                                existing[doc_id] = (c_hash, emb_len, bin_len, prev_blob)
                                 continue
                         self._conn.execute(
-                            "UPDATE documents SET embedding_blob = ? WHERE doc_id = ?",
-                            (emb_blob, doc_id),
+                            "UPDATE documents SET embedding_blob = ?, binary_blob = ? WHERE doc_id = ?",
+                            (emb_blob, bin_blob, doc_id),
                         )
-                        existing[doc_id] = (c_hash, emb_len, emb_blob)
+                        existing[doc_id] = (c_hash, emb_len, bin_len, emb_blob)
                         continue
                 aliases = _extract_alias_tokens(content)
                 self._conn.execute(
                     """
-                    INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO documents (
+                        doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(doc_id) DO UPDATE SET
                         content = excluded.content,
                         alias_tokens = excluded.alias_tokens,
                         content_hash = excluded.content_hash,
-                        embedding_blob = excluded.embedding_blob
+                        embedding_blob = excluded.embedding_blob,
+                        binary_blob = excluded.binary_blob
                     """,
-                    (doc_id, content, aliases, c_hash, emb_blob),
+                    (doc_id, content, aliases, c_hash, emb_blob, bin_blob),
                 )
-                existing[doc_id] = (c_hash, emb_len, emb_blob)
+                existing[doc_id] = (c_hash, emb_len, bin_len, emb_blob)
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
@@ -448,36 +537,80 @@ class HybridSQLiteIndex:
         ordered = and_ids + [doc_id for _neg_cov, _bm25, doc_id in scored_or]
         return {doc_id: rank for rank, doc_id in enumerate(ordered, start=1)}
 
-    def _vector_rankings(self, query_vec: Sequence[float] | None) -> dict[str, int]:
+    def _vector_rankings(
+        self,
+        query_vec: Sequence[float] | None,
+        *,
+        limit: int | None = None,
+    ) -> dict[str, int]:
         if query_vec is None:
             return {}
         q_list = [float(v) for v in query_vec]
         if not q_list:
             return {}
         rows = self._conn.execute(
-            "SELECT doc_id, embedding_blob FROM documents WHERE embedding_blob IS NOT NULL"
+            "SELECT doc_id, embedding_blob, binary_blob FROM documents "
+            "WHERE embedding_blob IS NOT NULL OR binary_blob IS NOT NULL"
         ).fetchall()
         if not rows:
             return {}
 
+        q_bin = pack_heaviside_1bit(q_list)
+        preview_k = max(limit * 8, 32) if limit is not None and limit > 0 else len(rows)
+
+        # Stage 1: Fast 1-bit Hamming recall preview when binary_blob is present.
+        has_all_binary = q_bin is not None and all(r[2] is not None for r in rows)
+        survivors: list[tuple[str, bytes | None, float | None]]
+        if has_all_binary and q_bin is not None and len(rows) > preview_k:
+            hamming_scored: list[tuple[float, str, bytes | None]] = []
+            for doc_id, emb_blob, bin_blob in rows:
+                h_sim = hamming_similarity_1bit(q_bin, bin_blob)
+                if h_sim is None:
+                    continue
+                hamming_scored.append((h_sim, str(doc_id), bytes(emb_blob) if emb_blob else None))
+            hamming_scored.sort(key=lambda item: (-item[0], item[1]))
+            survivors = [
+                (doc_id, emb_blob, h_sim) for h_sim, doc_id, emb_blob in hamming_scored[:preview_k]
+            ]
+        else:
+            survivors = [
+                (
+                    str(doc_id),
+                    bytes(emb_blob) if emb_blob is not None else None,
+                    hamming_similarity_1bit(q_bin, bin_blob)
+                    if (q_bin is not None and bin_blob is not None)
+                    else None,
+                )
+                for doc_id, emb_blob, bin_blob in rows
+            ]
+
+        # Stage 2: Exact cosine rerank on survivors (or Hamming fallback if quantize_only=True).
         scored: list[tuple[str, float]] = []
         if np is not None:
             q_arr = np.asarray(q_list, dtype=np.float64)
             q_norm = float(np.linalg.norm(q_arr))
             if q_norm == 0.0:
                 return {}
-            for doc_id, emb_blob in rows:
-                vec = np.frombuffer(bytes(emb_blob), dtype="<f2").astype(np.float64)
+            for doc_id, emb_blob, h_sim in survivors:
+                if emb_blob is None:
+                    if h_sim is not None:
+                        scored.append((doc_id, h_sim))
+                    continue
+                vec = np.frombuffer(emb_blob, dtype="<f2").astype(np.float64)
                 if vec.shape != q_arr.shape:
                     continue
                 v_norm = float(np.linalg.norm(vec))
                 sim = float(np.dot(q_arr, vec) / (q_norm * v_norm)) if v_norm > 0.0 else 0.0
-                scored.append((str(doc_id), sim))
+                scored.append((doc_id, sim))
         else:
-            for doc_id, emb_blob in rows:
+            for doc_id, emb_blob, h_sim in survivors:
+                if emb_blob is None:
+                    if h_sim is not None:
+                        scored.append((doc_id, h_sim))
+                    continue
                 vec_py = _unpack_embedding_py(emb_blob)
                 sim = _cosine_similarity_py(q_list, vec_py)
-                scored.append((str(doc_id), sim))
+                scored.append((doc_id, sim))
 
         scored.sort(key=lambda item: (-item[1], item[0]))
         return {doc_id: rank for rank, (doc_id, _sim) in enumerate(scored, start=1)}
@@ -495,7 +628,7 @@ class HybridSQLiteIndex:
         if limit <= 0:
             return []
         fts_ranks = self._fts_rankings(query, limit=limit)
-        vec_ranks = self._vector_rankings(query_vec)
+        vec_ranks = self._vector_rankings(query_vec, limit=limit)
         if not fts_ranks and not vec_ranks:
             return []
 
