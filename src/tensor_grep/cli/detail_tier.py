@@ -134,9 +134,7 @@ def _bound_compact_json(filtered: dict[str, Any], *, ensure_ascii: bool) -> str:
             serialized = json.dumps(bounded, ensure_ascii=ensure_ascii, separators=(",", ":"))
             if len(serialized.encode("utf-8")) <= _COMPACT_MAX_BYTES:
                 return serialized
-    for key in sorted(
-        list(bounded.keys()), key=lambda k: len(json.dumps(bounded[k])), reverse=True
-    ):
+    for key in sorted(bounded.keys(), key=lambda k: len(json.dumps(bounded[k])), reverse=True):
         if key not in _CAPSULE_PROTECTED_KEYS:
             bounded.pop(key, None)
             bounded["compact_truncated"] = True
