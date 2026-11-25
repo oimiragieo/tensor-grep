@@ -77,6 +77,14 @@ _MAX_TIMEOUT_RETRIES = 3
 _READINESS_SUBPROCESS_CASE_TIMEOUT_S = 30
 
 
+def _clean_probe_env() -> dict[str, str]:
+    """Copy os.environ for independent top-level probes without inherited hop counters."""
+    env = dict(os.environ)
+    env.pop("TG_FRONTDOOR_HOPS", None)
+    env.setdefault("PYTHONUTF8", "1")
+    return env
+
+
 def effective_budget_s(check: Check) -> float:
     """The worst-case wall time an outer caller must budget for one check attempt."""
     return check.budget_s if check.budget_s is not None else float(check.timeout_s)
@@ -191,6 +199,7 @@ def validate_windows_launcher_quoted_patterns(
         completed = subprocess.run(
             command,
             cwd=repo_root,
+            env=_clean_probe_env(),
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -473,6 +482,7 @@ def validate_public_search_advertised_flag_sweep(
     help_result = subprocess.run(
         ["tg", "search", "--help"],
         cwd=repo_root,
+        env=_clean_probe_env(),
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -507,6 +517,7 @@ def validate_public_search_advertised_flag_sweep(
         completed = subprocess.run(
             command,
             cwd=repo_root,
+            env=_clean_probe_env(),
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -1249,8 +1260,7 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
     max_attempts = 1 + min(max(0, check.retry_on_timeout), _MAX_TIMEOUT_RETRIES)
     try:
         if check.command:
-            env = dict(os.environ)
-            env.setdefault("PYTHONUTF8", "1")
+            env = _clean_probe_env()
             last_timeout: subprocess.TimeoutExpired | None = None
             completed: subprocess.CompletedProcess[str] | None = None
             for _ in range(max_attempts):
