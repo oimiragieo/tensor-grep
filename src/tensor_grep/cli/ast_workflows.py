@@ -1190,20 +1190,22 @@ def scan_command(
     return 0
 
 
-def test_command(config: str | None = "sgconfig.yml") -> int:
+def test_command(config: str | None = "sgconfig.yml", *, json_output: bool = False) -> int:
     from dataclasses import replace
 
+    from tensor_grep.cli import prepare_format as _pf
     from tensor_grep.core.config import SearchConfig
 
     try:
         project_cfg, rules, _, test_data, _hints = _load_ast_project_data(config)
     except (FileNotFoundError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+        return _pf.emit_test_json_error(str(exc), config, json_output=json_output)
 
     rules_by_id = _load_test_rule_index(project_cfg, rules)
     if rules_by_id is None:
-        return 1
+        return _pf.emit_test_json_error(
+            "Failed to load AST test rules.", config, json_output=json_output, quiet=True
+        )
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_names_used: set[str] = set()
@@ -1333,18 +1335,14 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                     for case_key, _, _ in items:
                         failures.append(f"{case_key}: backend error: {exc}")
 
-    print(
-        f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "
-        f"from {project_cfg['config_path']}..."
+    return _pf.emit_test_json_result(
+        str(project_cfg["config_path"]),
+        sorted(backend_names_used),
+        total_cases,
+        failures,
+        json_output=json_output,
+        backend_desc=_describe_ast_backend_modes(backend_names_used),
     )
-    if failures:
-        for failure in failures:
-            print(f"[test] FAIL {failure}", file=sys.stderr)
-        print(f"Rule tests failed. cases={total_cases} failures={len(failures)}", file=sys.stderr)
-        return 1
-
-    print(f"All tests passed. cases={total_cases}")
-    return 0
 
 
 def main_entry(argv: list[str] | None = None) -> None:

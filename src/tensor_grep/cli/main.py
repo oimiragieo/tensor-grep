@@ -4916,6 +4916,7 @@ def codemap(
     out: str | None = typer.Option(
         None,
         "--out",
+        "--output",
         help="Output directory for pages + _coverage.json. Defaults to <path>/docs/code-map.",
     ),
     index_file: str = typer.Option(
@@ -6483,15 +6484,17 @@ def prepare(
         "--no-deadline",
         help="Disable prepare's default 60s --deadline bound; let it run unbounded.",
     ),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(
-        True, "--json/--text", help="Emit machine-readable JSON output (default)."
+        False, "--json/--text", help="Emit machine-readable JSON output."
     ),
     out: str | None = typer.Option(
         None,
         "--out",
+        "--output",
         help=(
-            "Also persist the full capsule JSON to FILE, byte-identical to the --json stdout "
-            "payload regardless of --text, so `tg evidence emit --capsule FILE` can reuse it "
+            "Also persist the full capsule JSON to FILE (always full, even when stdout uses "
+            "--text or --json --compact), so `tg evidence emit --capsule FILE` can reuse it "
             "without a manual save. Refuses to write through a pre-existing symlink."
         ),
     ),
@@ -6500,6 +6503,7 @@ def prepare(
     floor, validation commands, and claim/evidence coordination hooks -- the single call meant
     to replace the orient -> search -> agent -> route-test -> callers -> evidence -> ledger loop.
     """
+    _detail_tier.resolve_compact_detail(compact, "standard", json_output=json_output)
     # Anchor deadline_monotonic at CLI command entry (mirrors route-test/agent's #197/#200 fix):
     # computed BEFORE path/query resolution so front-door time counts against the same bound.
     from tensor_grep.cli.agent_capsule import DEFAULT_AGENT_CLI_DEADLINE_SECONDS
@@ -6532,61 +6536,15 @@ def prepare(
     # Output-before-exit (mirrors context-render/edit-plan/agent/route-test): print the full
     # payload FIRST, then exit 2 if either the capsule or the blast-radius floor was truncated --
     # never a silent exit 0 that reads as a complete, full-confidence result.
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        primary = payload.get("primary_target", {})
-        floor = payload.get("blast_radius_floor", {})
-        claim_hook = payload.get("coordination", {}).get("claim", {})
-        # `prepare` already ended with `partial=true partial_reason=...`, but only for the
-        # `partial` cause and only AFTER every line it qualifies. The banner covers every cause
-        # and leads. The key=value line stays: it is a structured field in a key=value listing,
-        # not prose duplicating prose (contrast `codemap`, where adding a banner beside its
-        # existing `PARTIAL:` sentence would have said the same thing twice in the same register).
+    from tensor_grep.cli.prepare_format import emit_prepare_output, write_prepare_out
+
+    if not json_output:
         _emit_scan_incompleteness_banner(payload)
-        typer.echo(f"Prepare for {payload['path']}")
-        typer.echo(f"query={payload['query']}")
-        typer.echo(f"primary={primary.get('file')}#L{primary.get('line')} {primary.get('symbol')}")
-        typer.echo(f"confidence={payload.get('confidence', {}).get('overall', 0)}")
-        typer.echo(
-            f"ask_required={bool(payload.get('ask_user_before_editing', {}).get('required'))}"
-        )
-        typer.echo(
-            "blast_radius_floor="
-            f"{floor.get('callers_count', 0)} callers (source={floor.get('source')})"
-        )
-        typer.echo(f"validation={len(payload.get('validation_commands', []))} commands")
-        typer.echo(f"claim_submitted={bool(claim_hook.get('submitted'))}")
-        if payload.get("partial"):
-            typer.echo(f"partial=true partial_reason={payload.get('partial_reason')}")
+    emit_prepare_output(payload, json_output=json_output, compact=compact)
 
     if out is not None:
-        # v1.92.1 dogfood feature 4: persist the FULL capsule JSON regardless of --text, so the
-        # file always works with `tg evidence emit --capsule FILE` (a text-mode summary would
-        # not). Written AFTER stdout above (never before) -- mirrors this command's own
-        # "output-before-exit" contract: an --out failure must not hide the payload that was
-        # already computed. Reuses the house atomic-write helper
-        # (_index_lock.atomic_write_json via session_store._write_json_atomic) with the exact
-        # same symlink-precheck-then-resolve shape `tg evidence emit --out` uses
-        # (main.py's evidence_emit, "audit C4 / CWE-59") rather than a bare open().write().
-        from tensor_grep.cli.session_store import _write_json_atomic
-
         try:
-            # C4/CWE-59: check for a symlink BEFORE `.resolve()` -- resolving first would
-            # follow the symlink to its real target and make `is_symlink()` on the result
-            # always False, silently defeating `_write_json_atomic`'s own symlink guard. This
-            # also refuses a DANGLING symlink (a broken target still makes `is_symlink()` True
-            # regardless of whether the target exists). A destination that is an existing
-            # directory is refused too, via the OSError `atomic_write_bytes`'s own
-            # `os.replace` raises when a file cannot replace a directory -- caught by the same
-            # `except OSError` below, never a raw traceback.
-            expanded_out = Path(out).expanduser()
-            if expanded_out.is_symlink():
-                raise OSError(
-                    f"Refusing to write the prepare capsule through a symlink: {expanded_out}"
-                )
-            resolved_out = expanded_out.resolve()
-            _write_json_atomic(resolved_out, payload)
+            write_prepare_out(out, payload)
         except OSError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1) from exc
@@ -9422,9 +9380,21 @@ def checkpoint_create(
 
     try:
         payload = create_checkpoint(path, paths=paths, label=label)
-    except Exception as exc:
-        typer.echo(str(exc), err=True)
+    except ValueError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps({"error": {"code": "invalid_input", "message": str(exc)}}, indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
+    except Exception as exc:
+        error_code = "path_not_found" if isinstance(exc, FileNotFoundError) else "create_failed"
+        if json_output:
+            typer.echo(json.dumps({"error": {"code": error_code, "message": str(exc)}}, indent=2))
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
 
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
@@ -9612,10 +9582,6 @@ def checkpoint_undo(
         resolve_latest_checkpoint,
         undo_checkpoint,
     )
-
-    if path == "--json":
-        json_output = True
-        path = "."
 
     try:
         if last:
@@ -9906,6 +9872,11 @@ def scan(
         "--sarif",
         help="Emit findings as a SARIF v2.1.0 log (GitHub code scanning, Azure DevOps, Sonar).",
     ),
+    output_format: str | None = typer.Option(
+        None,
+        "--format",
+        help="Output format ('sarif' aliases --sarif, 'json' aliases --json).",
+    ),
     baseline: str | None = typer.Option(
         None,
         "--baseline",
@@ -9981,6 +9952,18 @@ def scan(
 
     def _scan_err(error: str, detail: str, code: int = 1) -> None:
         _exit_search_error(error, detail, json_mode=bool(json_output), exit_code=code)
+
+    if output_format is not None:
+        fmt = output_format.strip().lower()
+        if fmt == "sarif":
+            sarif = True
+        elif fmt != "json":
+            _scan_err(
+                "invalid_argument",
+                f"Unsupported --format {output_format!r}; expected 'sarif' or 'json'.",
+            )
+        else:
+            json_output = True
 
     inline_source_count = sum(item is not None for item in (ruleset, inline_rules, rule_file))
     if inline_source_count > 1:
@@ -10246,11 +10229,12 @@ def test(
     config: str | None = typer.Option(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Emit structured JSON test results."),
 ) -> None:
     """Test structural rules in tensor-grep's bounded AST workflow slice."""
     from tensor_grep.cli import ast_workflows
 
-    exit_code = ast_workflows.test_command(config)
+    exit_code = ast_workflows.test_command(config, json_output=json_output)
     if exit_code != 0:
         raise typer.Exit(code=exit_code)
 
@@ -11818,6 +11802,7 @@ def review_bundle_create(
     output_path: str | None = typer.Option(
         None,
         "--output",
+        "--out",
         help="Optional file path where the review bundle JSON should be written.",
     ),
     json_output: bool = typer.Option(
@@ -12160,7 +12145,10 @@ def evidence_emit(
         "(independent of --sign).",
     ),
     output_path: str | None = typer.Option(
-        None, "--out", help="Optional file path where the receipt JSON should be written."
+        None,
+        "--out",
+        "--output",
+        help="Optional file path where the receipt JSON should be written.",
     ),
     json_output: bool = typer.Option(
         False, "--json", help="Emit the receipt as structured JSON to stdout."
@@ -12375,6 +12363,7 @@ def evidence_keygen(
     out_path: str | None = typer.Option(
         None,
         "--out",
+        "--output",
         help="Where to write the private key. Defaults to TG_EVIDENCE_SIGNING_KEY or "
         "~/.tensor-grep/keys/evidence_ed25519.key.",
     ),
