@@ -856,4 +856,24 @@ def test_sql_imports_python_syntax_error_file_is_flagged_not_zero_imports(tmp_pa
     result = runner.invoke(app, ["sql", str(proj), "SELECT * FROM imports", "--json"])
     assert result.exit_code == 2, result.output
     payload = json.loads(result.stdout)
-    assert payload["incomplete_reason"] == ["imports_unsupported_files"]
+    assert payload["incomplete_reason"] == ["imports_parse_errors"]
+
+
+def test_sql_imports_oversize_file_is_distinguished_from_parse_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Oversized files are reported as `imports_oversize_skipped`, not `imports_parse_errors`."""
+    from tensor_grep.cli import repo_map
+
+    proj = tmp_path / "proj"
+    _write(proj / "ok.py", "import os\n")
+    _write(proj / "big.py", "import sys\n" + "# padding\n" * 4)
+
+    monkeypatch.setattr(repo_map, "_max_parse_bytes", lambda: 16)
+
+    result = runner.invoke(app, ["sql", str(proj), "SELECT * FROM imports", "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is True
+    assert "imports_oversize_skipped" in payload["incomplete_reason"]
+    assert "imports_parse_errors" not in payload["incomplete_reason"]

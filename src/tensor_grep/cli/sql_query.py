@@ -307,7 +307,7 @@ def _run_imports_pass(
     norm_path: Any,
     clock: Any = None,
     unreadable_hit: Any = None,
-) -> tuple[list[tuple[str, str, int, str | None]], bool, bool]:
+) -> tuple[list[tuple[str, str, int, str | None]], bool, bool, bool, bool]:
     """The actual `imports` extraction+resolution pass -- ONLY called when
     `_detect_imports_referenced` says the query needs it .
 
@@ -317,7 +317,7 @@ def _run_imports_pass(
     files' own attributes is what `test_bare_call_ratchet.py`'s retired-to-zero pins guard
     against (a prior round of this same PR re-tripped that ratchet exactly this way).
 
-    Returns ``(import_records, imports_deadline_hit, imports_unsupported_files_hit)``. Line-aware
+    Returns ``(import_records, imports_deadline_hit, imports_unsupported_files_hit, imports_parse_errors_hit, imports_oversize_skipped_hit)``. Line-aware
     raw extraction comes from `repo_map._imports_with_lines_for_path` (10 supported languages);
     resolution to a target file comes from `repo_map._resolve_raw_import_entry`, which reports
     honestly-unresolved (NULL) rather than guessing. Sol audit round 2, finding 4: resolution
@@ -348,6 +348,8 @@ def _run_imports_pass(
     resolve_cache: dict[tuple[str, str, str, str, int, bool, bool], dict[str, Any]] = {}
     imports_deadline_hit = False
     imports_unsupported_files_hit = False
+    imports_parse_errors_hit = False
+    imports_oversize_skipped_hit = False
     import_records: list[tuple[str, str, int, str | None]] = []
     for file_str in repo_map.get("files", []):
         if clock() >= deadline_monotonic:
@@ -377,8 +379,11 @@ def _run_imports_pass(
             if unreadable_hit is not None:
                 unreadable_hit.record(exc)
             continue
-        if file_size > max_parse_bytes() or python_syntax_error_gap([file_path]) is not None:
-            imports_unsupported_files_hit = True
+        if file_size > max_parse_bytes():
+            imports_oversize_skipped_hit = True
+            continue
+        if python_syntax_error_gap([file_path]) is not None:
+            imports_parse_errors_hit = True
             continue
         try:
             # Sol audit (second silent-loss path): `_imports_with_lines_for_path` (repo_map.py)
@@ -432,7 +437,13 @@ def _run_imports_pass(
             ))
         if file_deadline_hit:
             break
-    return import_records, imports_deadline_hit, imports_unsupported_files_hit
+    return (
+        import_records,
+        imports_deadline_hit,
+        imports_unsupported_files_hit,
+        imports_parse_errors_hit,
+        imports_oversize_skipped_hit,
+    )
 
 
 def sql_command(
@@ -841,9 +852,17 @@ def sql_command(
         imports_referenced = _detect_imports_referenced(conn, query)
         imports_deadline_hit = False
         imports_unsupported_files_hit = False
+        imports_parse_errors_hit = False
+        imports_oversize_skipped_hit = False
         imports_unreadable_hit = _UnreadablePathFlag()
         if imports_referenced:
-            import_records, imports_deadline_hit, imports_unsupported_files_hit = _run_imports_pass(
+            (
+                import_records,
+                imports_deadline_hit,
+                imports_unsupported_files_hit,
+                imports_parse_errors_hit,
+                imports_oversize_skipped_hit,
+            ) = _run_imports_pass(
                 repo_map,
                 deadline_monotonic,
                 lang_registry_module=lang_registry,
@@ -862,7 +881,11 @@ def sql_command(
             conn.commit()
 
         imports_incomplete = (
-            imports_deadline_hit or imports_unsupported_files_hit or imports_unreadable_hit.hit
+            imports_deadline_hit
+            or imports_unsupported_files_hit
+            or imports_parse_errors_hit
+            or imports_oversize_skipped_hit
+            or imports_unreadable_hit.hit
         )
 
         # Sol R4: combine BEFORE the text banner, the JSON flag, and the exit-2 gate below -- an
@@ -884,6 +907,10 @@ def sql_command(
             incomplete_reasons.append("imports_deadline")
         if imports_unsupported_files_hit:
             incomplete_reasons.append("imports_unsupported_files")
+        if imports_parse_errors_hit:
+            incomplete_reasons.append("imports_parse_errors")
+        if imports_oversize_skipped_hit:
+            incomplete_reasons.append("imports_oversize_skipped")
         if imports_unreadable_hit.hit:
             incomplete_reasons.append("imports_unreadable_files")
 

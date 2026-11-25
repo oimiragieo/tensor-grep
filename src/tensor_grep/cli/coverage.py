@@ -12,6 +12,46 @@ from pathlib import Path
 from typing import Any
 
 _SESSION_INDEX_LIMIT = 8 * 1024 * 1024
+_NON_CODE_SKIPPED_SAMPLE_LIMIT = 20
+_NON_CODE_SUFFIXES = frozenset({
+    ".adoc",
+    ".bin",
+    ".cfg",
+    ".conf",
+    ".csv",
+    ".gif",
+    ".gitignore",
+    ".ico",
+    ".ini",
+    ".jpeg",
+    ".jpg",
+    ".json",
+    ".jsonc",
+    ".lock",
+    ".log",
+    ".markdown",
+    ".md",
+    ".pdf",
+    ".png",
+    ".rst",
+    ".svg",
+    ".toml",
+    ".tsv",
+    ".txt",
+    ".yaml",
+    ".yml",
+})
+_NON_CODE_FILENAMES = frozenset({
+    ".gitattributes",
+    ".gitignore",
+    "dockerfile",
+    "license",
+    "makefile",
+})
+
+
+def _is_non_code_file(path: Path) -> bool:
+    return path.name.lower() in _NON_CODE_FILENAMES or path.suffix.lower() in _NON_CODE_SUFFIXES
 
 
 def _iso_timestamp(value: str) -> float:
@@ -215,11 +255,12 @@ def _ast_cache_entries(root: Path, floor: Path | None = None) -> dict[str, tuple
         connection.close()
 
 
-def _unparsed_files(files: list[Path], root: Path) -> list[dict[str, str]]:
+def _unparsed_files(files: list[Path], root: Path) -> tuple[list[dict[str, str]], list[str]]:
     from tensor_grep.cli import lang_registry, repo_map
     from tensor_grep.cli.repo_map_coverage_gaps import _classify_uncached
 
     reasons: dict[str, str] = {}
+    non_code_skipped: list[str] = []
     buckets = _classify_uncached(files, root)
     for (kind, _language), bucket in buckets.items():
         if kind in {"parse-cap", "syntax-error", "unreadable", "lossy-decode"}:
@@ -234,7 +275,11 @@ def _unparsed_files(files: list[Path], root: Path) -> list[dict[str, str]]:
         spec = lang_registry.spec_for_path(path)
         name = _display_path(path, root)
         if spec is None:
-            reasons[name] = "missing_grammar"
+            if _is_non_code_file(path):
+                reasons.pop(name, None)
+                non_code_skipped.append(name)
+            else:
+                reasons[name] = "missing_grammar"
             continue
         parser = spec.parser_for_path(path) if spec.parser_for_path is not None else None
         if spec.parser_for_path is not None and parser is None:
@@ -249,7 +294,10 @@ def _unparsed_files(files: list[Path], root: Path) -> list[dict[str, str]]:
                     reasons[name] = "parse_error"
             except OSError:
                 reasons[name] = "unreadable"
-    return [{"path": path, "reason": reason} for path, reason in sorted(reasons.items())]
+    return (
+        [{"path": path, "reason": reason} for path, reason in sorted(reasons.items())],
+        sorted(non_code_skipped),
+    )
 
 
 def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[str, Any]:
@@ -282,6 +330,8 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
         if prior is None or cache_stamp >= prior[1]:
             receipts[name] = (digest, cache_stamp)
 
+    unparsed, non_code_skipped = _unparsed_files(files, scope)
+    non_code_set = set(non_code_skipped)
     stale: list[dict[str, str]] = []
     unindexed: list[str] = []
     has_index = bool(receipts)
@@ -289,9 +339,10 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     for name, current in displayed.items():
         old_digest = receipts.get(str(current.resolve()), (None, 0.0))[0]
         if old_digest is None:
-            unindexed.append(name)
-            if has_index:
-                stale.append({"path": name, "reason": "added"})
+            if name not in non_code_set:
+                unindexed.append(name)
+                if has_index:
+                    stale.append({"path": name, "reason": "added"})
             continue
         try:
             digest = _digest(current, repo_map._max_parse_bytes(), confinement=floor)
@@ -309,7 +360,6 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
             if name not in current_absolute and not Path(name).exists():
                 stale.append({"path": _display_path(Path(name), scope), "reason": "deleted"})
 
-    unparsed = _unparsed_files(files, scope)
     caps = ["max_repo_files"] if cap_hit else []
     if unreadable.hit:
         caps.append("unreadable_paths")
@@ -320,6 +370,10 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
         "stale": sorted(stale, key=lambda item: (item["path"], item["reason"])),
         "unindexed": sorted(unindexed),
         "unparsed": unparsed,
+        "non_code_skipped": {
+            "count": len(non_code_skipped),
+            "sample": non_code_skipped[:_NON_CODE_SKIPPED_SAMPLE_LIMIT],
+        },
         "complete": complete,
         "caps": caps,
     }
@@ -354,6 +408,8 @@ def coverage_command(path: str, *, json_output: bool) -> int:
                     typer.echo(f"{category}: {entry['path']} ({entry['reason']})")
                 else:
                     typer.echo(f"{category}: {entry}")
+        if payload["non_code_skipped"]["count"]:
+            typer.echo(f"non_code_skipped: {payload['non_code_skipped']['count']}")
         if payload["caps"]:
             typer.echo(f"caps: {', '.join(payload['caps'])}")
         typer.echo("complete" if payload["complete"] else "incomplete")
