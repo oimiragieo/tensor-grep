@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
 # compact outputSchema, tg_session preconditions & safety notes
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.26.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.27.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -3788,30 +3788,48 @@ def tg_ast_search(
         return _sanitized_tool_error_text("tg_ast_search", exc)
 
 
+_CLASSIFY_TEXT_MAX_BYTES = 2 * 1024 * 1024
+_CLASSIFY_ANOMALY_LINE_MAX_CHARS = 512
+_CLASSIFY_LINE_PATTERN = re.compile(r"[^\r\n]+(?:\r\n|\r|\n)?|(?:\r\n|\r|\n)")
+
+
 @_register_tool  # type: ignore
-def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
-    """Classify anomalies in a log file (heuristics default; CyBERT if TENSOR_GREP_CLASSIFY_PROVIDER=cybert)."""
+def tg_classify_logs(
+    file_path: str | None = None,
+    structured_json: bool = True,
+    text: str | None = None,
+) -> str:
+    """Classify anomalies in a log file or inline text (heuristics default; CyBERT if TENSOR_GREP_CLASSIFY_PROVIDER=cybert)."""
     # round-7 security (audit #81 #1): confine file_path to the project root (cwd) before any
     # read -- unconfined it is an arbitrary-file-read/exfil primitive (FallbackReader will
     # happily read .env/keys/anything locally readable, and up to 20 heuristic-flagged lines
     # are echoed back verbatim in anomalies[].text below). Forward the RESOLVED path so the
     # downstream read below sees the same anchor-validated location this check validated.
+    if (file_path is None and text is None) or (file_path is not None and text is not None):
+        message = "Provide exactly one of file_path or text."
+        if structured_json:
+            return _meta_invalid_input_error("tg_classify_logs", "classify_logs", message)
+        return f"Error: {message}"
+
+    target_label = "inline text"
     try:
-        try:
-            file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
-        except PathConfinementError as exc:
-            if structured_json:
-                # M14: confinement-refusal envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(
-                    json.dumps(
-                        {
-                            "file_path": "[refused]",
-                            "error": {"code": "invalid_input", "message": str(exc)},
-                        },
-                        indent=2,
+        if file_path is not None:
+            try:
+                file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
+            except PathConfinementError as exc:
+                if structured_json:
+                    # M14: confinement-refusal envelope crossed the wire un-stamped.
+                    return _self._inject_mcp_contract_fields(
+                        json.dumps(
+                            {
+                                "file_path": "[refused]",
+                                "error": {"code": "invalid_input", "message": str(exc)},
+                            },
+                            indent=2,
+                        )
                     )
-                )
-            return f"Error: {exc}"
+                return f"Error: {exc}"
+            target_label = file_path
 
         try:
             from tensor_grep.io.reader_fallback import FallbackReader
@@ -3821,32 +3839,60 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
                 _classify_lines_with_metadata,
             )
 
-            reader = FallbackReader()
-            # round-7 security (audit #81 #1): bound the read BEFORE materializing. read_lines()
-            # is a generator; previously `list(reader.read_lines(file_path))` fully materialized
-            # the entire file into memory before the DEFAULT_CLASSIFY_MAX_LINES budget was applied
-            # below -- an unbounded-memory DoS on a large (or attacker-influenceable) file. Cap the
-            # read one line past the budget via itertools.islice so `_apply_classify_line_budget`
-            # can still report `truncated=True` accurately without reading the rest of the file.
-            lines = list(
-                itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1)
-            )
-            if not lines:
-                if structured_json:
-                    # M14: empty/unreadable envelope crossed the wire un-stamped.
-                    return _self._inject_mcp_contract_fields(
-                        json.dumps(
-                            {
-                                "file_path": file_path,
-                                "error": {
-                                    "code": "invalid_input",
-                                    "message": f"File {file_path} is empty or unreadable.",
-                                },
-                            },
-                            indent=2,
-                        )
+            if text is not None:
+                if (
+                    len(text) > _CLASSIFY_TEXT_MAX_BYTES
+                    or len(text.encode("utf-8", errors="replace")) > _CLASSIFY_TEXT_MAX_BYTES
+                ):
+                    message = (
+                        f"text input exceeds maximum size of {_CLASSIFY_TEXT_MAX_BYTES} bytes."
                     )
-                return f"Error: File {file_path} is empty or unreadable."
+                    if structured_json:
+                        return _meta_invalid_input_error(
+                            "tg_classify_logs", "classify_logs", message
+                        )
+                    return f"Error: {message}"
+                lines = list(
+                    itertools.islice(
+                        (m.group(0) for m in _CLASSIFY_LINE_PATTERN.finditer(text)),
+                        DEFAULT_CLASSIFY_MAX_LINES + 1,
+                    )
+                )
+                if not lines:
+                    message = "text input is empty."
+                    if structured_json:
+                        return _meta_invalid_input_error(
+                            "tg_classify_logs", "classify_logs", message
+                        )
+                    return f"Error: {message}"
+            else:
+                assert file_path is not None
+                reader = FallbackReader()
+                # round-7 security (audit #81 #1): bound the read BEFORE materializing. read_lines()
+                # is a generator; previously `list(reader.read_lines(file_path))` fully materialized
+                # the entire file into memory before the DEFAULT_CLASSIFY_MAX_LINES budget was applied
+                # below -- an unbounded-memory DoS on a large (or attacker-influenceable) file. Cap the
+                # read one line past the budget via itertools.islice so `_apply_classify_line_budget`
+                # can still report `truncated=True` accurately without reading the rest of the file.
+                lines = list(
+                    itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1)
+                )
+                if not lines:
+                    if structured_json:
+                        # M14: empty/unreadable envelope crossed the wire un-stamped.
+                        return _self._inject_mcp_contract_fields(
+                            json.dumps(
+                                {
+                                    "file_path": file_path,
+                                    "error": {
+                                        "code": "invalid_input",
+                                        "message": f"File {file_path} is empty or unreadable.",
+                                    },
+                                },
+                                indent=2,
+                            )
+                        )
+                    return f"Error: File {file_path} is empty or unreadable."
 
             budgeted_lines, line_budget = _apply_classify_line_budget(
                 lines,
@@ -3859,43 +3905,45 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
             warnings_or_errors = []
             for i, r in enumerate(results):
                 if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
+                    line_text = budgeted_lines[i].strip()
+                    if len(line_text) > _CLASSIFY_ANOMALY_LINE_MAX_CHARS:
+                        line_text = line_text[: _CLASSIFY_ANOMALY_LINE_MAX_CHARS - 3] + "..."
                     warnings_or_errors.append((
-                        budgeted_lines[i].strip(),
+                        line_text,
                         r["label"],
                         r["confidence"],
                     ))
 
             if structured_json:
                 # M14: the success envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(
-                    json.dumps(
-                        {
-                            "file_path": file_path,
-                            "provider": provider_used,
-                            "provider_status": provider_status,
-                            "sample_lines": line_budget["emitted_lines"],
-                            "total_lines": line_budget["total_lines"],
-                            # Round-3 audit finding: sample_lines/total_lines are numeric
-                            # fields a client must compare itself; stamp the same explicit
-                            # top-level truncated boolean every other capped tool already
-                            # carries, so unified_incomplete_envelope's generic check works.
-                            "truncated": line_budget["emitted_lines"] < line_budget["total_lines"],
-                            "anomaly_count": len(warnings_or_errors),
-                            "anomalies": [
-                                {"label": label, "confidence": conf, "text": text}
-                                for text, label, conf in warnings_or_errors[:20]
-                            ],
-                        },
-                        indent=2,
-                    )
-                )
+                payload: dict[str, Any] = {
+                    "provider": provider_used,
+                    "provider_status": provider_status,
+                    "sample_lines": line_budget["emitted_lines"],
+                    "total_lines": line_budget["total_lines"],
+                    # Round-3 audit finding: sample_lines/total_lines are numeric
+                    # fields a client must compare itself; stamp the same explicit
+                    # top-level truncated boolean every other capped tool already
+                    # carries, so unified_incomplete_envelope's generic check works.
+                    "truncated": line_budget["emitted_lines"] < line_budget["total_lines"],
+                    "anomaly_count": len(warnings_or_errors),
+                    "anomalies": [
+                        {"label": label, "confidence": conf, "text": line_text}
+                        for line_text, label, conf in warnings_or_errors[:20]
+                    ],
+                }
+                if file_path is not None:
+                    payload["file_path"] = file_path
+                else:
+                    payload["source"] = "text"
+                return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
             if not warnings_or_errors:
-                return f"No severe anomalies detected in {file_path}. All logs appear nominal."
+                return f"No severe anomalies detected in {target_label}. All logs appear nominal."
 
             output = [
                 (
-                    f"Log Classification for {file_path} "
+                    f"Log Classification for {target_label} "
                     f"(provider={provider_used}, status={provider_status}, "
                     f"sample={line_budget['emitted_lines']}/{line_budget['total_lines']} lines):"
                 )

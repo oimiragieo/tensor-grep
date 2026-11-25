@@ -6,6 +6,17 @@ pub const LITERAL_PATTERN_HINT: &str =
     "Hint: If you intended literal code, retry with --fixed-strings (-F).";
 const MAX_HINT_PATTERN_BYTES: usize = 16 * 1024;
 
+fn has_identifier_before(pattern: &str, offset: usize) -> bool {
+    let Some(prefix) = pattern.as_bytes().get(..offset) else {
+        return false;
+    };
+    let mut i = prefix.len();
+    while i > 0 && (prefix[i - 1].is_ascii_alphanumeric() || prefix[i - 1] == b'_') {
+        i -= 1;
+    }
+    i < prefix.len() && (prefix[i].is_ascii_alphabetic() || prefix[i] == b'_')
+}
+
 /// Inspect syntax only, after the real engine has failed. Never change the pattern
 /// or treat a search error as a successful literal search.
 pub fn literal_pattern_hint(pattern: &str) -> Option<&'static str> {
@@ -20,6 +31,7 @@ pub fn literal_pattern_hint(pattern: &str) -> Option<&'static str> {
         ErrorKind::RepetitionMissing => {
             pattern.as_bytes().get(error.span().start.offset) == Some(&b'{')
         }
+        ErrorKind::GroupUnclosed => has_identifier_before(pattern, error.span().start.offset),
         _ => false,
     };
     delimiter_error.then_some(LITERAL_PATTERN_HINT)
@@ -39,7 +51,15 @@ mod tests {
 
     #[test]
     fn delimiter_errors_get_a_conditional_literal_hint() {
-        for pattern in ["KNOWN_COMMANDS = {", "items[", "x{2", "[", "{"] {
+        for pattern in [
+            "KNOWN_COMMANDS = {",
+            "items[",
+            "x{2",
+            "[",
+            "{",
+            "def foo(bar",
+            "compute_tax(",
+        ] {
             assert_eq!(
                 literal_pattern_hint(pattern),
                 Some(LITERAL_PATTERN_HINT),

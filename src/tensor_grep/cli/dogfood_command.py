@@ -11,7 +11,9 @@ import typer
 
 def dogfood(
     root: Path = typer.Option(Path("."), "--root", help="Repository root to validate."),
-    output: Path | None = typer.Option(None, "--output", help="Optional JSON report path."),
+    output: Path | None = typer.Option(
+        None, "--output", "--out", help="Optional JSON report path."
+    ),
     expected_version: str | None = typer.Option(
         None, "--expected-version", help="Expected tensor-grep version. Defaults to pyproject."
     ),

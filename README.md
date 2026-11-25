@@ -63,7 +63,7 @@ packages are not published yet.
 
 | Task | Start here | What you get |
 |---|---|---|
-| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; optional word-based relevance ranking with `--rank` |
+| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; `--rank` matches the pattern first and ranks matched lines/files by BM25 relevance (use `tg find` for multi-term natural-language queries) |
 | Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
 | Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
 | Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits (`--detail compact` for compact JSON) |
@@ -95,6 +95,10 @@ recommendation before deciding what to do:
 ```bash
 tg prepare . "add invoice tax validation" --json
 ```
+
+> **Migration note:** `tg prepare` now defaults to concise human-readable text when
+> `--json` is omitted. Use `--json` for machine consumers, or `--json --compact` for a
+> bounded `<= 4 KB` JSON payload.
 
 A **context capsule** is a structured collection of relevant files, symbols and snippets.
 It saves callers from assembling that information through separate searches. Sessions
