@@ -48,6 +48,21 @@ pub(crate) enum LaunchFailure {
     Unsettled(Box<UnsettledChild>),
 }
 
+fn handoff_job_breakaway_policy(args: &[OsString]) -> crate::win_job::JobBreakawayPolicy {
+    let mut non_flag_args = args
+        .iter()
+        .filter_map(|arg| arg.to_str())
+        .filter(|arg| !arg.starts_with('-'));
+    if non_flag_args.next() == Some("session")
+        && non_flag_args.next() == Some("daemon")
+        && non_flag_args.next() == Some("start")
+    {
+        crate::win_job::JobBreakawayPolicy::AllowBreakaway
+    } else {
+        crate::win_job::JobBreakawayPolicy::DenyBreakaway
+    }
+}
+
 pub(crate) fn launch_selected_native(
     runtime: ManagedRuntime,
     args: &[OsString],
@@ -61,7 +76,10 @@ pub(crate) fn launch_selected_native(
         .stderr(Stdio::inherit())
         .env(TG_FRONTDOOR_HOPS_ENV, hops.to_string());
     configure_managed_runtime_command(&mut command, &runtime.python, &runtime.native);
-    let mut child = command.spawn().map_err(LaunchFailure::Io)?;
+    let breakaway_policy = handoff_job_breakaway_policy(args);
+    let (_job_handle, mut child) =
+        crate::win_job::spawn_in_kill_on_close_job(&mut command, breakaway_policy)
+            .map_err(LaunchFailure::Io)?;
     let status = match child.wait() {
         Ok(status) => status,
         Err(wait_error) => {

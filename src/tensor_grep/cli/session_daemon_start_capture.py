@@ -41,11 +41,17 @@ def spawn_daemon_subprocess(
     spawn_cwd = root if root.is_dir() else root.parent
     # audit I7: detach the daemon from the launching process group/console so it is not
     # killed by signals delivered to the parent and survives the CLI invocation.
-    creationflags = 0
+    breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0) if os.name == "nt" else 0
+    base_creationflags = 0
     if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+        base_creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
+    candidate_flags = (
+        [base_creationflags | breakaway_flag, base_creationflags]
+        if breakaway_flag
+        else [base_creationflags]
+    )
     capture_path = sessions_dir / f"daemon-start.{uuid4().hex}.stderr"
     # O_EXCL rejects a planted symlink or junction at this unique name; the fd is never
     # re-opened by path after creation.
@@ -59,22 +65,33 @@ def spawn_daemon_subprocess(
     )
     capture_fd = os.open(capture_path, capture_flags, 0o600)
     try:
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "tensor_grep.cli.session_daemon",
-                "--root",
-                str(root),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=capture_fd,
-            stdin=subprocess.DEVNULL,
-            creationflags=creationflags,
-            start_new_session=os.name != "nt",
-            cwd=str(spawn_cwd),
-            env=env,
-        )
+        for index, creationflags in enumerate(candidate_flags):
+            try:
+                subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "tensor_grep.cli.session_daemon",
+                        "--root",
+                        str(root),
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=capture_fd,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                    start_new_session=os.name != "nt",
+                    cwd=str(spawn_cwd),
+                    env=env,
+                )
+                break
+            except OSError as exc:
+                if (
+                    index + 1 < len(candidate_flags)
+                    and getattr(exc, "winerror", None) == 5
+                    and env.get("TG_WIN_JOB_NO_BREAKAWAY") != "1"
+                ):
+                    continue
+                raise
     except BaseException:
         os.close(capture_fd)
         capture_path.unlink(missing_ok=True)

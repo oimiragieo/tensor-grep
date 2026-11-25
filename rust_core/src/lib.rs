@@ -74,6 +74,7 @@ pub mod runtime_paths;
 pub mod safe_write;
 pub mod search_error;
 mod search_file_open;
+pub mod win_job;
 
 use crate::backend_ast::AstBackend;
 use crate::backend_cpu::CpuBackend;
