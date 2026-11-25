@@ -38,11 +38,20 @@ _COMPACT_OMITTED_KEYS: frozenset[str] = frozenset({
 _COMPACT_MAX_BYTES = 4000
 _COMPACT_TRIM_ORDER: tuple[str, ...] = (
     "snippets",
-    "call_site_evidence",
     "candidates",
-    "validation_plan",
     "tests",
     "resolution_gaps",
+    "alternative_targets",
+    "related_call_sites",
+    "validation_commands",
+    "suggested_validation_commands",
+    "dependency_grounding",
+    "route_rationale",
+    "edit_order",
+    "ambiguity",
+    "scan_limit",
+    "call_site_evidence",
+    "validation_plan",
 )
 
 
