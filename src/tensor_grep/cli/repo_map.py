@@ -3666,7 +3666,7 @@ def _references_and_calls_for_path(
             definition_dirs=definition_dirs,  # type: ignore[call-arg]
         )
     # Explicit documented fallback for references_and_calls is None / unregistered path.
-    return _regex_references_and_calls(path, symbol)
+    return _self._regex_references_and_calls(path, symbol)
 
 
 lang_registry.register_language(
@@ -12533,7 +12533,7 @@ def build_symbol_refs_from_map(
         # chain). As of Task 10E (C++, the final wave) no registered language has
         # references_and_calls is None any more -- only an UNREGISTERED suffix hits the
         # EXPLICIT `_regex_references_and_calls` fallback inside `_references_and_calls_for_path`.
-        current_refs, current_calls = _references_and_calls_for_path(
+        current_refs, current_calls = _self._references_and_calls_for_path(
             current, symbol, repo_root, definition_dirs=go_definition_dirs
         )
         if current_spec is not None and current_spec.references_and_calls is not None:
@@ -12558,7 +12558,7 @@ def build_symbol_refs_from_map(
                 and not current_calls
                 and current_spec.provenance_when_missing == "regex-heuristic"
             ):
-                current_refs, current_calls = _regex_references_and_calls(current, symbol)
+                current_refs, current_calls = _self._regex_references_and_calls(current, symbol)
             # Merge call rows into the reference list for tree-sitter languages
             # (JS/TS/Rust/Go). Python keeps refs-only (the prior call site discarded calls
             # with `current_refs, _ = ...`); its provenance_when_parsed is "python-ast".
@@ -13516,7 +13516,7 @@ def build_symbol_callers_from_map(
             # if/elif chain). Foundational languages (references_and_calls is None) and
             # unregistered suffixes hit the EXPLICIT `_regex_references_and_calls`
             # fallback inside `_references_and_calls_for_path`.
-            _, current_calls = _references_and_calls_for_path(
+            _, current_calls = _self._references_and_calls_for_path(
                 current, symbol, repo_root, definition_dirs=go_definition_dirs
             )
             if current_spec is not None and current_spec.references_and_calls is not None:
@@ -13536,7 +13536,7 @@ def build_symbol_callers_from_map(
                 ):
                     current_calls = current_spec.provider_alias_calls(current, symbol, repo_root)
                 if not current_calls and current_spec.provenance_when_missing == "regex-heuristic":
-                    _, current_calls = _regex_references_and_calls(current, symbol)
+                    _, current_calls = _self._regex_references_and_calls(current, symbol)
             for current_call in current_calls:
                 call_payload = dict(current_call)
                 call_payload["provenance"] = _symbol_navigation_provenance_for_path(

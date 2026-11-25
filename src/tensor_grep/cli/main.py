@@ -6519,7 +6519,7 @@ def prepare(
             query_option=query,
             command_name="prepare",
         )
-        payload = _build_prepare_payload(
+        payload = _self._build_prepare_payload(
             path=resolved_path,
             query=resolved_query,
             claim=claim,
