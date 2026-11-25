@@ -80,7 +80,9 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
     return [record_from_entry(session_store.SessionRecord, entry) for entry in payload]
 
 
-def _session_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[str, float]]:
+def _session_entries(
+    root: Path, floor: Path | None = None, warnings: list[str] | None = None
+) -> dict[str, tuple[str, float]]:
     from tensor_grep.cli import session_store
     from tensor_grep.cli.session_provenance import read_session_payload, verified_session_readonly
 
@@ -95,7 +97,12 @@ def _session_entries(root: Path, floor: Path | None = None) -> dict[str, tuple[s
     result: dict[str, tuple[str, float]] = {}
     for record in sorted(records, key=lambda item: item.created_at, reverse=True):
         session_path = session_store._session_payload_path(session_root, record.session_id)
-        payload = read_session_payload(session_root, session_path)
+        try:
+            payload = read_session_payload(session_root, session_path)
+        except FileNotFoundError:
+            if warnings is not None:
+                warnings.append(f"missing session payload: {record.session_id}")
+            continue
         if payload.get("session_id") != record.session_id or not verified_session_readonly(payload):
             raise ValueError("session snapshot authentication failed")
         entries = payload.get("snapshot", [])
@@ -229,7 +236,8 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     if floor is not None:
         files = [item for item in files if _under_confinement(item, floor)]
     displayed = {_display_path(item, scope): item for item in files}
-    receipts: dict[str, tuple[str, float]] = dict(_session_entries(scope, floor))
+    warnings: list[str] = []
+    receipts: dict[str, tuple[str, float]] = dict(_session_entries(scope, floor, warnings=warnings))
     for name, (digest, cache_stamp) in _ast_cache_entries(scope, floor).items():
         prior = receipts.get(name)
         if prior is None or cache_stamp >= prior[1]:
@@ -267,7 +275,7 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     if unreadable.hit:
         caps.append("unreadable_paths")
     complete = not stale and not unindexed and not unparsed and not caps
-    return {
+    payload_out: dict[str, Any] = {
         "path": str(root),
         "files_total": len(files),
         "stale": sorted(stale, key=lambda item: (item["path"], item["reason"])),
@@ -276,6 +284,9 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
         "complete": complete,
         "caps": caps,
     }
+    if warnings:
+        payload_out["stale_session_warnings"] = warnings
+    return payload_out
 
 
 def coverage_command(path: str, *, json_output: bool) -> int:
@@ -284,7 +295,10 @@ def coverage_command(path: str, *, json_output: bool) -> int:
     try:
         payload = check_coverage(Path(path))
     except (OSError, ValueError, sqlite3.Error) as exc:
-        typer.echo(f"coverage: {exc}", err=True)
+        if json_output:
+            typer.echo(json.dumps({"path": str(Path(path)), "complete": False, "error": str(exc)}))
+        else:
+            typer.echo(f"coverage: {exc}", err=True)
         return 1
     rendered = json.dumps(payload, indent=2)
     if json_output:

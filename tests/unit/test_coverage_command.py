@@ -528,3 +528,37 @@ def test_coverage_confined_index_refuses_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="session index unreadable"):
         check_coverage(allowed, confinement_root=allowed)
+
+
+def test_coverage_dangling_session_id_emits_stale_session_warnings_json(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("value = 1\n", encoding="utf-8")
+    runner = CliRunner()
+    opened = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+
+    session_root = session_store._resolve_root(project)
+    index_path = session_store._index_path(session_root)
+    entries = json.loads(index_path.read_text(encoding="utf-8"))
+    dangling = dict(entries[0])
+    dangling["session_id"] = "dangling-session-id"
+    entries.append(dangling)
+    index_path.write_text(json.dumps(entries), encoding="utf-8")
+
+    result = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["complete"] is True
+    assert payload["stale_session_warnings"] == ["missing session payload: dangling-session-id"]
+
+
+def test_coverage_missing_path_emits_valid_json_error(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.py"
+    result = CliRunner().invoke(app, ["coverage", str(missing), "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["complete"] is False
+    assert "Path not found:" in payload["error"]
