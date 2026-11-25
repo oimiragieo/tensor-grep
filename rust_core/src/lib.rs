@@ -1,6 +1,26 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod apply_report;
+
+/// Strip Windows extended-length drive/UNC prefixes while preserving device namespaces.
+pub fn clean_windows_extended_path(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if text
+        .get(..8)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"\\?\UNC\"))
+    {
+        return format!(r"\\{}", &text[8..]);
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        let mut chars = rest.chars();
+        if let (Some(drive), Some(':'), Some(sep)) = (chars.next(), chars.next(), chars.next()) {
+            if drive.is_ascii_alphabetic() && (sep == '\\' || sep == '/') {
+                return rest.to_string();
+            }
+        }
+    }
+    text.into_owned()
+}
 pub mod backend_ast;
 pub mod backend_ast_workflow;
 pub mod backend_cpu;
@@ -487,4 +507,34 @@ fn cross_encoder_scores(
 #[pyfunction]
 fn _literal_pattern_hint(pattern: &str) -> Option<&'static str> {
     regex_hint::literal_pattern_hint(pattern)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_windows_extended_path;
+    use std::path::Path;
+
+    #[test]
+    fn clean_windows_extended_path_handles_mixed_case_unc_and_device_namespaces() {
+        assert_eq!(
+            clean_windows_extended_path(Path::new(r"\\?\UNC\server\share\tg.exe")),
+            r"\\server\share\tg.exe"
+        );
+        assert_eq!(
+            clean_windows_extended_path(Path::new(r"\\?\unc\server\share\tg.exe")),
+            r"\\server\share\tg.exe"
+        );
+        assert_eq!(
+            clean_windows_extended_path(Path::new(r"\\?\Unc\server\share\tg.exe")),
+            r"\\server\share\tg.exe"
+        );
+        assert_eq!(
+            clean_windows_extended_path(Path::new(r"\\?\C:\Users\demo\tg.exe")),
+            r"C:\Users\demo\tg.exe"
+        );
+        assert_eq!(
+            clean_windows_extended_path(Path::new(r"\\?\GLOBALROOT\Device\Harddisk0")),
+            r"\\?\GLOBALROOT\Device\Harddisk0"
+        );
+    }
 }

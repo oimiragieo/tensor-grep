@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any, cast
 
 from tensor_grep.cli._main_binding import _self as _self
+from tensor_grep.cli.doctor_launcher_probe import (
+    strip_windows_extended_prefix as _strip_windows_extended_prefix,
+)
 
 # Cross-module reads back into the head half of the split. These are NOT patched on
 # `main`, so a direct import is correct -- anything the test suite patches is reached
@@ -349,7 +352,23 @@ def _build_doctor_payload(
                 "and reset ACLs or reinstall the managed launcher."
             )
     gpu_status = _doctor_gpu_status()
-    gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(native_tg_binary)
+    if fast and native_frontdoor_flavor == "cpu":
+        gpu_status["search_runtime_probe"] = {
+            "status": "skipped_fast_cpu_flavor",
+            "requested_gpu_device_ids": [0],
+            "command": None,
+            "exit_code": None,
+            "routing_backend": None,
+            "routing_reason": None,
+            "sidecar_used": None,
+            "routing_gpu_device_ids": [],
+            "native_error_kind": None,
+            "error": None,
+        }
+    else:
+        gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(
+            native_tg_binary
+        )
     # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
     # GPU search runtime actually routes through NativeGpuBackend. Surface an honest
     # search_ready boolean derived from the runtime probe so callers don't read
@@ -377,7 +396,11 @@ def _build_doctor_payload(
         "invoked_as": sys.argv[0] if sys.argv else "tg",
         "root": str(root),
         "config": str(resolved_config),
-        "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
+        "native_tg_binary": (
+            _strip_windows_extended_prefix(str(native_tg_binary))
+            if native_tg_binary is not None
+            else None
+        ),
         "native_tg_binary_exists": native_tg_binary is not None,
         "native_tg_binary_kind": native_tg_binary_kind,
         "native_frontdoor_flavor": native_frontdoor_flavor,
@@ -485,7 +508,15 @@ def _build_doctor_payload(
         "ast_grep": _self._doctor_ast_grep_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
-        "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
+        "env": {
+            key: (
+                _strip_windows_extended_prefix(os.environ[key])
+                if key == "TG_NATIVE_TG_BINARY"
+                else os.environ[key]
+            )
+            for key in env_keys
+            if os.environ.get(key)
+        },
         "session_daemon": _self._doctor_session_daemon_status(str(root)),
         "dense_model": _doctor_dense_model_status(),
     }

@@ -39,6 +39,75 @@ def strip_windows_extended_prefix(path_str: str) -> str:
     return path_str
 
 
+def preferred_mcp_stdio_binary_path(native_tg_binary: Path) -> str:
+    """Return the stable managed shim path for MCP stdio clients when given a hash-versioned runtime."""
+    recommended = native_tg_binary
+    if (
+        len(native_tg_binary.parents) >= 4
+        and native_tg_binary.parent.name.lower() == "bin"
+        and native_tg_binary.parents[2].name.lower() == "runtimes"
+        and native_tg_binary.parents[3].name.lower() == ".tensor-grep"
+    ):
+        preferred_path = native_tg_binary.parents[3] / "bin" / native_tg_binary.name
+        if preferred_path.is_file():
+            recommended = preferred_path
+    return strip_windows_extended_prefix(str(recommended))
+
+
+def build_mcp_stdio_launcher_warning(
+    *,
+    native_tg_binary: Path | None,
+    launchers: list[tuple[str, str | None, str | None]],
+    path_tg_candidates: list[dict[str, str | None]] | None = None,
+) -> str | None:
+    native_stdio_path = native_tg_binary
+    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
+        native_stdio_path = next(
+            (
+                Path(path)
+                for _label, kind, path in launchers
+                if path
+                and Path(path).suffix.lower() == ".exe"
+                and kind in {"managed-native", "native-exe"}
+            ),
+            None,
+        )
+    if native_stdio_path is None or native_stdio_path.suffix.lower() != ".exe":
+        return None
+
+    powershell_launchers = [
+        (label, path)
+        for label, kind, path in launchers
+        if path and (kind == "powershell-shim" or Path(path).suffix.lower() == ".ps1")
+    ]
+    if path_tg_candidates:
+        seen_paths = {path for _, path in powershell_launchers if path}
+        for candidate in path_tg_candidates:
+            cpath = candidate.get("path")
+            if cpath and cpath not in seen_paths and Path(cpath).suffix.lower() == ".ps1":
+                powershell_launchers.append(("PATH .ps1 sibling", cpath))
+                seen_paths.add(cpath)
+    if not powershell_launchers:
+        return None
+
+    observed = "; ".join(
+        f"{label} resolves {strip_windows_extended_prefix(path)}"
+        for label, path in powershell_launchers
+    )
+    script_path = strip_windows_extended_prefix(powershell_launchers[0][1])
+    clean_native_stdio_path = preferred_mcp_stdio_binary_path(native_stdio_path)
+    return (
+        "MCP stdio launcher warning: "
+        f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
+        f"tg.exe directly: {clean_native_stdio_path}. Windows MCP/stdio clients that launch "
+        "`tg` via PowerShell Start-Process must target native tg.exe directly, not "
+        "`tg.ps1`, because Start-Process can resolve the PowerShell shim instead of "
+        "the native stdio-safe front door. If you intentionally use the PowerShell "
+        "script shim, configure the client to launch it explicitly as "
+        f"`pwsh -NoProfile -File {script_path} mcp`."
+    )
+
+
 def format_stale_daemon_cleanup_hint(root_path: str) -> str:
     """Format a shell-quoted cleanup hint for stale session_daemon metadata."""
     import os
