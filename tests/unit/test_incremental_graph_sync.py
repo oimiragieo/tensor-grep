@@ -182,7 +182,13 @@ def test_incremental_graph_sync_rejects_symlink_or_junction_cache_paths(tmp_path
 def test_extract_ego_subgraph_handles_multiple_edge_kinds_per_dst(tmp_path: Path) -> None:
     def _multi_edges(path: str, _content: str) -> list[tuple[str, str]]:
         if path == "a.py":
-            return [("b.py", "import"), ("b.py", "call"), ("b.py", "type"), ("c.py", "import")]
+            return [
+                ("b.py", "import"),
+                ("b.py", "call"),
+                ("b.py", "type"),
+                ("b.py", "ref"),
+                ("c.py", "import"),
+            ]
         return []
 
     sync_graph_edges(tmp_path, {"a.py": "1", "b.py": "2", "c.py": "3"}, _multi_edges)

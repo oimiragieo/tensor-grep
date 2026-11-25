@@ -334,17 +334,22 @@ def _build_prepare_payload(
             from tensor_grep.cli.symbol_graph_index import sync_incremental_ego_subgraph
 
             seed_file = str(target["file"])
-            import_edges = [
-                (str(edge.get("target") or edge.get("file") or ""), "import")
-                for edge in (rm.get("imports") or [])
-                if isinstance(edge, dict) and str(edge.get("file") or "") == seed_file
-            ]
-            seed_file_path = Path(seed_file)
-            seed_bytes = seed_file_path.read_bytes() if seed_file_path.is_file() else b""
+            edges_by_file: dict[str, list[tuple[str, str]]] = {}
+            for entry in rm.get("imports") or []:
+                if not isinstance(entry, dict):
+                    continue
+                src = str(entry.get("file") or "")
+                raw_imps = entry.get("imports") or []
+                if src and isinstance(raw_imps, list):
+                    edges_by_file[src] = [(str(dst), "import") for dst in raw_imps if dst]
+            repo_files: dict[str, bytes] = {}
+            for f_str in rm.get("files") or [seed_file]:
+                fp = Path(str(f_str))
+                repo_files[str(f_str)] = fp.read_bytes() if fp.is_file() else b""
             sync_incremental_ego_subgraph(
                 Path(resolved_path),
-                {seed_file: seed_bytes},
-                lambda _p, _c: [(dst, kind) for dst, kind in import_edges if dst],
+                repo_files,
+                lambda p, _c: edges_by_file.get(p, []),
                 seed_file,
                 max_hops=1,
                 max_nodes=16,
