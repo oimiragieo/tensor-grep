@@ -231,6 +231,14 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # No `_UnreadablePathFlag` path: this module deliberately does not import `repo_map`
     # (cycle), and a boolean confirmation surface has no `unreadable_paths` consumer.
     "lang_c_cpp_include.py": 0,
+    # AUDITED (DF-13): best-effort advisory return-type hint scanner (`_MAX_ADVISORY_FILES`);
+    # makes no completeness claim, only attaches an additive hint when an unmatched typed def is found.
+    "ast_workflow_rules.py": 1,
+    # AUDITED (DF-06): explicit disclosure via `reasons[name] = "unreadable"` returned to caller.
+    "coverage.py": 1,
+    # AUDITED (DF-10): explicit disclosure via `resolution_gaps_count += 1`,
+    # `constant_resolution_incomplete = True`, and `partial = True` returned to diff-impact.
+    "diff_impact_constants.py": 1,
 }
 
 

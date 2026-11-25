@@ -44,6 +44,8 @@ DISPOSITIONS: dict[tuple[str, str], str] = {
     # _run_imports_pass is wired to python_syntax_error_gap (test_sql_imports_table.py).
     ("cli/symbol_suggestions.py", "suggestions_for_payload"): "EXEMPT: proposes names after a miss "
     "that already carries the coverage disclosure",
+    ("cli/prepare_service.py", "_load_warm_prepare_cache"): "incremental warm cache refresh; "
+    "falls back to full build_repo_map on miss/error which computes universe gaps",
 }
 
 

@@ -15,7 +15,6 @@ import hashlib
 import hmac
 import json
 import sqlite3
-import subprocess
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -74,21 +73,27 @@ def _iter_import_records(
 
 
 def _git_head_revision(repo_root: Path) -> str:
+    git_dir = repo_root / ".git"
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=2.0,
-            check=False,
+        head_raw = (
+            read_confined(repo_root, git_dir / "HEAD", 4096).decode("utf-8", "replace").strip()
         )
-        if proc.returncode == 0:
-            rev = proc.stdout.strip()
-            if rev:
-                return rev
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return "no-git"
+        if not head_raw:
+            return "no-git"
+        if head_raw.startswith("ref:"):
+            ref_rel = head_raw[4:].strip().lstrip("/")
+            if not ref_rel or ".." in Path(ref_rel).parts:
+                return "no-git"
+            ref_path = git_dir / ref_rel
+            try:
+                rev = read_confined(repo_root, ref_path, 4096).decode("utf-8", "replace").strip()
+                if rev:
+                    return rev
+            except (OSError, ValueError):
+                return head_raw
+        return head_raw
+    except (OSError, ValueError):
+        return "no-git"
 
 
 def _collect_repo_map_file_paths(
