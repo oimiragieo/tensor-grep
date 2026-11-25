@@ -682,11 +682,13 @@ def _collapse_nullable_anyof(node: Any) -> None:
             if (
                 len(non_null) == 1
                 and isinstance(non_null[0], dict)
-                and set(non_null[0].keys()) == {"type"}
+                and set(non_null[0].keys()) <= {"type", "items"}
                 and isinstance(non_null[0].get("type"), str)
             ):
                 node.pop("anyOf")
                 node["type"] = [non_null[0]["type"], "null"]
+                if "items" in non_null[0]:
+                    node["items"] = non_null[0]["items"]
         desc = node.get("description")
         if isinstance(desc, str):
             node["description"] = _tighten_description_text(desc)
@@ -697,6 +699,43 @@ def _collapse_nullable_anyof(node: Any) -> None:
             _collapse_nullable_anyof(item)
 
 
+_COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "tg_navigate": "Symbol defs, source, refs, callers, and file imports/importers.",
+    "tg_impact": "Symbol change-impact, blast radius, plan, and rendered bundle.",
+    "tg_query": "Search code: text regex, ast pattern+lang, find semantic, index trigram.",
+    "tg_context": "Ranked context pack, edit plan, render, or agent capsule.",
+    "tg_explore": "Repo orientation, repo map, doctor diagnostics, and GPU devices.",
+    "tg_session": "Cached repo-map session lifecycle, context, and blast radius.",
+    "tg_scan": "Run ast-grep security ruleset scans and list rulesets.",
+    "tg_audit": "Verify rewrite audit manifests, history, diff, and review bundles.",
+    "tg_checkpoint": "Create, list, and undo workspace edit checkpoints.",
+    "tg_rewrite": "Plan, apply, or diff native AST structural code rewrites.",
+    "tg_mcp_capabilities": "Report MCP tool availability, contract version, and runtime.",
+    "tg_classify_logs": "Classify anomalies and patterns in a log file.",
+    "tg_batch": (
+        "Batch up to 16 queries with $prev/$steps[i] chaining and return_final_only. "
+        "Invalid top-level requests error; per-item errors set result_incomplete=true. "
+        "Deadlines cap at 120 seconds."
+    ),
+    "tg_coverage": "Report repo-map session and AST-cache coverage inventory.",
+    "tg_discover_tools": "Search the full MCP tool catalog by natural-language intent.",
+}
+
+
+def _strip_property_defaults(node: Any) -> None:
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for prop_schema in props.values():
+                if isinstance(prop_schema, dict) and prop_schema.get("default", 0) is None:
+                    prop_schema.pop("default", None)
+        for value in node.values():
+            _strip_property_defaults(value)
+    elif isinstance(node, list):
+        for item in node:
+            _strip_property_defaults(item)
+
+
 def tighten_mcp_tool_schemas(mcp_server_obj: Any) -> None:
     """Apply semantics-preserving TSCG tightening to registered compact MCP tool schemas."""
     tool_manager = getattr(mcp_server_obj, "_tool_manager", None)
@@ -704,9 +743,15 @@ def tighten_mcp_tool_schemas(mcp_server_obj: Any) -> None:
     if not callable(list_tools):
         return
     for tool in list_tools():
-        if isinstance(getattr(tool, "description", None), str):
+        tool_name = getattr(tool, "name", None)
+        if isinstance(tool_name, str) and tool_name in _COMPACT_TOOL_DESCRIPTIONS:
+            tool.description = _COMPACT_TOOL_DESCRIPTIONS[tool_name]
+        elif isinstance(getattr(tool, "description", None), str):
             tool.description = _tighten_description_text(tool.description)
         if isinstance(getattr(tool, "parameters", None), dict):
             _collapse_nullable_anyof(tool.parameters)
+            _strip_property_defaults(tool.parameters)
         if isinstance(getattr(tool, "output_schema", None), dict):
             _collapse_nullable_anyof(tool.output_schema)
+            tool.output_schema.pop("required", None)
+            tool.output_schema.pop("properties", None)

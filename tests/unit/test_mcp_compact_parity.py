@@ -234,7 +234,7 @@ def test_tscg_schema_tightening_preserves_types_defaults_and_constraints() -> No
     assert ctx_props["compact"]["default"] is False
     assert ctx_props["compact"]["type"] == "boolean"
     assert ctx_props["grounding"]["enum"] == ["off", "local", "registry"]
-    assert ctx_props["query"]["default"] is None
+    assert ctx_props["query"]["type"] == ["string", "null"]
 
     # Verify compact surface (TG_MCP_LEGACY_TOOLS=0) applies TSCG tightening without losing semantics.
     repo_root = Path(__file__).resolve().parents[2]

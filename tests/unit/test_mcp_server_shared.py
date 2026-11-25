@@ -742,12 +742,20 @@ def _tool_string_param_names(tool) -> list[str]:
     properties = tool.inputSchema.get("properties", {})
     names = []
     for param_name, schema in properties.items():
-        types_seen = set()
+        types_seen: set[str] = set()
         if "type" in schema:
-            types_seen.add(schema["type"])
+            schema_type = schema["type"]
+            if isinstance(schema_type, list):
+                types_seen.update(t for t in schema_type if isinstance(t, str))
+            elif isinstance(schema_type, str):
+                types_seen.add(schema_type)
         for sub in schema.get("anyOf", ()):
             if "type" in sub:
-                types_seen.add(sub["type"])
+                sub_type = sub["type"]
+                if isinstance(sub_type, list):
+                    types_seen.update(t for t in sub_type if isinstance(t, str))
+                elif isinstance(sub_type, str):
+                    types_seen.add(sub_type)
         if "string" in types_seen:
             names.append(param_name)
     return names
@@ -860,10 +868,11 @@ def _tool_array_string_param_names(tool) -> list[str]:
     for param_name, schema in properties.items():
         candidates = [schema, *schema.get("anyOf", ())]
         for candidate in candidates:
-            if (
-                candidate.get("type") == "array"
-                and candidate.get("items", {}).get("type") == "string"
-            ):
+            cand_type = candidate.get("type")
+            is_array = cand_type == "array" or (
+                isinstance(cand_type, list) and "array" in cand_type
+            )
+            if is_array and candidate.get("items", {}).get("type") == "string":
                 names.append(param_name)
                 break
     return names
