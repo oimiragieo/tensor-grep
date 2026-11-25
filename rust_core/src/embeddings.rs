@@ -38,6 +38,9 @@ impl StaticTokenEmbeddings {
                     vec.len()
                 ));
             }
+            if vec.iter().any(|w| !w.is_finite()) {
+                return Err(format!("token '{token}' weight contains non-finite value"));
+            }
         }
         Ok(Self { dim, weights })
     }
@@ -79,13 +82,13 @@ pub struct BinaryQuantizedEmbedding {
 }
 
 impl BinaryQuantizedEmbedding {
-    /// Quantize each dimension `v` into `1` if `v >= 0.0` else `0`, packed LSB-first per `u64` word.
+    /// Quantize each dimension `v` into `1` if finite and `v >= 0.0` else `0`, packed LSB-first per `u64` word.
     pub fn quantize(embedding: &[f32]) -> Self {
         let num_bits = embedding.len();
         let num_words = num_bits.div_ceil(64);
         let mut words = vec![0_u64; num_words];
         for (idx, &val) in embedding.iter().enumerate() {
-            if val >= 0.0 {
+            if val.is_finite() && val >= 0.0 {
                 words[idx / 64] |= 1_u64 << (idx % 64);
             }
         }
@@ -112,8 +115,9 @@ impl BinaryQuantizedEmbedding {
             .words
             .iter()
             .zip(other.words.iter())
-            .map(|(a, b)| (a ^ b).count_ones())
-            .sum())
+            .fold(0_u32, |acc, (a, b)| {
+                acc.saturating_add((a ^ b).count_ones())
+            }))
     }
 
     /// Normalized Hamming similarity in `[0.0, 1.0]`.
@@ -139,6 +143,9 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32, String> {
     let mut norm_a = 0.0_f64;
     let mut norm_b = 0.0_f64;
     for (&x, &y) in a.iter().zip(b.iter()) {
+        if !x.is_finite() || !y.is_finite() {
+            return Ok(0.0);
+        }
         let xf = f64::from(x);
         let yf = f64::from(y);
         dot += xf * yf;
@@ -146,10 +153,15 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Result<f32, String> {
         norm_b += yf * yf;
     }
     let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom == 0.0 {
+    if !dot.is_finite() || !denom.is_finite() || denom == 0.0 {
         return Ok(0.0);
     }
-    Ok((dot / denom) as f32)
+    let sim = (dot / denom) as f32;
+    if sim.is_finite() {
+        Ok(sim)
+    } else {
+        Ok(0.0)
+    }
 }
 
 fn tokenize(text: &str) -> Vec<String> {
@@ -182,20 +194,55 @@ fn deterministic_token_vector(token: &str, dim: usize) -> Vec<f32> {
 }
 
 fn add_normalized(acc: &mut [f32], vec: &[f32]) {
-    let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm == 0.0 {
+    if vec.iter().any(|v| !v.is_finite()) {
+        return;
+    }
+    let norm = vec
+        .iter()
+        .map(|&v| {
+            let vf = f64::from(v);
+            vf * vf
+        })
+        .sum::<f64>()
+        .sqrt();
+    if !norm.is_finite() || norm == 0.0 {
         return;
     }
     for (dst, &src) in acc.iter_mut().zip(vec.iter()) {
-        *dst += src / norm;
+        let scaled = (f64::from(src) / norm) as f32;
+        if scaled.is_finite() {
+            *dst += scaled;
+        }
     }
 }
 
 fn l2_normalize_in_place(vec: &mut [f32]) {
-    let norm: f32 = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm > 0.0 {
+    if vec.iter().any(|v| !v.is_finite()) {
         for v in vec.iter_mut() {
-            *v /= norm;
+            *v = 0.0;
+        }
+        return;
+    }
+    let norm = vec
+        .iter()
+        .map(|&v| {
+            let vf = f64::from(v);
+            vf * vf
+        })
+        .sum::<f64>()
+        .sqrt();
+    if norm.is_finite() && norm > 0.0 {
+        for v in vec.iter_mut() {
+            let normalized = (f64::from(*v) / norm) as f32;
+            *v = if normalized.is_finite() {
+                normalized
+            } else {
+                0.0
+            };
+        }
+    } else {
+        for v in vec.iter_mut() {
+            *v = 0.0;
         }
     }
 }
@@ -259,5 +306,35 @@ mod tests {
         let mut bad_weights = HashMap::new();
         bad_weights.insert("bad".to_string(), vec![1.0, 2.0]);
         assert!(StaticTokenEmbeddings::from_token_weights(4, bad_weights).is_err());
+
+        for non_finite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut non_finite_weights = HashMap::new();
+            non_finite_weights.insert("bad".to_string(), vec![1.0, non_finite, 0.0, 0.0]);
+            assert!(StaticTokenEmbeddings::from_token_weights(4, non_finite_weights).is_err());
+        }
+    }
+
+    #[test]
+    fn non_finite_inputs_do_not_propagate_in_cosine_quantize_or_normalize() {
+        let nan_vec = vec![1.0, f32::NAN, 0.5, -0.5];
+        let inf_vec = vec![1.0, f32::INFINITY, 0.5, f32::NEG_INFINITY];
+        let clean = vec![1.0, 0.0, 0.5, -0.5];
+
+        assert_eq!(cosine_similarity(&nan_vec, &clean).unwrap(), 0.0);
+        assert_eq!(cosine_similarity(&inf_vec, &clean).unwrap(), 0.0);
+
+        let q_inf = BinaryQuantizedEmbedding::quantize(&inf_vec);
+        assert_eq!(q_inf.words()[0], 0b0101_u64);
+        let q_nan = BinaryQuantizedEmbedding::quantize(&nan_vec);
+        assert_eq!(q_nan.words()[0], 0b0101_u64);
+
+        let mut acc = vec![1.0_f32, 2.0, 3.0, 4.0];
+        add_normalized(&mut acc, &nan_vec);
+        add_normalized(&mut acc, &inf_vec);
+        assert_eq!(acc, vec![1.0, 2.0, 3.0, 4.0]);
+
+        let mut to_norm = vec![1.0_f32, f32::INFINITY, 0.0, 0.0];
+        l2_normalize_in_place(&mut to_norm);
+        assert_eq!(to_norm, vec![0.0, 0.0, 0.0, 0.0]);
     }
 }

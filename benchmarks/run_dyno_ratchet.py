@@ -21,14 +21,19 @@ from pathlib import Path
 from typing import Any
 
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
+_SRC_DIR = _BENCHMARKS_DIR.parent / "src"
 if str(_BENCHMARKS_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCHMARKS_DIR))
+if _SRC_DIR.is_dir() and str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
 from gpu_native_bench_support import (  # noqa: E402
     _extract_rg_json_match_signatures,
     _extract_tg_match_signatures,
     _signature_files,
 )
+
+from tensor_grep.cli.doctor_proof_gates import sign_dyno_promotion_report  # noqa: E402
 
 MB = 1024 * 1024
 GB = 1024 * 1024 * 1024
@@ -497,12 +502,13 @@ def run_dyno_ratchet(
             )
 
     gate = evaluate_dyno_promotion_gate(rows, correctness_checks)
-    return {
+    report: dict[str, Any] = {
         "benchmark": "dyno_ratchet",
         "rows": rows,
         "correctness_checks": correctness_checks,
         **gate,
     }
+    return sign_dyno_promotion_report(report)
 
 
 def build_parser() -> argparse.ArgumentParser:

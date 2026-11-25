@@ -6,10 +6,12 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from tensor_grep.cli import doctor_payload, doctor_report, version_info
+from tensor_grep.cli import doctor_payload, doctor_proof_gates, doctor_report, version_info
+from tensor_grep.cli.symbols_cache_auth import load_machine_key
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT / "benchmarks") not in sys.path:
@@ -34,9 +36,7 @@ def _passing_row(
     size_bytes: int | None = None,
 ) -> dict[str, object]:
     resolved_size_bytes = (
-        size_bytes
-        if size_bytes is not None
-        else (1_000_000_000 if size_label == "1GB" else 5_000_000_000)
+        size_bytes if size_bytes is not None else (GB if size_label == "1GB" else 5 * GB)
     )
     return {
         "size_label": size_label,
@@ -52,6 +52,14 @@ def _passing_row(
             "sidecar_used": sidecar_used,
         },
     }
+
+
+def _sign_report(payload: dict[str, Any], checkout: Path) -> dict[str, Any]:
+    key = load_machine_key(checkout)
+    assert key is not None, "machine-private key must be available in unit test"
+    signed = dict(payload)
+    signed["hmac_sha256"] = doctor_proof_gates.compute_dyno_report_hmac(signed, key)
+    return signed
 
 
 def _passing_check(size_label: str, *, equal: bool = True) -> dict[str, object]:
@@ -183,16 +191,17 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
     assert promoted_bad is False
     assert "5GB parity failed" in reason_bad
 
-    good_report = tmp_path / "dyno_pass.json"
-    good_report.write_text(
-        json.dumps({
+    good_payload = _sign_report(
+        {
             "promotion_proof": True,
             "promotion_reason": "1GB & 5GB verified",
             "rows": [_passing_row("1GB"), _passing_row("5GB")],
             "correctness_checks": [_passing_check("1GB"), _passing_check("5GB")],
-        }),
-        encoding="utf-8",
+        },
+        tmp_path,
     )
+    good_report = tmp_path / "dyno_pass.json"
+    good_report.write_text(json.dumps(good_payload), encoding="utf-8")
     monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(good_report))
     promoted_false_probe, _ = doctor_report.evaluate_doctor_dyno_promotion_status(False)
     assert promoted_false_probe is False
@@ -201,9 +210,23 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
     assert promoted_ok is True
     assert "1GB & 5GB verified" in reason_ok
 
+    tampered_payload = dict(good_payload)
+    tampered_payload["promotion_reason"] = "tampered"
+    tampered_report = tmp_path / "dyno_tampered.json"
+    tampered_report.write_text(json.dumps(tampered_payload), encoding="utf-8")
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(tampered_report))
+    promoted_tampered, reason_tampered = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_tampered is False
+    assert "hmac" in reason_tampered.lower()
+
     forged_report = tmp_path / "dyno_forged.json"
     forged_report.write_text(
-        json.dumps({"promotion_proof": True, "promotion_reason": "1GB & 5GB verified"}),
+        json.dumps({
+            "promotion_proof": True,
+            "promotion_reason": "1GB & 5GB verified",
+            "rows": [_passing_row("1GB"), _passing_row("5GB")],
+            "correctness_checks": [_passing_check("1GB"), _passing_check("5GB")],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(forged_report))
@@ -220,9 +243,15 @@ def test_doctor_dyno_promotion_status_never_promotes_without_verified_report(
         "file_count_mismatch",
         "nonzero_gpu_exit_code",
         "small_size_bytes",
+        "under_gib_size_bytes",
         "missing_size_bytes",
         "missing_sidecar_used",
         "gpu_status_fail",
+        "missing_baseline_exit_code",
+        "duplicate_scale_row",
+        "duplicate_scale_check",
+        "malformed_observed_backends",
+        "huge_int_overflow",
     ],
 )
 def test_doctor_dyno_promotion_status_rejects_contradictory_evidence(
@@ -230,6 +259,7 @@ def test_doctor_dyno_promotion_status_rejects_contradictory_evidence(
 ) -> None:
     rows = [_passing_row("1GB"), _passing_row("5GB")]
     checks = [_passing_check("1GB"), _passing_check("5GB")]
+    extra: dict[str, Any] = {}
 
     if case_name == "match_count_mismatch":
         checks[0]["rg_match_count"] = 41
@@ -245,6 +275,8 @@ def test_doctor_dyno_promotion_status_rejects_contradictory_evidence(
         gpu_entry["exit_code"] = 1
     elif case_name == "small_size_bytes":
         rows[0]["size_bytes"] = 1024
+    elif case_name == "under_gib_size_bytes":
+        rows[0]["size_bytes"] = 1_000_000_000
     elif case_name == "missing_size_bytes":
         rows[1].pop("size_bytes", None)
     elif case_name == "missing_sidecar_used":
@@ -255,21 +287,92 @@ def test_doctor_dyno_promotion_status_rejects_contradictory_evidence(
         gpu_entry = rows[1]["tg_gpu"]
         assert isinstance(gpu_entry, dict)
         gpu_entry["status"] = "FAIL"
+    elif case_name == "missing_baseline_exit_code":
+        rg_entry = rows[0]["rg"]
+        assert isinstance(rg_entry, dict)
+        rg_entry.pop("exit_code", None)
+    elif case_name == "duplicate_scale_row":
+        rows = [_passing_row("1GB", gpu_s=99.0), _passing_row("1GB"), _passing_row("5GB")]
+    elif case_name == "duplicate_scale_check":
+        checks = [_passing_check("1GB", equal=False), _passing_check("1GB"), _passing_check("5GB")]
+    elif case_name == "malformed_observed_backends":
+        extra["observed_backends"] = [{}]
+    elif case_name == "huge_int_overflow":
+        gpu_entry = rows[0]["tg_gpu"]
+        assert isinstance(gpu_entry, dict)
+        gpu_entry["median_s"] = 10**400
 
     contradictory = tmp_path / f"dyno_{case_name}.json"
-    contradictory.write_text(
-        json.dumps({
+    contradictory_payload = _sign_report(
+        {
             "promotion_proof": True,
             "promotion_reason": "1GB & 5GB verified",
             "rows": rows,
             "correctness_checks": checks,
-        }),
-        encoding="utf-8",
+            **extra,
+        },
+        tmp_path,
     )
+    contradictory.write_text(json.dumps(contradictory_payload), encoding="utf-8")
     monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(contradictory))
     promoted, reason = doctor_report.evaluate_doctor_dyno_promotion_status(True)
     assert promoted is False
     assert "verification" in reason.lower() or "experimental" in reason.lower()
+
+
+def test_doctor_dyno_promotion_status_rejects_symlink_and_oversized_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    oversized = tmp_path / "dyno_oversized.json"
+    oversized.write_bytes(b"{" + b" " * (4 * 1024 * 1024 + 16) + b"}")
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(oversized))
+    promoted_big, reason_big = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_big is False
+    assert "limit" in reason_big.lower() or "unverified" in reason_big.lower()
+
+    monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(tmp_path))
+    promoted_dir, _ = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_dir is False
+
+    target = tmp_path / "real_report.json"
+    target.write_text(
+        json.dumps(
+            _sign_report(
+                {
+                    "promotion_proof": True,
+                    "promotion_reason": "1GB & 5GB verified",
+                    "rows": [_passing_row("1GB"), _passing_row("5GB")],
+                    "correctness_checks": [_passing_check("1GB"), _passing_check("5GB")],
+                },
+                tmp_path,
+            )
+        ),
+        encoding="utf-8",
+    )
+    link_path = tmp_path / "linked_report.json"
+    try:
+        link_path.symlink_to(target)
+    except OSError:
+        import os
+        import stat as stat_mod
+
+        real_lstat = os.lstat
+
+        def _fake_lstat(path: object, *args: object, **kwargs: object) -> object:
+            res = real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+            if Path(str(path)) == target:
+                fake_list = list(res)
+                fake_list[0] = (res.st_mode & ~0o170000) | stat_mod.S_IFLNK
+                return os.stat_result(fake_list)
+            return res
+
+        monkeypatch.setattr(doctor_proof_gates.os, "lstat", _fake_lstat)
+        monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(target))
+    else:
+        monkeypatch.setenv("TG_DYNO_RATCHET_REPORT_PATH", str(link_path))
+    promoted_link, reason_link = doctor_report.evaluate_doctor_dyno_promotion_status(True)
+    assert promoted_link is False
+    assert "symlink" in reason_link.lower() or "regular" in reason_link.lower()
 
 
 def test_lsp_warm_pool_proof_requires_all_10_languages_within_latency_budget() -> None:
