@@ -61,7 +61,10 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
     if not index_path.exists():
         return []
     if floor is None:
-        return session_store._load_index(root)
+        try:
+            return session_store._load_index(root)
+        except (AttributeError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("invalid session index entry") from exc
     anchor = floor.resolve()
     if not root.resolve().is_relative_to(anchor):
         return []
@@ -77,7 +80,15 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
         raise ValueError("session index is not valid JSON") from exc
     if not isinstance(payload, list):
         raise ValueError("session index is not a JSON array")
-    return [record_from_entry(session_store.SessionRecord, entry) for entry in payload]
+    records: list[Any] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            raise ValueError("invalid session index entry")
+        try:
+            records.append(record_from_entry(session_store.SessionRecord, entry))
+        except TypeError as exc:
+            raise ValueError("invalid session index entry") from exc
+    return records
 
 
 def _session_entries(
@@ -222,11 +233,15 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     from tensor_grep.cli import repo_map
 
     root = path.expanduser().resolve()
+    floor = confinement_root.resolve() if confinement_root is not None else None
+    if floor is not None and not _under_confinement(root, floor):
+        raise ValueError("path is outside confinement root")
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
     is_directory = root.is_dir()
     scope = root if is_directory else root.parent
-    floor = confinement_root.resolve() if confinement_root is not None else None
+    if floor is not None and not _under_confinement(scope, floor):
+        raise ValueError("path is outside confinement root")
     cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
     unreadable = repo_map._UnreadablePathFlag()
     walked = repo_map._iter_repo_files(root, max_files=cap + 1, unreadable_hit=unreadable)
@@ -295,10 +310,14 @@ def coverage_command(path: str, *, json_output: bool) -> int:
     try:
         payload = check_coverage(Path(path))
     except (OSError, ValueError, sqlite3.Error) as exc:
+        raw_error = str(exc)
+        error_message = raw_error.splitlines()[0][:240] if raw_error else type(exc).__name__
         if json_output:
-            typer.echo(json.dumps({"path": str(Path(path)), "complete": False, "error": str(exc)}))
+            typer.echo(
+                json.dumps({"path": str(Path(path)), "complete": False, "error": error_message})
+            )
         else:
-            typer.echo(f"coverage: {exc}", err=True)
+            typer.echo(f"coverage: {error_message}", err=True)
         return 1
     rendered = json.dumps(payload, indent=2)
     if json_output:

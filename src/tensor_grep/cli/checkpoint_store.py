@@ -89,7 +89,18 @@ _NON_GIT_IGNORED_DIRS = {
     "site",
     "target",
 }
+_NON_GIT_IGNORED_DIRS_LOWER = {name.lower() for name in _NON_GIT_IGNORED_DIRS}
 _DISCOVERY_IGNORED_DIRS = _NON_GIT_IGNORED_DIRS - {"artifacts"}
+
+
+def _is_ignored_snapshot_dir(name: str) -> bool:
+    if os.name == "nt":
+        return name.lower() in _NON_GIT_IGNORED_DIRS_LOWER
+    return name in _NON_GIT_IGNORED_DIRS
+
+
+def _is_tg_cache_part(name: str) -> bool:
+    return name.lower() == ".tg_cache" if os.name == "nt" else name == ".tg_cache"
 
 
 class CheckpointNotFoundError(FileNotFoundError):
@@ -701,7 +712,8 @@ def _git_snapshot_entries(root: Path) -> tuple[dict[str, bool], list[str]]:
         if not raw:
             continue
         rel = raw.decode("utf-8", errors="surrogateescape")
-        if _CHECKPOINT_DIRNAME in Path(rel).parts:
+        parts = Path(rel).parts
+        if _CHECKPOINT_DIRNAME in parts or any(_is_tg_cache_part(part) for part in parts):
             continue
         candidate = root / rel
         if candidate.is_dir() and not candidate.is_symlink():
@@ -719,7 +731,7 @@ def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
     # restores content, and copying a link's target would disclose out-of-root data (and could
     # re-materialize it into the tree on undo). rglob previously followed symlinked dirs.
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(name for name in dirnames if name not in _NON_GIT_IGNORED_DIRS)
+        dirnames[:] = sorted(name for name in dirnames if not _is_ignored_snapshot_dir(name))
         for filename in sorted(filenames):
             full = Path(dirpath) / filename
             if full.is_symlink():
@@ -728,7 +740,7 @@ def _filesystem_snapshot_entries(root: Path) -> dict[str, bool]:
                 relative = full.relative_to(root)
             except ValueError:
                 continue
-            if any(part in _NON_GIT_IGNORED_DIRS for part in relative.parts):
+            if any(_is_ignored_snapshot_dir(part) for part in relative.parts):
                 continue
             entries[relative.as_posix()] = True
     return dict(sorted(entries.items()))

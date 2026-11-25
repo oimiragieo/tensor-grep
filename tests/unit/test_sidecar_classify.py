@@ -465,3 +465,39 @@ def test_python_cli_classify_json_flag_and_conflict(monkeypatch) -> None:
     )
     assert conflict.exit_code == 2
     assert "cannot be combined" in conflict.stderr
+
+    same_json = CliRunner().invoke(
+        app, ["classify", "--json", "--format", "json", "--text", "INFO ok"]
+    )
+    assert same_json.exit_code == 0, same_json.output
+    assert json.loads(same_json.stdout)["classifications"][0]["label"] == "info"
+
+
+def test_sidecar_heuristic_avoids_terror_false_positive_and_handles_end_of_options(
+    monkeypatch, tmp_path
+) -> None:
+    from tensor_grep.backends.cybert_backend import CybertBackend
+    from tensor_grep.sidecar import _classify_payload, _heuristic_classify_lines
+
+    monkeypatch.delenv("TENSOR_GREP_CLASSIFY_PROVIDER", raising=False)
+    lines = [
+        "The policy aims to prevent terror",
+        "FATAL out of descriptors",
+        "CRITICAL OutOfMemoryError",
+        "ValueError: invalid input",
+        "connection_error during handshake",
+    ]
+    labels = [item["label"] for item in _heuristic_classify_lines(lines)]
+    assert labels == ["info", "error", "critical", "error", "error"]
+    assert CybertBackend()._heuristic_classify(lines) == _heuristic_classify_lines(lines)
+
+    tricky_file = tmp_path / "--format=text"
+    tricky_file.write_text("The policy aims to prevent terror\n", encoding="utf-8")
+    stdout, stderr, exit_code = _classify_payload(
+        ["--format", "json", "--max-lines", "10", "--", str(tricky_file)],
+        None,
+    )
+    assert stderr == ""
+    assert exit_code == 0
+    payload = json.loads(stdout)
+    assert payload["classifications"][0]["label"] == "info"

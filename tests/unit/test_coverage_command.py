@@ -562,3 +562,42 @@ def test_coverage_missing_path_emits_valid_json_error(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["complete"] is False
     assert "Path not found:" in payload["error"]
+
+
+def test_coverage_confinement_fails_closed_before_walk(tmp_path: Path, monkeypatch) -> None:
+    from tensor_grep.cli import repo_map
+
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.py").write_text("secret = 1\n", encoding="utf-8")
+
+    def _fail_walk(*args, **kwargs):
+        raise AssertionError("_iter_repo_files must not run for out-of-confinement path")
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", _fail_walk)
+
+    with pytest.raises(ValueError, match="outside confinement root"):
+        check_coverage(outside, confinement_root=allowed)
+
+
+def test_coverage_malformed_session_index_emits_valid_json_error(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("value = 1\n", encoding="utf-8")
+    runner = CliRunner()
+    opened = runner.invoke(app, ["session", "open", str(project), "--json"])
+    assert opened.exit_code == 0, opened.output
+
+    session_root = session_store._resolve_root(project)
+    index_path = session_store._index_path(session_root)
+    index_path.write_text("[null]", encoding="utf-8")
+
+    result = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["complete"] is False
+    assert payload["error"] == "invalid session index entry"

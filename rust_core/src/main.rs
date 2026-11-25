@@ -5187,8 +5187,18 @@ mod tests {
 
     #[test]
     fn classify_args_accepts_json_and_rejects_conflicting_format() {
-        let Commands::Classify(args) = CommandCli::try_parse_from(["tg", "classify", "--json", "--text", "CRITICAL OOM"]).unwrap().command else { panic!() };
-        assert!(args.json && resolve_classify_format(args.json, args.format.as_deref()) == Ok("json".to_string()));
+        let Commands::Classify(args) =
+            CommandCli::try_parse_from(["tg", "classify", "--json", "--text", "CRITICAL OOM"])
+                .unwrap()
+                .command
+        else {
+            panic!()
+        };
+        assert!(
+            args.json
+                && resolve_classify_format(args.json, args.format.as_deref())
+                    == Ok("json".to_string())
+        );
         assert!(resolve_classify_format(true, Some("text")).is_err());
     }
 
@@ -14006,7 +14016,12 @@ fn resolve_classify_format(json: bool, format: Option<&str>) -> Result<String, &
     if json && format.is_some_and(|fmt| fmt != "json") {
         return Err("Error: tg classify --json cannot be combined with --format");
     }
-    Ok(if json { "json" } else { format.unwrap_or("json") }.to_string())
+    Ok(if json {
+        "json"
+    } else {
+        format.unwrap_or("json")
+    }
+    .to_string())
 }
 
 fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
@@ -14057,6 +14072,7 @@ fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
         );
     }
     let mut full_args = sidecar_args;
+    full_args.push("--".to_string());
     full_args.push(file_path);
     handle_sidecar_command("classify", full_args, None)
 }

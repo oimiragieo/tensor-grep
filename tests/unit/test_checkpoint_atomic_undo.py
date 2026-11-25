@@ -791,3 +791,53 @@ def test_checkpoint_excludes_tg_cache_from_snapshot_and_undo_divergence(tmp_path
     undone = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
     assert undone.diverged_paths == []
     assert cache_db.read_text(encoding="utf-8") == "sqlite-mutated"
+
+
+@requires_checkpoint_creation
+def test_git_checkpoint_excludes_unignored_tg_cache_from_snapshot_and_undo(tmp_path: Path) -> None:
+    import os
+    import subprocess
+    import time
+
+    root = tmp_path / "git-repo"
+    root.mkdir()
+    _make_project(
+        root,
+        {
+            "src/app.py": "print('ok')\n",
+            ".tg_cache/symbols_v1/metadata.sqlite3": "sqlite-bytes",
+            ".tg_cache/symbols_v1/metadata.sqlite3.lock": "lock",
+        },
+    )
+    subprocess.run(["git", "-C", str(root), "init"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Test User"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(root), "add", "src/app.py"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+    created = checkpoint_store.create_checkpoint(str(root))
+    assert created.mode == "git-worktree-snapshot"
+    assert created.file_count == 1
+    snapshot_dir = root / ".tensor-grep" / "checkpoints" / created.checkpoint_id / "snapshot"
+    assert not (snapshot_dir / ".tg_cache").exists()
+
+    cache_db = root / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    cache_db.write_text("sqlite-mutated", encoding="utf-8")
+    future = time.time() + 10
+    os.utime(cache_db, (future, future))
+
+    undone = checkpoint_store.undo_checkpoint(created.checkpoint_id, str(root))
+    assert undone.diverged_paths == []
+    assert cache_db.read_text(encoding="utf-8") == "sqlite-mutated"
