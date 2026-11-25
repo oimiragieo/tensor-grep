@@ -178,7 +178,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
 # compact outputSchema, tg_session preconditions & safety notes
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.25.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.26.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1121,9 +1121,29 @@ _PLAN_DIGEST_VERSION = "tg-plan-digest-v1"
 
 
 @_register_tool  # type: ignore
-def tg_mcp_capabilities() -> str:
+def tg_mcp_capabilities(summary: bool = False) -> str:
     """Report MCP tool availability for the current runtime."""
     try:
+        if summary:
+            from tensor_grep.cli.mcp_compact import (
+                build_capabilities_summary_payload,
+                finalize_capabilities_summary,
+            )
+
+            native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
+            summary_payload = build_capabilities_summary_payload(
+                version=_json_output_version(),
+                mcp_contract_version=_TG_MCP_SERVER_CONTRACT_VERSION,
+                cli_version=_mcp_server_version(),
+                native_available=native_tg is not None,
+                embedded_rewrite_available=bool(_self._embedded_rewrite_available()),
+                legacy_tools_enabled=bool(_legacy_tools_enabled()),
+                total_tools=len(_MCP_TOOL_CAPABILITIES),
+                meta_tools=sorted(_META_MCP_TOOLS),
+                singleton_tools=sorted(_SINGLETON_MCP_TOOLS),
+            )
+            injected = _self._inject_mcp_contract_fields(json.dumps(summary_payload, indent=2))
+            return finalize_capabilities_summary(injected)
         return _self._inject_mcp_contract_fields(
             json.dumps(_self._mcp_capabilities_payload(), indent=2)
         )
@@ -4692,6 +4712,7 @@ def tg_context(
     grounding: Literal["off", "local", "registry"] = "local",
     rerank: Literal["off", "auto", "cross-encoder"] = "off",
     citations: bool = False,
+    compact: bool = False,
 ) -> str:
     """Edit-planning context (query required): capsule (1200 tok), edit_plan (targets), pack (~16k), render (pack+source)."""
     try:
@@ -4703,17 +4724,24 @@ def tg_context(
         refusal = _av.investigation_options_refusal(grounding, rerank)
         if refusal is not None:
             return _meta_invalid_input_error("tg_context", action, refusal)
+        if compact and citations:
+            return _meta_invalid_input_error(
+                "tg_context", action, "compact=True cannot be combined with citations=True."
+            )
         if query is None:
             return _meta_missing_param_error("tg_context", action, "query")
 
         try:
+            from tensor_grep.cli.mcp_compact import compact_mcp_json_result
+
             max_tokens_kwargs: dict[str, Any] = (
                 {} if max_tokens is None else {"max_tokens": max_tokens}
             )
+            result_json: str | None = None
             if action == "pack":
-                return _self.tg_context_pack(query=query, path=path, **max_tokens_kwargs)
-            if action == "edit_plan":
-                return _self.tg_edit_plan(
+                result_json = _self.tg_context_pack(query=query, path=path, **max_tokens_kwargs)
+            elif action == "edit_plan":
+                result_json = _self.tg_edit_plan(
                     query=query,
                     path=path,
                     max_files=max_files,
@@ -4723,8 +4751,8 @@ def tg_context(
                     max_symbols=max_symbols,
                     provider=provider,
                 )
-            if action == "render":
-                return _self.tg_context_render(
+            elif action == "render":
+                result_json = _self.tg_context_render(
                     query=query,
                     path=path,
                     max_files=max_files,
@@ -4740,8 +4768,8 @@ def tg_context(
                     citations=citations,
                     **max_tokens_kwargs,
                 )
-            if action == "capsule":
-                return _self.tg_agent_capsule(
+            elif action == "capsule":
+                result_json = _self.tg_agent_capsule(
                     query=query,
                     path=path,
                     max_files=max_files,
@@ -4758,7 +4786,9 @@ def tg_context(
                     citations=citations,
                     **max_tokens_kwargs,
                 )
-            return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
+            else:
+                return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
+            return compact_mcp_json_result(result_json, action=action) if compact else result_json
         except Exception as exc:
             payload = _meta_envelope(tool="tg_context", action=action)
             payload["error"] = _sanitized_tool_error("tg_context", exc)
@@ -4779,8 +4809,9 @@ def tg_explore(
     config: str | None = "sgconfig.yml",
     with_lsp: bool = True,
     json_output: bool = True,
+    compact: bool = False,
 ) -> str:
-    """Repo orientation & diagnostics: orient (capsule), repo_map (inventory), doctor (system/GPU/LSP), devices (GPUs)."""
+    """Repo orientation & diagnostics: orient (capsule), repo_map (inventory), doctor (system/GPU/LSP), devices (GPUs). compact=True bounds JSON responses to <=4000 bytes (requires json_output=True)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -4789,21 +4820,33 @@ def tg_explore(
         except PathConfinementError as exc:
             return _meta_confinement_error("tg_explore", action, exc)
 
+        if compact and not json_output:
+            return _meta_invalid_input_error(
+                "tg_explore", action, "compact=True cannot be combined with json_output=False."
+            )
+
         try:
+            result_json: str | None = None
             if action == "orient":
-                return _self.tg_orient(
+                result_json = _self.tg_orient(
                     path=path,
                     max_tokens=max_tokens,
                     max_central_files=max_central_files,
                     ignore=ignore,
                 )
-            if action == "repo_map":
-                return _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
-            if action == "doctor":
-                return _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
-            if action == "devices":
-                return _self.tg_devices(json_output=json_output)
-            return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
+            elif action == "repo_map":
+                result_json = _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
+            elif action == "doctor":
+                result_json = _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
+            elif action == "devices":
+                result_json = _self.tg_devices(json_output=json_output)
+            else:
+                return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
+            if compact:
+                from tensor_grep.cli.mcp_compact import compact_mcp_json_result
+
+                return compact_mcp_json_result(result_json, action=action)
+            return result_json
         except Exception as exc:
             payload = _meta_envelope(tool="tg_explore", action=action)
             payload["error"] = _sanitized_tool_error("tg_explore", exc)
