@@ -51,7 +51,7 @@ def test_doctor_session_daemon_stale_metadata_emits_cleanup_hint(
     status = doctor_report._doctor_session_daemon_status(root_str)
     assert status["stale_metadata"] is True
     assert "\\\\?\\" not in status["cleanup_hint"]
-    assert f"tg session daemon stop {root_str}" in status["cleanup_hint"]
+    assert f"tg session daemon stop '{root_str}'" in status["cleanup_hint"]
 
     rendered = doctor_payload._render_doctor_payload({
         "version": "1.0.0",
