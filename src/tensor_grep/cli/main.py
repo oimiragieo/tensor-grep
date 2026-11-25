@@ -32,6 +32,7 @@ from tensor_grep.cli import _index_lock as _index_lock
 from tensor_grep.cli import ast_scan as _ast_scan
 from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import citations as _citations
+from tensor_grep.cli import compact_payloads as _compact_payloads
 from tensor_grep.cli import detail_tier as _detail_tier
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
@@ -5500,9 +5501,11 @@ def context_render(
         help="Accepted for command-surface parity with codemap; a no-op since context-render "
         "already defaults to an unbounded --deadline.",
     ),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
+    _compact_payloads.validate_compact_flags(compact, json_output=json_output, citations=citations)
     # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
     # repo_map import, path resolution, and daemon gate, so front-door time counts against --deadline.
     # CLI consistency fix : `--deadline` used to be undefined on
@@ -5548,10 +5551,7 @@ def context_render(
             # exit-2-on-scan-truncation contract as the cold path below -- a truncated daemon payload
             # still prints in full, then exits 2, instead of a silent exit 0 that reads as complete.
             if json_output:
-                if daemon_payload.get("render_profile") == "llm":
-                    typer.echo(json.dumps(daemon_payload, separators=(",", ":")))
-                else:
-                    typer.echo(json.dumps(daemon_payload, indent=2))
+                typer.echo(_compact_payloads.dump_render(daemon_payload, compact))
             else:
                 _emit_scan_incompleteness_banner(daemon_payload)
                 typer.echo(str(daemon_payload.get("rendered_context", "")))
@@ -5587,10 +5587,7 @@ def context_render(
     if citations:
         _citations.emit_payload_citations(payload, resolved_path, json_output=json_output)
     elif json_output:
-        if payload.get("render_profile") == "llm":
-            typer.echo(json.dumps(payload, separators=(",", ":")))
-        else:
-            typer.echo(json.dumps(payload, indent=2))
+        typer.echo(_compact_payloads.dump_context_render_json(payload, compact=compact))
     else:
         _emit_scan_incompleteness_banner(payload)
         typer.echo(payload["rendered_context"])
@@ -7083,11 +7080,7 @@ def _emit_symbol_command_result(
         )
         is_truncation = True
     if json_output:
-        if detail == "compact":
-            from tensor_grep.cli.symbol_compact import trim_symbol_compact_payload
-
-            payload = trim_symbol_compact_payload(payload, result_key=result_key)
-        typer.echo(_detail_tier.dump_detail_json(payload, detail))
+        typer.echo(_compact_payloads.dump_cmd(payload, detail, result_key))
     else:
         leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
         if leading is not None:
@@ -8361,6 +8354,7 @@ def blast_radius_render(
             "whatever was found so far, instead of running unbounded."
         ),
     ),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready blast-radius bundle for a symbol.
@@ -8369,6 +8363,7 @@ def blast_radius_render(
     (callers/caller_tree/affected_files/blast_radius_score), use
     `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
     """
+    _compact_payloads.validate_compact_flags(compact, json_output=json_output)
     from tensor_grep.cli.repo_map import (
         _deadline_monotonic_from_seconds,
         build_symbol_blast_radius_render,
@@ -8412,6 +8407,7 @@ def blast_radius_render(
         json_output=json_output,
         emit_text=lambda current: typer.echo(current["rendered_context"]),
         keep_candidate_symbols=True,
+        detail="compact" if compact else "standard",
     )
 
 
@@ -8449,12 +8445,14 @@ def blast_radius_plan(
     deadline: float | None = _deadline_option(
         "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
     ),
+    compact: bool = _detail_tier.compact_option(),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable blast-radius planning bundle without rendered source text.
 
     Like `blast-radius --json` but shaped as an edit/action plan (no source snippets).
     """
+    _compact_payloads.validate_compact_flags(compact, json_output=json_output)
     from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
 
     try:
@@ -8497,6 +8495,7 @@ def blast_radius_plan(
         json_output=json_output,
         emit_text=_emit_text,
         keep_candidate_symbols=True,
+        detail="compact" if compact else "standard",
     )
 
 
