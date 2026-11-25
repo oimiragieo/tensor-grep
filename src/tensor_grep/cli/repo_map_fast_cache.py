@@ -7,7 +7,6 @@ import hashlib
 import os
 import tempfile
 from collections.abc import Callable
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -49,34 +48,47 @@ def canonical_symbol_cache_root(
     return cache_root
 
 
-@lru_cache(maxsize=4096)
-def _cached_python_import_summary(
-    source_digest: str,
+_IMPORT_SUMMARY_CACHE: dict[str, _ImportSummary | None] = {}
+_IMPORT_SUMMARY_CACHE_MAX = 512
+
+
+def clear_python_import_summary_cache() -> None:
+    _IMPORT_SUMMARY_CACHE.clear()
+
+
+def _get_or_compute_import_summary(
+    cache_key: str,
     source: str,
     cached_ast_parse: Callable[[str], ast.Module],
 ) -> _ImportSummary | None:
-    _ = source_digest
+    if cache_key in _IMPORT_SUMMARY_CACHE:
+        return _IMPORT_SUMMARY_CACHE[cache_key]
     try:
         tree = cached_ast_parse(source)
     except SyntaxError:
-        return None
-    records: list[tuple[bool, str | None, int, tuple[tuple[str, str | None], ...]]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            records.append((
-                False,
-                None,
-                0,
-                tuple((alias.name, alias.asname) for alias in node.names),
-            ))
-        elif isinstance(node, ast.ImportFrom):
-            records.append((
-                True,
-                node.module,
-                int(node.level or 0),
-                tuple((alias.name, alias.asname) for alias in node.names),
-            ))
-    return tuple(records)
+        summary: _ImportSummary | None = None
+    else:
+        records: list[tuple[bool, str | None, int, tuple[tuple[str, str | None], ...]]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                records.append((
+                    False,
+                    None,
+                    0,
+                    tuple((alias.name, alias.asname) for alias in node.names),
+                ))
+            elif isinstance(node, ast.ImportFrom):
+                records.append((
+                    True,
+                    node.module,
+                    int(node.level or 0),
+                    tuple((alias.name, alias.asname) for alias in node.names),
+                ))
+        summary = tuple(records)
+    if len(_IMPORT_SUMMARY_CACHE) >= _IMPORT_SUMMARY_CACHE_MAX:
+        _IMPORT_SUMMARY_CACHE.clear()
+    _IMPORT_SUMMARY_CACHE[cache_key] = summary
+    return summary
 
 
 def python_file_imports_symbol_fast(
@@ -86,9 +98,9 @@ def python_file_imports_symbol_fast(
     module_path_matches_definition: Callable[[str, str], bool],
     cached_ast_parse: Callable[[str], ast.Module],
 ) -> bool:
-    """Check whether Python `source` imports `symbol` from `definition_path` using cached import summaries."""
+    """Check whether Python `source` imports `symbol` from `definition_path` using digest-keyed import summaries."""
     digest = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()
-    summary = _cached_python_import_summary(digest, source, cached_ast_parse)
+    summary = _get_or_compute_import_summary(f"{digest}:{len(source)}", source, cached_ast_parse)
     if summary is None:
         return False
     for is_from, module, level, names in summary:
