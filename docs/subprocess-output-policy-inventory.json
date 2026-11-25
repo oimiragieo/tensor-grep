@@ -606,10 +606,10 @@
     "producer_fingerprint": "babba0ff9efe32801d2fcdbe16fe0bdfcfcdb73a42fbb856a14fc584886c7b90"
   },
   {
-    "identity": "cli/dogfood_features.py:_run:subprocess.Popen:3b3f11869c2f78c4dd9946957d2ce62b6c261b8b949263d89c7563a2893e646f:0",
+    "identity": "cli/dogfood_features.py:_run:subprocess.Popen:653ce25f6266bee0ad8e356b21cfe4008a7444a36cc981b399298cdc0a81b827:0",
     "path": "cli/dogfood_features.py",
     "function": "_run",
-    "line": 52,
+    "line": 54,
     "column": 15,
     "target": "subprocess.Popen",
     "policy": "diagnostic-utf8-replace",
@@ -622,14 +622,14 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "3b3f11869c2f78c4dd9946957d2ce62b6c261b8b949263d89c7563a2893e646f",
-    "producer_fingerprint": "199aeb4fb58c3f1376ed215c6f576de8de7b0d5ec5fae14dbc3d3eaa1fd78275"
+    "call_fingerprint": "653ce25f6266bee0ad8e356b21cfe4008a7444a36cc981b399298cdc0a81b827",
+    "producer_fingerprint": "7f4ef08247b3aea7a489f8e60edb69d19ab7f7e8d40bf50e156f4d2878c961f3"
   },
   {
     "identity": "cli/dogfood_features.py:_artifact_identity:subprocess.run:20f6b490dbe3fd26bb96c09465de1038a47c618eb663444aedf1b0bb24c0619b:0",
     "path": "cli/dogfood_features.py",
     "function": "_artifact_identity",
-    "line": 102,
+    "line": 104,
     "column": 12,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -649,7 +649,7 @@
     "identity": "cli/dogfood_features.py:_artifact_identity:subprocess.run:2be9fd959bccfa5ef3a25b8a023291b8f046c37172b7230a86829e172990058d:0",
     "path": "cli/dogfood_features.py",
     "function": "_artifact_identity",
-    "line": 143,
+    "line": 145,
     "column": 23,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -669,7 +669,7 @@
     "identity": "cli/dogfood_features.py:main:subprocess.run:157d12074ff78152c9b4323028d8d29f0f1089e57dcc9697d85f16a6a135c90d:0",
     "path": "cli/dogfood_features.py",
     "function": "main",
-    "line": 362,
+    "line": 364,
     "column": 25,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -1630,11 +1630,11 @@
     "producer_fingerprint": "3abb83e3acff109b9baf67094cc808369c4fca15c72725303eaadc81339a7d2c"
   },
   {
-    "identity": "cli/session_daemon.py:_restrict_windows_file_to_current_user:subprocess.run:0bd0e243e601112d83372017b4e09152875b9122c1eaefe4cb79785f34d14bad:0",
+    "identity": "cli/session_daemon.py:_restrict_windows_file_to_current_user:subprocess.run:a6ff4d5a7f0dbe97a6655de102785a2a19bafce185371944884dce2e34e7e5be:0",
     "path": "cli/session_daemon.py",
     "function": "_restrict_windows_file_to_current_user",
-    "line": 369,
-    "column": 8,
+    "line": 367,
+    "column": 12,
     "target": "subprocess.run",
     "policy": "strict-protocol",
     "rationale": "Stdout remains bytes until strict UTF-8 protocol decoding; stderr is separately replacement-decoded for diagnostics.",
@@ -1646,8 +1646,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "0bd0e243e601112d83372017b4e09152875b9122c1eaefe4cb79785f34d14bad",
-    "producer_fingerprint": "9334eeb52ebc91f7f32b7f11398d251df9134eaa17945e40366be20662e89ff6"
+    "call_fingerprint": "a6ff4d5a7f0dbe97a6655de102785a2a19bafce185371944884dce2e34e7e5be",
+    "producer_fingerprint": "cd6eb4559dbea3b450921900fe5901f780c39a4bb624cff189ba5fc904504012"
   },
   {
     "identity": "cli/session_daemon_start_capture.py:spawn_daemon_subprocess:subprocess.Popen:cc8b25cac77bb4a7609cdbfdf3801e3ffab472c7d0e2bc508ebbe7786758135c:0",
