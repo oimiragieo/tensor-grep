@@ -791,6 +791,12 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     else:
         state = "stale-metadata" if session_payload.get("stale_metadata") else "stopped"
         lines.append(f"session_daemon: {state}")
+        if state == "stale-metadata":
+            cleanup_hint = session_payload.get("cleanup_hint") or (
+                f"Run `tg session daemon stop {session_payload.get('root') or '.'}` "
+                "to remove stale daemon metadata."
+            )
+            lines.append(f"  cleanup_hint: {cleanup_hint}")
 
     # tg-ledger step-0 (demand instrumentation, see docs/multi_agent_context_plane.md): a single
     # human summary line for the trailing-14-day demand receipt that the daemon persists to

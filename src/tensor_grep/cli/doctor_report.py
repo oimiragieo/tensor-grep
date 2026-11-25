@@ -34,15 +34,17 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from tensor_grep.cli._main_binding import _self as _self
-from tensor_grep.cli.doctor_launcher_probe import powershell_shim_target as powershell_shim_target
+from tensor_grep.cli.doctor_launcher_probe import (
+    powershell_shim_target as powershell_shim_target,
+)
+from tensor_grep.cli.doctor_launcher_probe import (
+    strip_windows_extended_prefix as _strip_windows_extended_prefix,
+)
 from tensor_grep.cli.doctor_shell_guidance import (
     _doctor_shell_escaping_guidance as _doctor_shell_escaping_guidance,
 )
 from tensor_grep.cli.freshness_process import capture_probe
-from tensor_grep.cli.runtime_paths import (
-    gpu_probe_timeout_s,
-    iter_in_tree_native_tg_binaries,
-)
+from tensor_grep.cli.runtime_paths import gpu_probe_timeout_s, iter_in_tree_native_tg_binaries
 from tensor_grep.cli.subprocess_policy import decode_diagnostic_output, decode_protocol_output
 
 
@@ -82,10 +84,13 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
         else None
     )
     if not status.get("running"):
-        # Additive-only field, present only in the not-running state -- mirrors the
-        # conditional `install_hint` precedent (_doctor_ast_grep_status/_doctor_dense_model_
-        # status below) rather than always emitting a field that is meaningless once warm.
+        # Additive-only field when stopped (mirrors conditional install_hint).
         status["autostart"] = _doctor_session_daemon_autostart_status()
+        if status.get("stale_metadata"):
+            clean_root = _strip_windows_extended_prefix(str(status.get("root") or path))
+            status["cleanup_hint"] = (
+                f"Run `tg session daemon stop {clean_root}` to remove stale daemon metadata."
+            )
     return status
 
 
@@ -1104,12 +1109,16 @@ def _doctor_mcp_stdio_launcher_warning(
     if not powershell_launchers:
         return None
 
-    observed = "; ".join(f"{label} resolves {path}" for label, path in powershell_launchers)
-    script_path = powershell_launchers[0][1]
+    observed = "; ".join(
+        f"{label} resolves {_strip_windows_extended_prefix(path)}"
+        for label, path in powershell_launchers
+    )
+    script_path = _strip_windows_extended_prefix(powershell_launchers[0][1])
+    clean_native_stdio_path = _strip_windows_extended_prefix(str(native_stdio_path))
     return (
         "MCP stdio launcher warning: "
         f"{observed}. Configure MCP clients for `tg mcp` to call the managed native "
-        f"tg.exe directly: {native_stdio_path}. Windows MCP/stdio clients that launch "
+        f"tg.exe directly: {clean_native_stdio_path}. Windows MCP/stdio clients that launch "
         "`tg` via PowerShell Start-Process must target native tg.exe directly, not "
         "`tg.ps1`, because Start-Process can resolve the PowerShell shim instead of "
         "the native stdio-safe front door. If you intentionally use the PowerShell "

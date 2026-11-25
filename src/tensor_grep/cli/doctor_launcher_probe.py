@@ -24,6 +24,15 @@ _SIMPLE_DELEGATE_RE = re.compile(
 )
 
 
+def strip_windows_extended_prefix(path_str: str) -> str:
+    """Strip Windows extended-length path prefixes for user-facing diagnostics."""
+    if path_str.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path_str[8:]
+    if path_str.startswith("\\\\?\\"):
+        return path_str[4:]
+    return path_str
+
+
 _PROBE_ENV_ALLOWLIST = (
     "SYSTEMROOT",
     "SYSTEMDRIVE",
