@@ -64,13 +64,8 @@ from tensor_grep.cli.runtime_paths import _native_tg_version as _native_tg_versi
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version_matches as _native_tg_version_matches,
 )
-from tensor_grep.cli.runtime_paths import (
-    env_flag_disabled,
-    env_flag_enabled,
-)
-from tensor_grep.cli.runtime_paths import (
-    inspect_native_tg_binary as inspect_native_tg_binary,
-)
+from tensor_grep.cli.runtime_paths import env_flag_disabled, env_flag_enabled
+from tensor_grep.cli.runtime_paths import inspect_native_tg_binary as inspect_native_tg_binary
 from tensor_grep.cli.runtime_paths import (
     is_cross_domain_native_binary as is_cross_domain_native_binary,
 )
@@ -79,12 +74,8 @@ from tensor_grep.cli.runtime_paths import (
 from tensor_grep.cli.runtime_paths import (
     native_frontdoor_metadata_path as native_frontdoor_metadata_path,
 )
-from tensor_grep.cli.runtime_paths import (
-    resolve_native_tg_binary as resolve_native_tg_binary,
-)
-from tensor_grep.cli.runtime_paths import (
-    resolve_ripgrep_binary as resolve_ripgrep_binary,
-)
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary as resolve_native_tg_binary
+from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary as resolve_ripgrep_binary
 from tensor_grep.cli.runtime_paths import (
     translate_path_for_windows_binary as translate_path_for_windows_binary,
 )
