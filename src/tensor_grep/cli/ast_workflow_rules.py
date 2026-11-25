@@ -735,6 +735,7 @@ def _warn_windows_single_quote_pattern(pattern: str) -> None:
 # discipline); a static shape catalog can never be wrong, only unhelpful.
 _AST_RUN_REMEDIATION_IDIOMS: tuple[str, ...] = (
     "def $NAME($$$ARGS): $$$BODY",
+    "def $NAME($$$ARGS) -> $RET: $$$BODY",
     "function $NAME($$$) { $$$ }",
 )
 
@@ -745,6 +746,11 @@ def _ast_run_remediation_lines(pattern: str, lang: str | None) -> list[str]:
         "No AST matches found. Common idiom shapes: " + " | ".join(_AST_RUN_REMEDIATION_IDIOMS),
         "Run `tg ast-info` to list supported LANGUAGES.",
     ]
+    if (lang and lang.strip().lower() in {"py", "python"}) or "def " in pattern:
+        lines.append(
+            "For Python functions with return annotations, try `def $NAME($$$ARGS) -> $RET: $$$BODY` "
+            "or pass `--selector function_definition` to match any function definition."
+        )
     if "$" not in pattern:
         lines.append(
             "The pattern has no metavariable ($) -- add one like $NAME to match "

@@ -2,12 +2,13 @@
 //!
 //! Keep this catalog scoped to `tg run`: a clean AST scan with no findings is not a failed search.
 
-const IDIOMS: &str = "def $NAME($$$ARGS): $$$BODY | function $NAME($$$) { $$$ }";
+const IDIOMS: &str = "def $NAME($$$ARGS): $$$BODY | def $NAME($$$ARGS) -> $RET: $$$BODY | function $NAME($$$) { $$$ }";
 
 fn hints(pattern: &str, lang_was_implicit: bool) -> Vec<String> {
     let mut lines = vec![
         format!("No AST matches found. Common idiom shapes: {IDIOMS}"),
         "Run `tg ast-info` to list supported LANGUAGES.".to_string(),
+        "For Python functions with return annotations, try `def $NAME($$$ARGS) -> $RET: $$$BODY` or pass `--selector function_definition` to match any function definition.".to_string(),
     ];
     if !pattern.contains('$') {
         lines.push(
@@ -56,5 +57,18 @@ pub fn json_for_search(
 pub fn emit_text_for_search(pattern: &str, match_count: usize) {
     if match_count == 0 {
         eprintln!("{}", hints(pattern, lang_was_implicit()).join("\n"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hints;
+
+    #[test]
+    fn hints_include_python_return_typed_function_and_selector() {
+        let lines = hints("def $NAME($$$ARGS): $$$BODY", false);
+        let joined = lines.join("\n");
+        assert!(joined.contains("def $NAME($$$ARGS) -> $RET: $$$BODY"));
+        assert!(joined.contains("--selector function_definition"));
     }
 }
