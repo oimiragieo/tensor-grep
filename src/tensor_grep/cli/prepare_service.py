@@ -874,12 +874,16 @@ def _build_prepare_payload(
                 path, max_repo_files, deadline_monotonic
             )
         if warm_rm is not None:
-            rm, cached_file_meta, hydrated_dirty = _hydrate_warm_larger_repo_map(
+            hydrated = _hydrate_warm_larger_repo_map(
                 path, warm_rm, cached_file_meta, query, deadline_monotonic
             )
-            if hydrated_dirty:
-                cache_dirty = True
-        else:
+            if hydrated is None:
+                warm_rm = None
+            else:
+                rm, cached_file_meta, hydrated_dirty = hydrated
+                if hydrated_dirty:
+                    cache_dirty = True
+        if warm_rm is None:
             lazy_result = (
                 _build_larger_lazy_repo_map(path, max_repo_files, query, deadline_monotonic)
                 if can_use_warm_cache

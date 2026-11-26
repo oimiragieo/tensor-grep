@@ -373,7 +373,7 @@ def hydrate_warm_larger_repo_map(
     file_meta: dict[str, dict[str, Any]] | None,
     query: str,
     deadline_monotonic: float | None,
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]] | None, bool]:
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]] | None, bool] | None:
     from tensor_grep.cli import repo_map as _repo_map
 
     if not rm.get("lazy_larger"):
@@ -388,7 +388,11 @@ def hydrate_warm_larger_repo_map(
     seed_files, lexical_ok = _seed_larger_candidates(
         root, query, context_files, generation=generation, deadline_monotonic=deadline_monotonic
     )
-    if not lexical_ok or not any(str(sf) not in already_parsed for sf in seed_files):
+    if not lexical_ok:
+        if generation.connection is not None:
+            generation.connection.close()
+        return None
+    if not any(str(sf) not in already_parsed for sf in seed_files):
         if generation.connection is not None:
             generation.connection.close()
         return rm, file_meta, False

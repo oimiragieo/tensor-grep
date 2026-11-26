@@ -226,10 +226,18 @@ def _strip_toml_tensor_grep_sections(content: str) -> str:
                 if ch == "\\":
                     esc = True
                 elif line.startswith('"""', i):
+                    extra = 0
+                    while extra < 2 and i + 3 < n and line[i + 3] == '"':
+                        i += 1
+                        extra += 1
                     in_ml_str = False
                     i += 2
             elif in_ml_lit:
                 if line.startswith("'''", i):
+                    extra = 0
+                    while extra < 2 and i + 3 < n and line[i + 3] == "'":
+                        i += 1
+                        extra += 1
                     in_ml_lit = False
                     i += 2
             elif in_str:

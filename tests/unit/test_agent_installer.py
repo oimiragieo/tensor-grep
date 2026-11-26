@@ -384,7 +384,7 @@ def test_codex_reinstall_with_subtable_produces_valid_toml(fake_home):
     codex_cfg.parent.mkdir(parents=True, exist_ok=True)
     codex_cfg.write_text(
         'note = """\n[\n"""\n\n'
-        '  [mcp_servers . "tensor_grep"]\ncommand = "old"\nargs = [\n  ["mcp"],\n  \'[\'\n]\n\n'
+        '  [mcp_servers . "tensor_grep"]\ncommand = "old"\nargs = [\n  ["mcp"],\n  \'[\',\n  """abc""""\n]\n\n'
         '  [mcp_servers.tensor_grep.env]\nFOO = "bar"\n\n'
         '[[profiles]]\nname = "keep"\n\n'
         '[env_profiles."dev[local]"]\nmodel = "keep"\n\n'
