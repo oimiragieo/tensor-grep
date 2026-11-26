@@ -607,7 +607,7 @@ Default 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=0`, contract `1.28.0`):
 
 - Always-on: `tg_mcp_capabilities`, `tg_batch`, `tg_classify_logs`, `tg_discover_tools`
 - Task-shaped meta-tools (`action=...`): `tg_explore`, `tg_query`, `tg_navigate`, `tg_impact`, `tg_context`, `tg_session`, `tg_scan`, `tg_rewrite`, `tg_audit`, `tg_checkpoint`
-- Set `TG_MCP_LEGACY_TOOLS=1` only if a legacy client requires individual names (`tg_repo_map`, `tg_context_pack`, `tg_symbol_defs`, `tg_agent_capsule`, `tg_checkpoint_create`, `tg_rewrite_apply`, etc.).
+- Legacy 61-tool compatibility names (opt-in with `TG_MCP_LEGACY_TOOLS=1`): `tg_repo_map`, `tg_context_pack`, `tg_edit_plan`, `tg_symbol_defs`, `tg_symbol_source`, `tg_symbol_impact`, `tg_symbol_refs`, `tg_symbol_callers`, `tg_session_open`, `tg_session_list`, `tg_session_show`, `tg_session_refresh`, `tg_session_context`, `tg_agent_capsule`, `tg_checkpoint_create`, `tg_checkpoint_list`, `tg_checkpoint_undo`, `tg_index_search`, `tg_rewrite_plan`, `tg_rewrite_apply`, `tg_rewrite_diff`, `tg_audit_manifest_verify`.
 
 Example flow:
 
