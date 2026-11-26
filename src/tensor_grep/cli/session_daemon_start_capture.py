@@ -11,6 +11,10 @@ from pathlib import Path
 from uuid import uuid4
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 def spawn_daemon_subprocess(
     root: Path,
     sessions_dir: Path,
@@ -41,9 +45,9 @@ def spawn_daemon_subprocess(
     spawn_cwd = root if root.is_dir() else root.parent
     # audit I7: detach the daemon from the launching process group/console so it is not
     # killed by signals delivered to the parent and survives the CLI invocation.
-    breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0) if os.name == "nt" else 0
+    breakaway_flag = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0) if _is_windows() else 0
     base_creationflags = 0
-    if os.name == "nt":
+    if _is_windows():
         base_creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0
         )
@@ -79,7 +83,7 @@ def spawn_daemon_subprocess(
                     stderr=capture_fd,
                     stdin=subprocess.DEVNULL,
                     creationflags=creationflags,
-                    start_new_session=os.name != "nt",
+                    start_new_session=not _is_windows(),
                     cwd=str(spawn_cwd),
                     env=env,
                 )

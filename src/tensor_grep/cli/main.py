@@ -9379,18 +9379,18 @@ def checkpoint_create(
 
     try:
         payload = create_checkpoint(path, paths=paths, label=label)
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError) as exc:
+        code = "path_not_found" if isinstance(exc, FileNotFoundError) else "invalid_input"
         if json_output:
-            typer.echo(
-                json.dumps({"error": {"code": "invalid_input", "message": str(exc)}}, indent=2)
-            )
+            typer.echo(json.dumps({"error": {"code": code, "message": str(exc)}}, indent=2))
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(2) from exc
     except Exception as exc:
-        error_code = "path_not_found" if isinstance(exc, FileNotFoundError) else "create_failed"
         if json_output:
-            typer.echo(json.dumps({"error": {"code": error_code, "message": str(exc)}}, indent=2))
+            typer.echo(
+                json.dumps({"error": {"code": "create_failed", "message": str(exc)}}, indent=2)
+            )
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

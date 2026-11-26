@@ -874,7 +874,15 @@ def test_malformed_test_reference_lookup_preserves_payload_and_exit(
     legacy_payload = {
         key: value
         for key, value in payload.items()
-        if key not in {"risk_reasons", "risk_cap_evidence"}
+        if key
+        not in {
+            "risk_reasons",
+            "risk_cap_evidence",
+            "tdad_tests",
+            "kg_ast_risk",
+            "change_slice",
+            "slice_digest",
+        }
     }
     assert legacy_payload == {
         "root": str(tmp_path).replace("\\", "/"),

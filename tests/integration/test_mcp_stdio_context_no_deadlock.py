@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -59,7 +60,7 @@ def _create_git_repo(repo: Path) -> None:
 
 def _terminate_process_tree(proc: subprocess.Popen[bytes]) -> None:
     if proc.poll() is None:
-        if os.name == "nt":
+        if os.name == "nt" and shutil.which("taskkill"):
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                 stdin=subprocess.DEVNULL,
