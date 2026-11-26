@@ -181,6 +181,7 @@ def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: P
             env = os.environ.copy()
             env["PYTHONPATH"] = str(SRC_DIR)
             env["TG_MCP_ROOT"] = str(project)
+            env["TG_MCP_LEGACY_TOOLS"] = "1"
             env["TG_TEST_GATE_PORT"] = str(listener.sockets[0].getsockname()[1])
             server = StdioServerParameters(
                 command=sys.executable,

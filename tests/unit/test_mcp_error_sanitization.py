@@ -1320,6 +1320,12 @@ def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, mon
     assert "path confinement refusal" in captured.err
 
 
+def _call_meta(tool: str, action: str, **kwargs: object):
+    from tensor_grep.cli import mcp_server
+
+    return call_mcp_tool_parts(mcp_server.mcp.call_tool(tool, {"action": action, **kwargs}))
+
+
 def test_direct_call_tool_broad_poison_sanitized(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool handles broad exceptions without leaking poison on wire."""
 
@@ -1327,9 +1333,7 @@ def test_direct_call_tool_broad_poison_sanitized(capsys):
 
     poison = r"SEC007_BROAD_SECRET at C:\private\trace.py"
     with patch.object(mcp_server, "build_symbol_defs", side_effect=RuntimeError(poison)):
-        content, _data = call_mcp_tool_parts(
-            mcp_server.mcp.call_tool("tg_symbol_defs", {"symbol": "foo", "path": "."})
-        )
+        content, _data = _call_meta("tg_navigate", "defs", symbol="foo", path=".")
         text = content[0].text
         assert poison not in text
         assert "RuntimeError" in text
@@ -1346,11 +1350,8 @@ def test_direct_call_tool_narrow_poison_sanitized(capsys):
 
     poison = r"SEC007_NARROW_SECRET at C:\private\missing.py"
     with patch.object(mcp_server, "build_file_importers", side_effect=FileNotFoundError(poison)):
-        content, _data = call_mcp_tool_parts(
-            mcp_server.mcp.call_tool(
-                "tg_file_importers",
-                {"file": "src/tensor_grep/cli/mcp_server.py", "path": "."},
-            )
+        content, _data = _call_meta(
+            "tg_navigate", "importers", file="src/tensor_grep/cli/mcp_server.py", path="."
         )
         text = content[0].text
         assert poison not in text
@@ -1392,13 +1393,13 @@ def test_direct_call_tool_external_path_redacted(capsys):
 
     poison_file = r"C:\outside\secret.py" if sys.platform == "win32" else "/outside/secret.py"
     content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool("tg_file_imports", {"file": poison_file})
+        mcp_server.mcp.call_tool("tg_navigate", {"action": "imports", "file": poison_file})
     )
     text = content[0].text
     assert "outside" not in text and "secret.py" not in text
     payload = json.loads(text)
     assert payload["error"]["code"] == "invalid_input"
-    assert payload["file"] == "[refused]"
+    assert "file" not in payload or payload["file"] == "[refused]"
     captured = capsys.readouterr()
     assert "path confinement refusal" in captured.err
 
@@ -1415,7 +1416,7 @@ def test_direct_call_tool_session_open_get_session_poison_sanitized(tmp_path, mo
     poison = r"SEC007_GET_SESSION_POISON_SECRET"
     with patch("tensor_grep.cli.session_store.get_session", side_effect=RuntimeError(poison)):
         content, _data = asyncio.run(
-            mcp_server.mcp.call_tool("tg_session_open", {"path": str(tmp_path)})
+            mcp_server.mcp.call_tool("tg_session", {"action": "open", "path": str(tmp_path)})
         )
         text = content[0].text
         assert poison not in text
@@ -1443,11 +1444,8 @@ def test_direct_call_tool_rewrite_diff_subprocess_poison_sanitized(tmp_path, mon
         patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
         patch.object(mcp_server, "_run_rewrite_subprocess", side_effect=poison),
     ):
-        content, data = call_mcp_tool_parts(
-            mcp_server.mcp.call_tool(
-                "tg_rewrite_diff",
-                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
-            )
+        content, data = _call_meta(
+            "tg_rewrite", "diff", pattern="$A", replacement="$A", lang="python", path=str(tmp_path)
         )
         text = content[0].text
         assert token not in text
@@ -1478,11 +1476,8 @@ def test_direct_call_tool_rewrite_plan_embedded_poison_sanitized(tmp_path, monke
     monkeypatch.setitem(sys.modules, "tensor_grep.rust_core", fake_rust)
 
     with patch.object(mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(None, None)):
-        content, data = call_mcp_tool_parts(
-            mcp_server.mcp.call_tool(
-                "tg_rewrite_plan",
-                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
-            )
+        content, data = _call_meta(
+            "tg_rewrite", "plan", pattern="$A", replacement="$A", lang="python", path=str(tmp_path)
         )
         text = content[0].text
         assert token not in text
@@ -1518,11 +1513,8 @@ def test_direct_call_tool_rewrite_diff_native_stderr_poison_sanitized(
         patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
         patch.object(mcp_server, "_run_rewrite_subprocess", return_value=completed),
     ):
-        content, data = call_mcp_tool_parts(
-            mcp_server.mcp.call_tool(
-                "tg_rewrite_diff",
-                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
-            )
+        content, data = _call_meta(
+            "tg_rewrite", "diff", pattern="$A", replacement="$A", lang="python", path=str(tmp_path)
         )
         text = content[0].text
         assert token not in text
@@ -1553,8 +1545,8 @@ def test_direct_call_tool_index_search_subprocess_poison_sanitized(tmp_path, mon
     ):
         content, data = call_mcp_tool_parts(
             mcp_server.mcp.call_tool(
-                "tg_index_search",
-                {"pattern": "def foo", "path": str(tmp_path)},
+                "tg_query",
+                {"action": "index", "pattern": "def foo", "path": str(tmp_path)},
             )
         )
         text = content[0].text
@@ -2017,16 +2009,8 @@ def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monke
     monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", _raise_resolver_poison)
     monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: False)
 
-    content, data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_plan",
-            {
-                "pattern": "$A",
-                "replacement": "$A",
-                "lang": "python",
-                "path": ".",
-            },
-        )
+    content, data = _call_meta(
+        "tg_rewrite", "plan", pattern="$A", replacement="$A", lang="python", path="."
     )
     assert json.loads(content[0].text)["error"]["code"] == "unavailable"
     wire = content[0].text + "\n" + json.dumps(data, default=str)
@@ -2040,7 +2024,6 @@ def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitiz
 ):
     """SEC-007: Direct FastMCP tg_rewrite_apply sanitizes PolicyValidationError.details on wire."""
 
-    from tensor_grep.cli import mcp_server
     from tensor_grep.cli.apply_policy import PolicyValidationError
 
     poison_token = "SEC007_POLICY_TOKEN_SECRET_98765"
@@ -2061,17 +2044,14 @@ def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitiz
     (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr("tensor_grep.cli.apply_policy.load_apply_policy", _raise_policy_poison)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_apply",
-            {
-                "pattern": "$A",
-                "replacement": "$A",
-                "lang": "python",
-                "path": ".",
-                "policy": "policy.json",
-            },
-        )
+    content, _data = _call_meta(
+        "tg_rewrite",
+        "apply",
+        pattern="$A",
+        replacement="$A",
+        lang="python",
+        path=".",
+        policy="policy.json",
     )
     wire = content[0].text
     assert poison_token not in wire, f"Poison token leaked to wire: {wire}"
@@ -2112,17 +2092,14 @@ def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
     fake_result = json.dumps({"applied_edits": 1, "edits": [{"path": "foo.py"}]})
     monkeypatch.setattr(mcp_server, "_execute_embedded_rewrite_json", lambda **_kwargs: fake_result)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_apply",
-            {
-                "pattern": "x = 1",
-                "replacement": "x = 2",
-                "lang": "python",
-                "path": ".",
-                "policy": "policy.json",
-            },
-        )
+    content, _data = _call_meta(
+        "tg_rewrite",
+        "apply",
+        pattern="x = 1",
+        replacement="x = 2",
+        lang="python",
+        path=".",
+        policy="policy.json",
     )
     wire = content[0].text
     assert poison not in wire, f"Policy eval poison leaked to wire: {wire}"
@@ -2144,7 +2121,7 @@ def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
 
     monkeypatch.setattr(mcp_server, "collect_device_inventory", _raise_devices_poison)
 
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_devices", {}))
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_explore", {"action": "devices"}))
     wire = content[0].text
     assert poison not in wire, f"Devices poison leaked to wire: {wire}"
     captured = capsys.readouterr()
@@ -2154,7 +2131,7 @@ def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
 def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles confinement poison without leaking."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     poison = r"SEC007_OUTER_SECRET at C:\private\diff.py"
 
@@ -2163,11 +2140,8 @@ def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_diff",
-            {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
-        )
+    content, _data = _call_meta(
+        "tg_rewrite", "diff", pattern="x", replacement="y", lang="python", path="."
     )
     wire = content[0].text
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
@@ -2178,7 +2152,7 @@ def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch,
 def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles confinement poison without leaking."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     poison = r"SEC007_OUTER_SECRET at C:\private\plan.py"
 
@@ -2187,11 +2161,8 @@ def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_plan",
-            {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
-        )
+    content, _data = _call_meta(
+        "tg_rewrite", "plan", pattern="x", replacement="y", lang="python", path="."
     )
     wire = content[0].text
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
@@ -2202,7 +2173,7 @@ def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch,
 def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply handles confinement poison without leaking."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     poison = r"SEC007_OUTER_SECRET at C:\private\apply.py"
 
@@ -2211,11 +2182,8 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_apply",
-            {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
-        )
+    content, _data = _call_meta(
+        "tg_rewrite", "apply", pattern="x", replacement="y", lang="python", path="."
     )
     wire = content[0].text
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
@@ -2226,7 +2194,7 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
 def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_index_search handles confinement poison without leaking."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     poison = r"SEC007_OUTER_SECRET at C:\private\root.py"
 
@@ -2235,12 +2203,7 @@ def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_index_search",
-            {"pattern": "x", "path": "."},
-        )
-    )
+    content, _data = _call_meta("tg_query", "index", pattern="x", path=".")
     wire = content[0].text
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
     captured = capsys.readouterr()
@@ -2250,7 +2213,7 @@ def test_direct_call_tool_index_search_confinement_poison_sanitized(monkeypatch,
 def test_direct_call_tool_ruleset_scan_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_ruleset_scan handles confinement poison without leaking."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     poison = r"SEC007_OUTER_SECRET at C:\private\root.py"
 
@@ -2259,12 +2222,7 @@ def test_direct_call_tool_ruleset_scan_confinement_poison_sanitized(monkeypatch,
 
     monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
 
-    content, _data = call_mcp_tool_parts(
-        mcp_server.mcp.call_tool(
-            "tg_ruleset_scan",
-            {"ruleset": "security", "path": "."},
-        )
-    )
+    content, _data = _call_meta("tg_scan", "scan", ruleset="security", path=".")
     wire = content[0].text
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
     captured = capsys.readouterr()
@@ -2295,7 +2253,7 @@ def test_direct_call_tool_broken_stderr_poison_sanitized(monkeypatch):
     monkeypatch.setattr(sys, "stderr", RaisingStderr())
 
     # Direct FastMCP tool call must complete cleanly without ToolError or stderr leak
-    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_devices", {}))
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_explore", {"action": "devices"}))
     wire = content[0].text
     assert stderr_poison not in wire, f"Stderr write poison leaked to wire: {wire}"
     assert device_poison not in wire, f"Device poison leaked to wire: {wire}"
@@ -2305,7 +2263,7 @@ def test_direct_call_tool_broken_stderr_poison_sanitized(monkeypatch):
 def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Attacker-controlled dynamic exception type name degrades safely to InternalError on wire."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     DynamicSecretError = type("SEC007_DYNAMIC_TYPE_SECRET", (Exception,), {})
     poison_msg = "some private failure at C:/private/rulesets.py"
@@ -2315,7 +2273,7 @@ def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_dynamic_error)
 
-    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = _call_meta("tg_scan", "rulesets")
     wire = content[0].text
     assert "SEC007_DYNAMIC_TYPE_SECRET" not in wire, (
         f"Dynamic exception class name leaked to wire: {wire}"
@@ -2332,7 +2290,7 @@ def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
 def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
     """SEC-007: Hostile __class__ property accessor does not escape boundary or leak secret on wire."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     class HostileClassException(Exception):
         @property
@@ -2344,7 +2302,7 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_hostile_error)
 
-    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = _call_meta("tg_scan", "rulesets")
     wire = content[0].text
     assert "SEC007_CLASS_ACCESS_SECRET" not in wire, f"Hostile class secret leaked: {wire}"
     assert "underlying secret" not in wire, f"Underlying secret leaked to wire: {wire}"
@@ -2356,7 +2314,7 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
 def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Exception with forged __module__ matching tensor_grep degrades safely to InternalError on wire."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     SpoofedModuleError = type(
         "SEC007_SPOOFED_MODULE_SECRET",
@@ -2370,7 +2328,7 @@ def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, c
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_spoofed_error)
 
-    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = _call_meta("tg_scan", "rulesets")
     wire = content[0].text
     assert "SEC007_SPOOFED_MODULE_SECRET" not in wire, f"Spoofed leaked: {wire}"
     assert poison_msg not in wire, f"Poison message leaked to wire: {wire}"
@@ -2385,7 +2343,7 @@ def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, c
 def test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized(monkeypatch, capsys):
     """SEC-007: Dynamic synthetic exception claiming trusted name (e.g. ValueError) degrades safely to InternalError."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     SyntheticValueError = type("ValueError", (Exception,), {})
     poison_msg = "synthetic value error secret at C:/private/rulesets.py"
@@ -2395,7 +2353,7 @@ def test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized(monkey
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_synthetic_value_error)
 
-    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = _call_meta("tg_scan", "rulesets")
     wire = content[0].text
     # Exact type identity does not match builtins.ValueError -> must be InternalError
     assert "ValueError" not in wire, f"Synthetic ValueError leaked on wire: {wire}"
@@ -2441,8 +2399,9 @@ def test_direct_call_tool_rewrite_apply_audit_manifest_record_failure_sanitized(
 
     content, _data = asyncio.run(
         mcp_server.mcp.call_tool(
-            "tg_rewrite_apply",
+            "tg_rewrite",
             {
+                "action": "apply",
                 "pattern": "def $F($A): return $A",
                 "replacement": "def $F($A): return $A",
                 "lang": "python",
@@ -2470,7 +2429,7 @@ def test_direct_call_tool_rewrite_apply_audit_manifest_record_failure_sanitized(
 def test_direct_call_tool_metaclass_equality_spoof_sanitized(monkeypatch, capsys):
     """SEC-007: Exception with hostile metaclass spoofing __eq__ and __hash__ degrades to InternalError."""
 
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
+    from tensor_grep.cli import mcp_audit_tools
 
     Trusted = ValueError
     Meta = type(
@@ -2486,7 +2445,7 @@ def test_direct_call_tool_metaclass_equality_spoof_sanitized(monkeypatch, capsys
 
     monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_meta_error)
 
-    content, _data = call_mcp_tool_parts(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    content, _data = _call_meta("tg_scan", "rulesets")
     wire = content[0].text
     assert "SEC007_METACLASS_SPOOF_SECRET" not in wire, (
         f"Metaclass spoof secret leaked to wire: {wire}"

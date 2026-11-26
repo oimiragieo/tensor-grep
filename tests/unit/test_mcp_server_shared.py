@@ -622,6 +622,7 @@ CONFINEMENT_EXEMPT: dict[str, str] = {
     # enum-like action name (e.g. "defs"/"scan"/"apply"), never a path.
     "action": "the meta-tool's dispatch action selector (e.g. 'defs'/'scan'/'apply'), not a path",
     "intent": "natural-language tool discovery query, not a path",
+    "text": "raw inline log text (tg_classify_logs), not a filesystem path",
 }
 
 # Minimal valid kwargs per tool so a targeted param's confinement check is actually REACHED

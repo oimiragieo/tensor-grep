@@ -250,28 +250,21 @@ def test_checkpoint_create_text_output_shows_label(tmp_path: Path) -> None:
 def test_mcp_checkpoint_label_schema_and_legacy_tool_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import os
+    import subprocess
+    import sys
+
     from tensor_grep.cli import mcp_server
 
     project = _project(tmp_path / "project")
     monkeypatch.chdir(tmp_path)
     schemas = {tool.name: tool.inputSchema for tool in asyncio.run(mcp_server.mcp.list_tools())}
-    for tool_name in ("tg_checkpoint_create", "tg_checkpoint"):
-        properties = schemas[tool_name]["properties"]
-        schema = properties["label"]
-        assert "string" in {
-            schema.get("type"),
-            *(sub.get("type") for sub in schema.get("anyOf", ())),
-        }
-        assert "label" not in schemas[tool_name].get("required", [])
-
-    content, _meta = asyncio.run(
-        mcp_server.mcp.call_tool(
-            "tg_checkpoint_create", {"path": str(project), "label": "mcp label"}
-        )
-    )
-    payload = json.loads(cast(Any, content)[0].text)
-    assert payload["label"] == "mcp label"
-    assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+    schema = schemas["tg_checkpoint"]["properties"]["label"]
+    raw_type = schema.get("type")
+    types_seen = set(raw_type) if isinstance(raw_type, list) else {raw_type}
+    types_seen.update(sub.get("type") for sub in schema.get("anyOf", ()))
+    assert "string" in types_seen
+    assert "label" not in schemas["tg_checkpoint"].get("required", [])
 
     meta_content, _meta = asyncio.run(
         mcp_server.mcp.call_tool(
@@ -280,6 +273,37 @@ def test_mcp_checkpoint_label_schema_and_legacy_tool_call(
     )
     meta_payload = json.loads(cast(Any, meta_content)[0].text)
     assert meta_payload["label"] == "meta label"
+    assert meta_payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
+
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "TG_MCP_LEGACY_TOOLS": "1", "PYTHONPATH": str(repo_root / "src")}
+    script = (
+        "import asyncio, json\n"
+        "from tensor_grep.cli import mcp_server\n"
+        "schemas = {t.name: t.inputSchema for t in asyncio.run(mcp_server.mcp.list_tools())}\n"
+        "content, _ = asyncio.run(mcp_server.mcp.call_tool("
+        f"'tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 'mcp label'}}))\n"
+        "print(json.dumps({'schema': schemas['tg_checkpoint_create'], 'payload': json.loads(content[0].text)}))\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
+    )
+    legacy = json.loads(done.stdout)
+    legacy_label_schema = legacy["schema"]["properties"]["label"]
+    assert "string" in {
+        legacy_label_schema.get("type"),
+        *(sub.get("type") for sub in legacy_label_schema.get("anyOf", ())),
+    }
+    assert "label" not in legacy["schema"].get("required", [])
+    assert legacy["payload"]["label"] == "mcp label"
+    assert legacy["payload"]["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
 
 
 @pytest.mark.parametrize("bad_label", [123, True, [], object()])
