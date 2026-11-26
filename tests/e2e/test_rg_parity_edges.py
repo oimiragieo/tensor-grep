@@ -389,3 +389,43 @@ def test_files_without_match_text_mode_includes_binary_paths(
         env=env,
         rg_binary=rg_binary,
     )
+
+
+def _resolve_native_tg_for_bare_search() -> Path | None:
+    import os
+
+    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
+    cargo_target = os.environ.get("CARGO_TARGET_DIR")
+    if cargo_target:
+        for profile in ("debug", "release"):
+            candidate = Path(cargo_target) / profile / exe_name
+            if candidate.is_file():
+                return candidate
+    return _helpers().resolve_native_tg_binary()
+
+
+def test_bare_tg_search_respects_gitignore_unless_no_ignore(tmp_path: Path) -> None:
+    import os
+
+    tg_binary = _resolve_native_tg_for_bare_search()
+    if tg_binary is None:
+        pytest.skip("native tg binary not available")
+
+    (tmp_path / ".gitignore").write_text("ignored_dir/\n", encoding="utf-8")
+    ignored_dir = tmp_path / "ignored_dir"
+    ignored_dir.mkdir()
+    (ignored_dir / "secret.py").write_text("TOKEN = 'needle'\n", encoding="utf-8")
+    (tmp_path / "visible.py").write_text("TOKEN = 'needle'\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    bare = _run([str(tg_binary), "needle", "."], cwd=tmp_path, env=env)
+    assert bare.returncode == 0, decode_for_display(bare.stderr)
+    bare_out = decode_for_display(bare.stdout)
+    assert "visible.py" in bare_out
+    assert "secret.py" not in bare_out
+
+    no_ignore = _run([str(tg_binary), "needle", ".", "--no-ignore"], cwd=tmp_path, env=env)
+    assert no_ignore.returncode == 0, decode_for_display(no_ignore.stderr)
+    no_ignore_out = decode_for_display(no_ignore.stdout)
+    assert "visible.py" in no_ignore_out
+    assert "secret.py" in no_ignore_out
