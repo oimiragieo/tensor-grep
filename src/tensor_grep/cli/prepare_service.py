@@ -25,19 +25,15 @@ untyped dict shape by hand.
 import hashlib
 import hmac
 import json
-import os
-import re
 import sqlite3
 import stat
-import subprocess
 import time
-from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import prepare_larger as _prepare_larger
 from tensor_grep.cli import prepare_protocol as _prepare_protocol
 
 # AGT-03 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 03): the exact-string
@@ -52,10 +48,10 @@ _select_validation_argv = _prepare_protocol._select_validation_argv
 _PREPARE_CACHE_REL_PATH = Path(".tg_cache") / "prepare_v1" / "repo_map_cache.json"
 _PREPARE_CACHE_MAX_BYTES = 32 * 1024 * 1024
 _PREPARE_CACHE_SCHEMA = 1
-_LARGER_LAZY_MIN_FILES = 64
-_LARGER_SEED_CAP = 16
-_LARGER_EGO_MAX_FILES = 48
-_LARGER_SEARCH_TIMEOUT_S = 1.5
+_LARGER_LAZY_MIN_FILES = _prepare_larger._LARGER_LAZY_MIN_FILES
+_LARGER_SEED_CAP = _prepare_larger._LARGER_SEED_CAP
+_LARGER_EGO_MAX_FILES = _prepare_larger._LARGER_EGO_MAX_FILES
+_LARGER_SEARCH_TIMEOUT_S = _prepare_larger._LARGER_SEARCH_TIMEOUT_S
 _PROJECT_CONFIG_FILES = (
     "pyproject.toml",
     "tsconfig.json",
@@ -357,8 +353,10 @@ def _load_warm_prepare_cache(
         ):
             new_meta[p_str] = prev
             continue
-        if isinstance(cached_rm.get("lazy_larger"), bool) and cached_rm.get("lazy_larger") and (
-            prev is None or prev.get("unparsed") is True
+        if (
+            isinstance(cached_rm.get("lazy_larger"), bool)
+            and cached_rm.get("lazy_larger")
+            and (prev is None or prev.get("unparsed") is True)
         ):
             new_meta[p_str] = {
                 "mtime_ns": stat_key[0],
@@ -851,302 +849,13 @@ def _build_prepare_blast_radius_floor(
     return _floor_from_radius_payload(radius_payload)
 
 
-def _larger_query_terms(query: str) -> list[str]:
-    from tensor_grep.cli import repo_map as _repo_map
-
-    raw = _repo_map._symbol_query_terms(query) or _repo_map._query_terms(query)
-    terms = [t for t in raw if len(t) >= 2] or re.findall(r"[A-Za-z0-9_]+", query.lower())
-    return list(dict.fromkeys(terms))[:8]
-
-
-def _seed_larger_candidates(
-    root: Path,
-    query: str,
-    context_files: list[Path],
-    *,
-    generation: Any = None,
-    deadline_monotonic: float | None = None,
-) -> list[Path]:
-    from tensor_grep.cli import repo_map as _repo_map
-    from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
-
-    terms = _larger_query_terms(query)
-    norm_to_path = {os.path.normcase(os.path.abspath(str(p))): p for p in context_files}
-    lexical_hits: set[str] = set()
-    symbol_hits: set[str] = set()
-
-    if terms:
-        timeout_s = _LARGER_SEARCH_TIMEOUT_S
-        if deadline_monotonic is not None:
-            timeout_s = min(timeout_s, max(0.1, deadline_monotonic - time.monotonic()))
-        pattern = "|".join(re.escape(t) for t in terms)
-        native_tg = resolve_native_tg_binary()
-        rg_bin = None if native_tg is not None else resolve_ripgrep_binary()
-        cmd = (
-            [str(native_tg), "search", "-i", "-l", pattern, str(root)]
-            if native_tg is not None
-            else ([str(rg_bin), "-i", "-l", "--no-messages", pattern, str(root)] if rg_bin else None)
-        )
-        if cmd is not None:
-            try:
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s
-                )
-                for line in proc.stdout.splitlines():
-                    c = line.strip()
-                    if c:
-                        fp = Path(c) if Path(c).is_absolute() else root / c
-                        key = os.path.normcase(os.path.abspath(str(fp)))
-                        if key in norm_to_path:
-                            lexical_hits.add(key)
-            except (OSError, subprocess.SubprocessError):
-                pass
-
-    if generation is not None and getattr(generation, "connection", None) is not None and terms:
-        conn = generation.connection
-        end = min(time.monotonic() + 0.15, deadline_monotonic) if deadline_monotonic is not None else time.monotonic() + 0.15
-        try:
-            conn.set_progress_handler(lambda: int(time.monotonic() >= end), 1000)
-            for raw_path, raw_data in conn.execute(
-                "SELECT f.path, e.data FROM files f JOIN entries e ON f.key = e.key WHERE f.scope = ?",
-                (str(root),),
-            ).fetchall():
-                key = os.path.normcase(os.path.abspath(str(raw_path)))
-                if key in norm_to_path and any(t in str(raw_data).lower() for t in terms):
-                    symbol_hits.add(key)
-        except sqlite3.Error:
-            pass
-        finally:
-            try:
-                conn.set_progress_handler(None, 0)
-            except sqlite3.Error:
-                pass
-
-    wants_test = "test" in terms or "tests" in terms
-    pool = [norm_to_path[k] for k in (lexical_hits | symbol_hits)] if (lexical_hits or symbol_hits) else context_files
-    scored = sorted(
-        pool,
-        key=lambda fp: (
-            -(1 if os.path.normcase(os.path.abspath(str(fp))) in symbol_hits else 0),
-            -(1 if os.path.normcase(os.path.abspath(str(fp))) in lexical_hits else 0),
-            -(sum(1 for t in terms if t in fp.stem.lower()) * 2 + sum(1 for t in terms if t in str(fp).lower())),
-            0 if (wants_test or not _repo_map._is_test_file(fp)) else 1,
-            str(fp),
-        ),
-    )
-    return scored[:_LARGER_SEED_CAP]
-
-
-def _expand_larger_ego_files(
-    *,
-    cache_root: Path,
-    seed_files: list[Path],
-    context_files: list[Path],
-    tests: list[Path],
-    generation: Any,
-    max_parse_bytes: int,
-    deadline_monotonic: float | None = None,
-    already_parsed: set[str] | None = None,
-) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, tuple[int, int, int, str | None]]]:
-    from tensor_grep.cli import repo_map as _repo_map
-    from tensor_grep.io.confined import read_confined
-
-    stem_index: dict[str, list[Path]] = {}
-    norm_to_path: dict[str, Path] = {}
-    for fp in context_files:
-        stem_index.setdefault(fp.stem.lower(), []).append(fp)
-        norm_to_path[os.path.normcase(os.path.abspath(str(fp)))] = fp
-    test_by_stem = [(t, t.stem.lower()) for t in tests]
-    queue: deque[tuple[Path, int]] = deque((fp, 0) for fp in seed_files)
-
-    if seed_files and (cache_root / ".tg_cache" / "graph_v1" / "incremental_edges.sqlite3").exists():
-        try:
-            from tensor_grep.cli.incremental_graph_sync import extract_ego_subgraph
-
-            ego = extract_ego_subgraph(cache_root, str(seed_files[0]), max_hops=2, max_nodes=_LARGER_EGO_MAX_FILES)
-            for raw_node in ego.get("nodes") or []:
-                node_fp = norm_to_path.get(os.path.normcase(os.path.abspath(str(raw_node))))
-                if node_fp is not None:
-                    queue.append((node_fp, 1))
-        except (OSError, ValueError, sqlite3.Error):
-            pass
-
-    seen_norm: set[str] = set()
-    parsed_paths, symbols, imports = [], [], []
-    parsed_meta: dict[str, dict[str, Any]] = {}
-    pre_stats: dict[str, tuple[int, int, int, str | None]] = {}
-    skip_parsed = already_parsed or set()
-
-    while queue and len(seen_norm) < _LARGER_EGO_MAX_FILES:
-        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-            break
-        current, hop = queue.popleft()
-        norm_key = os.path.normcase(os.path.abspath(str(current)))
-        if norm_key in seen_norm:
-            continue
-        seen_norm.add(norm_key)
-        p_str = str(current)
-        if p_str in skip_parsed:
-            continue
-        stat_key = _lstat_regular_file(current)
-        if stat_key is None:
-            continue
-        if stat_key[2] > max_parse_bytes:
-            parsed_meta[p_str] = {"mtime_ns": stat_key[0], "ctime_ns": stat_key[1], "size": stat_key[2], "oversized": True}
-            pre_stats[p_str] = (stat_key[0], stat_key[1], stat_key[2], None)
-            continue
-        try:
-            pre_digest = hashlib.sha256(read_confined(cache_root, current, max_parse_bytes)).hexdigest()
-            cur_imports, cur_symbols = generation.product(current, partial(_repo_map._imports_and_symbols_for_path, current))
-            if _lstat_regular_file(current) != stat_key or hashlib.sha256(read_confined(cache_root, current, max_parse_bytes)).hexdigest() != pre_digest:
-                continue
-        except OSError:
-            continue
-        parsed_paths.append(p_str)
-        parsed_meta[p_str] = {"mtime_ns": stat_key[0], "ctime_ns": stat_key[1], "size": stat_key[2], "sha256": pre_digest}
-        pre_stats[p_str] = (stat_key[0], stat_key[1], stat_key[2], pre_digest)
-        if cur_imports:
-            imports.append({"file": p_str, "imports": cur_imports, "provenance": _repo_map._symbol_navigation_provenance_for_path(p_str)})
-        symbols.extend(cur_symbols)
-        if hop < 2:
-            for imp in cur_imports:
-                tail = re.split(r"[./:\\]+", str(imp).strip())[-1].lower()
-                for neighbor in stem_index.get(tail, [])[:4] if tail else ():
-                    queue.append((neighbor, hop + 1))
-            if hop == 0 and current.stem:
-                for test_fp, test_stem in test_by_stem:
-                    if current.stem.lower() in test_stem and test_fp != current:
-                        queue.append((test_fp, 1))
-                        if len(queue) >= _LARGER_EGO_MAX_FILES:
-                            break
-    return parsed_paths, symbols, imports, parsed_meta, pre_stats
-
-
-def _open_larger_generation(root: Path, deadline_monotonic: float | None) -> tuple[Path, int, Any]:
-    from tensor_grep.cli import repo_map as _repo_map
-    from tensor_grep.cli.repo_map_fast_cache import canonical_symbol_cache_root
-    from tensor_grep.cli.symbols_cache import SymbolGeneration, authenticated_content_root
-
-    cache_root = canonical_symbol_cache_root(root, _repo_map._infer_project_root, authenticated_content_root())
-    max_parse_bytes = _repo_map._max_parse_bytes()
-    generation = SymbolGeneration(
-        cache_root, scope=root, max_bytes=max_parse_bytes, ignore_policy=sorted(_repo_map._SKIP_DIR_NAMES), deadline=deadline_monotonic
-    )
-    return cache_root, max_parse_bytes, generation
-
-
-def _build_larger_lazy_repo_map(
-    path: str, max_repo_files: int, query: str, deadline_monotonic: float | None
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]], tuple[dict[str, tuple[int, int, int, str | None]], dict[str, dict[str, Any]]]] | None:
-    from tensor_grep.cli import repo_map as _repo_map
-    from tensor_grep.cli.incompleteness import budget_remediable
-
-    root = _repo_map._resolved_input_path(path)
-    if not _repo_map._path_exists_with_receipt(root) or not _repo_map._is_dir_with_receipt(root):
-        return None
-    _repo_map._clear_all_source_caches()
-    _repo_map._load_gitignore_matcher.cache_clear()
-    _repo_map._prime_all_language_repo_contexts(root)
-    walk_deadline, walk_unreadable = _repo_map._DeadlineBreakFlag(), _repo_map._UnreadablePathFlag()
-    all_files = _repo_map._iter_repo_files(
-        root, max_files=max_repo_files, deadline_monotonic=deadline_monotonic, deadline_hit=walk_deadline, unreadable_hit=walk_unreadable
-    )
-    if walk_deadline.hit or walk_unreadable.hit:
-        return None
-    context_files = [c for c in all_files if _repo_map._is_repo_context_file(c, root)]
-    if len(context_files) <= _LARGER_LAZY_MIN_FILES:
-        return None
-
-    cache_root, max_parse_bytes, generation = _open_larger_generation(root, deadline_monotonic)
-    config_meta = _build_config_meta(root, cache_root, max_parse_bytes)
-    test_paths = [c for c in context_files if _repo_map._is_test_file(c)]
-    tests = [str(c) for c in test_paths]
-    source_files = [str(c) for c in context_files if not _repo_map._is_test_file(c)] or tests
-    seed_files = _seed_larger_candidates(root, query, context_files, generation=generation, deadline_monotonic=deadline_monotonic)
-    parsed_paths, symbols, imports, parsed_meta, pre_stats = _expand_larger_ego_files(
-        cache_root=cache_root, seed_files=seed_files, context_files=context_files, tests=test_paths,
-        generation=generation, max_parse_bytes=max_parse_bytes, deadline_monotonic=deadline_monotonic,
-    )
-    file_meta = dict(parsed_meta)
-    for current in context_files:
-        p_str = str(current)
-        if p_str not in file_meta:
-            stat_key = _lstat_regular_file(current)
-            if stat_key is None:
-                return None
-            file_meta[p_str] = {"mtime_ns": stat_key[0], "ctime_ns": stat_key[1], "size": stat_key[2], "unparsed": True}
-            pre_stats[p_str] = (stat_key[0], stat_key[1], stat_key[2], None)
-
-    capped_count = len(all_files)
-    _capped = capped_count >= max_repo_files
-    _cause = _repo_map._scan_limit_cause(all_files, root, capped_count, max_repo_files) if _capped else "project-files"
-    _truncated = _capped and _cause == "project-files"
-    rm = _repo_map._envelope(root)
-    rm.update({
-        "files": source_files, "symbols": symbols, "imports": imports, "tests": tests,
-        "related_paths": sorted(dict.fromkeys([*source_files, *tests])),
-        "lazy_larger": True, "parsed_files": sorted(dict.fromkeys(parsed_paths)),
-        "scan_limit": {
-            "max_repo_files": max_repo_files, "scanned_files": capped_count,
-            "possibly_truncated": _truncated, "truncation_cause": _cause if _capped else None,
-            **({"budget_remediable": budget_remediable(_cause)} if _capped else {}),
-        },
-        "scan_remediation": _repo_map._SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
-    })
-    generation.finish(rm, complete=not _truncated)
-    return rm, file_meta, (pre_stats, config_meta)
-
-
-def _hydrate_warm_larger_repo_map(
-    path: str, rm: dict[str, Any], file_meta: dict[str, dict[str, Any]] | None, query: str, deadline_monotonic: float | None
-) -> tuple[dict[str, Any], dict[str, dict[str, Any]] | None, bool]:
-    from tensor_grep.cli import repo_map as _repo_map
-
-    if not rm.get("lazy_larger"):
-        return rm, file_meta, False
-    root = _repo_map._resolved_input_path(path)
-    if not _repo_map._is_dir_with_receipt(root):
-        return rm, file_meta, False
-    already_parsed = {str(p) for p in (rm.get("parsed_files") or [])}
-    context_files = [Path(p) for p in (rm.get("related_paths") or [])]
-    test_paths = [Path(p) for p in (rm.get("tests") or [])]
-    cache_root, max_parse_bytes, generation = _open_larger_generation(root, deadline_monotonic)
-    seed_files = _seed_larger_candidates(root, query, context_files, generation=generation, deadline_monotonic=deadline_monotonic)
-    if not any(str(sf) not in already_parsed for sf in seed_files):
-        if generation.connection is not None:
-            generation.connection.close()
-        return rm, file_meta, False
-    parsed_paths, new_symbols, new_imports, parsed_meta, _ = _expand_larger_ego_files(
-        cache_root=cache_root, seed_files=seed_files, context_files=context_files, tests=test_paths,
-        generation=generation, max_parse_bytes=max_parse_bytes, deadline_monotonic=deadline_monotonic, already_parsed=already_parsed,
-    )
-    if not parsed_paths:
-        if generation.connection is not None:
-            generation.connection.close()
-        return rm, file_meta, False
-    updated_rm = {
-        **rm,
-        "symbols": [*(rm.get("symbols") or []), *new_symbols],
-        "imports": [*(rm.get("imports") or []), *new_imports],
-        "parsed_files": sorted(already_parsed | set(parsed_paths)),
-    }
-    updated_meta = {**(file_meta or {}), **parsed_meta}
-    generation.finish(updated_rm, complete=not bool((rm.get("scan_limit") or {}).get("possibly_truncated")))
-    return updated_rm, updated_meta, True
-
-
-def _scope_lazy_rm(rm: dict[str, Any]) -> dict[str, Any]:
-    if not rm.get("lazy_larger"):
-        return rm
-    parsed_set = set(rm.get("parsed_files") or [])
-    if not parsed_set:
-        return rm
-    return {
-        **rm,
-        "files": [p for p in (rm.get("files") or []) if p in parsed_set] or sorted(parsed_set),
-        "tests": [p for p in (rm.get("tests") or []) if p in parsed_set],
-        "related_paths": sorted(parsed_set),
-    }
+_larger_query_terms = _prepare_larger._larger_query_terms
+_seed_larger_candidates = _prepare_larger._seed_larger_candidates
+_expand_larger_ego_files = _prepare_larger._expand_larger_ego_files
+_open_larger_generation = _prepare_larger._open_larger_generation
+_build_larger_lazy_repo_map = _prepare_larger.build_larger_lazy_repo_map
+_hydrate_warm_larger_repo_map = _prepare_larger.hydrate_warm_larger_repo_map
+_scope_lazy_rm = _prepare_larger.scope_lazy_rm
 
 
 def _build_prepare_payload(
@@ -1509,7 +1218,9 @@ def _build_prepare_payload(
             rm,
             cached_floors,
             cached_file_meta,
-            None if (not rm.get("partial") and not rm.get("unreadable_paths")) else deadline_monotonic,
+            None
+            if (not rm.get("partial") and not rm.get("unreadable_paths"))
+            else deadline_monotonic,
             pre_build_stats=pre_build_stats,
         )
     if Path(resolved_path).is_dir() and not rm_truncated and not content_receipts_active():

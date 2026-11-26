@@ -35,9 +35,7 @@ def _make_large_repo(root: Path, count: int = 96) -> None:
     )
 
 
-def test_larger_lazy_cold_and_warm_avoids_full_repo_parse(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_larger_lazy_cold_and_warm_avoids_full_repo_parse(tmp_path: Path, monkeypatch) -> None:
     """Cold run seeds + expands 1-2 hop ego-subgraph without full build_repo_map."""
     _make_large_repo(tmp_path, count=96)
 
