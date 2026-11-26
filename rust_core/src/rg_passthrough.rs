@@ -48,17 +48,40 @@ pub fn implicit_search_paths(
     }
 }
 
+fn token_takes_next_arg(cmd: &clap::Command, tok: &str) -> bool {
+    if let Some(long_name) = tok.strip_prefix("--") {
+        if long_name.is_empty() || long_name.contains('=') {
+            return false;
+        }
+        return cmd
+            .get_arguments()
+            .any(|a| a.get_long() == Some(long_name) && a.get_action().takes_values());
+    }
+    if tok.starts_with('-') && tok.len() >= 2 {
+        if let Some(last_ch) = tok.chars().last() {
+            return cmd
+                .get_arguments()
+                .any(|a| a.get_short() == Some(last_ch) && a.get_action().takes_values());
+        }
+    }
+    false
+}
+
 pub fn extract_search_tail_with_matches(
     search_args: &[std::ffi::OsString],
     root_matches: Option<&clap::ArgMatches>,
+    search_cmd: Option<&clap::Command>,
 ) -> Vec<String> {
     let mut args: Vec<String> = search_args
         .iter()
         .skip(2)
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    if let Some(sub) = root_matches.and_then(|m| m.subcommand_matches("search")) {
-        strip_overridden_ignore_flags_with_matches(&mut args, sub);
+    if let (Some(sub), Some(cmd)) = (
+        root_matches.and_then(|m| m.subcommand_matches("search")),
+        search_cmd,
+    ) {
+        strip_overridden_ignore_flags_with_matches(&mut args, sub, cmd);
     }
     args
 }
@@ -66,6 +89,7 @@ pub fn extract_search_tail_with_matches(
 pub fn strip_overridden_ignore_flags_with_matches(
     args: &mut Vec<String>,
     matches: &clap::ArgMatches,
+    search_cmd: &clap::Command,
 ) {
     let no_idx = cmdline_indices(matches, "no_ignore");
     let ig_idx = cmdline_indices(matches, "ignore");
@@ -73,18 +97,38 @@ pub fn strip_overridden_ignore_flags_with_matches(
         return;
     }
     let last_no_ignore = no_idx.iter().max() > ig_idx.iter().max();
-    let drop_indices: std::collections::HashSet<usize> =
-        if last_no_ignore { ig_idx } else { no_idx }
-            .into_iter()
-            .filter(|&i| i >= 2)
-            .map(|i| i - 2)
-            .collect();
-    let mut idx = 0usize;
-    args.retain(|_| {
-        let keep = !drop_indices.contains(&idx);
-        idx += 1;
-        keep
-    });
+    let drop_flag = if last_no_ignore {
+        "--ignore"
+    } else {
+        "--no-ignore"
+    };
+    let mut out = Vec::with_capacity(args.len());
+    let mut skip_next = false;
+    let mut after_double_dash = false;
+    for tok in args.drain(..) {
+        if after_double_dash {
+            out.push(tok);
+            continue;
+        }
+        if skip_next {
+            skip_next = false;
+            out.push(tok);
+            continue;
+        }
+        if tok == "--" {
+            after_double_dash = true;
+            out.push(tok);
+            continue;
+        }
+        if tok == drop_flag {
+            continue;
+        }
+        if token_takes_next_arg(search_cmd, &tok) {
+            skip_next = true;
+        }
+        out.push(tok);
+    }
+    *args = out;
 }
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;

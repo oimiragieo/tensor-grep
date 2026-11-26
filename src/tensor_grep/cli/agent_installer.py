@@ -202,22 +202,30 @@ def _strip_toml_tensor_grep_sections(content: str) -> str:
         if not skipping:
             kept.append(line)
         in_str = False
+        in_lit = False
         esc = False
         for ch in line:
             if esc:
                 esc = False
                 continue
-            if ch == "\\" and in_str:
-                esc = True
+            if in_str:
+                if ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif in_lit:
+                if ch == "'":
+                    in_lit = False
             elif ch == '"':
-                in_str = not in_str
-            elif not in_str:
-                if ch == "#":
-                    break
-                if ch == "[":
-                    depth += 1
-                elif ch == "]" and depth > 0:
-                    depth -= 1
+                in_str = True
+            elif ch == "'":
+                in_lit = True
+            elif ch == "#":
+                break
+            elif ch == "[":
+                depth += 1
+            elif ch == "]" and depth > 0:
+                depth -= 1
     return "".join(kept)
 
 

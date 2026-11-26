@@ -1560,10 +1560,13 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
 
 fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<String>> {
     let search_args = normalize_top_level_search_args(raw_args)?;
-    let matches = CommandCli::command()
-        .try_get_matches_from(&search_args)
-        .ok();
-    let args = extract_search_tail_with_matches(&search_args, matches.as_ref());
+    let cmd = CommandCli::command();
+    let matches = cmd.clone().try_get_matches_from(&search_args).ok();
+    let args = extract_search_tail_with_matches(
+        &search_args,
+        matches.as_ref(),
+        cmd.find_subcommand("search"),
+    );
     // External audit #138/#140: `--index` selects the Rust-native trigram-index engine
     // (route_search -> handle_index_search -> index_flag_violations), which the Python sidecar
     // does not implement at all. Every check below exists to route some OTHER flag to Python --
@@ -1667,7 +1670,7 @@ fn json_aggregate_render_flag_conflicts(raw_args: &[OsString]) -> Vec<String> {
     let Some(search_args) = normalize_top_level_search_args(raw_args) else {
         return Vec::new();
     };
-    let args = extract_search_tail_with_matches(&search_args, None);
+    let args = extract_search_tail_with_matches(&search_args, None, None);
     if !args.iter().any(|arg| arg == "--json") {
         return Vec::new();
     }

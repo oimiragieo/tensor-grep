@@ -80,11 +80,20 @@ fn gitignore_bare_search() {
         );
     }
 
-    // Inverse ordering `--ignore --no-ignore` must honor final `--no-ignore` across all routes.
+    // Inverse ordering `--ignore --no-ignore` must honor final `--no-ignore` across all routes,
+    // including when `=` options precede the flags.
     for extra in [
         &["needle", ".", "--ignore", "--no-ignore"][..],
         &["needle", ".", "--cpu", "--ignore", "--no-ignore"][..],
         &["search", "-F", "--ignore", "--no-ignore", "needle", "."][..],
+        &[
+            "search",
+            "--format=rg",
+            "--ignore",
+            "--no-ignore",
+            "needle",
+            ".",
+        ][..],
     ] {
         let output = tg().current_dir(dir.path()).args(extra).output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
