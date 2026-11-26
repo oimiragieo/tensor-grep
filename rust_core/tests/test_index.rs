@@ -63,11 +63,8 @@ fn write_regex_prefilter_corpus(dir: &std::path::Path) {
 }
 
 fn decode_hex_trigram(key: &str) -> [u8; 3] {
-    fn byte_at(key: &str, offset: usize) -> u8 {
-        u8::from_str_radix(&key[offset..offset + 2], 16).unwrap()
-    }
-
-    [byte_at(key, 0), byte_at(key, 2), byte_at(key, 4)]
+    let b = |o| u8::from_str_radix(&key[o..o + 2], 16).unwrap();
+    [b(0), b(2), b(4)]
 }
 
 fn write_legacy_v1_index(dir: &Path) {
@@ -81,11 +78,9 @@ fn write_legacy_v1_index(dir: &Path) {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"TGI\x00");
     buf.push(1);
-
     let root_bytes = dir.to_string_lossy().as_bytes().to_vec();
     buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
     buf.extend_from_slice(&root_bytes);
-
     let files = payload["files"].as_array().unwrap();
     buf.extend_from_slice(&(files.len() as u32).to_le_bytes());
     for entry in files {
@@ -95,7 +90,6 @@ fn write_legacy_v1_index(dir: &Path) {
         buf.extend_from_slice(&(entry["mtime_ns"].as_u64().unwrap() as u128).to_le_bytes());
         buf.extend_from_slice(&entry["size"].as_u64().unwrap().to_le_bytes());
     }
-
     let postings = payload["postings"].as_object().unwrap();
     buf.extend_from_slice(&(postings.len() as u32).to_le_bytes());
     for (key, value) in postings {
