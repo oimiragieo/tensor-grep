@@ -27,7 +27,6 @@ from tensor_grep.cli.main import (
     _build_rulesets_payload,
     _load_inline_rule_specs,
 )
-from tensor_grep.cli.rule_packs import resolve_rule_pack
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.pipeline import ConfigurationError
 
@@ -344,11 +343,30 @@ def tg_ruleset_scan(
                 "test_dirs": [],
                 "language": inferred_language,
             }
+            prepared_scope = None
             scan_ruleset_name: str | None = None
             scan_routing_reason = "ast-inline-rules-scan"
         else:
+            from tensor_grep.cli.ruleset_scope import _prepare_builtin_ruleset_scan
+
             try:
-                ruleset_meta, rules = resolve_rule_pack(cast(str, ruleset), language)
+                project_cfg, rules, prepared_scope = _prepare_builtin_ruleset_scan(
+                    cast(str, ruleset),
+                    language,
+                    scan_paths=[path],
+                    scan_globs=[glob] if glob else None,
+                    scan_types=[file_type] if file_type else None,
+                    scan_max_depth=max_depth,
+                    allow_broad_generated_scan=allow_broad_generated_scan,
+                )
+            except BroadScanRefusedError as exc:
+                _log_tool_exception("tg_ruleset_scan", exc)
+                return _ruleset_scan_error(
+                    "broad AST scan refused: root directory matches broad scan criteria. Pass --allow-broad-generated-scan to override.",
+                    code="broad_scan_refused",
+                    ruleset=ruleset,
+                    path=path,
+                )
             except ValueError as exc:
                 _log_tool_exception("tg_ruleset_scan", exc)
                 return _ruleset_scan_error(
@@ -357,14 +375,7 @@ def tg_ruleset_scan(
                     ruleset=ruleset,
                     path=path,
                 )
-            project_cfg = {
-                "config_path": f"builtin:{ruleset_meta['name']}",
-                "root_dir": Path(path).expanduser().resolve(),
-                "rule_dirs": [],
-                "test_dirs": [],
-                "language": ruleset_meta["language"],
-            }
-            scan_ruleset_name = ruleset_meta["name"]
+            scan_ruleset_name = str(project_cfg["name"])
             scan_routing_reason = "builtin-ruleset-scan"
 
         # round-4/5 security: confine the two write paths to the scan root before any scan/write —
@@ -420,6 +431,7 @@ def tg_ruleset_scan(
                     project_cfg,
                     rules,
                     routing_reason=scan_routing_reason,
+                    prepared_scope=prepared_scope,
                     ruleset_name=scan_ruleset_name,
                     scan_globs=[glob] if glob else None,
                     scan_types=[file_type] if file_type else None,

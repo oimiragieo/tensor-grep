@@ -154,21 +154,21 @@ def test_resolve_rule_pack_exposes_new_multilanguage_rules(
             "subprocess-safe",
             "python",
             "a.py",
-            "subprocess.run($CMD, shell=True)\n",
+            "subprocess.run($$$BEFORE, shell=True)\n",
             "python-subprocess-run-shell-true",
         ),
         (
             "subprocess-safe",
             "javascript",
             "a.js",
-            "child_process.exec($CMD)\n",
+            "child_process.exec($$$ARGS)\n",
             "javascript-child-process-exec",
         ),
         (
             "subprocess-safe",
             "typescript",
             "a.ts",
-            "execSync($CMD)\n",
+            "execSync($$$ARGS)\n",
             "typescript-exec-sync",
         ),
         (
@@ -339,7 +339,7 @@ def test_deserialization_safe_does_not_flag_yaml_safe_loader(
         (
             "subprocess-safe",
             "python",
-            "subprocess.run($CMD, shell=True)\n",
+            "subprocess.run($$$BEFORE, shell=True)\n",
             "python-subprocess-run-shell-true",
         ),
     ],
@@ -409,7 +409,7 @@ def test_new_rule_packs_support_baselines(
         (
             "subprocess-safe",
             "python",
-            "subprocess.run($CMD, shell=True)\n",
+            "subprocess.run($$$BEFORE, shell=True)\n",
             "python-subprocess-run-shell-true",
         ),
     ],
@@ -477,7 +477,7 @@ def test_new_rule_packs_support_suppressions(
         (
             "subprocess-safe",
             "python",
-            "subprocess.run($CMD, shell=True)\n",
+            "subprocess.run($$$BEFORE, shell=True)\n",
             "python-subprocess-run-shell-true",
             "subprocess.r",
         ),
