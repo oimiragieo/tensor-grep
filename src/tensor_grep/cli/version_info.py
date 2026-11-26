@@ -19,7 +19,14 @@ def _module_importable(name: str) -> bool:
     if not _module_available(name):
         return False
     try:
-        importlib.import_module(name)
+        if name == "cudf":
+            importlib.import_module("cudf")
+        elif name == "pyarrow":
+            importlib.import_module("pyarrow")
+        elif name == "tensor_grep.rust_core":
+            importlib.import_module("tensor_grep.rust_core")
+        else:
+            return False
         return True
     except (ImportError, OSError, AttributeError, RuntimeError, ValueError):
         return False

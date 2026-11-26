@@ -441,7 +441,7 @@ def test_spawn_daemon_subprocess_falls_back_when_breakaway_is_denied(
     project = tmp_path / "project"
     project.mkdir()
     sessions = tmp_path / "sessions"
-    monkeypatch.setattr(session_daemon_start_capture.os, "name", "nt")
+    monkeypatch.setattr(session_daemon_start_capture, "_is_windows", lambda: True)
     monkeypatch.setattr(session_daemon_start_capture.os, "O_TEMPORARY", 0, raising=False)
     monkeypatch.setattr(
         session_daemon_start_capture.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False
@@ -490,7 +490,7 @@ def test_spawn_daemon_subprocess_fails_closed_when_win_job_no_breakaway_is_set(
     project.mkdir()
     sessions = tmp_path / "sessions"
     monkeypatch.setenv("TG_WIN_JOB_NO_BREAKAWAY", "1")
-    monkeypatch.setattr(session_daemon_start_capture.os, "name", "nt")
+    monkeypatch.setattr(session_daemon_start_capture, "_is_windows", lambda: True)
     monkeypatch.setattr(session_daemon_start_capture.os, "O_TEMPORARY", 0, raising=False)
     monkeypatch.setattr(
         session_daemon_start_capture.subprocess, "CREATE_NO_WINDOW", 0x08000000, raising=False

@@ -28,6 +28,7 @@ from tensor_grep.cli.diff_impact_cap import (
 from tensor_grep.cli.diff_impact_constants import (
     check_directory_ref,
     constant_uncertainty_fields,
+    format_git_diff_error,
     merge_constant_symbols,
     record_constant_uncertainty,
     resolve_constant_blast_radius,
@@ -722,7 +723,7 @@ def extract_diff_hunks_from_git(
         raise DiffError("git_diff_failed", str(exc)) from exc
 
     if proc.returncode != 0:
-        raise DiffError("git_diff_failed", decode_diagnostic_output(proc.stderr).strip()[:500])
+        raise DiffError("git_diff_failed", format_git_diff_error(proc.stderr, ref=ref, root=root))
 
     raw = proc.stdout or b""
     output = raw if isinstance(raw, str) else raw.decode("utf-8", errors="surrogateescape")

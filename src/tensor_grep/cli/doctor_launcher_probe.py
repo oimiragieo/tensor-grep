@@ -29,6 +29,8 @@ def strip_windows_extended_prefix(path_str: str) -> str:
     lower = path_str.lower()
     if lower.startswith("\\\\?\\unc\\"):
         return "\\\\" + path_str[8:]
+    if path_str.startswith("\\\\?\\/"):
+        return path_str[4:]
     if (
         path_str.startswith("\\\\?\\")
         and len(path_str) >= 7

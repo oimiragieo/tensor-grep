@@ -12,9 +12,9 @@ from typing import Any
 
 from tensor_grep.cli import repo_map
 from tensor_grep.cli.repo_map_test_paths import _is_test_file
+from tensor_grep.core.lang_suffixes import JS_TS_SUFFIXES as _JS_TS_SUFFIXES
 
 _PY_SUFFIXES = frozenset({".py", ".pyi"})
-_JS_TS_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"})
 
 _JS_TS_CONST_RE = re.compile(
     r"^(?:export\s+(?:default\s+)?)?(?:declare\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\b"
@@ -767,3 +767,22 @@ def check_directory_ref(
     return (
         f"{ref!r} is a directory path, not a git revision; pass --path or a git ref such as HEAD~1"
     )
+
+
+def format_git_diff_error(stderr: bytes | str | None, *, ref: str | None, root: Path) -> str:
+    """Decode git diff stderr and append a directory-ref hint for confined directories."""
+    from tensor_grep.cli.subprocess_policy import decode_diagnostic_output
+
+    msg = decode_diagnostic_output(stderr).strip()[:500]
+    if ref is None or "\x00" in ref or ref.startswith(("\\\\", "//")):
+        return msg
+    try:
+        candidate = Path(ref) if Path(ref).is_absolute() else root / ref
+        if candidate.resolve().is_relative_to(root.resolve()) and candidate.is_dir():
+            return (
+                f"{msg} ({ref!r} is a directory path, not a git revision; "
+                "pass --path or a git ref such as HEAD~1)"
+            ).strip()
+    except OSError:
+        pass
+    return msg

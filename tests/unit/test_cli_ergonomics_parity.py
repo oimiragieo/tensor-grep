@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -289,8 +290,9 @@ def test_prepare_compact_json_enforces_cap_on_oversized_version_and_schema_versi
 def test_out_and_output_aliases_exposed(cmd_args: list[str]) -> None:
     res = runner.invoke(app, cmd_args)
     assert res.exit_code == 0, res.output
-    assert "--out" in res.output
-    assert "--output" in res.output
+    plain = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", res.output)
+    assert "--out" in plain
+    assert "--output" in plain
 
 
 def test_scan_format_sarif_alias(tmp_path: Path) -> None:

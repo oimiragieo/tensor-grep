@@ -96,6 +96,7 @@ def test_strip_windows_extended_prefix_handles_unc_and_preserves_device_namespac
     assert strip_windows_extended_prefix(r"\\?\unc\server\share\tg.exe") == r"\\server\share\tg.exe"
     assert strip_windows_extended_prefix(r"\\?\UNC\server\share\tg.exe") == r"\\server\share\tg.exe"
     assert strip_windows_extended_prefix(r"\\?\C:\Users\demo\tg.exe") == r"C:\Users\demo\tg.exe"
+    assert strip_windows_extended_prefix(r"\\?\/tmp/demo/tg.exe") == "/tmp/demo/tg.exe"
     assert (
         strip_windows_extended_prefix(r"\\?\GLOBALROOT\Device\Harddisk0")
         == r"\\?\GLOBALROOT\Device\Harddisk0"

@@ -109,6 +109,22 @@ _CHANGED_TIERS = {
         "medium",
     ),
 }
+# Top-level assignments previously produced no symbols (falling back to 0.05 * changed_files);
+# constant-aware extraction now emits a constant symbol with blast_radius_score 0.0.
+_CHANGED_SCORES = {
+    "tests/unit/test_diff_impact.py::test_real_merge_revision_is_incomplete_not_no_changes#2": (
+        0.05,
+        0.0,
+    ),
+    "tests/unit/test_diff_impact_hardening.py::test_valid_symbol_free_python_file_stays_analyzed#1": (
+        0.05,
+        0.0,
+    ),
+    "tests/unit/test_diff_impact_hardening.py::test_uppercase_suffix_symbol_free_valid_file_stays_analyzed#1": (
+        0.05,
+        0.0,
+    ),
+}
 _CAPTURED: list[dict[str, Any]] = []
 _COUNTS: dict[str, int] = defaultdict(int)
 
@@ -195,6 +211,7 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(
     actual = {row["scenario_id"]: row for row in actual_rows}
     assert len(actual) == len(actual_rows)
     assert _CHANGED_TIERS.keys() <= expected.keys()
+    assert _CHANGED_SCORES.keys() <= expected.keys()
     for scenario_id, pin in expected.items():
         if scenario_id not in actual:
             continue
@@ -205,9 +222,14 @@ def test_every_existing_diff_impact_scenario_matches_origin_main_pin(
             new_tier = _CHANGED_TIERS[scenario_id][1]
             if new_tier == "medium":
                 assert "capped_uncalled_symbols" in actual[scenario_id]["risk_reasons"]
+        old_score = pin["blast_radius_score"]
+        new_score = old_score
+        if scenario_id in _CHANGED_SCORES:
+            assert _CHANGED_SCORES[scenario_id][0] == old_score
+            new_score = _CHANGED_SCORES[scenario_id][1]
         assert (actual[scenario_id]["risk_tier"], actual[scenario_id]["blast_radius_score"]) == (
             new_tier,
-            pin["blast_radius_score"],
+            new_score,
         ), scenario_id
     missing = expected.keys() - actual.keys()
     extra = actual.keys() - expected.keys()
