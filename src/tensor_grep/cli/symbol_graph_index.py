@@ -13,6 +13,7 @@ from tensor_grep.cli.incremental_graph_sync import (
     sync_graph_edges,
     sync_graph_edges_from_paths,
 )
+from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 from tensor_grep.cli.symbols_cache_io import (
     cache_lock,
     prepare_directory,
@@ -308,16 +309,17 @@ class SymbolGraphIndex:
 
     def save_to_cache(self, root: Path, *, deadline: float | None = None) -> Path:
         """Persist serialized graph database under .tg_cache/graph_v1/edges.sqlite3."""
-        cache_path = root / GRAPH_CACHE_REL_PATH
-        prepare_directory(root, cache_path.parent)
+        cache_root = resolve_canonical_cache_root(root)
+        cache_path = cache_root / GRAPH_CACHE_REL_PATH
+        prepare_directory(cache_root, cache_path.parent)
         ignore_path = cache_path.parent / ".gitignore"
         try:
-            publish_confined(root, ignore_path, b"*\n", only_if_missing=True)
+            publish_confined(cache_root, ignore_path, b"*\n", only_if_missing=True)
         except FileExistsError:
-            read_confined(root, ignore_path, 65536)
+            read_confined(cache_root, ignore_path, 65536)
         payload = self.serialize()
-        with cache_lock(root, cache_path, deadline):
-            publish_confined(root, cache_path, payload)
+        with cache_lock(cache_root, cache_path, deadline):
+            publish_confined(cache_root, cache_path, payload)
         return cache_path
 
     @classmethod
@@ -331,11 +333,12 @@ class SymbolGraphIndex:
         """Load graph cache if present, valid, and matching expected_merkle_root."""
         if deadline is not None and time.monotonic() >= deadline:
             return None
-        cache_path = root / GRAPH_CACHE_REL_PATH
+        cache_root = resolve_canonical_cache_root(root)
+        cache_path = cache_root / GRAPH_CACHE_REL_PATH
         if not cache_path.exists():
             return None
         try:
-            data = read_confined(root, cache_path, _DATABASE_LIMIT)
+            data = read_confined(cache_root, cache_path, _DATABASE_LIMIT)
             return cls.deserialize(
                 data,
                 expected_merkle_root=expected_merkle_root,
@@ -355,9 +358,10 @@ def sync_incremental_ego_subgraph(
     max_nodes: int = 32,
 ) -> dict[str, Any]:
     """Incrementally sync file edges and extract a bounded ego subgraph around ``seed_file``."""
-    sync_stats = sync_graph_edges(cache_root, current_files, extract_edges_fn)
+    canonical_root = resolve_canonical_cache_root(cache_root)
+    sync_stats = sync_graph_edges(canonical_root, current_files, extract_edges_fn)
     subgraph = extract_ego_subgraph(
-        cache_root,
+        canonical_root,
         seed_file,
         max_hops=max_hops,
         max_nodes=max_nodes,
@@ -378,8 +382,9 @@ def sync_incremental_ego_subgraph_from_paths(
     context_digest: str | None = None,
 ) -> dict[str, Any]:
     """Incrementally sync file edges via stat+hash reconciliation and extract an ego subgraph."""
+    canonical_root = resolve_canonical_cache_root(cache_root)
     sync_stats = sync_graph_edges_from_paths(
-        cache_root,
+        canonical_root,
         file_paths,
         extract_edges_fn,
         deadline_monotonic=deadline_monotonic,
@@ -387,7 +392,7 @@ def sync_incremental_ego_subgraph_from_paths(
         context_digest=context_digest,
     )
     subgraph = extract_ego_subgraph(
-        cache_root,
+        canonical_root,
         seed_file,
         max_hops=max_hops,
         max_nodes=max_nodes,

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 from tensor_grep.cli.symbols_cache_auth import load_machine_key
 from tensor_grep.cli.symbols_cache_io import (
     cache_lock,
@@ -101,11 +102,20 @@ def collect_source_address_entries(
     files: Iterable[str | Path],
 ) -> list[tuple[str, int, int]]:
     """Collect sorted ``(rel_posix_path, mtime_ns, size)`` entries for regular files."""
-    resolved_root = Path(repo_root).resolve()
+    input_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(input_root)
     entries_by_rel: dict[str, tuple[int, int]] = {}
     for raw in files:
         fp = Path(raw)
-        abs_fp = fp if fp.is_absolute() else resolved_root / fp
+        if fp.is_absolute():
+            abs_fp = fp
+        else:
+            candidate_root = resolved_root / fp
+            abs_fp = (
+                candidate_root
+                if candidate_root.exists() or input_root == resolved_root
+                else input_root / fp
+            )
         try:
             rel_posix = abs_fp.relative_to(resolved_root).as_posix()
         except ValueError:
@@ -149,7 +159,7 @@ def build_source_address_contract(
     files: Iterable[str | Path],
 ) -> tuple[str, dict[str, Any]]:
     """Build generation Merkle root and source-address contract dictionary."""
-    resolved_root = Path(repo_root).resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     entries = collect_source_address_entries(resolved_root, files)
     if not entries:
         merkle_root = hashlib.sha256(b"tg-merkle-empty-v1\0").hexdigest()
@@ -192,7 +202,7 @@ def _stat_confined_regular_artifact(repo_root: Path, path: Path) -> tuple[int, i
 
 def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | None:
     """Return a confined regular-file fingerprint for ``hybrid_v1`` or ``index_v1``, else None."""
-    resolved_root = Path(repo_root).resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     if view_name == "hybrid_v1":
         fp = _stat_confined_regular_artifact(
             resolved_root, resolved_root / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
@@ -232,7 +242,7 @@ def load_unified_manifest(
     """Load and HMAC-verify ``.tg_cache/manifest_v1.json``; fail closed on tamper/unsigned."""
     if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
         return None
-    resolved_root = Path(repo_root).resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     signing_key = load_machine_key(resolved_root)
     if signing_key is None:
         return None
@@ -374,7 +384,7 @@ def save_unified_manifest(
     """Sign and atomically publish ``.tg_cache/manifest_v1.json`` via confined I/O."""
     if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
         return False
-    resolved_root = Path(repo_root).resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     signing_key = load_machine_key(resolved_root)
     if signing_key is None:
         return False

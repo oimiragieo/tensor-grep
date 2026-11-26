@@ -156,6 +156,8 @@ def test_blast_radius_render_and_plan_compact_stay_under_4000_bytes(tmp_path: Pa
     assert plan_payload["symbol"] == "compute_invoice"
     assert plan_payload["definitions"]
     assert plan_payload["files"]
+    assert len(plan_payload["files"]) >= 2
+    assert len(plan_payload["edit_order"]) >= 2
     assert plan_payload["tests"]
     assert "not_found" in plan_payload
     assert "result_incomplete" in plan_payload
@@ -468,3 +470,50 @@ def test_compact_payload_extreme_fallback_updates_existing_smaller_omissions_cou
     assert popped_sections > 1
     assert parsed["omissions"]["omitted_section_count"] >= popped_sections
     assert parsed["omissions"]["omitted_count"] >= popped_sections * 2
+
+
+def test_compact_payload_sheds_candidate_edit_targets_before_trimming_edit_order() -> None:
+    original = {
+        "routing_backend": "RepoMap",
+        "routing_reason": "symbol-blast-radius-plan",
+        "symbol": "compute_invoice",
+        "path": "billing",
+        "definitions": [{"file": "core.py", "line": 3}],
+        "files": ["core.py", "service_1.py", "service_2.py"],
+        "tests": ["test_billing.py"],
+        "edit_order": [
+            {"file": "core.py", "role": "definition"},
+            {"file": "service_1.py", "role": "caller"},
+            {"file": "service_2.py", "role": "caller"},
+        ],
+        "candidate_edit_targets": {
+            "files": ["core.py", "service_1.py", "service_2.py"],
+            "spans": [{"file": f"service_{i}.py", "blob": "x" * 600} for i in range(6)],
+        },
+        "navigation_pack": {"blob": "n" * 2000},
+    }
+    compacted = compact_payload_for_cli(original)
+    assert len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    assert "navigation_pack" not in compacted
+    assert "candidate_edit_targets" not in compacted
+    assert len(compacted["edit_order"]) == 3
+    assert compacted["files"] == ["core.py", "service_1.py", "service_2.py"]
+    assert compacted["tests"] == ["test_billing.py"]
+
+
+def test_compact_payload_keeps_at_least_one_edit_order_under_list_trim() -> None:
+    original = {
+        "routing_backend": "RepoMap",
+        "routing_reason": "symbol-blast-radius-plan",
+        "symbol": "compute_invoice",
+        "path": "billing",
+        "definitions": [{"file": "core.py", "line": 3}],
+        "files": ["core.py"],
+        "tests": ["test_billing.py"],
+        "edit_order": [
+            {"file": f"service_{i}.py", "reason": "r" * 400} for i in range(15)
+        ],
+    }
+    compacted = compact_payload_for_cli(original)
+    assert len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    assert len(compacted["edit_order"]) >= 1

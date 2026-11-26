@@ -43,6 +43,101 @@ def _session_status(payload: dict[str, Any]) -> tuple[str, str | None]:
     return _STATUS_CURRENT, None
 
 
+def _collect_repo_merkle_candidates(cache_root: Path) -> tuple[list[Path], list[Path]]:
+    from tensor_grep.cli import lang_registry, repo_map
+
+    cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
+    walked = repo_map._iter_repo_files(cache_root, max_files=cap + 1)[:cap]
+    context_files = [p for p in walked if repo_map._is_repo_context_file(p, cache_root)]
+    code_files = [p for p in context_files if lang_registry.spec_for_path(p) is not None]
+    return code_files, context_files
+
+
+def _unified_cache_status(root: Path) -> tuple[dict[str, Any] | None, str | None, str | None]:
+    from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
+    from tensor_grep.cli.unified_cache import (
+        MANIFEST_REL_PATH,
+        check_view_freshness,
+        compute_generation_merkle_root,
+        load_unified_manifest,
+    )
+
+    cache_root = resolve_canonical_cache_root(root)
+    manifest_path = cache_root / MANIFEST_REL_PATH
+    if not manifest_path.exists():
+        return None, None, None
+
+    manifest = load_unified_manifest(cache_root)
+    if manifest is None:
+        unverified_detail = "manifest_v1.json could not be verified or decoded"
+        return (
+            {
+                "root": str(cache_root),
+                "status": _STATUS_UNKNOWN,
+                "views": {},
+                "detail": unverified_detail,
+            },
+            _STATUS_UNKNOWN,
+            unverified_detail,
+        )
+
+    code_files, context_files = _collect_repo_merkle_candidates(cache_root)
+    merkle_code = compute_generation_merkle_root(cache_root, code_files)
+    matched_merkle: str | None = merkle_code if merkle_code == manifest.get("merkle_root") else None
+    if matched_merkle is None:
+        merkle_context = compute_generation_merkle_root(cache_root, context_files)
+        if merkle_context == manifest.get("merkle_root"):
+            matched_merkle = merkle_context
+
+    raw_views = manifest.get("views")
+    views_dict = raw_views if isinstance(raw_views, dict) else {}
+    view_names = tuple(str(k) for k in views_dict)
+    fresh_map = (
+        check_view_freshness(manifest, matched_merkle, view_names, repo_root=cache_root)
+        if matched_merkle is not None and view_names
+        else dict.fromkeys(view_names, False)
+    )
+    ready_views = [
+        str(name)
+        for name, entry in views_dict.items()
+        if isinstance(entry, dict) and entry.get("ready") is True
+    ]
+
+    status: str
+    detail: str | None = None
+    if matched_merkle is None:
+        status = _STATUS_STALE
+        detail = "working tree changed since .tg_cache/manifest_v1.json was recorded"
+    elif not ready_views:
+        status = _STATUS_STALE
+        detail = "no ready views in .tg_cache/manifest_v1.json"
+    elif any(not fresh_map.get(name, False) for name in ready_views):
+        stale_views = [name for name in ready_views if not fresh_map.get(name, False)]
+        status = _STATUS_STALE
+        detail = f"stale cache view(s): {', '.join(stale_views)}"
+    else:
+        status = _STATUS_CURRENT
+
+    cache_info: dict[str, Any] = {
+        "root": str(cache_root),
+        "merkle_root": manifest.get("merkle_root"),
+        "status": status,
+        "views": {
+            name: {
+                "ready": bool(
+                    isinstance(views_dict.get(name), dict)
+                    and views_dict[name].get("ready") is True
+                ),
+                "fresh": bool(fresh_map.get(name, False)),
+            }
+            for name in view_names
+        },
+    }
+    if detail:
+        cache_info["detail"] = detail
+    return cache_info, status, detail
+
+
 def check_freshness(root: Path) -> dict[str, Any]:
     """Report whether every persisted session for ``root`` still matches the working tree."""
     from tensor_grep.cli.session_store import get_session, list_sessions
@@ -93,7 +188,16 @@ def check_freshness(root: Path) -> dict[str, Any]:
 
     payload["session_count"] = len(payload["sessions"])
 
-    if payload["session_count"] == 0:
+    cache_info, cache_status, _ = _unified_cache_status(root)
+    if cache_info is not None:
+        payload["unified_cache"] = cache_info
+        if cache_status == _STATUS_STALE:
+            payload["stale_count"] += 1
+        elif cache_status == _STATUS_UNKNOWN:
+            payload["unknown_count"] += 1
+
+    has_persisted_state = payload["session_count"] > 0 or cache_info is not None
+    if not has_persisted_state:
         # THE floor. Never report a confident "current" for state that does not exist.
         payload["result_incomplete"] = True
         payload["incomplete_reason"] = "no_persisted_state"
@@ -104,7 +208,11 @@ def check_freshness(root: Path) -> dict[str, Any]:
         )
     elif payload["unknown_count"]:
         payload["result_incomplete"] = True
-        payload["incomplete_reason"] = "session_state_unreadable"
+        payload["incomplete_reason"] = (
+            "cache_state_unreadable"
+            if payload["session_count"] == 0 and cache_status == _STATUS_UNKNOWN
+            else "session_state_unreadable"
+        )
         payload["remediation"] = (
             f"{payload['unknown_count']} session(s) could not be checked; their freshness is "
             "UNRESOLVED, not current."
@@ -131,6 +239,10 @@ def render_freshness_text(payload: dict[str, Any]) -> str:
     for entry in payload["sessions"]:
         detail = f"  -- {entry['detail']}" if entry.get("detail") else ""
         lines.append(f"  {entry['status']:<8} {entry['session_id']}{detail}")
+    uc = payload.get("unified_cache")
+    if isinstance(uc, dict):
+        uc_detail = f"  -- {uc['detail']}" if uc.get("detail") else ""
+        lines.append(f"  {uc.get('status', 'unknown')!s:<8} unified_cache{uc_detail}")
     lines.append(
         f"sessions={payload['session_count']} stale={payload['stale_count']} "
         f"unknown={payload['unknown_count']}"

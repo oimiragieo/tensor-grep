@@ -623,21 +623,31 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": "python-yaml-load-unsafe-loader",
-                    "pattern": "yaml.load($DATA, Loader=yaml.Loader)",
+                    "pattern": "yaml.load($$$BEFORE, Loader=yaml.Loader)",
+                    "patterns": [
+                        "yaml.load($$$BEFORE, Loader=yaml.Loader)",
+                        "yaml.load($$$BEFORE, Loader=yaml.Loader, $$$AFTER)",
+                        "yaml.load($$$BEFORE, Loader=yaml.UnsafeLoader)",
+                        "yaml.load($$$BEFORE, Loader=yaml.UnsafeLoader, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Use yaml.SafeLoader instead of yaml.Loader for untrusted YAML.",
                 },
                 {
                     "id": "python-yaml-load-full-loader",
-                    "pattern": "yaml.load($DATA, Loader=yaml.FullLoader)",
+                    "pattern": "yaml.load($$$BEFORE, Loader=yaml.FullLoader)",
+                    "patterns": [
+                        "yaml.load($$$BEFORE, Loader=yaml.FullLoader)",
+                        "yaml.load($$$BEFORE, Loader=yaml.FullLoader, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Use yaml.SafeLoader instead of yaml.FullLoader for untrusted YAML.",
                 },
                 {
                     "id": "python-pandas-read-pickle",
-                    "pattern": "pandas.read_pickle($PATH)",
+                    "pattern": "pandas.read_pickle($$$ARGS)",
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid loading untrusted pickle data with pandas.read_pickle().",
@@ -681,7 +691,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": "javascript-yaml-load",
-                    "pattern": "yaml.load($DATA)",
+                    "pattern": "yaml.load($$$ARGS)",
                     "language": "javascript",
                     "severity": "high",
                     "message": "Use a safe YAML loader when parsing untrusted YAML.",
@@ -725,7 +735,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": "typescript-yaml-load",
-                    "pattern": "yaml.load($DATA)",
+                    "pattern": "yaml.load($$$ARGS)",
                     "language": "typescript",
                     "severity": "high",
                     "message": "Use a safe YAML loader when parsing untrusted YAML.",
@@ -800,35 +810,55 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": "python-subprocess-run-shell-true",
-                    "pattern": "subprocess.run($CMD, shell=True)",
+                    "pattern": "subprocess.run($$$BEFORE, shell=True)",
+                    "patterns": [
+                        "subprocess.run($$$BEFORE, shell=True)",
+                        "subprocess.run($$$BEFORE, shell=True, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid subprocess.run(..., shell=True) with untrusted commands.",
                 },
                 {
                     "id": "python-subprocess-call-shell-true",
-                    "pattern": "subprocess.call($CMD, shell=True)",
+                    "pattern": "subprocess.call($$$BEFORE, shell=True)",
+                    "patterns": [
+                        "subprocess.call($$$BEFORE, shell=True)",
+                        "subprocess.call($$$BEFORE, shell=True, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid subprocess.call(..., shell=True) with untrusted commands.",
                 },
                 {
                     "id": "python-subprocess-popen-shell-true",
-                    "pattern": "subprocess.Popen($CMD, shell=True)",
+                    "pattern": "subprocess.Popen($$$BEFORE, shell=True)",
+                    "patterns": [
+                        "subprocess.Popen($$$BEFORE, shell=True)",
+                        "subprocess.Popen($$$BEFORE, shell=True, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid subprocess.Popen(..., shell=True) with untrusted commands.",
                 },
                 {
                     "id": "python-subprocess-check-call-shell-true",
-                    "pattern": "subprocess.check_call($CMD, shell=True)",
+                    "pattern": "subprocess.check_call($$$BEFORE, shell=True)",
+                    "patterns": [
+                        "subprocess.check_call($$$BEFORE, shell=True)",
+                        "subprocess.check_call($$$BEFORE, shell=True, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid subprocess.check_call(..., shell=True) with untrusted commands.",
                 },
                 {
                     "id": "python-subprocess-check-output-shell-true",
-                    "pattern": "subprocess.check_output($CMD, shell=True)",
+                    "pattern": "subprocess.check_output($$$BEFORE, shell=True)",
+                    "patterns": [
+                        "subprocess.check_output($$$BEFORE, shell=True)",
+                        "subprocess.check_output($$$BEFORE, shell=True, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Avoid subprocess.check_output(..., shell=True) with untrusted commands.",
@@ -851,42 +881,42 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
             "javascript": [
                 {
                     "id": "javascript-child-process-exec",
-                    "pattern": "child_process.exec($CMD)",
+                    "pattern": "child_process.exec($$$ARGS)",
                     "language": "javascript",
                     "severity": "high",
                     "message": "Avoid child_process.exec() with untrusted commands.",
                 },
                 {
                     "id": "javascript-child-process-exec-sync",
-                    "pattern": "child_process.execSync($CMD)",
+                    "pattern": "child_process.execSync($$$ARGS)",
                     "language": "javascript",
                     "severity": "high",
                     "message": "Avoid child_process.execSync() with untrusted commands.",
                 },
                 {
                     "id": "javascript-exec",
-                    "pattern": "exec($CMD)",
+                    "pattern": "exec($$$ARGS)",
                     "language": "javascript",
                     "severity": "high",
                     "message": "Avoid exec() with untrusted commands.",
                 },
                 {
                     "id": "javascript-exec-sync",
-                    "pattern": "execSync($CMD)",
+                    "pattern": "execSync($$$ARGS)",
                     "language": "javascript",
                     "severity": "high",
                     "message": "Avoid execSync() with untrusted commands.",
                 },
                 {
                     "id": "javascript-require-child-process-exec",
-                    "pattern": 'require("child_process").exec($CMD)',
+                    "pattern": 'require("child_process").exec($$$ARGS)',
                     "language": "javascript",
                     "severity": "high",
                     "message": 'Avoid require("child_process").exec() with untrusted commands.',
                 },
                 {
                     "id": "javascript-require-child-process-exec-sync",
-                    "pattern": 'require("child_process").execSync($CMD)',
+                    "pattern": 'require("child_process").execSync($$$ARGS)',
                     "language": "javascript",
                     "severity": "high",
                     "message": 'Avoid require("child_process").execSync() with untrusted commands.',
@@ -909,42 +939,42 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
             "typescript": [
                 {
                     "id": "typescript-child-process-exec",
-                    "pattern": "child_process.exec($CMD)",
+                    "pattern": "child_process.exec($$$ARGS)",
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid child_process.exec() with untrusted commands.",
                 },
                 {
                     "id": "typescript-child-process-exec-sync",
-                    "pattern": "child_process.execSync($CMD)",
+                    "pattern": "child_process.execSync($$$ARGS)",
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid child_process.execSync() with untrusted commands.",
                 },
                 {
                     "id": "typescript-exec",
-                    "pattern": "exec($CMD)",
+                    "pattern": "exec($$$ARGS)",
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid exec() with untrusted commands.",
                 },
                 {
                     "id": "typescript-exec-sync",
-                    "pattern": "execSync($CMD)",
+                    "pattern": "execSync($$$ARGS)",
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid execSync() with untrusted commands.",
                 },
                 {
                     "id": "typescript-require-child-process-exec",
-                    "pattern": 'require("child_process").exec($CMD)',
+                    "pattern": 'require("child_process").exec($$$ARGS)',
                     "language": "typescript",
                     "severity": "high",
                     "message": 'Avoid require("child_process").exec() with untrusted commands.',
                 },
                 {
                     "id": "typescript-require-child-process-exec-sync",
-                    "pattern": 'require("child_process").execSync($CMD)',
+                    "pattern": 'require("child_process").execSync($$$ARGS)',
                     "language": "typescript",
                     "severity": "high",
                     "message": 'Avoid require("child_process").execSync() with untrusted commands.',
@@ -1040,14 +1070,22 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 },
                 {
                     "id": "python-requests-verify-false",
-                    "pattern": "requests.get($URL, verify=False)",
+                    "pattern": "requests.get($$$BEFORE, verify=False)",
+                    "patterns": [
+                        "requests.get($$$BEFORE, verify=False)",
+                        "requests.get($$$BEFORE, verify=False, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Do not disable TLS certificate verification with verify=False.",
                 },
                 {
                     "id": "python-requests-post-verify-false",
-                    "pattern": "requests.post($URL, verify=False)",
+                    "pattern": "requests.post($$$BEFORE, verify=False)",
+                    "patterns": [
+                        "requests.post($$$BEFORE, verify=False)",
+                        "requests.post($$$BEFORE, verify=False, $$$AFTER)",
+                    ],
                     "language": "python",
                     "severity": "high",
                     "message": "Do not disable TLS certificate verification with verify=False.",
@@ -1158,13 +1196,15 @@ def resolve_rule_pack(
 
     rules = []
     for rule in raw_rules:
-        resolved_rule = {
+        resolved_rule: dict[str, Any] = {
             "id": str(rule["id"]),
             "pattern": str(rule["pattern"]),
             "language": str(rule["language"]),
             "severity": str(rule["severity"]),
             "message": str(rule["message"]),
         }
+        if rule.get("patterns"):
+            resolved_rule["patterns"] = [str(p) for p in rule["patterns"]]
         if rule.get("engine"):
             resolved_rule["engine"] = str(rule["engine"])
         rules.append(resolved_rule)

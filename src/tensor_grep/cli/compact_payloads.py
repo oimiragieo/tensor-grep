@@ -76,6 +76,7 @@ _RENDER_EXTRA_OMIT_KEYS: frozenset[str] = frozenset({
 
 _SECONDARY_TRIM_ORDER: tuple[str, ...] = (
     "caveat",
+    "candidate_edit_targets",
     "resolution_gaps",
     "candidates",
     "alternative_targets",
@@ -167,7 +168,6 @@ def _primary_keys_for_payload(payload: dict[str, Any]) -> tuple[frozenset[str], 
             "tests",
             "symbols",
             "edit_order",
-            "candidate_edit_targets",
             "validation_commands",
             "blast_radius_score",
         })
@@ -617,7 +617,7 @@ def compact_payload_for_cli(payload: dict[str, Any]) -> dict[str, Any]:
     for key in _LIST_OMIT_ORDER:
         val = bounded.get(key)
         if isinstance(val, list) and val:
-            min_keep = 1 if key in {"definitions", "files", "tests"} else 0
+            min_keep = 1 if key in {"definitions", "files", "tests", "edit_order"} else 0
             removed = 0
             while len(val) > min_keep and _over_budget():
                 val.pop()
