@@ -3,7 +3,6 @@
 import hashlib
 import os
 import re
-import sqlite3
 import subprocess
 import time
 from collections import deque
@@ -172,23 +171,6 @@ def _expand_larger_ego_files(
         norm_to_path[os.path.normcase(os.path.abspath(str(fp)))] = fp
     test_by_stem = [(t, t.stem.lower()) for t in tests]
     queue: deque[tuple[Path, int]] = deque((fp, 0) for fp in seed_files)
-
-    if (
-        seed_files
-        and (cache_root / ".tg_cache" / "graph_v1" / "incremental_edges.sqlite3").exists()
-    ):
-        try:
-            from tensor_grep.cli.incremental_graph_sync import extract_ego_subgraph
-
-            ego = extract_ego_subgraph(
-                cache_root, str(seed_files[0]), max_hops=2, max_nodes=_LARGER_EGO_MAX_FILES
-            )
-            for raw_node in ego.get("nodes") or []:
-                node_fp = norm_to_path.get(os.path.normcase(os.path.abspath(str(raw_node))))
-                if node_fp is not None:
-                    queue.append((node_fp, 1))
-        except (OSError, ValueError, sqlite3.Error):
-            pass
 
     seen_norm: set[str] = set()
     parsed_paths, symbols, imports = [], [], []
@@ -374,7 +356,7 @@ def build_larger_lazy_repo_map(
         },
         "scan_remediation": _repo_map._SCAN_LIMIT_TRUNCATED_REMEDIATION if _truncated else None,
     })
-    generation.finish(rm, complete=not _truncated)
+    generation.finish(rm, complete=False)
     return rm, file_meta, (pre_stats, config_meta)
 
 
@@ -424,9 +406,7 @@ def hydrate_warm_larger_repo_map(
         "parsed_files": sorted(already_parsed | set(parsed_paths)),
     }
     updated_meta = {**(file_meta or {}), **parsed_meta}
-    generation.finish(
-        updated_rm, complete=not bool((rm.get("scan_limit") or {}).get("possibly_truncated"))
-    )
+    generation.finish(updated_rm, complete=False)
     return updated_rm, updated_meta, True
 
 

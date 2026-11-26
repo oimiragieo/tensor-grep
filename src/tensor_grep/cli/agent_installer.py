@@ -195,10 +195,8 @@ def _update_toml_codex(path: Path, add_entry: bool = True, *, home_dir: Path | N
     tg_cmd_toml = json.dumps(_resolve_tg_command(home_dir))
     if add_entry:
         block = f'[mcp_servers.tensor_grep]\ncommand = {tg_cmd_toml}\nargs = ["mcp"]\n'
-        if pattern.search(content):
-            new_content = pattern.sub(lambda _m: block.strip(), content)
-        else:
-            new_content = (content.rstrip() + "\n\n" + block).lstrip()
+        stripped = pattern.sub("", content).strip()
+        new_content = f"{stripped}\n\n{block}" if stripped else block
     else:
         new_content = (
             pattern.sub("", content).strip() + "\n" if pattern.search(content) else content

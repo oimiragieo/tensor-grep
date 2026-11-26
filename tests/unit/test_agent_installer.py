@@ -377,3 +377,20 @@ def test_uninstall_all_targets_preserves_existing_user_keys(fake_home):
     assert qwen_data["ui"] == {"compact": True}
     assert "keep" in qwen_data["mcpServers"]
     assert "tensor_grep" not in qwen_data["mcpServers"]
+
+
+def test_codex_reinstall_with_subtable_produces_valid_toml(fake_home):
+    codex_cfg = fake_home / ".codex" / "config.toml"
+    codex_cfg.parent.mkdir(parents=True, exist_ok=True)
+    codex_cfg.write_text(
+        '[mcp_servers.tensor_grep]\ncommand = "old"\nargs = ["mcp"]\n\n'
+        '[mcp_servers.tensor_grep.env]\nFOO = "bar"\n\n'
+        '[mcp_servers.other]\ncommand = "other"\n',
+        encoding="utf-8",
+    )
+
+    res = install_agent_integration("codex", home_dir=fake_home)
+    assert res["status"] == "installed"
+    parsed = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
+    assert "tensor_grep" in parsed["mcp_servers"]
+    assert "other" in parsed["mcp_servers"]

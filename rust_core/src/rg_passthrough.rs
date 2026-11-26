@@ -7,19 +7,82 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-pub fn resolve_no_ignore_from_argv(raw_args: &[OsString], parsed_no_ignore: bool) -> bool {
-    let (mut state, mut saw_either) = (parsed_no_ignore, false);
-    for arg in raw_args.iter().skip(1) {
+fn takes_option_value(flag: &str) -> bool {
+    matches!(
+        flag,
+        "-e" | "--regexp"
+            | "-f"
+            | "--file"
+            | "-g"
+            | "--glob"
+            | "--iglob"
+            | "-t"
+            | "--type"
+            | "-T"
+            | "--type-not"
+            | "--type-add"
+            | "--type-clear"
+            | "-A"
+            | "--after-context"
+            | "-B"
+            | "--before-context"
+            | "-C"
+            | "--context"
+            | "-m"
+            | "--max-count"
+            | "--max-depth"
+            | "--max-filesize"
+            | "--color"
+            | "--colors"
+            | "--path-separator"
+            | "-r"
+            | "--replace"
+            | "--encoding"
+            | "-E"
+            | "--ignore-file"
+            | "--gpu-device-ids"
+            | "--threads"
+            | "-j"
+            | "--sort"
+            | "--sortr"
+            | "--field-context-separator"
+            | "--field-match-separator"
+            | "--heading"
+            | "--max-columns"
+            | "-M"
+            | "--engine"
+    )
+}
+
+fn ignore_flag_positions(args: &[OsString], start_idx: usize) -> (bool, bool, Vec<usize>) {
+    let mut state = false;
+    let mut saw_either = false;
+    let mut flag_indices = Vec::new();
+    let mut skip_next = false;
+    for (idx, arg) in args.iter().enumerate().skip(start_idx) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         let s = arg.to_string_lossy();
         if s == "--" {
             break;
         }
         if s == "--no-ignore" {
             (state, saw_either) = (true, true);
+            flag_indices.push(idx);
         } else if s == "--ignore" {
             (state, saw_either) = (false, true);
+            flag_indices.push(idx);
+        } else if takes_option_value(&s) {
+            skip_next = true;
         }
     }
+    (state, saw_either, flag_indices)
+}
+
+pub fn resolve_no_ignore_from_argv(raw_args: &[OsString], parsed_no_ignore: bool) -> bool {
+    let (state, saw_either, _) = ignore_flag_positions(raw_args, 1);
     if saw_either {
         state
     } else {
@@ -28,16 +91,35 @@ pub fn resolve_no_ignore_from_argv(raw_args: &[OsString], parsed_no_ignore: bool
 }
 
 pub fn strip_overridden_ignore_flags(args: &mut Vec<String>, search_args: &[OsString]) {
-    if args.iter().any(|a| a == "--no-ignore") && args.iter().any(|a| a == "--ignore") {
-        let last_no_ignore = resolve_no_ignore_from_argv(search_args, false);
-        args.retain(|a| {
-            if last_no_ignore {
-                a != "--ignore"
-            } else {
-                a != "--no-ignore"
-            }
-        });
+    let (last_no_ignore, saw_either, flag_indices) = ignore_flag_positions(search_args, 2);
+    if !saw_either {
+        return;
     }
+    let has_no_ignore = flag_indices
+        .iter()
+        .any(|&i| search_args[i].to_string_lossy() == "--no-ignore");
+    let has_ignore = flag_indices
+        .iter()
+        .any(|&i| search_args[i].to_string_lossy() == "--ignore");
+    if !(has_no_ignore && has_ignore) {
+        return;
+    }
+    let drop_flag = if last_no_ignore {
+        "--ignore"
+    } else {
+        "--no-ignore"
+    };
+    let drop_tail_indices: std::collections::HashSet<usize> = flag_indices
+        .into_iter()
+        .filter(|&i| search_args[i].to_string_lossy() == drop_flag)
+        .map(|i| i - 2)
+        .collect();
+    let mut idx = 0usize;
+    args.retain(|_| {
+        let keep = !drop_tail_indices.contains(&idx);
+        idx += 1;
+        keep
+    });
 }
 
 pub fn extract_search_tail_args(search_args: &[OsString]) -> Vec<String> {

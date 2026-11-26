@@ -1068,11 +1068,13 @@ def _build_prepare_payload(
             ) or bool(rm.get("possibly_truncated"))
             symbols_ready = (
                 not bool(rm.get("partial"))
+                and not bool(rm.get("lazy_larger"))
                 and not bool(rm.get("unreadable_paths"))
                 and not rm_truncated_for_manifest
             )
             graph_ready = (
                 ego_subgraph is not None
+                and not bool(rm.get("lazy_larger"))
                 and int((ego_subgraph.get("sync") or {}).get("complete", 0)) == 1
             )
             if can_use_warm_cache:
