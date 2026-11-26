@@ -43,14 +43,16 @@ def _session_status(payload: dict[str, Any]) -> tuple[str, str | None]:
     return _STATUS_CURRENT, None
 
 
-def _collect_repo_merkle_candidates(cache_root: Path) -> tuple[list[Path], list[Path]]:
+def _collect_repo_merkle_candidates(cache_root: Path) -> tuple[list[Path], list[Path], bool]:
     from tensor_grep.cli import lang_registry, repo_map
 
     cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
-    walked = repo_map._iter_repo_files(cache_root, max_files=cap + 1)[:cap]
+    walked_all = repo_map._iter_repo_files(cache_root, max_files=cap + 1)
+    truncated = len(walked_all) > cap
+    walked = walked_all[:cap]
     context_files = [p for p in walked if repo_map._is_repo_context_file(p, cache_root)]
     code_files = [p for p in context_files if lang_registry.spec_for_path(p) is not None]
-    return code_files, context_files
+    return code_files, context_files, truncated
 
 
 def _unified_cache_status(root: Path) -> tuple[dict[str, Any] | None, str | None, str | None]:
@@ -81,7 +83,19 @@ def _unified_cache_status(root: Path) -> tuple[dict[str, Any] | None, str | None
             unverified_detail,
         )
 
-    code_files, context_files = _collect_repo_merkle_candidates(cache_root)
+    code_files, context_files, walked_truncated = _collect_repo_merkle_candidates(cache_root)
+    if walked_truncated:
+        trunc_detail = "repository file walk exceeded scan_limit"
+        return (
+            {
+                "root": str(cache_root),
+                "status": _STATUS_UNKNOWN,
+                "views": {},
+                "detail": trunc_detail,
+            },
+            _STATUS_UNKNOWN,
+            trunc_detail,
+        )
     merkle_code = compute_generation_merkle_root(cache_root, code_files)
     matched_merkle: str | None = merkle_code if merkle_code == manifest.get("merkle_root") else None
     if matched_merkle is None:

@@ -322,6 +322,7 @@ class HybridSQLiteIndex:
                 "file_id",
                 "start_line",
                 "end_line",
+                "inline_content",
                 "content_hash",
                 "alias_tokens",
                 "embedding_blob",
@@ -359,6 +360,7 @@ class HybridSQLiteIndex:
                     file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
                     start_line INTEGER NOT NULL DEFAULT 0,
                     end_line INTEGER NOT NULL DEFAULT 0,
+                    inline_content TEXT,
                     content_hash TEXT,
                     alias_tokens TEXT NOT NULL DEFAULT '',
                     embedding_blob BLOB,
@@ -366,17 +368,28 @@ class HybridSQLiteIndex:
                 )
                 """
             )
-            self._conn.execute(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-                    content,
-                    alias_tokens,
-                    content='',
-                    contentless_delete=1,
-                    tokenize="unicode61"
+            if sqlite3.sqlite_version_info >= (3, 43, 0):
+                self._conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        content,
+                        alias_tokens,
+                        content='',
+                        contentless_delete=1,
+                        tokenize="unicode61"
+                    )
+                    """
                 )
-                """
-            )
+            else:
+                self._conn.execute(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                        content,
+                        alias_tokens,
+                        tokenize="unicode61"
+                    )
+                    """
+                )
             self._conn.execute(
                 """
                 CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
@@ -548,20 +561,22 @@ class HybridSQLiteIndex:
                         )
                         continue
                 aliases = _extract_alias_tokens(content)
+                inline_val = None if file_id is not None else content
                 if prev is not None:
                     row_id = prev[0]
                     self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
                     self._conn.execute(
                         """
                         UPDATE documents
-                        SET file_id = ?, start_line = ?, end_line = ?, alias_tokens = ?,
-                            content_hash = ?, embedding_blob = ?, binary_blob = ?
+                        SET file_id = ?, start_line = ?, end_line = ?, inline_content = ?,
+                            alias_tokens = ?, content_hash = ?, embedding_blob = ?, binary_blob = ?
                         WHERE id = ?
                         """,
                         (
                             file_id,
                             start_line,
                             end_line,
+                            inline_val,
                             aliases,
                             c_hash,
                             emb_blob,
@@ -573,16 +588,17 @@ class HybridSQLiteIndex:
                     cur = self._conn.execute(
                         """
                         INSERT INTO documents (
-                            doc_id, file_id, start_line, end_line, alias_tokens,
+                            doc_id, file_id, start_line, end_line, inline_content, alias_tokens,
                             content_hash, embedding_blob, binary_blob
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             doc_id,
                             file_id,
                             start_line,
                             end_line,
+                            inline_val,
                             aliases,
                             c_hash,
                             emb_blob,
@@ -678,10 +694,9 @@ class HybridSQLiteIndex:
             doc_key = str(doc_id)
             if doc_key in seen_and:
                 continue
-            content = self._content_cache.get(doc_key, str(alias_tokens))
             doc_tokens = {
                 part.lower()
-                for raw_tok in re.findall(r"[A-Za-z0-9_]+", str(content))
+                for raw_tok in re.findall(r"[A-Za-z0-9_]+", str(alias_tokens))
                 for part in split_code_identifiers(raw_tok)
             }
             coverage = len(query_terms & doc_tokens)
@@ -840,32 +855,64 @@ class HybridSQLiteIndex:
         missing_ids = [doc_id for _, doc_id, _, _ in top if doc_id not in self._content_cache]
         reconstructed: dict[str, str] = {}
         if missing_ids:
+            import os
+
+            from tensor_grep.io.confined import validate_confined_parent_prefix
+            from tensor_grep.io.root_probe import open_regular_nontraversing_fd
+
             placeholders = ",".join("?" for _ in missing_ids)
             rows = self._conn.execute(
                 f"""
-                SELECT d.doc_id, f.file_path, d.start_line, d.end_line
+                SELECT d.doc_id, f.file_path, d.start_line, d.end_line, d.content_hash, d.inline_content
                 FROM documents d
-                JOIN files f ON f.id = d.file_id
+                LEFT JOIN files f ON f.id = d.file_id
                 WHERE d.doc_id IN ({placeholders})
                 """,
                 missing_ids,
             ).fetchall()
+            confinement_root: Path | None = None
+            if not self._is_memory:
+                db_p = self.db_path.resolve()
+                if (
+                    len(db_p.parts) >= 4
+                    and db_p.parent.name == "hybrid_v1"
+                    and db_p.parent.parent.name == ".tg_cache"
+                ):
+                    confinement_root = db_p.parent.parent.parent
             file_lines_cache: dict[str, list[str]] = {}
-            for row_doc_id, file_path_str, start_line, end_line in rows:
+            for row_doc_id, file_path_str, start_line, end_line, expected_hash, inline_val in rows:
+                if inline_val is not None:
+                    reconstructed[str(row_doc_id)] = str(inline_val)
+                    continue
+                if not file_path_str:
+                    continue
                 lines = file_lines_cache.get(file_path_str)
                 if lines is None:
+                    lines = []
                     try:
-                        lines = (
-                            Path(file_path_str)
-                            .read_text(encoding="utf-8", errors="replace")
-                            .splitlines()
-                        )
+                        src_path = Path(file_path_str)
+                        if confinement_root is not None:
+                            validate_confined_parent_prefix(confinement_root, src_path)
+                        fd = open_regular_nontraversing_fd(src_path)
+                        if fd is not None:
+                            with os.fdopen(fd, "rb") as handle:
+                                raw_bytes = handle.read(16 * 1024 * 1024 + 1)
+                            if len(raw_bytes) <= 16 * 1024 * 1024:
+                                lines = (
+                                    raw_bytes
+                                    .decode("utf-8", errors="replace")
+                                    .replace("\r\n", "\n")
+                                    .splitlines(keepends=True)
+                                )
                     except OSError:
                         lines = []
                     file_lines_cache[file_path_str] = lines
                 s_idx = max(0, int(start_line) - 1)
                 e_idx = max(s_idx, int(end_line))
-                reconstructed[str(row_doc_id)] = "\n".join(lines[s_idx:e_idx])
+                chunk_text = "".join(lines[s_idx:e_idx])
+                if expected_hash and _content_hash(chunk_text) != str(expected_hash):
+                    continue
+                reconstructed[str(row_doc_id)] = chunk_text
 
         return [
             {

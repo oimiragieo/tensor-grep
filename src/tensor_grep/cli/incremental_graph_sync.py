@@ -213,6 +213,7 @@ def sync_graph_edges_from_paths(
     deadline_monotonic: float | None = None,
     force_refresh: bool = False,
     context_digest: str | None = None,
+    scope_root: Path | None = None,
 ) -> dict[str, int]:
     """Incrementally sync file edges using ``(mtime_ns, ctime_ns, size)`` stat-first reconciliation.
 
@@ -249,7 +250,13 @@ def sync_graph_edges_from_paths(
 
         current_path_strs = [str(p) for p in file_paths]
         current_path_set = set(current_path_strs)
-        deleted_paths = sorted(p for p in existing_hashes if p not in current_path_set)
+        resolved_scope = Path(scope_root).expanduser().resolve() if scope_root is not None else None
+        deleted_paths = sorted(
+            p
+            for p in existing_hashes
+            if p not in current_path_set
+            and (resolved_scope is None or Path(p).resolve().is_relative_to(resolved_scope))
+        )
 
         skipped = 0
         updated = 0

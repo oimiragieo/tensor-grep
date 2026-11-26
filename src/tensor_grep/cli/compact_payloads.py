@@ -106,11 +106,11 @@ _LIST_OMIT_ORDER: tuple[str, ...] = (
     "sections",
     "callers",
     "candidate_edit_targets",
-    "edit_order",
     "symbols",
     "tests",
     "files",
     "definitions",
+    "edit_order",
 )
 
 _BLAST_RADIUS_ROUTING_REASONS: frozenset[str] = frozenset({

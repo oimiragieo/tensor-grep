@@ -87,19 +87,20 @@ def test_find_hybrid_4_parallel_processes_cold_and_warm(tmp_path: Path) -> None:
 def test_hybrid_rerank_retries_transient_permission_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from tensor_grep.io import confined
+    import os
 
-    real_publish = confined.publish_confined
+    real_replace = os.replace
     attempts = 0
 
-    def _flaky_publish(*args, **kwargs):
+    def _flaky_replace(src, dst, *args, **kwargs):
         nonlocal attempts
-        attempts += 1
-        if attempts <= 2 and str(args[1]).endswith("index.sqlite3"):
-            raise PermissionError(13, "sharing violation")
-        return real_publish(*args, **kwargs)
+        if str(dst).endswith("index.sqlite3"):
+            attempts += 1
+            if attempts <= 2:
+                raise PermissionError(13, "sharing violation")
+        return real_replace(src, dst, *args, **kwargs)
 
-    monkeypatch.setattr(confined, "publish_confined", _flaky_publish)
+    monkeypatch.setattr(os, "replace", _flaky_replace)
     monkeypatch.setattr("time.sleep", lambda _s: None)
 
     chunks = [

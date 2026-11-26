@@ -123,6 +123,17 @@ def chunk_file(
     return _chunk_file_line_windows(file_path, chunk_size=chunk_size, overlap=overlap)
 
 
+def _read_text_with_bom(file_path: Path) -> str:
+    data = file_path.read_bytes()
+    if data.startswith(b"\x00\x00\xfe\xff"):
+        return data.decode("utf-32-be", errors="replace").lstrip("\ufeff")
+    if data.startswith(b"\xff\xfe\x00\x00"):
+        return data.decode("utf-32-le", errors="replace").lstrip("\ufeff")
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace").lstrip("\ufeff")
+    return data.decode("utf-8", errors="replace")
+
+
 def _chunk_file_line_windows(
     file_path: str,
     *,
@@ -135,8 +146,7 @@ def _chunk_file_line_windows(
     if _looks_like_binary_file(Path(file_path)):
         return []
     try:
-        with open(file_path, encoding="utf-8", errors="replace") as handle:
-            raw = handle.read()
+        raw = _read_text_with_bom(Path(file_path))
     except OSError:
         return []
 

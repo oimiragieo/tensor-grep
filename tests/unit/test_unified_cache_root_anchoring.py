@@ -121,3 +121,44 @@ def test_prepare_subdirectory_never_creates_nested_tg_cache(tmp_path: Path) -> N
     assert payload["primary_target"] is not None
     assert (repo / MANIFEST_REL_PATH).is_file()
     assert not (src / ".tg_cache").exists()
+
+
+def test_sequential_subtree_graph_sync_preserves_other_subtrees_and_floor(tmp_path: Path) -> None:
+    from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
+    from tensor_grep.cli.symbol_graph_index import (
+        extract_ego_subgraph,
+        sync_incremental_ego_subgraph_from_paths,
+    )
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    sub_a = repo / "src" / "a"
+    sub_b = repo / "src" / "b"
+    sub_a.mkdir(parents=True)
+    sub_b.mkdir(parents=True)
+    file_a = sub_a / "a.py"
+    file_a2 = sub_a / "a2.py"
+    file_b = sub_b / "b.py"
+    file_a.write_text("def fa(): pass\n", encoding="utf-8")
+    file_a2.write_text("def fa2(): pass\n", encoding="utf-8")
+    file_b.write_text("def fb(): pass\n", encoding="utf-8")
+
+    sync_incremental_ego_subgraph_from_paths(
+        sub_a,
+        [file_a, file_a2],
+        lambda src, _txt: [(str(file_a2), "import")] if src == str(file_a) else [],
+        str(file_a),
+    )
+    sync_incremental_ego_subgraph_from_paths(
+        sub_b,
+        [file_b],
+        lambda _src, _txt: [],
+        str(file_b),
+    )
+    ego_a = extract_ego_subgraph(repo, str(file_a), max_hops=1, max_nodes=10)
+    assert str(file_a2) in ego_a["nodes"]
+
+    import pytest
+
+    with pytest.raises(ValueError, match="confinement floor"):
+        resolve_canonical_cache_root(tmp_path / "outside", floor=repo)

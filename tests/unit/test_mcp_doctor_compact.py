@@ -56,7 +56,7 @@ def test_tg_explore_doctor_defaults_to_fast_and_skips_slow_probes(
     assert "lsp_provider_items" not in payload
 
 
-def test_tg_explore_doctor_deduplicates_lsp_fields_even_when_fast_false(
+def test_tg_explore_doctor_preserves_additive_lsp_aliases_when_fast_false(
     monkeypatch, tmp_path: Path
 ) -> None:
     _patch_fast_doctor_env(monkeypatch, tmp_path)
@@ -84,5 +84,5 @@ def test_tg_explore_doctor_deduplicates_lsp_fields_even_when_fast_false(
     assert payload["lsp"]["enabled"] is True
     assert len(payload["lsp"]["providers"]) == 1
     assert "python" in payload["lsp"]["providers_by_language"]
-    assert "lsp_providers" not in payload
-    assert "lsp_provider_items" not in payload
+    assert "lsp_providers" in payload
+    assert "lsp_provider_items" in payload

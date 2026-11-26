@@ -120,6 +120,9 @@ def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
         return []
     if floor is None:
         try:
+            st = index_path.lstat()
+            if st.st_size > _SESSION_INDEX_LIMIT:
+                raise ValueError("session index exceeds size limit")
             raw_payload = json.loads(index_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError("session index is not valid JSON") from exc
@@ -291,7 +294,7 @@ def _unified_manifest_covers_scope(
         for name, entry in raw_views.items()
         if isinstance(entry, dict) and entry.get("ready") is True
     ]
-    if not ready_views:
+    if "symbols_v1" not in ready_views:
         return True, False
 
     if scope == cache_root:
@@ -395,7 +398,10 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     non_code_set = set(non_code_skipped)
     from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 
-    cache_root = resolve_canonical_cache_root(scope)
+    try:
+        cache_root = resolve_canonical_cache_root(scope, floor=floor)
+    except ValueError:
+        cache_root = scope
     manifest_exists, manifest_fresh = _unified_manifest_covers_scope(
         scope, cache_root, files, floor
     )

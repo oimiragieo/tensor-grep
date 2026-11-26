@@ -125,6 +125,10 @@ def collect_source_address_entries(
                 continue
         if not rel_posix or rel_posix.startswith(".."):
             continue
+        try:
+            validate_confined_parent_prefix(resolved_root, abs_fp)
+        except OSError:
+            continue
         stat_pair = _lstat_regular(abs_fp)
         if stat_pair is None:
             continue
@@ -186,23 +190,38 @@ def build_source_address_contract(
     return merkle_root, contract
 
 
-def _stat_confined_regular_artifact(repo_root: Path, path: Path) -> tuple[int, int, int] | None:
+_MAX_ARTIFACT_HASH_BYTES = 512 * 1024 * 1024
+
+
+def _hash_confined_regular_artifact(repo_root: Path, path: Path) -> str | None:
+    from tensor_grep.io.root_probe import open_regular_nontraversing_fd
+
     try:
         validate_confined_parent_prefix(repo_root, path)
-        st = path.lstat()
+        fd = open_regular_nontraversing_fd(path)
     except OSError:
         return None
-    if (
-        not stat.S_ISREG(st.st_mode)
-        or (getattr(st, "st_file_attributes", 0) & _REPARSE_ATTR)
-        or st.st_nlink != 1
-    ):
+    if fd is None:
         return None
-    return int(st.st_size), int(st.st_mtime_ns), int(st.st_ino)
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_ARTIFACT_HASH_BYTES:
+                    return None
+                hasher.update(chunk)
+    except OSError:
+        return None
+    return hasher.hexdigest()
 
 
 def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | None:
-    """Return a confined regular-file fingerprint for cached view artifacts, else None."""
+    """Return a confined regular-file SHA-256 content digest for cached view artifacts, else None."""
     resolved_root = resolve_canonical_cache_root(repo_root)
     rel_map = {
         "hybrid_v1": Path(".tg_cache") / "hybrid_v1" / "index.sqlite3",
@@ -211,10 +230,7 @@ def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | 
         "prepare_v1": Path(".tg_cache") / "prepare_v1" / "repo_map_cache.json",
     }
     if view_name in rel_map:
-        fp = _stat_confined_regular_artifact(resolved_root, resolved_root / rel_map[view_name])
-        if fp is None:
-            return None
-        return hashlib.sha256(f"{fp[0]}:{fp[1]}:{fp[2]}".encode()).hexdigest()
+        return _hash_confined_regular_artifact(resolved_root, resolved_root / rel_map[view_name])
     if view_name == "index_v1":
         index_dir = resolved_root / ".tg_cache" / "index_v1"
         try:
@@ -231,10 +247,10 @@ def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | 
             return None
         digest = hashlib.sha256()
         for candidate in candidates:
-            fp = _stat_confined_regular_artifact(resolved_root, candidate)
-            if fp is None:
+            file_hash = _hash_confined_regular_artifact(resolved_root, candidate)
+            if file_hash is None:
                 return None
-            digest.update(f"{candidate.name}:{fp[0]}:{fp[1]}:{fp[2]}\0".encode())
+            digest.update(f"{candidate.name}:{file_hash}\0".encode())
         return digest.hexdigest()
     return None
 
@@ -363,13 +379,7 @@ def check_view_freshness(
                 recorded_fp = (
                     entry.get("artifact_fingerprint") if isinstance(entry, Mapping) else None
                 )
-                if fp is None:
-                    is_fresh = False
-                elif view_name in ("hybrid_v1", "index_v1") and (
-                    not isinstance(recorded_fp, str) or recorded_fp != fp
-                ):
-                    is_fresh = False
-                elif isinstance(recorded_fp, str) and recorded_fp != fp:
+                if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
                     is_fresh = False
         result[view_name] = is_fresh
     return result
@@ -425,9 +435,18 @@ def save_unified_manifest(
                 for view_name, view_data in views.items():
                     merged_views[str(view_name)] = dict(view_data)
             for view_name, entry in merged_views.items():
-                if view_name in ("hybrid_v1", "index_v1"):
+                if view_name in (
+                    "hybrid_v1",
+                    "index_v1",
+                    "symbols_v1",
+                    "graph_v1",
+                    "prepare_v1",
+                ):
                     fp = compute_view_artifact_fingerprint(resolved_root, view_name)
                     recorded_fp = entry.get("artifact_fingerprint")
+                    if recorded_fp is None and entry.get("ready") is True and fp is not None:
+                        entry["artifact_fingerprint"] = fp
+                        recorded_fp = fp
                     if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
                         entry["ready"] = False
 

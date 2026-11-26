@@ -382,7 +382,8 @@ def sync_incremental_ego_subgraph_from_paths(
     context_digest: str | None = None,
 ) -> dict[str, Any]:
     """Incrementally sync file edges via stat+hash reconciliation and extract an ego subgraph."""
-    canonical_root = resolve_canonical_cache_root(cache_root)
+    scope_root = Path(cache_root).expanduser().resolve()
+    canonical_root = resolve_canonical_cache_root(scope_root)
     sync_stats = sync_graph_edges_from_paths(
         canonical_root,
         file_paths,
@@ -390,6 +391,7 @@ def sync_incremental_ego_subgraph_from_paths(
         deadline_monotonic=deadline_monotonic,
         force_refresh=force_refresh,
         context_digest=context_digest,
+        scope_root=scope_root,
     )
     subgraph = extract_ego_subgraph(
         canonical_root,

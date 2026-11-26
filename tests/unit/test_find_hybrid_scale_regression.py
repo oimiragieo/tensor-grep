@@ -361,18 +361,20 @@ def test_persisted_v3_hybrid_index_reconstructs_content_on_reopen(tmp_path: Path
         "def header(): pass\ndef calculate_sales_tax(x):\n    return x * 0.07\n",
         encoding="utf-8",
     )
+    exact_chunk = "def calculate_sales_tax(x):\n    return x * 0.07\n"
     db_path = tmp_path / HYBRID_INDEX_REL_PATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
     idx1 = HybridSQLiteIndex(db_path=db_path)
     idx1.upsert_documents([
         {
             "doc_id": "c1",
-            "content": "def calculate_sales_tax(x):\n    return x * 0.07",
+            "content": exact_chunk,
             "file_path": str(src_file),
             "start_line": 2,
             "end_line": 3,
             "embedding": None,
-        }
+        },
+        ("t1", "def legacy_tuple_helper(): return 42", None),
     ])
     idx1.close()
 
@@ -380,6 +382,15 @@ def test_persisted_v3_hybrid_index_reconstructs_content_on_reopen(tmp_path: Path
     try:
         hits = idx2.search("calculate sales tax", limit=5)
         assert hits
-        assert "calculate_sales_tax" in str(hits[0].get("content", ""))
+        assert hits[0].get("content") == exact_chunk
+        tuple_hits = idx2.search("legacy tuple helper", limit=5)
+        assert tuple_hits
+        assert tuple_hits[0].get("content") == "def legacy_tuple_helper(): return 42"
+
+        # Tampering source file invalidates content_hash match (no stale bytes returned).
+        src_file.write_text("def header(): pass\ndef tampered():\n    return 0\n", encoding="utf-8")
+        stale_hits = idx2.search("calculate sales tax", limit=5)
+        assert stale_hits
+        assert stale_hits[0].get("content") == ""
     finally:
         idx2.close()

@@ -205,7 +205,11 @@ def _open_tdad_db(repo_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connec
                         "SELECT name FROM sqlite_master WHERE type='table'"
                     ).fetchall()
                 }
-                if {"metadata", "source_test_deps"}.issubset(tables):
+                triggers = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='trigger'"
+                ).fetchall()
+                qc = conn.execute("PRAGMA quick_check").fetchone()
+                if tables == {"metadata", "source_test_deps"} and not triggers and qc == ("ok",):
                     meta_cols = {
                         row[1] for row in conn.execute("PRAGMA table_info(metadata)").fetchall()
                     }

@@ -4901,14 +4901,6 @@ def tg_explore(
                 result_json = _self.tg_doctor(
                     path=path, config=config, with_lsp=with_lsp, fast=fast
                 )
-                try:
-                    parsed_doc = json.loads(result_json)
-                    if isinstance(parsed_doc, dict) and "lsp" in parsed_doc:
-                        parsed_doc.pop("lsp_providers", None)
-                        parsed_doc.pop("lsp_provider_items", None)
-                        result_json = json.dumps(parsed_doc, indent=2)
-                except (ValueError, TypeError):
-                    pass
             elif action == "devices":
                 result_json = _self.tg_devices(json_output=json_output)
             else:
