@@ -22,6 +22,7 @@ def test_stdio_ast_missing_path_is_refused_and_session_recovers(tmp_path: Path) 
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC_DIR)
     env["TG_MCP_ROOT"] = str(tmp_path)
+    env["TG_MCP_LEGACY_TOOLS"] = "1"
     server = StdioServerParameters(
         command=sys.executable,
         args=["-m", "tensor_grep", "mcp"],

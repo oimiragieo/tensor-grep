@@ -144,17 +144,42 @@ def test_review_bundle_verify_json_uses_standard_envelope(tmp_path: Path) -> Non
 
 
 def test_mcp_tool_listing_includes_new_trust_tools() -> None:
+    import os
+    import subprocess
+    import sys
+
     from tensor_grep.cli import mcp_server
 
     tools = mcp_server.mcp._tool_manager.list_tools()
     tool_names = {tool.name for tool in tools}
+    assert "tg_audit" in tool_names
 
+    repo_root = Path(__file__).resolve().parents[2]
+    env = {**os.environ, "TG_MCP_LEGACY_TOOLS": "1", "PYTHONPATH": str(repo_root / "src")}
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; from tensor_grep.cli import mcp_server; "
+                "print(json.dumps(sorted(t.name for t in mcp_server.mcp._tool_manager.list_tools())))"
+            ),
+        ],
+        env=env,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
+    )
+    legacy_tool_names = set(json.loads(done.stdout))
     assert {
         "tg_audit_history",
         "tg_audit_diff",
         "tg_review_bundle_create",
         "tg_review_bundle_verify",
-    } <= tool_names
+    } <= legacy_tool_names
 
 
 def test_tg_help_lists_new_trust_commands() -> None:

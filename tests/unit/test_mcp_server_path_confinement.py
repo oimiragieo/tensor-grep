@@ -1327,8 +1327,15 @@ def test_round8_residual_cwd_params_move_with_tg_mcp_root(
     in_root_target = real_root / "target.json"
     in_root_target.write_text("{}", encoding="utf-8")
 
+    from tensor_grep.cli import mcp_server
+
+    def _invoke_residual(name: str, call_kwargs: dict[str, object]) -> str:
+        if mcp_server.mcp._tool_manager.get_tool(name) is not None:
+            return _call_mcp_tool_text(name, call_kwargs)
+        return str(getattr(mcp_server, name)(**call_kwargs))
+
     kwargs = {**base_kwargs, param_name: str(in_root_target)}
-    result = _call_mcp_tool_text(tool_name, kwargs)
+    result = _invoke_residual(tool_name, kwargs)
 
     assert "must stay within" not in result, (
         f"{tool_name}.{param_name} rejected a path inside TG_MCP_ROOT while cwd differed from "
@@ -1341,7 +1348,7 @@ def test_round8_residual_cwd_params_move_with_tg_mcp_root(
     outside = tmp_path / "outside_both"
     outside.mkdir()
     (outside / "target.json").write_text("{}", encoding="utf-8")
-    rejected = _call_mcp_tool_text(
+    rejected = _invoke_residual(
         tool_name, {**base_kwargs, param_name: str(outside / "target.json")}
     )
     assert "must stay within" in rejected, (

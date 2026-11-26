@@ -68,7 +68,7 @@ def test_blocked_create_keeps_loop_live_and_cancelled_queue_never_writes(
     async def exercise() -> None:
         first = asyncio.create_task(
             mcp_server.mcp.call_tool(
-                "tg_checkpoint_create", {"path": str(project), "label": "first"}
+                "tg_checkpoint", {"action": "create", "path": str(project), "label": "first"}
             )
         )
         try:
@@ -76,7 +76,8 @@ def test_blocked_create_keeps_loop_live_and_cancelled_queue_never_writes(
             responsive.set()
             second = asyncio.create_task(
                 mcp_server.mcp.call_tool(
-                    "tg_checkpoint_create", {"path": str(project), "label": "cancelled"}
+                    "tg_checkpoint",
+                    {"action": "create", "path": str(project), "label": "cancelled"},
                 )
             )
             assert await asyncio.to_thread(queued.wait, 10.0)
@@ -90,7 +91,9 @@ def test_blocked_create_keeps_loop_live_and_cancelled_queue_never_writes(
             release.set()
 
         listed = _payload(
-            await mcp_server.mcp.call_tool("tg_checkpoint_list", {"path": str(project)})
+            await mcp_server.mcp.call_tool(
+                "tg_checkpoint", {"action": "list", "path": str(project)}
+            )
         )
         assert [item["label"] for item in listed["checkpoints"]] == ["first"]
 
@@ -139,22 +142,28 @@ def test_worker_admission_stays_bounded_until_cancelled_jobs_drain(
 
     async def exercise() -> None:
         first = asyncio.create_task(
-            mcp_server.mcp.call_tool("tg_checkpoint_create", {"path": str(project)})
+            mcp_server.mcp.call_tool("tg_checkpoint", {"action": "create", "path": str(project)})
         )
         try:
             assert await asyncio.to_thread(entered.wait, 10.0)
             second = asyncio.create_task(
-                mcp_server.mcp.call_tool("tg_checkpoint_create", {"path": str(project)})
+                mcp_server.mcp.call_tool(
+                    "tg_checkpoint", {"action": "create", "path": str(project)}
+                )
             )
             assert await asyncio.to_thread(submitted.wait, 10.0)
             with pytest.raises(ToolError, match="busy"):
-                await mcp_server.mcp.call_tool("tg_checkpoint_list", {"path": str(project)})
+                await mcp_server.mcp.call_tool(
+                    "tg_checkpoint", {"action": "list", "path": str(project)}
+                )
             second.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await second
             # A cancelled queued job still holds its slot until the worker skips it.
             with pytest.raises(ToolError, match="busy"):
-                await mcp_server.mcp.call_tool("tg_checkpoint_list", {"path": str(project)})
+                await mcp_server.mcp.call_tool(
+                    "tg_checkpoint", {"action": "list", "path": str(project)}
+                )
             first.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await first
@@ -164,7 +173,9 @@ def test_worker_admission_stays_bounded_until_cancelled_jobs_drain(
         delegate.submit(drained.set)
         assert await asyncio.to_thread(drained.wait, 10.0)
         listed = _payload(
-            await mcp_server.mcp.call_tool("tg_checkpoint_list", {"path": str(project)})
+            await mcp_server.mcp.call_tool(
+                "tg_checkpoint", {"action": "list", "path": str(project)}
+            )
         )
         assert len(listed["checkpoints"]) == 1
 

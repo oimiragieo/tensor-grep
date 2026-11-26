@@ -3805,14 +3805,14 @@ def tg_classify_logs(
     # happily read .env/keys/anything locally readable, and up to 20 heuristic-flagged lines
     # are echoed back verbatim in anomalies[].text below). Forward the RESOLVED path so the
     # downstream read below sees the same anchor-validated location this check validated.
-    if (file_path is None and text is None) or (file_path is not None and text is not None):
-        message = "Provide exactly one of file_path or text."
-        if structured_json:
-            return _meta_invalid_input_error("tg_classify_logs", "classify_logs", message)
-        return f"Error: {message}"
-
-    target_label = "inline text"
     try:
+        if (file_path is None and text is None) or (file_path is not None and text is not None):
+            message = "Provide exactly one of file_path or text."
+            if structured_json:
+                return _meta_invalid_input_error("tg_classify_logs", "classify_logs", message)
+            return f"Error: {message}"
+
+        target_label = "inline text"
         if file_path is not None:
             try:
                 file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))

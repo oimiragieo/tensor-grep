@@ -421,7 +421,8 @@ def test_mcp_citations_wire_wrapper_preserves_error_signal(tmp_path: Path, monke
     (tmp_path / "sample.txt").write_text("needle\n", encoding="utf-8")
     success = asyncio.run(
         mcp_server.mcp.call_tool(
-            "tg_search", {"pattern": "needle", "path": str(tmp_path), "citations": True}
+            "tg_query",
+            {"action": "search", "pattern": "needle", "path": str(tmp_path), "citations": True},
         )
     )
     if isinstance(success, types.CallToolResult):
@@ -433,7 +434,13 @@ def test_mcp_citations_wire_wrapper_preserves_error_signal(tmp_path: Path, monke
 
     refused = asyncio.run(
         mcp_server.mcp.call_tool(
-            "tg_search", {"pattern": "needle", "path": str(tmp_path.parent), "citations": True}
+            "tg_query",
+            {
+                "action": "search",
+                "pattern": "needle",
+                "path": str(tmp_path.parent),
+                "citations": True,
+            },
         )
     )
     assert isinstance(refused, types.CallToolResult)
