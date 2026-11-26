@@ -544,3 +544,17 @@ def test_docs_coverage_budget_cap_truncation_still_exits_0(tmp_path):
     assert '"truncation_cause": "project-files"' in result.output, (
         "precondition: the cap must actually have fired, otherwise this arm is vacuous"
     )
+
+
+def test_fixture_exclusion_matches_relative_parts_not_ancestor_dirs(tmp_path):
+    """DF2-06: an ancestor directory named fixture*/testdata must not cause 100.0% false-green."""
+    proj = tmp_path / "fixture_workspace" / "proj"
+    (proj / "src").mkdir(parents=True)
+    (proj / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (proj / "testdata").mkdir()
+    (proj / "testdata" / "sample.py").write_text("y = 2\n", encoding="utf-8")
+    payload = build_docs_coverage(str(proj))
+    assert payload["totals"]["source_files"] == 1
+    assert "src/real.py" in payload["uncovered_files"]
+    assert "testdata/sample.py" not in payload["uncovered_files"]
+    assert payload["totals"]["coverage_pct"] != 100.0

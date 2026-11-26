@@ -1,3 +1,4 @@
+import inspect
 import itertools
 import json
 import os
@@ -1787,12 +1788,13 @@ def tg_doctor(
     path: str = ".",
     config: str | None = "sgconfig.yml",
     with_lsp: bool = True,
+    fast: bool = True,
 ) -> str:
     """
     Return system, GPU, cache, AST, daemon, shell-escaping, and LSP-provider diagnostics.
 
     Mirrors `tg doctor` (_build_doctor_payload). Provider availability
-    (lsp_provider_items/lsp_providers) is not navigation proof -- inspect health_status/
+    (lsp.providers/lsp.providers_by_language) is not navigation proof -- inspect health_status/
     health_check before trusting an LSP-confirmed evidence label.
 
     Args:
@@ -1803,6 +1805,7 @@ def tg_doctor(
             lives outside path must be copied in first (fail-closed, not a silent drop).
             Defaults to "sgconfig.yml".
         with_lsp: Include external LSP provider diagnostics. Defaults to true.
+        fast: Skip slow PyPI/LSP/CPU-GPU runtime probes. Defaults to true.
     """
     # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
     # root before any probe -- see tg_repo_map for the systemic-finding rationale.
@@ -1845,11 +1848,20 @@ def tg_doctor(
                 return json.dumps(payload, indent=2)
 
         try:
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    _self._build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2
-                )
+            builder = _self._build_doctor_payload
+            sig = inspect.signature(builder)
+            accepts_fast = "fast" in sig.parameters or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             )
+            doctor_payload = (
+                builder(path, config=config, with_lsp=with_lsp, fast=fast)
+                if accepts_fast
+                else builder(path, config=config, with_lsp=with_lsp)
+            )
+            if isinstance(doctor_payload, dict) and "lsp" in doctor_payload:
+                doctor_payload.pop("lsp_providers", None)
+                doctor_payload.pop("lsp_provider_items", None)
+            return _self._inject_mcp_contract_fields(json.dumps(doctor_payload, indent=2))
         except Exception as exc:  # propagate as structured error, never a raw exception
             payload = _envelope_base(
                 routing_backend="Doctor",
@@ -4856,6 +4868,7 @@ def tg_explore(
     max_repo_files: int | None = _DEFAULT_MCP_REPO_SCAN_LIMIT,
     config: str | None = "sgconfig.yml",
     with_lsp: bool = True,
+    fast: bool = True,
     json_output: bool = True,
     compact: bool = False,
 ) -> str:
@@ -4885,7 +4898,9 @@ def tg_explore(
             elif action == "repo_map":
                 result_json = _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
             elif action == "doctor":
-                result_json = _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
+                result_json = _self.tg_doctor(
+                    path=path, config=config, with_lsp=with_lsp, fast=fast
+                )
             elif action == "devices":
                 result_json = _self.tg_devices(json_output=json_output)
             else:

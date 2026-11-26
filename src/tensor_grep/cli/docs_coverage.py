@@ -67,12 +67,17 @@ def _is_governing_doc(name: str) -> bool:
     return lower in _GOVERNING_DOC_NAMES or lower.startswith("readme")
 
 
-def _is_fixture_path(path: Path) -> bool:
+def _is_fixture_path(file_path: Path, resolved_root: Path) -> bool:
     # Test-fixture / sample-corpus trees are scaffolding, not product source a governing doc cites
-    # (e.g. benchmarks/bakeoff_fixtures/**). Treat like tests.
+    # (e.g. benchmarks/bakeoff_fixtures/**). Match relative-to-root parts so an ancestor directory
+    # containing 'fixture' or 'testdata' does not silence the whole repo into a 100.0% false-green.
+    try:
+        relative_parts = file_path.resolve().relative_to(resolved_root).parts
+    except ValueError:
+        relative_parts = file_path.parts
     return any(
         ("fixture" in part.lower() or part.lower() in {"testdata", "test_data", "__fixtures__"})
-        for part in path.parts
+        for part in relative_parts
     )
 
 
@@ -231,7 +236,7 @@ def build_docs_coverage(
             and not _is_test_path(
                 file_path, resolved_root
             )  # a governing doc documents source, not tests
-            and not _is_fixture_path(file_path)
+            and not _is_fixture_path(file_path, resolved_root)
             and not _looks_like_binary_file(file_path)
             # --ignore: an intentional stub group is excluded entirely (not counted as uncovered nor
             # dragging coverage_pct). Only pay the relative-path cost when globs were actually given.
