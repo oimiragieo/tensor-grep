@@ -186,29 +186,42 @@ def _update_json_mcp(
 
 
 def _strip_toml_tensor_grep_sections(content: str) -> str:
-    """Remove [mcp_servers.tensor_grep] and its subtables without cutting multiline arrays."""
-    header_re = re.compile(r"^[ \t]*\[([^\[\]]+)\][ \t]*(?:#.*)?$")
+    """Remove [mcp_servers.tensor_grep] and its subtables without cutting arrays/strings."""
+    header_re = re.compile(r"^[ \t]*\[{1,2}([^\[\]]+)\]{1,2}[ \t]*(?:#.*)?$")
     kept: list[str] = []
     skipping = False
     depth = 0
+    in_ml_str = False
+    in_ml_lit = False
     for line in content.splitlines(keepends=True):
-        if depth == 0:
+        if depth == 0 and not in_ml_str and not in_ml_lit:
             m = header_re.match(line.rstrip("\r\n"))
             if m:
                 name = m.group(1).strip()
-                skipping = name == "mcp_servers.tensor_grep" or name.startswith(
-                    "mcp_servers.tensor_grep."
+                skipping = not line.lstrip(" \t").startswith("[[") and (
+                    name == "mcp_servers.tensor_grep" or name.startswith("mcp_servers.tensor_grep.")
                 )
         if not skipping:
             kept.append(line)
+        i, n = 0, len(line)
         in_str = False
         in_lit = False
         esc = False
-        for ch in line:
+        while i < n:
+            ch = line[i]
             if esc:
                 esc = False
-                continue
-            if in_str:
+            elif in_ml_str:
+                if ch == "\\":
+                    esc = True
+                elif line.startswith('"""', i):
+                    in_ml_str = False
+                    i += 2
+            elif in_ml_lit:
+                if line.startswith("'''", i):
+                    in_ml_lit = False
+                    i += 2
+            elif in_str:
                 if ch == "\\":
                     esc = True
                 elif ch == '"':
@@ -216,6 +229,12 @@ def _strip_toml_tensor_grep_sections(content: str) -> str:
             elif in_lit:
                 if ch == "'":
                     in_lit = False
+            elif line.startswith('"""', i):
+                in_ml_str = True
+                i += 2
+            elif line.startswith("'''", i):
+                in_ml_lit = True
+                i += 2
             elif ch == '"':
                 in_str = True
             elif ch == "'":
@@ -226,6 +245,7 @@ def _strip_toml_tensor_grep_sections(content: str) -> str:
                 depth += 1
             elif ch == "]" and depth > 0:
                 depth -= 1
+            i += 1
     return "".join(kept)
 
 
