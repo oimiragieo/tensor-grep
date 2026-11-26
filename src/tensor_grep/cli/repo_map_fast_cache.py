@@ -48,6 +48,19 @@ def canonical_symbol_cache_root(
     return cache_root
 
 
+def resolve_canonical_cache_root(scope: Path) -> Path:
+    """Resolve ``scope`` to its canonical project cache root via ``_infer_project_root``."""
+    from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.cli.symbols_cache import authenticated_content_root
+
+    resolved_scope = Path(scope).expanduser().resolve()
+    return canonical_symbol_cache_root(
+        resolved_scope,
+        _repo_map._infer_project_root,
+        authenticated_content_root(),
+    ).resolve()
+
+
 _IMPORT_SUMMARY_CACHE: dict[str, _ImportSummary | None] = {}
 _IMPORT_SUMMARY_CACHE_MAX = 512
 

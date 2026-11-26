@@ -19,6 +19,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 from tensor_grep.io.confined import (
     prepare_directory,
     publish_confined,
@@ -180,7 +181,7 @@ def _configure_sqlite(conn: sqlite3.Connection) -> None:
 
 
 def _open_tdad_db(repo_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connection, Path, Path]:
-    resolved_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     db_path = resolved_root / TDAD_CACHE_REL_PATH
     if create_dirs:
         prepare_directory(resolved_root, db_path.parent)
@@ -287,7 +288,7 @@ def record_tdad_edges(
     metadata_updates: Mapping[str, str] | None = None,
 ) -> int:
     """Persist explicit (source_file, source_symbol, test_file, edge_kind, weight) rows."""
-    resolved_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     rows = [
         (
             _norm_path(src_file, repo_root=resolved_root),
@@ -437,12 +438,13 @@ def build_tdad_dependency_map(
     persist: bool = True,
 ) -> dict[str, Any]:
     """Build (and optionally persist) the TDAD source-to-test dependency map."""
-    resolved_root = Path(repo_root).expanduser().resolve()
+    input_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(input_root)
     payload = repo_map_payload
     if payload is None:
         from tensor_grep.cli import repo_map as _repo_map
 
-        payload = _repo_map.build_repo_map(resolved_root)
+        payload = _repo_map.build_repo_map(input_root)
 
     edges = _extract_tdad_edges_from_repo_map(payload, repo_root=resolved_root)
     tracked_files = _collect_repo_map_file_paths(payload, resolved_root)
@@ -499,7 +501,7 @@ def ensure_tdad_dependency_map(
     persist: bool = True,
 ) -> dict[str, Any]:
     """Refresh TDAD cache only if missing or invalidated by revision/file-stat changes."""
-    resolved_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     db_path = resolved_root / TDAD_CACHE_REL_PATH
     if db_path.exists():
         rows, stored_fp, tracked_files = _read_tdad_cache_state(resolved_root)
@@ -536,7 +538,7 @@ def query_tdad_tests(
     persist: bool = True,
 ) -> list[dict[str, Any]]:
     """Query covering test files for changed_files / changed_symbols from TDAD cache."""
-    resolved_root = Path(repo_root).expanduser().resolve()
+    resolved_root = resolve_canonical_cache_root(repo_root)
     db_path = resolved_root / TDAD_CACHE_REL_PATH
     norm_files = sorted({_norm_path(f, repo_root=resolved_root) for f in changed_files if f})
     sym_names = sorted({str(s.get("name", "")) for s in (changed_symbols or ()) if s.get("name")})
