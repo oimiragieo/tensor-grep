@@ -120,27 +120,31 @@ From the project root, use `tg search --index` to explicitly build or refresh th
 tg search --index -F -n 'KNOWN_TEXT' .
 ```
 
-Replace `KNOWN_TEXT` with a literal expected in the project. The search builds `.tg_index` when it is absent and updates it when the recorded file state is stale. The query's match result does not determine whether the index is built. To force a full rebuild, first close any running `tg` work that may be using the project, then remove only the index file:
+Replace `KNOWN_TEXT` with a literal expected in the project. Current builds write trigram indexes under `.tg_cache/index_v1/<hash>.tg_index` (while retaining read compatibility with a legacy root `.tg_index` file) and update them when the recorded file state is stale. The query's match result does not determine whether the index is built. To force a full rebuild, first close any running `tg` work that may be using the project, then remove only the index file(s):
 
 **PowerShell:**
 
 ```powershell
+# Remove current per-corpus trigram index file(s) and/or a legacy root .tg_index:
+Get-ChildItem -LiteralPath '.tg_cache/index_v1' -Filter '*.tg_index' -ErrorAction SilentlyContinue | Remove-Item -Force
 Remove-Item -LiteralPath '.tg_index' -Force
 ```
 
 **Bash:**
 
 ```bash
-rm -f ./.tg_index
+rm -f ./.tg_cache/index_v1/*.tg_index ./.tg_index
 ```
 
-After removal, rerun the explicit `tg search --index` command above. If the problem concerns AST data, inspect and remove only `.tg_cache/ast/project_data_v6.json`; a later AST workflow can rebuild it. Do not remove session or checkpoint state to refresh either search cache. If you are unsure which path is affected, keep the files and ask your project maintainer before deleting anything.
+After removal, rerun the explicit `tg search --index` command above. If the problem concerns AST data, inspect and remove only `.tg_cache/ast/project_data_v6.json`; if it concerns the unified manifest or TDAD test graph, remove only `.tg_cache/manifest_v1.json` or `.tg_cache/graph_v1/tdad_tests.sqlite3`. Subsequent commands rebuild each missing view automatically. Do not remove session or checkpoint state to refresh search or graph caches. If you are unsure which path is affected, keep the files and ask your project maintainer before deleting anything.
 
 ## Keep state separate
 
-- `.tg_index` narrows candidates for some repeated text searches.
+- `.tg_cache/manifest_v1.json` records the HMAC-signed unified cross-view cache manifest (invalidated and rebuilt on mismatch).
+- `.tg_cache/index_v1/*.tg_index` (and legacy `.tg_index`) narrows candidates for eligible repeated text searches.
 - `.tg_cache/ast/` stores parsed project data for AST workflows.
 - `.tg_cache/symbols_v1/` stores rebuildable whole-file symbol products and generation metadata.
+- `.tg_cache/graph_v1/tdad_tests.sqlite3` stores the rebuildable TDAD source-to-test graph for `tg diff-impact` and `tg prepare`.
 - `.tensor-grep/sessions/` stores session snapshots and metadata.
 - `.tensor-grep/checkpoints/` stores file contents for rollback.
 - A daemon can also hold response data in memory while it runs.

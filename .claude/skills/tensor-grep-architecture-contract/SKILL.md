@@ -35,10 +35,12 @@ full candidate lists.
 
 ## Distinguish stored state
 
-- `.tg_index` is the native trigram index file.
+- `.tg_cache/manifest_v1.json` is the HMAC-signed unified cache manifest, and `.tg_cache/.gitignore` keeps rebuildable cache artifacts untracked.
+- `.tg_cache/index_v1/` holds native trigram index files (`*.tg_index`, with legacy root `.tg_index` compatibility).
 - `.tg_cache/ast/` holds rebuildable AST project data.
 - `.tg_cache/symbols_v1/` holds content-addressed symbol products and SQLite generation metadata;
   repository-map builds reconcile bounded content, including same-mtime edits.
+- `.tg_cache/graph_v1/tdad_tests.sqlite3` holds the confined TDAD source-to-test graph cache.
 - `.tensor-grep/sessions/` holds reusable context snapshots.
 - `.tensor-grep/checkpoints/` holds recovery data and must not be cleared as cache.
 

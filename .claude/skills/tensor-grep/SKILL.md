@@ -9,11 +9,12 @@ Use `tg` to find relevant files and inspect the evidence before editing. Start w
 `tg --version` and `tg --help`; installed entry points and optional dependencies
 affect available features.
 
-This guidance was checked against v1.141.0. Native `--version` prints `tg X.Y.Z`;
+This guidance was checked against v1.142.0. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package
 origins separately. MCP's `serverInfo.version` is its contract version (1.28.0),
 not the installed CLI version; call `tg_mcp_capabilities` for both values. By default,
-`tg mcp` exposes the 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=1` opts into all 61 tools).
+`tg mcp` exposes the 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=1` opts into all 61 tools),
+including `tg_batch` step pipelines (`$prev`, `$steps[i]`, and `return_final_only`).
 
 ## Choose a command
 
@@ -104,7 +105,9 @@ For already-authorized, reversible edits in non-interactive automation, do not a
 ending with "want me to apply this?". This does not authorize destructive operations.
 
 For fast local environment diagnostics without external LSP/PyPI network probes, run
-`tg doctor . --fast --json`. When testing or dogfooding against a disposable temporary
+`tg doctor . --fast --json` (checks `promotion_proof`, `native_embeddings_ready`, and LSP proof gates).
+For minimal change-slice verification, run `tg review-bundle verify <BUNDLE> --require-change-slice`
+(optionally pinned with `--expect-slice-digest <SHA256>`). When testing or dogfooding against a disposable temporary
 directory on Windows, run `tg session daemon stop <TEMP_DIR>` before deleting the
 directory so an auto-started session daemon does not hold an open directory handle.
 

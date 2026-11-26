@@ -67,10 +67,10 @@ packages are not published yet.
 | Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
 | Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
 | Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits (`--detail compact` for compact JSON) |
-| Inspect environment health | `tg doctor --fast`, `tg file-api PATH` | Fast local/launcher diagnostics without slow network probes, and single-file API signatures |
-| Prepare a change | `tg context`, `tg agent`, `tg prepare` | Relevant code, possible edit targets, confidence information, and suggested validation commands |
-| Repeat a workflow | `tg search --index`, `tg session`, `tg checkpoint` | Native search indexes, reusable repository context, and scoped snapshots restored by ID |
-| Connect your tools | `tg mcp`, JSON/NDJSON output | Structured results for coding assistants, scripts, and editor integrations |
+| Inspect environment health | `tg doctor --fast`, `tg file-api PATH` | Fast local/launcher/proof-gate diagnostics without slow network probes, and single-file API signatures |
+| Prepare and verify a change | `tg context`, `tg agent`, `tg prepare`, `tg diff-impact` | Relevant code, possible edit targets, diff blast radius, minimal change slices, and suggested validation commands |
+| Repeat a workflow | `tg search --index`, `tg session`, `tg checkpoint` | Unified `.tg_cache/` indexes/graphs (auto-gitignored), reusable repository context, and scoped rollback snapshots restored by ID |
+| Connect your tools | `tg mcp`, JSON/NDJSON output | 15-tool compact default MCP surface (`TG_MCP_LEGACY_TOOLS=1` for all 61), `tg_batch` step pipelines, and structured CLI envelopes |
 
 An **AST** is a parsed representation of source code. Structural search can match a
 function call as code rather than as a particular arrangement of spaces and text.
@@ -102,8 +102,12 @@ tg prepare . "add invoice tax validation" --json
 
 A **context capsule** is a structured collection of relevant files, symbols and snippets.
 It saves callers from assembling that information through separate searches. Sessions
-can reuse repository context across requests. Optional audit manifests and signed evidence
-support review workflows; they are not generated or signed automatically for every run.
+can reuse repository context across requests, and `tg mcp` exposes 15 compact tools by
+default (including `tg_batch` `$prev`/`$steps[i]` step pipelines; set
+`TG_MCP_LEGACY_TOOLS=1` for all 61 legacy tools). Optional audit manifests, signed
+evidence receipts, and minimal change-slice verification
+(`tg review-bundle verify --require-change-slice`) support review workflows; they are
+not generated or signed automatically for every run.
 
 For automation, start with [docs/harness_api.md](docs/harness_api.md) and the working
 recipes in [docs/harness_cookbook.md](docs/harness_cookbook.md). The
@@ -138,8 +142,10 @@ opt-in features have separate requirements and limitations in
 | [docs/installation.md](docs/installation.md) | Install, verify, and troubleshoot the launcher |
 | [Native Windows handles](docs/native-managed-handles.md) | Inactive native Windows trust primitives and their verification boundary |
 | [Managed runtime selection](docs/managed-runtime-selection.md) | Proposed runtime layout and implemented record codec; update activation remains pending |
-| [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contracts |
-| [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end automation examples |
+| [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contracts (15-tool compact default + `tg_batch`) |
+| [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end CLI, MCP, and diff-impact automation recipes |
+| [docs/runbooks/cache-management.md](docs/runbooks/cache-management.md) | Unified `.tg_cache/` layout, sessions, and rollback checkpoints |
+| [docs/enterprise_review_bundle_ci.md](docs/enterprise_review_bundle_ci.md) | Signed evidence receipts and `--require-change-slice` CI gates |
 | [docs/routing_policy.md](docs/routing_policy.md) | How execution paths are selected |
 | [docs/benchmarks.md](docs/benchmarks.md) | Accepted measurements and regression checks |
 | [docs/tool_comparison.md](docs/tool_comparison.md) | Workload and language-coverage comparisons |

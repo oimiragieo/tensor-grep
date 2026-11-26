@@ -241,19 +241,45 @@ Recommended consumer behavior:
 
 ## End-to-End MCP Flow
 
-Use this as the canonical MCP chain for the same task shape:
+By default (`TG_MCP_LEGACY_TOOLS=0`, contract `1.28.0`), `tg mcp` exposes **15 compact tools** (10 task-shaped meta-tools + 4 always-on tools + `tg_discover_tools`). Prefer the compact meta-tools and `tg_batch` chaining below; set `TG_MCP_LEGACY_TOOLS=1` only when an older client needs the 46 gated legacy tool names (61 tools total).
 
-1. `tg_mcp_capabilities`
-2. `tg_repo_map`
-3. `tg_context_pack`
-4. `tg_symbol_defs` or `tg_symbol_callers`
-5. `tg_agent_capsule`
-6. `tg_edit_plan`
-7. `tg_rewrite_diff` when `native_tg.available = true`
-8. `tg_rewrite_apply`
-9. `tg_audit_manifest_verify`
+Default compact MCP chain:
 
-Minimal MCP chain:
+```text
+tg_mcp_capabilities()
+tg_explore(action="orient", path=".")
+tg_context(action="capsule", query="invoice payment", path=".")
+tg_navigate(action="defs", symbol="create_invoice", path=".")
+tg_navigate(action="callers", symbol="create_invoice", path=".")
+tg_context(action="edit_plan", query="invoice payment", path=".")
+tg_rewrite(action="diff", pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".")
+tg_rewrite(action="apply", pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".", verify=True, checkpoint=True)
+tg_audit(action="manifest_verify", manifest_path="rewrite-audit.json")
+```
+
+### Chained `tg_batch` Pipeline Flow
+
+Use `tg_batch` to execute dependent read-only steps in a single round trip. Reference earlier completed step outputs with `$prev.<field>` or `$steps[i].<field>`, and set `return_final_only=True` when the agent only needs the last step's payload:
+
+```json
+{
+  "tool": "tg_batch",
+  "arguments": {
+    "path": ".",
+    "return_final_only": true,
+    "queries": [
+      {"id": "step_search", "kind": "search", "pattern": "def create_invoice", "path": "src"},
+      {"id": "step_defs", "kind": "defs", "symbol": "create_invoice", "path": "$prev.matches[0].file"}
+    ]
+  }
+}
+```
+
+Resolved `path`/`file` values are re-confined to the MCP root, and missing/failed upstream references fail closed as item `invalid_input` errors (`result_incomplete=true`).
+
+### Legacy 61-Tool MCP Names (`TG_MCP_LEGACY_TOOLS=1`)
+
+When `TG_MCP_LEGACY_TOOLS=1` is explicitly enabled, the equivalent legacy per-function names remain callable:
 
 ```text
 tg_mcp_capabilities()
@@ -271,13 +297,25 @@ tg_audit_manifest_verify(manifest_path="rewrite-audit.json")
 Recommended consumer behavior:
 
 1. call `tg_mcp_capabilities` before picking rewrite/index tools in PyPI or sandboxed installs
-2. preserve machine-readable envelopes from each tool instead of scraping prose
-3. treat `native-required` tools as unavailable unless `native_tg.available = true`
-4. inspect `native_required_options` before calling `tg_rewrite_apply`; `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd` require standalone native `tg`
-5. use simple `tg_rewrite_plan` / `tg_rewrite_apply`, including checkpointed apply, as the embedded-safe fallback when native `tg` is unavailable
-6. treat `tg_edit_plan` as the plan contract and `tg_rewrite_apply` as the patch-attempt plus validation contract
-7. use `tg_audit_manifest_verify` when the workflow needs trust or replay validation
-8. if final outcome needs benchmark-style scoring, hand the produced patch artifact to `run_patch_bakeoff.py`
+2. prefer the 15-tool default surface (`tg_explore`, `tg_navigate`, `tg_context`, `tg_impact`, `tg_query`, `tg_batch`, `tg_rewrite`, `tg_audit`, `tg_checkpoint`) to minimize tool-schema token overhead
+3. preserve machine-readable envelopes from each tool instead of scraping prose
+4. treat `native-required` tools as unavailable unless `native_tg.available = true`
+5. inspect `native_required_options` before calling `tg_rewrite(action="apply", ...)` / `tg_rewrite_apply`; `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd` require standalone native `tg`
+6. use simple `tg_rewrite(action="plan"|"apply", ...)`, including checkpointed apply, as the embedded-safe fallback when native `tg` is unavailable
+7. treat `tg_context(action="edit_plan", ...)` as the plan contract and `tg_rewrite(action="apply", ...)` as the patch-attempt plus validation contract
+8. use `tg_audit(action="manifest_verify", ...)` when the workflow needs trust or replay validation
+9. if final outcome needs benchmark-style scoring, hand the produced patch artifact to `run_patch_bakeoff.py`
+
+## Diff-Impact & Minimal Change Slice Flow
+
+Use `tg diff-impact` to measure working-tree blast radius, risk score, impacted tests (backed by `.tg_cache/graph_v1/tdad_tests.sqlite3`), and a deterministic `change_slice` with `slice_digest`:
+
+```powershell
+tg diff-impact . --json
+tg review-bundle verify review-bundle.json --require-change-slice --expect-slice-digest <64-hex-sha256> --json
+```
+
+If `--require-change-slice` is passed and the bundle omits a valid `change_slice` (or its digest mismatches `--expect-slice-digest`), `tg review-bundle verify` exits `1` fail-closed. See [Review Bundle CI Gate](enterprise_review_bundle_ci.md) for full CI integration.
 
 ## Rewrite Planning Flow
 
@@ -565,40 +603,22 @@ Read stdout line-by-line and parse each row independently.
 
 Use MCP when the consumer speaks tool calls instead of shelling out directly.
 
-Available workflow tools:
+Default 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=0`, contract `1.28.0`):
 
-- `tg_mcp_capabilities`
-- `tg_repo_map`
-- `tg_context_pack`
-- `tg_symbol_defs`
-- `tg_symbol_source`
-- `tg_symbol_impact`
-- `tg_symbol_refs`
-- `tg_symbol_callers`
-- `tg_session_open`
-- `tg_session_list`
-- `tg_session_show`
-- `tg_session_refresh`
-- `tg_session_context`
-- `tg_agent_capsule`
-- `tg_checkpoint_create`
-- `tg_checkpoint_list`
-- `tg_checkpoint_undo`
-- `tg_index_search`
-- `tg_rewrite_plan`
-- `tg_rewrite_apply`
-- `tg_rewrite_diff`
+- Always-on: `tg_mcp_capabilities`, `tg_batch`, `tg_classify_logs`, `tg_discover_tools`
+- Task-shaped meta-tools (`action=...`): `tg_explore`, `tg_query`, `tg_navigate`, `tg_impact`, `tg_context`, `tg_session`, `tg_scan`, `tg_rewrite`, `tg_audit`, `tg_checkpoint`
+- Set `TG_MCP_LEGACY_TOOLS=1` only if a legacy client requires individual names (`tg_repo_map`, `tg_context_pack`, `tg_symbol_defs`, `tg_agent_capsule`, `tg_checkpoint_create`, `tg_rewrite_apply`, etc.).
 
 Example flow:
 
 1. call `tg_mcp_capabilities()`
-2. call `tg_index_search("ERROR", path=".")` only if it is `native-required` and native `tg` is available
-3. call `tg_agent_capsule(...)` when the agent needs primary target, validation, rollback, confidence, or optional GPU evidence before editing
-4. pass `gpu_device_ids=[...]` to `tg_agent_capsule` only for explicit native GPU evidence probes; sidecar-routed GPU evidence is returned as unsupported
-5. call `tg_rewrite_plan(...)`
-6. call `tg_rewrite_diff(...)` only when native `tg` is available
-7. call `tg_checkpoint_create(path=".", label="before rewrite")` if rollback is required
-8. call `tg_rewrite_apply(..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
+2. call `tg_query(action="index", pattern="ERROR", path=".")` only if `native_tg.available = true`
+3. call `tg_context(action="capsule", query="...", path=".")` when the agent needs primary target, validation, rollback, confidence, or optional GPU evidence before editing
+4. pass `gpu_device_ids=[...]` to `tg_context(action="capsule", ...)` only for explicit native GPU evidence probes; sidecar-routed GPU evidence is returned as unsupported
+5. call `tg_rewrite(action="plan", ...)`
+6. call `tg_rewrite(action="diff", ...)` only when native `tg` is available
+7. call `tg_checkpoint(action="create", path=".", label="before rewrite")` if rollback is required
+8. call `tg_rewrite(action="apply", ..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
 
 The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:
 

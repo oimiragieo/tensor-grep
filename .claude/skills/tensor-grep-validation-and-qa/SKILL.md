@@ -13,12 +13,15 @@ environment before running tests.
 
 ```text
 cargo fmt --manifest-path rust_core/Cargo.toml --all -- --check
+cargo clippy --manifest-path rust_core/Cargo.toml --all-targets -- -D warnings
 uv run --no-sync ruff check .
 uv run --no-sync ruff format --check --preview .
 uv run --no-sync mypy src/tensor_grep
 uv run --no-sync python scripts/file_size_budget.py --report
 uv run --no-sync python scripts/bare_call_ratchet.py --report
 ```
+
+Note: `scripts/file_size_budget.py` also enforces line limits on `rust_core/tests/*.rs`.
 
 After rebuilding the Rust extension (`uv pip install --no-deps --reinstall .`),
 ensure no stale `src/tensor_grep/rust_core*.pyd` / `.so` shadows `.venv`
@@ -35,8 +38,14 @@ pytest -q tests/unit/test_handler_dispositions.py tests/unit/test_silent_loss_ce
 When touching `subprocess` calls, text decoding, or `_TG_MCP_SERVER_CONTRACT_VERSION`:
 
 - Keep `_TG_MCP_SERVER_CONTRACT_VERSION = "X.Y.Z"` on a single line in `src/tensor_grep/cli/mcp_server.py` and synced in `docs/harness_api.md`.
+- Prefer reusing an existing shared subprocess helper (or confined direct file reads) instead of adding a new production `subprocess` callsite, because `test_subprocess_decoding_guard.py` pins the production sink ceiling.
 - Regenerate the subprocess policy inventory with `uv run --no-sync python scripts/check_subprocess_decoding.py --write-inventory`.
 - Run `uv run --no-sync pytest -q tests/unit/test_subprocess_decoding_guard.py tests/unit/test_mcp_contract_version_docs_are_pinned.py`.
+
+When touching imports in `src/tensor_grep/` or default MCP tool exposure (`TG_MCP_LEGACY_TOOLS`):
+
+- Avoid dynamic `importlib.import_module(variable)` calls in `src/tensor_grep/` (use explicit literal allowlist dispatch) and run `uv run --no-sync pytest -q tests/unit/test_import_edges_baseline.py`.
+- When modifying default MCP tools or schemas, run `uv run --no-sync pytest -q tests/unit/test_mcp_compact_parity.py tests/unit/test_mcp_error_sanitization.py tests/unit/test_trust_parity.py tests/unit/test_checkpoint_labels.py tests/unit/test_citations_output.py`.
 
 In Rust `anyhow` error checks, use `err.is::<T>()` (not `err.chain().any(|c| c.is::<T>())`)
 to match `.with_context(|| T(...))` wrappers, and place diagnostic tags after

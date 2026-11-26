@@ -129,10 +129,74 @@ tg run -p 'print($VALUE)' --lang python ./src
 | Search by keywords and relevance | `tg find --hybrid 'invoice total' ./src --json` | Local-first keyword + relevance ranking (`SQLite FTS5` + RRF) with no API key or GPU |
 | Prepare an edit investigation | `tg prepare ./src 'add invoice tax field' --json` | Suggested target and supporting context for review, not approval to edit |
 | Check your local installation | `tg doctor . --fast --json` | Fast launcher, backend, and environment health report without slow network or LSP probes |
+| Measure blast radius of your git diff | `tg diff-impact . --json` | Modified symbols, affected callers/tests, KG-AST risk score, and a minimal change slice |
 
 If a literal pattern starts with `-` (for example `--compact`), place `--` before the pattern so `tg search` does not treat it as a flag: `tg search -F -- '--compact' ./src`.
 
 **JSON** is a text format for structured data. The `--json` options make results easier for programs to read; a person can still inspect them. A **context capsule** is a bounded package of selected files and metadata for a task. Limits such as `--max-tokens` constrain output size, not correctness. Caller and impact reports may be partial when a scan reaches its configured bounds; inspect their completeness fields before treating missing results as proof.
+
+## Investigate a change step by step
+
+When you are asked to fix a bug or add a small feature in an unfamiliar folder, follow this four-step read-only loop before editing any code:
+
+1. **Get your bearings without reading every file.**
+
+   ```text
+   tg orient ./src --json --compact
+   tg file-api ./src/invoice.py --json
+   ```
+
+   `tg orient --compact` returns a bounded JSON summary (`<= 4,000` bytes) of central files and entry points. `tg file-api` shows only function and class signatures (`invoice_total(amount, tax)`) so you can scan an unfamiliar module without loading its full body.
+
+2. **Trace who calls the symbol you plan to change.**
+
+   ```text
+   tg defs ./src invoice_total --json --detail compact
+   tg callers ./src invoice_total --json --detail compact
+   ```
+
+   Symbol commands always take the **path first**, then the **symbol name**. Always check `result_incomplete` and `output_limit` before treating an empty caller list as proof that a symbol is unused.
+
+3. **Find related code by plain-English keywords and assemble an edit plan.**
+
+   ```text
+   tg find --hybrid 'invoice tax total' ./src --json
+   tg prepare ./src 'add tax validation to invoice_total' --json
+   ```
+
+   `tg find --hybrid` combines local SQLite full-text search with adaptive Reciprocal Rank Fusion (RRF) — no API key or GPU required. `tg prepare` returns a suggested `primary_target`, `next_action`, caller context, and candidate test commands to review before editing.
+
+4. **Review your diff impact before committing.**
+
+   In a Git repository, after making edits, run:
+
+   ```text
+   tg diff-impact . --json
+   ```
+
+   `tg diff-impact` inspects your working-tree diff, maps modified symbols to impacted callers and tests, and emits a **change slice** (the minimal set of files and symbols linked to the diff) with a SHA-256 `slice_digest` that CI gates can verify with `tg review-bundle verify --require-change-slice`.
+
+## Connect an AI assistant (MCP)
+
+If you use an editor or coding assistant that speaks **MCP** (Model Context Protocol), start the local MCP server with:
+
+```text
+tg mcp
+```
+
+- By default, `tg mcp` exposes **15 compact tools** (10 task-shaped meta-tools such as `tg_explore`, `tg_navigate`, `tg_context`, `tg_impact`, `tg_query`, `tg_rewrite`, and `tg_audit`, plus always-on helpers `tg_mcp_capabilities`, `tg_batch`, `tg_classify_logs`, and `tg_discover_tools`). This keeps the tool catalog small (`< 12 KB`) so assistants spend fewer tokens choosing tools.
+- Set `TG_MCP_LEGACY_TOOLS=1` only if an older client expects all 61 individual legacy tool names.
+- Use `tg_batch` to chain multiple read-only queries in one call (passing outputs forward with `$prev.<field>` or `$steps[i].<field>` and setting `return_final_only=True` to return just the final answer).
+- On Windows, point stdio MCP clients directly at the native `tg.exe` executable rather than `tg.ps1`. See [automation recipes](harness_cookbook.md) and the [harness API](harness_api.md) for copyable MCP workflows.
+
+## Where `tg` stores local files
+
+As you run commands, `tg` creates two separate directories at your project root:
+
+- **`.tg_cache/` (safe to rebuild):** Holds the unified manifest (`manifest_v1.json`), trigram search indexes (`index_v1/*.tg_index`), AST cache (`ast/`), symbol cache (`symbols_v1/`), and pre-change test graph (`graph_v1/tdad_tests.sqlite3`). `tg` automatically creates `.tg_cache/.gitignore` so clean Git repos stay untracked.
+- **`.tensor-grep/` (handle with care):** Stores reusable sessions (`.tensor-grep/sessions/`) and rollback checkpoints (`.tensor-grep/checkpoints/`). Never delete `.tensor-grep/checkpoints/` when clearing search caches.
+
+See [cache management](runbooks/cache-management.md) before deleting any stored state.
 
 ## Reuse a session
 
@@ -187,10 +251,13 @@ These short definitions are repeated above where the terms first appear:
 
 - **AST:** a tree-shaped representation produced by parsing source code.
 - **Backend:** the engine that performs a search or analysis request.
+- **Change slice:** the minimal set of files, symbols, and impacted tests connected to a Git diff (identified by a SHA-256 `slice_digest`).
 - **Context capsule:** a bounded set of task-relevant files and metadata.
 - **Daemon:** an optional background process that can serve repeated session requests.
-- **Index:** saved search data used to narrow candidate files for some repeated text searches.
+- **Hybrid search:** local retrieval combining keyword full-text matching (SQLite FTS5 / BM25) with Reciprocal Rank Fusion (RRF) and optional dense/1-bit reranking.
+- **Index (trigram index):** saved character-group search data under `.tg_cache/index_v1/` (or legacy `.tg_index`) used to narrow candidate files for repeated text searches.
 - **JSON:** a text format for structured values such as objects, arrays, strings, and numbers.
+- **MCP (Model Context Protocol):** a standard protocol allowing coding assistants to call `tg` search and analysis tools over stdio (`tg mcp`).
 - **Parser:** software that reads source text and identifies its code structure.
 - **Session:** saved project context used by related requests.
 - **Sidecar:** a separate managed program that a front door may invoke for a command.

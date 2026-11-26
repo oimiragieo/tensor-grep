@@ -13,11 +13,13 @@ tg defs REPO_PATH SYMBOL --json --detail compact
 tg refs REPO_PATH SYMBOL --json
 tg callers REPO_PATH SYMBOL --json --detail compact
 tg blast-radius REPO_PATH SYMBOL --json
-tg orient REPO_PATH --json
+tg orient REPO_PATH --json --compact
+tg edit-plan REPO_PATH 'task description' --json --compact
 tg prepare REPO_PATH 'task description' --json
+tg diff-impact REPO_PATH --json
 tg file-api REPO_PATH/src/example.py --json
 tg doctor REPO_PATH --fast --json
-tg find 'task description' REPO_PATH --why-ranked --json
+tg find --hybrid 'task description' REPO_PATH --why-ranked --json
 ```
 
 Text search returns 0 for matches, 1 for no matches, and 2 for an error or
@@ -81,6 +83,7 @@ root; it does not imply the newest checkpoint in every descendant store.
 ```text
 tg evidence emit REPO_PATH --capsule capsule.json --out receipt.json --json
 tg evidence verify receipt.json --json
+tg review-bundle verify review-bundle.json --require-change-slice --expect-slice-digest SHA256 --json
 tg ledger claim REPO_PATH --symbol SYMBOL --json
 tg ledger list REPO_PATH --json
 tg ledger release REPO_PATH --claim-id CLAIM_ID --json
@@ -102,9 +105,10 @@ tg mcp
 
 Read reported capabilities rather than assuming a GPU or parser is available.
 A successful Python sidecar or CPU fallback is not proof of native GPU execution.
-MCP exposes structured tool calls; client discovery and the
-[harness API](../../../docs/harness_api.md) define the interface.
-Start with capabilities and live tool schemas. `tg_query` accepts `text` and
+MCP exposes 15 compact tools by default (`TG_MCP_LEGACY_TOOLS=1` opts into all 61 legacy tools);
+client discovery and the [harness API](../../../docs/harness_api.md) define the interface.
+Start with `tg_mcp_capabilities` and live tool schemas. Use `tg_batch` to chain read-only steps
+with `$prev.<field>` / `$steps[i].<field>` and `return_final_only=True`. `tg_query` accepts `text` and
 `search` aliases; provide scoped paths or explicit workspace roots. Requests
 outside the configured MCP root are refused. On Windows, use the native
 `tg.exe` directly for stdio clients that launch a subprocess, with its required

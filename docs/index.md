@@ -6,7 +6,8 @@
 
 - Find words or a pattern in logs and files: [Getting started](getting-started.md#search-a-sample-log).
 - Find code by its structure, such as a function call: [AST search](getting-started.md#search-code-structure).
-- See likely important files or gather context for a change: [Orientation and context](getting-started.md#choose-a-next-task).
+- Investigate an unfamiliar repo, trace callers, and assess diff impact: [Investigate a change step by step](getting-started.md#investigate-a-change-step-by-step).
+- Connect an AI assistant with the 15-tool compact MCP surface and `tg_batch`: [Connect an AI assistant](getting-started.md#connect-an-ai-assistant-mcp).
 - Reuse a project snapshot across requests: [Sessions](getting-started.md#reuse-a-session).
 - Save and restore one file during an edit: [Checkpoints](getting-started.md#save-a-checkpoint-before-an-edit).
 - Install `tg` or check platform support: [Installation](installation.md) and [support matrix](SUPPORT_MATRIX.md).

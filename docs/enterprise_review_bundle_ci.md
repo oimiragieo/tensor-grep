@@ -110,6 +110,24 @@ pressure when adapting this snippet:
   recommended when a specific identity (e.g. "the CI service account" or "the on-call reviewer")
   must be the one who signed, not just any trusted key.
 
+## Optional: enforce minimal change-slice integrity (`--require-change-slice`)
+
+`tg diff-impact` computes a minimal **change slice** (the modified files, symbols, and impacted tests connected to a diff) together with a deterministic SHA-256 `slice_digest`. When a review bundle embeds `change_slice` metadata, CI can fail closed if the slice is missing, malformed, or altered:
+
+```bash
+tg review-bundle verify review-bundle.json \
+  --against "$PR_HEAD_SHA" \
+  --require-trusted \
+  --trusted-key "$TG_EVIDENCE_TRUSTED_KEY" \
+  --min-receipts 1 \
+  --require-change-slice \
+  --expect-slice-digest "$EXPECTED_SLICE_DIGEST" \
+  --json
+```
+
+- `--require-change-slice` rejects any bundle that lacks a valid `change_slice` object or fails slice-digest verification (exit `1`).
+- `--expect-slice-digest <64-hex-sha256>` additionally pins verification to a specific expected SHA-256 digest (empty or malformed digests fail closed).
+
 ## Registering a trusted key
 
 `tg evidence keygen --out ~/.tensor-grep/keys/evidence_ed25519.key` generates a keypair once (for

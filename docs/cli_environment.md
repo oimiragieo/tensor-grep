@@ -19,6 +19,8 @@ used to be listed in root help. The setting takes effect only for the entry poin
 | `TENSOR_GREP_CLASSIFY_PROVIDER` | Set to `cybert` to opt into CyBERT/Triton classification. Classification otherwise uses local heuristics by default. |
 | `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` | Timeout for Triton-backed NLP probes. |
 | `TG_MCP_ALLOW_VALIDATION_COMMANDS` | Defaults off. Set to `1` in the MCP server environment to allow `tg_rewrite_apply` to accept and shell-execute `lint_cmd` and `test_cmd`; otherwise these requests are rejected with `code="unsupported_option"`. |
+| `TG_MCP_LEGACY_TOOLS` | Defaults off (`0`): `tg mcp` advertises the 15-tool compact surface (`< 12 KB`). Set to `1`, `true`, `yes`, or `on` to expose all 61 legacy per-function tools. |
+| `TG_RRF_SYMBOLS` | Defaults off. Set to `1` to fuse exact AST-backed symbol definitions with lexical (`tg search --rank`) and hybrid (`tg find`) rankings via Reciprocal Rank Fusion. |
 | `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS` | Total per-command time budget for optional external LSP provider requests before native fallback. |
 | `TENSOR_GREP_CPU_LITERAL_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_STRING_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_QUERY_CACHE_MAX_ENTRIES`, `TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_ENTRIES`, `TENSOR_GREP_REPO_CONTEXT_CACHE_MAX_ROOTS` | Bound long-lived in-process search and repository-context caches. |
 | `TENSOR_GREP_SESSION_RESPONSE_CACHE_MAX_BYTES`, `TENSOR_GREP_LSP_PROVIDER_CLIENT_CACHE_MAX_ENTRIES`, `TENSOR_GREP_LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES` | Bound agent-loop response and LSP provider caches. |

@@ -18,6 +18,20 @@ compatibility. See
 `tests/unit/test_scan_composite_rules_m16.py::test_load_ast_project_data_schema_gate`
 for legacy and current-cache cases.
 
+## Unified cache manifest and graph views (`.tg_cache/`)
+
+`src/tensor_grep/cli/unified_cache.py` manages `<project>/.tg_cache/manifest_v1.json`,
+an HMAC-SHA256-signed manifest coordinating rebuildable views under `.tg_cache/`:
+
+- `.tg_cache/index_v1/*.tg_index` (per-corpus trigram indexes, with legacy root `.tg_index` compatibility)
+- `.tg_cache/ast/project_data_v6.json` (AST project data)
+- `.tg_cache/symbols_v1/metadata.sqlite3` (whole-file symbol products)
+- `.tg_cache/graph_v1/tdad_tests.sqlite3` (TDAD source-to-test graph built by `src/tensor_grep/cli/tdad_kg_ast.py`, schema-validated and capped at 32 MiB on publish)
+
+Readers validate the manifest HMAC, view fingerprints, and SQLite column schemas
+before reuse; missing, unsigned, or mismatched artifacts fail closed into a clean
+rebuild rather than trusting unverified disk state.
+
 ## Other local state
 
 - The checkpoint discovery cache uses `_DISCOVERY_CACHE_VERSION` and can be

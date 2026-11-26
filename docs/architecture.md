@@ -34,7 +34,7 @@ Within the Rust executable, both the bare positional search form (`tg PATTERN PA
 
 The search router can select `rg`, native CPU search, a trigram index, an AST backend, or optional GPU paths according to flags, output shape, available tools, and project state. A backend is the engine that performs the request. Routing is conditional, so a release containing a GPU-related build configuration does not mean GPU is the default or that every search uses it.
 
-The trigram index records character groups to narrow which files need a full scan. It is a file named `.tg_index` at the indexed project root. It can narrow some compatible text searches; whether it is used depends on the query and route. For exact flags and fallbacks, use [routing policy](routing_policy.md).
+The trigram index records character groups to narrow which files need a full scan. Current builds store per-corpus trigram indexes under `.tg_cache/index_v1/<hash>.tg_index` (retaining compatibility with legacy root `.tg_index` files). It can narrow some compatible text searches; whether it is used depends on the query and route. For exact flags and fallbacks, use [routing policy](routing_policy.md).
 
 AST workflows parse source into an abstract syntax tree (AST), then match or analyze code structure. Parser and language coverage constrain what can be found. Call graphs and caller lists can have unresolved or bounded results, so an absent edge is not proof that no caller exists. Orientation scores suggest central files or entry points from available signals; they are not proof of runtime importance or safety.
 
@@ -48,7 +48,11 @@ can receive different treatment. Exact symbol evidence takes priority over a fil
 phrase match.
 
 The selected results must fit an output budget. This makes them practical to read or
-send to an assistant, but it also means that relevant code may be omitted. Sessions
+send to an assistant, but it also means that relevant code may be omitted. `tg prepare`
+also uses bounded lazy graph expansion (reusing warm cached views under `.tg_cache/`
+when fresh and rebuilding degraded views automatically), while `tg diff-impact` combines
+a confined source-to-test map (`.tg_cache/graph_v1/tdad_tests.sqlite3`) with AST
+dependency edges to compute a change risk score and minimal change slice. Sessions
 reuse project snapshots for repeated requests; refreshing a session updates its view
 after files change. Ranking and caching do not establish that a proposed edit is correct.
 
@@ -69,8 +73,12 @@ the source of truth; clients can discover it through MCP, and the
 
 | Location | Purpose | How to treat it |
 |---|---|---|
-| `.tg_index` | Native trigram index file used by eligible text searches | Rebuildable search data; may be removed when the index is stale |
+| `.tg_cache/manifest_v1.json` | HMAC-signed unified cache manifest linking index, AST, symbol, and graph views | Rebuildable cache metadata; verified fail-closed before reuse |
+| `.tg_cache/index_v1/<hash>.tg_index` (legacy `.tg_index`) | Native trigram index files used by eligible text searches | Rebuildable search data; may be removed when stale |
 | `.tg_cache/ast/` | AST project data, including `project_data_v6.json` | Rebuildable parser and project data; separate from the text index |
+| `.tg_cache/symbols_v1/` | Content-addressed symbol products and SQLite generation metadata | Rebuildable symbol cache; reconciled against file content |
+| `.tg_cache/graph_v1/tdad_tests.sqlite3` | Confined source-to-test dependency graph used by `tg diff-impact` and `tg prepare` | Rebuildable graph cache; invalidated when repository content changes |
+| `.tg_cache/.gitignore` | Auto-created ignore file (`*`) keeping generated caches out of `git status` | Managed cache hygiene file; does not alter repository `.gitignore` |
 | `.tensor-grep/sessions/` | Persisted session metadata and snapshots | State for reusable project context; inspect before cleanup |
 | `.tensor-grep/checkpoints/` | Saved file contents and metadata for rollback | Durable recovery material; do not delete when clearing caches |
 | Resident worker memory | Optional in-process AST data | Volatile; worker behavior is experimental |
