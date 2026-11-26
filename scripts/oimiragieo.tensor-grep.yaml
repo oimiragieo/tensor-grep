@@ -7,8 +7,9 @@ PackageVersion: 1.142.0
 PackageLocale: en-US
 PackageName: tensor-grep
 Publisher: oimiragieo
-License: MIT
-ShortDescription: GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT
+License: Apache-2.0
+ShortDescription: Fast local code search, symbol navigation, and token-budgeted AI context (Rust + tree-sitter + MCP; zero API key required, GPU experimental)
+Description: Fast local code search, symbol navigation, and token-budgeted AI context (Rust + tree-sitter + MCP; zero API key required, GPU experimental)
 Moniker: tg
 
 Installers:

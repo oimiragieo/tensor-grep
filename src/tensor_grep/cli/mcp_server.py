@@ -3904,7 +3904,7 @@ def tg_classify_logs(
 
             warnings_or_errors = []
             for i, r in enumerate(results):
-                if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
+                if r["label"] in ("warn", "error", "critical") and r["confidence"] > 0.8:
                     line_text = budgeted_lines[i].strip()
                     if len(line_text) > _CLASSIFY_ANOMALY_LINE_MAX_CHARS:
                         line_text = line_text[: _CLASSIFY_ANOMALY_LINE_MAX_CHARS - 3] + "..."
