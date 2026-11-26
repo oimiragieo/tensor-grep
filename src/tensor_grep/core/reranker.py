@@ -17,7 +17,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from tensor_grep.core import retrieval_symbols
 from tensor_grep.core.hybrid_rrf import (
@@ -37,6 +37,11 @@ from tensor_grep.io.confined import prepare_directory
 
 HYBRID_INDEX_REL_PATH = Path(".tg_cache") / "hybrid_v1" / "index.sqlite3"
 MAX_HYBRID_INDEX_BYTES = 64 * 1024 * 1024
+_HYBRID_CACHE_LOCK_TIMEOUT_S = 5.0
+_HYBRID_CACHE_RETRY_BASE_S = 0.01
+_HYBRID_CACHE_RETRY_MAX_S = 0.08
+_WINDOWS_TRANSIENT_WINERRORS = frozenset({5, 32, 33})
+_T = TypeVar("_T")
 
 # PR-S2 (channelized RRF, sverklo steal-list #2): a third, opt-in fusion leg that ranks chunks by
 # filename-token overlap with the query -- a precision signal (a query mentioning "invoice" should
@@ -240,6 +245,60 @@ def rerank_by_bm25(
     return dataclasses.replace(result, matches=reranked)
 
 
+def _is_retryable_hybrid_cache_error(exc: OSError) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if getattr(exc, "winerror", None) in _WINDOWS_TRANSIENT_WINERRORS:
+        return True
+    msg = str(exc)
+    return (
+        "symbol cache lock deadline exceeded" in msg or "confined source changed during read" in msg
+    )
+
+
+def _retry_hybrid_cache_io(
+    fn: Callable[[], _T], *, timeout_s: float = _HYBRID_CACHE_LOCK_TIMEOUT_S
+) -> _T:
+    import random
+    import time
+
+    overall_deadline = time.monotonic() + timeout_s
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except OSError as exc:
+            remaining = overall_deadline - time.monotonic()
+            if remaining <= 0 or not _is_retryable_hybrid_cache_error(exc):
+                raise
+            delay = min(
+                _HYBRID_CACHE_RETRY_MAX_S,
+                _HYBRID_CACHE_RETRY_BASE_S * (2 ** min(attempt, 4)),
+                remaining,
+            )
+            delay *= 0.75 + 0.5 * random.random()
+            time.sleep(max(0.001, min(delay, remaining)))
+            attempt += 1
+
+
+def _with_hybrid_cache_lock(
+    resolved_root: Path,
+    db_path: Path,
+    fn: Callable[[], _T],
+) -> _T:
+    import time
+
+    from tensor_grep.cli.symbols_cache_io import cache_lock
+
+    overall_deadline = time.monotonic() + _HYBRID_CACHE_LOCK_TIMEOUT_S
+
+    def _locked() -> _T:
+        with cache_lock(resolved_root, db_path, overall_deadline):
+            return fn()
+
+    return _retry_hybrid_cache_io(_locked, timeout_s=_HYBRID_CACHE_LOCK_TIMEOUT_S)
+
+
 def _open_confined_hybrid_index(
     cache_root: Path | None,
     telemetry: dict[str, Any] | None = None,
@@ -253,59 +312,60 @@ def _open_confined_hybrid_index(
 
     resolved_root = Path(cache_root).resolve()
     db_path = resolved_root / HYBRID_INDEX_REL_PATH
-    prepare_directory(resolved_root, db_path.parent)
+    _retry_hybrid_cache_io(lambda: prepare_directory(resolved_root, db_path.parent))
     index = HybridSQLiteIndex(":memory:")
     rebuilt_reason: str | None = None
     try:
-        try:
-            info = db_path.lstat()
-        except FileNotFoundError:
-            info = None
-        if info is not None:
+
+        def _read_existing() -> tuple[bytes | None, str | None]:
+            try:
+                info = db_path.lstat()
+            except FileNotFoundError:
+                return None, None
             if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
                 raise OSError(f"symbol cache refuses non-regular source: {db_path}")
             if info.st_size > MAX_HYBRID_INDEX_BYTES:
-                rebuilt_reason = "exceeds_size_cap"
-            else:
-                try:
-                    raw_bytes = read_confined(resolved_root, db_path, MAX_HYBRID_INDEX_BYTES)
-                except OSError as exc:
-                    if "exceeds" in str(exc):
-                        rebuilt_reason = "exceeds_size_cap"
-                    else:
-                        raise
+                return None, "exceeds_size_cap"
+            try:
+                return read_confined(resolved_root, db_path, MAX_HYBRID_INDEX_BYTES), None
+            except OSError as exc:
+                if "exceeds" in str(exc):
+                    return None, "exceeds_size_cap"
+                raise
+
+        raw_bytes, rebuilt_reason = _with_hybrid_cache_lock(resolved_root, db_path, _read_existing)
+        if raw_bytes is not None:
+            try:
+                index._conn.deserialize(raw_bytes)
+                ver_row = index._conn.execute("PRAGMA user_version").fetchone()
+                user_ver = int(ver_row[0]) if ver_row is not None else 0
+                tables = {
+                    str(r[0])
+                    for r in index._conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                triggers = {
+                    str(r[0])
+                    for r in index._conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='trigger'"
+                    ).fetchall()
+                }
+                if user_ver != HYBRID_SCHEMA_VERSION:
+                    rebuilt_reason = (
+                        "legacy_schema"
+                        if user_ver < HYBRID_SCHEMA_VERSION
+                        else "schema_version_mismatch"
+                    )
+                elif not (
+                    {"documents", "documents_fts"} <= tables
+                    and {"documents_ai", "documents_ad", "documents_au"} <= triggers
+                ):
+                    rebuilt_reason = "corrupt_index"
                 else:
-                    try:
-                        index._conn.deserialize(raw_bytes)
-                        ver_row = index._conn.execute("PRAGMA user_version").fetchone()
-                        user_ver = int(ver_row[0]) if ver_row is not None else 0
-                        tables = {
-                            str(r[0])
-                            for r in index._conn.execute(
-                                "SELECT name FROM sqlite_master WHERE type='table'"
-                            ).fetchall()
-                        }
-                        triggers = {
-                            str(r[0])
-                            for r in index._conn.execute(
-                                "SELECT name FROM sqlite_master WHERE type='trigger'"
-                            ).fetchall()
-                        }
-                        if user_ver != HYBRID_SCHEMA_VERSION:
-                            rebuilt_reason = (
-                                "legacy_schema"
-                                if user_ver < HYBRID_SCHEMA_VERSION
-                                else "schema_version_mismatch"
-                            )
-                        elif not (
-                            {"documents", "documents_fts"} <= tables
-                            and {"documents_ai", "documents_ad", "documents_au"} <= triggers
-                        ):
-                            rebuilt_reason = "corrupt_index"
-                        else:
-                            index._init_schema()
-                    except sqlite3.DatabaseError:
-                        rebuilt_reason = "corrupt_index"
+                    index._init_schema()
+            except sqlite3.DatabaseError:
+                rebuilt_reason = "corrupt_index"
         if rebuilt_reason is not None:
             index.close()
             index = HybridSQLiteIndex(":memory:")
@@ -340,7 +400,11 @@ def _run_cache_fts_query(
             if telemetry is not None:
                 telemetry["hybrid_cache_skipped"] = "exceeds_size_cap"
         else:
-            publish_confined(resolved_root, db_path, serialized)
+            _with_hybrid_cache_lock(
+                resolved_root,
+                db_path,
+                lambda: publish_confined(resolved_root, db_path, serialized),
+            )
     return fts_ranks
 
 
