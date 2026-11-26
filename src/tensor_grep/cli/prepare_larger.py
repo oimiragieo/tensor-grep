@@ -123,6 +123,40 @@ def _seed_larger_candidates(
                                 lexical_hits.add(key)
             except (OSError, subprocess.SubprocessError):
                 pass
+        if lexical_ok:
+            def_pat = rf"\b(?:def|class|fn|func|function|struct|enum|trait|interface|type)\s+(?:{pattern})\b"
+            def_cmd = (
+                [str(native_tg), "search", "-i", "-l", def_pat, str(root)]
+                if native_tg is not None
+                else (
+                    [str(rg_bin), "-i", "-l", "--no-messages", def_pat, str(root)]
+                    if rg_bin
+                    else None
+                )
+            )
+            if def_cmd is not None:
+                try:
+                    def_proc = subprocess.run(
+                        def_cmd,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        timeout=timeout_s,
+                    )
+                    if def_proc.returncode in (0, 1):
+                        for line in def_proc.stdout.splitlines():
+                            c = line.strip()
+                            if c:
+                                fp = Path(c) if Path(c).is_absolute() else root / c
+                                key = os.path.normcase(os.path.abspath(str(fp)))
+                                if key in norm_to_path:
+                                    symbol_hits.add(key)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+
+    if len(lexical_hits) > _LARGER_SEED_CAP and not symbol_hits:
+        lexical_ok = False
 
     wants_test = "test" in terms or "tests" in terms
     pool = (
