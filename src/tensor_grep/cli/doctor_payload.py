@@ -375,9 +375,12 @@ def _build_doctor_payload(
             "error": None,
         }
     else:
-        gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(
-            native_tg_binary
+        probed_bin = (
+            Path(_strip_windows_extended_prefix(str(native_tg_binary)))
+            if native_tg_binary is not None
+            else None
         )
+        gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(probed_bin)
     # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
     # GPU search runtime actually routes through NativeGpuBackend. Surface an honest
     # search_ready boolean derived from the runtime probe so callers don't read

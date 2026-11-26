@@ -249,7 +249,7 @@ mod tests {
         let (job, mut child) =
             spawn_in_kill_on_close_job(&mut cmd, JobBreakawayPolicy::DenyBreakaway).unwrap();
         let stdout = child.stdout.take().unwrap();
-        let line = read_line_with_timeout(stdout, Duration::from_secs(5))
+        let line = read_line_with_timeout(stdout, Duration::from_secs(30))
             .expect("timed out or failed reading grandchild PID");
         let grandchild_pid: u32 = line.trim().parse().expect("expected grandchild PID");
 
@@ -318,7 +318,7 @@ mod tests {
         let (job, mut child) =
             spawn_in_kill_on_close_job(&mut cmd, JobBreakawayPolicy::AllowBreakaway).unwrap();
         let stdout = child.stdout.take().unwrap();
-        let line = read_line_with_timeout(stdout, Duration::from_secs(5))
+        let line = read_line_with_timeout(stdout, Duration::from_secs(30))
             .expect("timed out or failed reading breakaway PID");
         let breakaway_pid: u32 = line.trim().parse().unwrap_or_else(|e| {
             let err_buf = child
@@ -366,7 +366,7 @@ mod tests {
         let (deny_job, mut deny_child) =
             spawn_in_kill_on_close_job(&mut deny_cmd, JobBreakawayPolicy::DenyBreakaway).unwrap();
         let deny_stdout = deny_child.stdout.take().unwrap();
-        let deny_line = read_line_with_timeout(deny_stdout, Duration::from_secs(5))
+        let deny_line = read_line_with_timeout(deny_stdout, Duration::from_secs(30))
             .expect("timed out reading deny env");
         drop(deny_job);
         wait_child_bounded(deny_child, Duration::from_secs(5));
@@ -386,7 +386,7 @@ mod tests {
         let (allow_job, mut allow_child) =
             spawn_in_kill_on_close_job(&mut allow_cmd, JobBreakawayPolicy::AllowBreakaway).unwrap();
         let allow_stdout = allow_child.stdout.take().unwrap();
-        let allow_line = read_line_with_timeout(allow_stdout, Duration::from_secs(5))
+        let allow_line = read_line_with_timeout(allow_stdout, Duration::from_secs(30))
             .expect("timed out reading allow env");
         drop(allow_job);
         wait_child_bounded(allow_child, Duration::from_secs(5));

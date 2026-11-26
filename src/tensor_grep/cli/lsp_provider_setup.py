@@ -613,7 +613,7 @@ def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
     )
     if completed.returncode == 0:
         return
@@ -816,7 +816,7 @@ def _find_go_binary_name(root: Path, binary_name: str) -> Path | None:
             check=False,
             capture_output=True,
             text=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
         value = os.fsdecode(completed.stdout or b"").removesuffix("\n")
         if not value:
@@ -880,7 +880,7 @@ def _ensure_csharp_ls(root: Path) -> Path:
         text=True,
         encoding="utf-8",
         errors="replace",
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
     )
     if completed.returncode != 0:
         if "already installed" in completed.stderr.lower():
@@ -926,7 +926,7 @@ def _swift_command() -> list[str] | None:
         check=False,
         capture_output=True,
         text=False,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
     )
     candidate = os.fsdecode(completed.stdout or b"").removesuffix("\n")
     if completed.returncode == 0 and candidate:

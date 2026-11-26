@@ -736,7 +736,7 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
             errors="replace",
             timeout=timeout,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
     except subprocess.TimeoutExpired:
         return _command_result(

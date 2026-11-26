@@ -55,7 +55,7 @@ def _bounded_git_cochanges(
             capture_output=True,
             timeout=0.5,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
     except (OSError, ValueError, subprocess.SubprocessError):
         return set()
