@@ -78,6 +78,18 @@ def current_chunker_mode() -> str:
     return FIXED_WINDOW_CHUNKER_MODE
 
 
+def _looks_like_binary_file(path: Path) -> bool:
+    """Return True if ``path`` contains a NUL byte in its first 8 KiB (excluding UTF-16/32 BOMs)."""
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(8192)
+    except OSError:
+        return False
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff") or data.startswith(b"\x00\x00\xfe\xff"):
+        return False
+    return b"\0" in data
+
+
 def chunk_file(
     file_path: str,
     *,
@@ -86,8 +98,8 @@ def chunk_file(
 ) -> list[Chunk]:
     """Split ``file_path`` into ``chunk_size``-ish windows, line-window by default.
 
-    Returns an empty list for unreadable or empty files. Raises ``RuntimeError`` if the file would
-    produce more than :data:`MAX_CHUNKS` chunks (a loud failure beats a silent OOM).
+    Returns an empty list for unreadable, binary, or empty files. Raises ``RuntimeError`` if the
+    file would produce more than :data:`MAX_CHUNKS` chunks (a loud failure beats a silent OOM).
 
     When ``TG_CHUNKER=structural`` is set in the environment, dispatches to
     :func:`chunk_file_structural` instead (mapping ``chunk_size``/``overlap`` onto its
@@ -95,6 +107,8 @@ def chunk_file(
     is byte-identical to the pre-cAST implementation.
     """
     if current_chunker_mode() == STRUCTURAL_CHUNKER_MODE:
+        if _looks_like_binary_file(Path(file_path)):
+            return []
         budget = max(1, chunk_size) * _STRUCTURAL_CHARS_PER_LINE
         try:
             return chunk_file_structural(file_path, budget=budget, overlap_context=max(0, overlap))
@@ -118,6 +132,8 @@ def _chunk_file_line_windows(
     """The original (pre-cAST) line-window chunker. Kept as a private helper so both
     :func:`chunk_file`'s default path and :func:`chunk_file_structural`'s fail-open fallback share
     one implementation."""
+    if _looks_like_binary_file(Path(file_path)):
+        return []
     try:
         with open(file_path, encoding="utf-8", errors="replace") as handle:
             raw = handle.read()

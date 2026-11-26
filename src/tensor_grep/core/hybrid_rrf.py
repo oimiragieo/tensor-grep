@@ -16,7 +16,7 @@ try:
 except ImportError:  # pragma: no cover - pure-Python fallback is always available
     np = None  # type: ignore[assignment]
 
-HYBRID_SCHEMA_VERSION = 2
+HYBRID_SCHEMA_VERSION = 3
 _IDENTIFIER_TOKEN_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _CAMEL_ACRONYM_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _CAMEL_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
@@ -281,6 +281,8 @@ class HybridSQLiteIndex:
     def __init__(self, db_path: str | Path) -> None:
         self._is_memory = str(db_path) == ":memory:"
         self.db_path = Path(db_path) if not self._is_memory else Path(":memory:")
+        self._content_cache: dict[str, str] = {}
+        self._dirty: bool = False
         if not self._is_memory:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path))
@@ -309,72 +311,79 @@ class HybridSQLiteIndex:
                     "SELECT name FROM sqlite_master WHERE type='trigger'"
                 ).fetchall()
             }
+            doc_cols = (
+                {
+                    str(r[1])
+                    for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()
+                }
+                if "documents" in existing_tables
+                else set()
+            )
+            expected_doc_cols = {
+                "id",
+                "doc_id",
+                "file_id",
+                "start_line",
+                "end_line",
+                "content_hash",
+                "alias_tokens",
+                "embedding_blob",
+                "binary_blob",
+            }
             incomplete_schema = bool(existing_tables) and not (
-                {"documents", "documents_fts"} <= existing_tables
-                and {"documents_ai", "documents_ad", "documents_au"} <= existing_triggers
+                {"files", "documents", "documents_fts"} <= existing_tables
+                and {"documents_ad"} <= existing_triggers
+                and doc_cols == expected_doc_cols
             )
             if (user_ver != HYBRID_SCHEMA_VERSION or incomplete_schema) and (
-                existing_tables & {"documents", "documents_fts", "meta"}
+                existing_tables & {"files", "documents", "documents_fts", "meta"}
             ):
                 self._conn.execute("DROP TRIGGER IF EXISTS documents_ai")
                 self._conn.execute("DROP TRIGGER IF EXISTS documents_ad")
                 self._conn.execute("DROP TRIGGER IF EXISTS documents_au")
                 self._conn.execute("DROP TABLE IF EXISTS documents_fts")
                 self._conn.execute("DROP TABLE IF EXISTS documents")
+                self._conn.execute("DROP TABLE IF EXISTS files")
                 self._conn.execute("DROP TABLE IF EXISTS meta")
+                self._dirty = True
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY,
+                    file_path TEXT UNIQUE NOT NULL
+                )
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS documents (
                     id INTEGER PRIMARY KEY,
                     doc_id TEXT UNIQUE NOT NULL,
-                    content TEXT NOT NULL,
-                    alias_tokens TEXT NOT NULL DEFAULT '',
+                    file_id INTEGER REFERENCES files(id) ON DELETE CASCADE,
+                    start_line INTEGER NOT NULL DEFAULT 0,
+                    end_line INTEGER NOT NULL DEFAULT 0,
                     content_hash TEXT,
+                    alias_tokens TEXT NOT NULL DEFAULT '',
                     embedding_blob BLOB,
                     binary_blob BLOB
                 )
                 """
             )
-            doc_cols = {
-                str(r[1]) for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()
-            }
-            if "binary_blob" not in doc_cols:
-                self._conn.execute("ALTER TABLE documents ADD COLUMN binary_blob BLOB")
             self._conn.execute(
                 """
                 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-                    doc_id UNINDEXED,
                     content,
                     alias_tokens,
-                    content='documents',
-                    content_rowid='id',
+                    content='',
+                    contentless_delete=1,
                     tokenize="unicode61"
                 )
                 """
             )
             self._conn.execute(
                 """
-                CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
-                    INSERT INTO documents_fts(rowid, doc_id, content, alias_tokens)
-                    VALUES (new.id, new.doc_id, new.content, new.alias_tokens);
-                END
-                """
-            )
-            self._conn.execute(
-                """
                 CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
-                    INSERT INTO documents_fts(documents_fts, rowid, doc_id, content, alias_tokens)
-                    VALUES ('delete', old.id, old.doc_id, old.content, old.alias_tokens);
-                END
-                """
-            )
-            self._conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE OF doc_id, content, alias_tokens ON documents BEGIN
-                    INSERT INTO documents_fts(documents_fts, rowid, doc_id, content, alias_tokens)
-                    VALUES ('delete', old.id, old.doc_id, old.content, old.alias_tokens);
-                    INSERT INTO documents_fts(rowid, doc_id, content, alias_tokens)
-                    VALUES (new.id, new.doc_id, new.content, new.alias_tokens);
+                    DELETE FROM documents_fts WHERE rowid = old.id;
                 END
                 """
             )
@@ -396,43 +405,99 @@ class HybridSQLiteIndex:
         quantize_only: bool = False,
     ) -> int:
         """Insert or update documents and their FTS5 + optional vector entries."""
-        normalized: list[tuple[str, str, str, bytes | None, bytes | None]] = []
+        normalized: list[tuple[str, str, str, int, int, str, bytes | None, bytes | None]] = []
         for item in docs:
             if isinstance(item, Mapping):
                 doc_id = str(item.get("doc_id", item.get("id", "")))
                 content = str(item.get("content", item.get("text", "")))
+                file_path = str(item.get("file_path", "") or "")
+                start_line = int(item.get("start_line", 0) or 0)
+                end_line = int(item.get("end_line", 0) or 0)
                 emb = item.get("embedding")
             else:
                 doc_id, content, emb = item
                 doc_id = str(doc_id)
                 content = str(content)
+                file_path = ""
+                start_line = 0
+                end_line = 0
             c_hash = _content_hash(content)
             emb_blob = None if quantize_only else _pack_embedding(emb)
             bin_blob = pack_heaviside_1bit(emb)
-            normalized.append((doc_id, content, c_hash, emb_blob, bin_blob))
+            self._content_cache[doc_id] = content
+            normalized.append(
+                (doc_id, content, file_path, start_line, end_line, c_hash, emb_blob, bin_blob)
+            )
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            file_id_by_path: dict[str, int] = {
+                str(r[1]): int(r[0])
+                for r in self._conn.execute("SELECT id, file_path FROM files").fetchall()
+            }
             existing_rows = self._conn.execute(
-                "SELECT doc_id, content_hash, length(embedding_blob), length(binary_blob) "
-                "FROM documents"
+                "SELECT id, doc_id, file_id, start_line, end_line, content_hash, "
+                "length(embedding_blob), length(binary_blob) FROM documents"
             ).fetchall()
-            existing: dict[str, tuple[str | None, int | None, int | None, bytes | None]] = {
-                str(r[0]): (
-                    str(r[1]) if r[1] is not None else None,
+            existing: dict[
+                str,
+                tuple[int, int | None, int, int, str | None, int | None, int | None, bytes | None],
+            ] = {
+                str(r[1]): (
+                    int(r[0]),
                     int(r[2]) if r[2] is not None else None,
-                    int(r[3]) if r[3] is not None else None,
+                    int(r[3]),
+                    int(r[4]),
+                    str(r[5]) if r[5] is not None else None,
+                    int(r[6]) if r[6] is not None else None,
+                    int(r[7]) if r[7] is not None else None,
                     None,
                 )
                 for r in existing_rows
             }
-            for doc_id, content, c_hash, emb_blob, bin_blob in normalized:
+            for (
+                doc_id,
+                content,
+                file_path,
+                start_line,
+                end_line,
+                c_hash,
+                emb_blob,
+                bin_blob,
+            ) in normalized:
+                file_id: int | None = None
+                if file_path:
+                    file_id = file_id_by_path.get(file_path)
+                    if file_id is None:
+                        cur_file = self._conn.execute(
+                            "INSERT INTO files (file_path) VALUES (?)",
+                            (file_path,),
+                        )
+                        if cur_file.lastrowid is None:
+                            raise RuntimeError("failed to insert file_path")
+                        file_id = int(cur_file.lastrowid)
+                        file_id_by_path[file_path] = file_id
+                        self._dirty = True
                 emb_len = len(emb_blob) if emb_blob is not None else None
                 bin_len = len(bin_blob) if bin_blob is not None else None
                 prev = existing.get(doc_id)
                 if prev is not None:
-                    prev_hash, prev_len, prev_bin_len, prev_blob = prev
-                    if prev_hash == c_hash:
+                    (
+                        prev_row_id,
+                        prev_file_id,
+                        prev_start,
+                        prev_end,
+                        prev_hash,
+                        prev_len,
+                        prev_bin_len,
+                        prev_blob,
+                    ) = prev
+                    if (
+                        prev_hash == c_hash
+                        and prev_file_id == file_id
+                        and prev_start == start_line
+                        and prev_end == end_line
+                    ):
                         if (
                             emb_blob is None
                             and prev_len is None
@@ -443,39 +508,101 @@ class HybridSQLiteIndex:
                         if prev_len == emb_len and prev_bin_len == bin_len:
                             if prev_blob is None:
                                 row = self._conn.execute(
-                                    "SELECT embedding_blob, binary_blob FROM documents WHERE doc_id = ?",
-                                    (doc_id,),
+                                    "SELECT embedding_blob, binary_blob FROM documents WHERE id = ?",
+                                    (prev_row_id,),
                                 ).fetchone()
                                 prev_blob = _coerce_blob(row[0]) if row is not None else None
                                 prev_bin = _coerce_blob(row[1]) if row is not None else None
                             else:
                                 prev_bin = bin_blob
                             if prev_blob == emb_blob and prev_bin == bin_blob:
-                                existing[doc_id] = (c_hash, emb_len, bin_len, prev_blob)
+                                existing[doc_id] = (
+                                    prev_row_id,
+                                    file_id,
+                                    start_line,
+                                    end_line,
+                                    c_hash,
+                                    emb_len,
+                                    bin_len,
+                                    prev_blob,
+                                )
                                 continue
                         self._conn.execute(
-                            "UPDATE documents SET embedding_blob = ?, binary_blob = ? WHERE doc_id = ?",
-                            (emb_blob, bin_blob, doc_id),
+                            "UPDATE documents SET embedding_blob = ?, binary_blob = ? WHERE id = ?",
+                            (emb_blob, bin_blob, prev_row_id),
                         )
-                        existing[doc_id] = (c_hash, emb_len, bin_len, emb_blob)
+                        self._dirty = True
+                        existing[doc_id] = (
+                            prev_row_id,
+                            file_id,
+                            start_line,
+                            end_line,
+                            c_hash,
+                            emb_len,
+                            bin_len,
+                            emb_blob,
+                        )
                         continue
                 aliases = _extract_alias_tokens(content)
-                self._conn.execute(
-                    """
-                    INSERT INTO documents (
-                        doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob
+                if prev is not None:
+                    row_id = prev[0]
+                    self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
+                    self._conn.execute(
+                        """
+                        UPDATE documents
+                        SET file_id = ?, start_line = ?, end_line = ?, alias_tokens = ?,
+                            content_hash = ?, embedding_blob = ?, binary_blob = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            file_id,
+                            start_line,
+                            end_line,
+                            aliases,
+                            c_hash,
+                            emb_blob,
+                            bin_blob,
+                            row_id,
+                        ),
                     )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(doc_id) DO UPDATE SET
-                        content = excluded.content,
-                        alias_tokens = excluded.alias_tokens,
-                        content_hash = excluded.content_hash,
-                        embedding_blob = excluded.embedding_blob,
-                        binary_blob = excluded.binary_blob
-                    """,
-                    (doc_id, content, aliases, c_hash, emb_blob, bin_blob),
+                else:
+                    cur = self._conn.execute(
+                        """
+                        INSERT INTO documents (
+                            doc_id, file_id, start_line, end_line, alias_tokens,
+                            content_hash, embedding_blob, binary_blob
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            doc_id,
+                            file_id,
+                            start_line,
+                            end_line,
+                            aliases,
+                            c_hash,
+                            emb_blob,
+                            bin_blob,
+                        ),
+                    )
+                    if cur.lastrowid is None:
+                        raise RuntimeError("failed to insert document")
+                    row_id = int(cur.lastrowid)
+                self._conn.execute(
+                    "INSERT INTO documents_fts(rowid, content, alias_tokens) VALUES (?, ?, ?)",
+                    (row_id, content, aliases),
                 )
-                existing[doc_id] = (c_hash, emb_len, bin_len, emb_blob)
+                self._dirty = True
+                existing[doc_id] = (
+                    row_id,
+                    file_id,
+                    start_line,
+                    end_line,
+                    c_hash,
+                    emb_len,
+                    bin_len,
+                    emb_blob,
+                )
             self._conn.commit()
         except BaseException:
             self._conn.rollback()
@@ -489,13 +616,19 @@ class HybridSQLiteIndex:
             (int(row[0]), str(row[1]))
             for row in self._conn.execute("SELECT id, doc_id FROM documents").fetchall()
         ]
-        stale_ids = [row_id for row_id, doc_id in existing if doc_id not in active]
-        if not stale_ids:
+        stale = [(row_id, doc_id) for row_id, doc_id in existing if doc_id not in active]
+        if not stale:
             return 0
         with self._conn:
-            for row_id in stale_ids:
+            for row_id, doc_id in stale:
                 self._conn.execute("DELETE FROM documents WHERE id = ?", (row_id,))
-        return len(stale_ids)
+                self._content_cache.pop(doc_id, None)
+            self._conn.execute(
+                "DELETE FROM files WHERE id NOT IN "
+                "(SELECT DISTINCT file_id FROM documents WHERE file_id IS NOT NULL)"
+            )
+            self._dirty = True
+        return len(stale)
 
     def _fts_rankings(self, query: str, *, limit: int = 20) -> dict[str, int]:
         escaped_and = escape_fts5_query(query, mode="and")
@@ -503,10 +636,11 @@ class HybridSQLiteIndex:
             return {}
         and_rows = self._conn.execute(
             """
-            SELECT doc_id
+            SELECT d.doc_id
             FROM documents_fts
+            JOIN documents d ON d.id = documents_fts.rowid
             WHERE documents_fts MATCH ?
-            ORDER BY bm25(documents_fts) ASC, doc_id ASC
+            ORDER BY bm25(documents_fts) ASC, d.doc_id ASC
             """,
             (escaped_and,),
         ).fetchall()
@@ -520,8 +654,9 @@ class HybridSQLiteIndex:
             return {str(row[0]): rank for rank, row in enumerate(and_rows, start=1)}
         or_rows = self._conn.execute(
             """
-            SELECT doc_id, bm25(documents_fts), content
+            SELECT d.doc_id, bm25(documents_fts), d.alias_tokens
             FROM documents_fts
+            JOIN documents d ON d.id = documents_fts.rowid
             WHERE documents_fts MATCH ?
             """,
             (escaped_or,),
@@ -535,10 +670,11 @@ class HybridSQLiteIndex:
         }
 
         scored_or: list[tuple[int, float, str]] = []
-        for doc_id, bm25_score, content in or_rows:
+        for doc_id, bm25_score, alias_tokens in or_rows:
             doc_key = str(doc_id)
             if doc_key in seen_and:
                 continue
+            content = self._content_cache.get(doc_key, str(alias_tokens))
             doc_tokens = {
                 part.lower()
                 for raw_tok in re.findall(r"[A-Za-z0-9_]+", str(content))
@@ -696,12 +832,6 @@ class HybridSQLiteIndex:
 
         scored.sort(key=lambda item: (-item[0], item[1]))
         top = scored[:limit]
-        placeholders = ",".join("?" for _ in top)
-        content_rows = self._conn.execute(
-            f"SELECT doc_id, content FROM documents WHERE doc_id IN ({placeholders})",
-            [item[1] for item in top],
-        ).fetchall()
-        content_by_id = {str(row[0]): str(row[1]) for row in content_rows}
 
         return [
             {
@@ -709,7 +839,7 @@ class HybridSQLiteIndex:
                 "score": score,
                 "fts_rank": f_rank,
                 "vec_rank": v_rank,
-                "content": content_by_id.get(doc_id, ""),
+                "content": self._content_cache.get(doc_id, ""),
             }
             for score, doc_id, f_rank, v_rank in top
         ]

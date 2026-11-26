@@ -20,19 +20,25 @@ from tensor_grep.core.reranker import HYBRID_INDEX_REL_PATH, hybrid_rerank
 from tensor_grep.core.retrieval_chunker import Chunk
 
 
-def test_external_content_fts5_schema_user_version_2_and_compact_blobs(tmp_path: Path) -> None:
+def test_contentless_offset_fts5_schema_user_version_3_and_compact_blobs(tmp_path: Path) -> None:
     db_path = tmp_path / "index.sqlite3"
     with HybridSQLiteIndex(db_path) as index:
         ver_row = index._conn.execute("PRAGMA user_version").fetchone()
-        assert ver_row is not None and int(ver_row[0]) == HYBRID_SCHEMA_VERSION == 2
+        assert ver_row is not None and int(ver_row[0]) == HYBRID_SCHEMA_VERSION == 3
 
         ddl_row = index._conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'documents_fts'"
         ).fetchone()
         assert ddl_row is not None
         ddl = str(ddl_row[0])
-        assert "content='documents'" in ddl
-        assert "content_rowid='id'" in ddl
+        assert "content=''" in ddl
+        assert "contentless_delete=1" in ddl
+
+        doc_cols = {
+            str(r[1]) for r in index._conn.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        assert {"file_id", "start_line", "end_line", "content_hash", "alias_tokens"} <= doc_cols
+        assert "content" not in doc_cols
 
         triggers = {
             str(r[0])
@@ -40,25 +46,44 @@ def test_external_content_fts5_schema_user_version_2_and_compact_blobs(tmp_path:
                 "SELECT name FROM sqlite_master WHERE type = 'trigger'"
             ).fetchall()
         }
-        assert {"documents_ai", "documents_ad", "documents_au"} <= triggers
+        assert {"documents_ad"} <= triggers
 
         index.upsert_documents([
-            ("d1", "def calculate_sales_tax(amount): return amount * 0.08", [0.5, 0.5, 0.0, 0.0]),
+            {
+                "doc_id": "d1",
+                "content": "def calculate_sales_tax(amount): return amount * 0.08",
+                "file_path": "billing/tax.py",
+                "start_line": 10,
+                "end_line": 12,
+                "embedding": [0.5, 0.5, 0.0, 0.0],
+            }
         ])
         row = index._conn.execute(
-            "SELECT content_hash, typeof(embedding_blob), length(embedding_blob) FROM documents WHERE doc_id = 'd1'"
+            "SELECT d.content_hash, typeof(d.embedding_blob), length(d.embedding_blob), "
+            "d.start_line, d.end_line, f.file_path "
+            "FROM documents d JOIN files f ON f.id = d.file_id WHERE d.doc_id = 'd1'"
         ).fetchone()
         assert row is not None
         assert len(str(row[0])) == 32  # BLAKE2b-128 hex digest
         assert row[1] == "blob"
         assert int(row[2]) == 8  # 4 x float16 = 8 bytes
+        assert int(row[3]) == 10
+        assert int(row[4]) == 12
+        assert row[5] == "billing/tax.py"
 
         # Unchanged upsert is a no-op (same hash and rowid preserved).
         rowid_before = index._conn.execute(
             "SELECT id FROM documents WHERE doc_id = 'd1'"
         ).fetchone()
         index.upsert_documents([
-            ("d1", "def calculate_sales_tax(amount): return amount * 0.08", [0.5, 0.5, 0.0, 0.0]),
+            {
+                "doc_id": "d1",
+                "content": "def calculate_sales_tax(amount): return amount * 0.08",
+                "file_path": "billing/tax.py",
+                "start_line": 10,
+                "end_line": 12,
+                "embedding": [0.5, 0.5, 0.0, 0.0],
+            }
         ])
         rowid_after = index._conn.execute("SELECT id FROM documents WHERE doc_id = 'd1'").fetchone()
         assert rowid_before == rowid_after
@@ -249,6 +274,55 @@ def test_bidirectional_identifier_matching_and_odd_blob_validation(tmp_path: Pat
         _unpack_embedding_py(b"\x01")
 
 
+def test_disk_backed_offset_sqlite_scale_1834_files_under_15mib(tmp_path: Path) -> None:
+    chunks: list[Chunk] = []
+    for file_idx in range(1834):
+        file_path = f"pkg/mod_{file_idx // 50}/file_{file_idx}.py"
+        for chunk_idx in range(3):
+            start = chunk_idx * 25 + 1
+            end = start + 24
+            marker = (
+                "def unique_scale_target_symbol(): return 99\n"
+                if file_idx == 1337 and chunk_idx == 1
+                else f"def worker_{file_idx}_{chunk_idx}(x, y): return x + y + {file_idx}\n"
+            )
+            body = marker + f"# module {file_idx} section {chunk_idx} shared_helper_logic\n" * 6
+            chunks.append(Chunk(file_path=file_path, start_line=start, end_line=end, text=body))
+
+    order = hybrid_rerank("unique_scale_target_symbol", chunks, cache_root=tmp_path)
+    assert order[0] == 1337 * 3 + 1
+
+    db_path = tmp_path / HYBRID_INDEX_REL_PATH
+    assert db_path.exists()
+    assert db_path.stat().st_size <= 15 * 1024 * 1024
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(documents)").fetchall()}
+        assert "content" not in cols
+        file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        assert file_count == 1834
+        assert doc_count == 1834 * 3
+    finally:
+        conn.close()
+
+
+def test_hybrid_cache_anchors_to_git_root(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / ".git").mkdir(parents=True)
+    sub_dir = repo_root / "src" / "pkg"
+    sub_dir.mkdir(parents=True)
+
+    chunks = [
+        Chunk(file_path=str(sub_dir / "mod.py"), start_line=1, end_line=1, text="def anchored_fn(): pass")
+    ]
+    assert hybrid_rerank("anchored_fn", chunks, cache_root=sub_dir) == [0]
+    assert (repo_root / HYBRID_INDEX_REL_PATH).exists()
+    assert not (sub_dir / HYBRID_INDEX_REL_PATH).exists()
+
+
+
 def test_post_open_corrupt_fts_triggers_graceful_rebuild(tmp_path: Path) -> None:
     chunks = [
         Chunk(file_path="a.py", start_line=1, end_line=2, text="def calculate_sales_tax(): pass")
@@ -256,7 +330,7 @@ def test_post_open_corrupt_fts_triggers_graceful_rebuild(tmp_path: Path) -> None
     assert hybrid_rerank("calculate_sales_tax", chunks, cache_root=tmp_path) == [0]
     db_path = tmp_path / HYBRID_INDEX_REL_PATH
     conn = sqlite3.connect(str(db_path))
-    conn.execute("DROP TRIGGER documents_ai")
+    conn.execute("DROP TRIGGER documents_ad")
     conn.commit()
     conn.close()
 
