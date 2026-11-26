@@ -331,7 +331,9 @@ def _validate_hybrid_sqlite_schema(work_db: Path) -> str | None:
         ver_row = conn.execute("PRAGMA user_version").fetchone()
         user_ver = int(ver_row[0]) if ver_row is not None else 0
         if user_ver != HYBRID_SCHEMA_VERSION:
-            return "legacy_schema" if user_ver < HYBRID_SCHEMA_VERSION else "schema_version_mismatch"
+            return (
+                "legacy_schema" if user_ver < HYBRID_SCHEMA_VERSION else "schema_version_mismatch"
+            )
         tables = {
             str(r[0])
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

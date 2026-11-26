@@ -15,9 +15,7 @@ def _patch_fast_doctor_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.142.0")
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr("tensor_grep.cli.main._doctor_rust_binary_version", lambda _b: None)
-    monkeypatch.setattr(
-        "tensor_grep.cli.main._doctor_rust_core_extension_available", lambda: True
-    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_rust_core_extension_available", lambda: True)
     monkeypatch.setattr("tensor_grep.cli.main._doctor_path_tg_candidates", lambda: [])
     monkeypatch.setattr("tensor_grep.cli.main._doctor_fresh_shell_path_tg_candidates", lambda: [])
     monkeypatch.setattr(

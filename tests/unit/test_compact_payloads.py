@@ -493,7 +493,9 @@ def test_compact_payload_sheds_candidate_edit_targets_before_trimming_edit_order
         "navigation_pack": {"blob": "n" * 2000},
     }
     compacted = compact_payload_for_cli(original)
-    assert len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    assert (
+        len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    )
     assert "navigation_pack" not in compacted
     assert "candidate_edit_targets" not in compacted
     assert len(compacted["edit_order"]) == 3
@@ -510,10 +512,10 @@ def test_compact_payload_keeps_at_least_one_edit_order_under_list_trim() -> None
         "definitions": [{"file": "core.py", "line": 3}],
         "files": ["core.py"],
         "tests": ["test_billing.py"],
-        "edit_order": [
-            {"file": f"service_{i}.py", "reason": "r" * 400} for i in range(15)
-        ],
+        "edit_order": [{"file": f"service_{i}.py", "reason": "r" * 400} for i in range(15)],
     }
     compacted = compact_payload_for_cli(original)
-    assert len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    assert (
+        len(json.dumps(compacted, ensure_ascii=True, separators=(",", ":")).encode("utf-8")) <= 4000
+    )
     assert len(compacted["edit_order"]) >= 1

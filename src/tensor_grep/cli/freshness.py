@@ -125,8 +125,7 @@ def _unified_cache_status(root: Path) -> tuple[dict[str, Any] | None, str | None
         "views": {
             name: {
                 "ready": bool(
-                    isinstance(views_dict.get(name), dict)
-                    and views_dict[name].get("ready") is True
+                    isinstance(views_dict.get(name), dict) and views_dict[name].get("ready") is True
                 ),
                 "fresh": bool(fresh_map.get(name, False)),
             }

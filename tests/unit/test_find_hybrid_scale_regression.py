@@ -315,12 +315,16 @@ def test_hybrid_cache_anchors_to_git_root(tmp_path: Path) -> None:
     sub_dir.mkdir(parents=True)
 
     chunks = [
-        Chunk(file_path=str(sub_dir / "mod.py"), start_line=1, end_line=1, text="def anchored_fn(): pass")
+        Chunk(
+            file_path=str(sub_dir / "mod.py"),
+            start_line=1,
+            end_line=1,
+            text="def anchored_fn(): pass",
+        )
     ]
     assert hybrid_rerank("anchored_fn", chunks, cache_root=sub_dir) == [0]
     assert (repo_root / HYBRID_INDEX_REL_PATH).exists()
     assert not (sub_dir / HYBRID_INDEX_REL_PATH).exists()
-
 
 
 def test_post_open_corrupt_fts_triggers_graceful_rebuild(tmp_path: Path) -> None:

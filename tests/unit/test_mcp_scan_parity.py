@@ -59,11 +59,15 @@ def test_mcp_tg_scan_matches_cli_tg_scan_on_mixed_language_fixture(
 
     assert "error" not in mcp_payload, mcp_payload
     assert mcp_payload["language"] == cli_payload["language"] == "mixed"
-    assert mcp_payload["languages"] == cli_payload["languages"] == [
-        "javascript",
-        "python",
-        "rust",
-    ]
+    assert (
+        mcp_payload["languages"]
+        == cli_payload["languages"]
+        == [
+            "javascript",
+            "python",
+            "rust",
+        ]
+    )
     assert mcp_payload["total_matches"] == cli_payload["total_matches"] == 3
     assert mcp_payload["matched_rules"] == cli_payload["matched_rules"] == 3
 

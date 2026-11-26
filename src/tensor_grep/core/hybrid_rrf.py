@@ -312,10 +312,7 @@ class HybridSQLiteIndex:
                 ).fetchall()
             }
             doc_cols = (
-                {
-                    str(r[1])
-                    for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()
-                }
+                {str(r[1]) for r in self._conn.execute("PRAGMA table_info(documents)").fetchall()}
                 if "documents" in existing_tables
                 else set()
             )
@@ -425,9 +422,16 @@ class HybridSQLiteIndex:
             emb_blob = None if quantize_only else _pack_embedding(emb)
             bin_blob = pack_heaviside_1bit(emb)
             self._content_cache[doc_id] = content
-            normalized.append(
-                (doc_id, content, file_path, start_line, end_line, c_hash, emb_blob, bin_blob)
-            )
+            normalized.append((
+                doc_id,
+                content,
+                file_path,
+                start_line,
+                end_line,
+                c_hash,
+                emb_blob,
+                bin_blob,
+            ))
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
