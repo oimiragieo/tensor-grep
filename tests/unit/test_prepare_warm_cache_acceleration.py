@@ -613,3 +613,33 @@ def test_possibly_truncated_map_disables_cached_blast_radius_floor_reuse(
         claim=False,
     )
     assert floor_calls == 1
+
+
+def test_cold_prepare_persists_complete_rm_even_if_floor_hits_deadline(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Complete rm is saved to .tg_cache even when blast_radius_floor expires the deadline."""
+    _make_sample_repo(tmp_path)
+
+    def _expired_floor(**_kwargs):
+        return (
+            {
+                "symbol": "compute_invoice_total",
+                "callers_count": 0,
+                "top_callers": [],
+                "source": "supplementary_blast_radius",
+                "graph_trust_summary": {},
+                "resolution_gaps": [],
+                "possibly_incomplete": True,
+            },
+            True,
+        )
+
+    monkeypatch.setattr(prepare_service, "_build_prepare_blast_radius_floor", _expired_floor)
+    payload = prepare_service._build_prepare_payload(
+        path=str(tmp_path),
+        query="compute_invoice_total",
+        claim=False,
+    )
+    assert payload.get("partial") is True
+    assert (tmp_path / prepare_service._PREPARE_CACHE_REL_PATH).exists()
