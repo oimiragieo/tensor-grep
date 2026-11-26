@@ -200,7 +200,7 @@ def test_codex_reinstall_keeps_toml_valid_with_windows_path(fake_home, monkeypat
     from tensor_grep.cli import agent_installer
 
     win = "C:\\Users\\me\\.venv\\Scripts\\tg.exe"
-    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda: win)
+    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda _home=None: win)
     install_agent_integration("codex", home_dir=fake_home)
     install_agent_integration("codex", home_dir=fake_home)
     data = tomllib.loads((fake_home / ".codex" / "config.toml").read_text(encoding="utf-8"))
@@ -285,13 +285,17 @@ def test_guidance_block_uses_valid_v1142_commands():
 def test_install_and_uninstall_opencode_schema(fake_home, monkeypatch):
     from tensor_grep.cli import agent_installer
 
-    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda: "/stable/tg")
+    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda _home=None: "/stable/tg")
     cfg = fake_home / ".config" / "opencode" / "opencode.json"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(
         json.dumps({
             "$schema": "https://opencode.ai/config.json",
             "mcp": {"other_mcp": {"type": "local", "command": ["other", "mcp"]}},
+            "mcpServers": {
+                "tensor_grep": {"command": "old", "args": ["mcp"]},
+                "user_legacy": {"command": "u", "args": []},
+            },
         }),
         encoding="utf-8",
     )
@@ -299,7 +303,8 @@ def test_install_and_uninstall_opencode_schema(fake_home, monkeypatch):
     res = install_agent_integration("opencode", home_dir=fake_home)
     assert res["status"] == "installed"
     data = json.loads(cfg.read_text(encoding="utf-8"))
-    assert "mcpServers" not in data
+    assert "tensor_grep" not in data.get("mcpServers", {})
+    assert "user_legacy" in data["mcpServers"]
     assert data["$schema"] == "https://opencode.ai/config.json"
     assert data["mcp"]["other_mcp"] == {"type": "local", "command": ["other", "mcp"]}
     assert data["mcp"]["tensor_grep"] == {"type": "local", "command": ["/stable/tg", "mcp"]}
@@ -326,7 +331,11 @@ def test_uninstall_all_targets_preserves_existing_user_keys(fake_home):
     )
     codex_cfg = fake_home / ".codex" / "config.toml"
     codex_cfg.parent.mkdir(parents=True, exist_ok=True)
-    codex_cfg.write_text('model = "gpt-5"\n\n[mcp_servers.keep]\ncommand = "k"\n', encoding="utf-8")
+    codex_cfg.write_text(
+        'model = "gpt-5"\n\n[mcp_servers.keep]\ncommand = "k"\n\n'
+        '[mcp_servers.tensor_grep_backup]\ncommand = "backup"\n',
+        encoding="utf-8",
+    )
     opencode_cfg = fake_home / ".config" / "opencode" / "opencode.json"
     opencode_cfg.parent.mkdir(parents=True, exist_ok=True)
     opencode_cfg.write_text(
@@ -356,6 +365,7 @@ def test_uninstall_all_targets_preserves_existing_user_keys(fake_home):
     codex_data = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
     assert codex_data["model"] == "gpt-5"
     assert "keep" in codex_data["mcp_servers"]
+    assert "tensor_grep_backup" in codex_data["mcp_servers"]
     assert "tensor_grep" not in codex_data["mcp_servers"]
 
     opencode_data = json.loads(opencode_cfg.read_text(encoding="utf-8"))

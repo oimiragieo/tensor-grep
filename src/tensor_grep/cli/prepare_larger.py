@@ -15,6 +15,53 @@ _LARGER_LAZY_MIN_FILES = 64
 _LARGER_SEED_CAP = 16
 _LARGER_EGO_MAX_FILES = 48
 _LARGER_SEARCH_TIMEOUT_S = 1.5
+_PROJECT_CONFIG_FILES = (
+    "pyproject.toml",
+    "tsconfig.json",
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+)
+
+
+def build_config_meta(
+    context_root: Path, cache_root: Path, max_bytes: int
+) -> dict[str, dict[str, Any]]:
+    from tensor_grep.cli import prepare_service as _prepare_service
+    from tensor_grep.io.confined import read_confined
+
+    roots = [context_root]
+    if cache_root != context_root:
+        roots.append(cache_root)
+    meta: dict[str, dict[str, Any]] = {}
+    for base in roots:
+        for cfg_name in _PROJECT_CONFIG_FILES:
+            cfg_path = base / cfg_name
+            stat_key = _prepare_service._lstat_regular_file(cfg_path)
+            if stat_key is None:
+                continue
+            key = str(cfg_path)
+            if stat_key[2] > max_bytes:
+                meta[key] = {
+                    "mtime_ns": stat_key[0],
+                    "ctime_ns": stat_key[1],
+                    "size": stat_key[2],
+                    "oversized": True,
+                }
+                continue
+            try:
+                content = read_confined(cache_root, cfg_path, max_bytes)
+                digest = hashlib.sha256(content).hexdigest()
+            except OSError:
+                meta[key] = {"unreadable": True}
+                continue
+            meta[key] = {
+                "mtime_ns": stat_key[0],
+                "ctime_ns": stat_key[1],
+                "size": stat_key[2],
+                "sha256": digest,
+            }
+    return meta
 
 
 def _larger_query_terms(query: str) -> list[str]:
@@ -73,30 +120,6 @@ def _seed_larger_candidates(
                         if key in norm_to_path:
                             lexical_hits.add(key)
             except (OSError, subprocess.SubprocessError):
-                pass
-
-    if generation is not None and getattr(generation, "connection", None) is not None and terms:
-        conn = generation.connection
-        end = (
-            min(time.monotonic() + 0.15, deadline_monotonic)
-            if deadline_monotonic is not None
-            else time.monotonic() + 0.15
-        )
-        try:
-            conn.set_progress_handler(lambda: int(time.monotonic() >= end), 1000)
-            for raw_path, raw_data in conn.execute(
-                "SELECT f.path, e.data FROM files f JOIN entries e ON f.key = e.key WHERE f.scope = ?",
-                (str(root),),
-            ).fetchall():
-                key = os.path.normcase(os.path.abspath(str(raw_path)))
-                if key in norm_to_path and any(t in str(raw_data).lower() for t in terms):
-                    symbol_hits.add(key)
-        except sqlite3.Error:
-            pass
-        finally:
-            try:
-                conn.set_progress_handler(None, 0)
-            except sqlite3.Error:
                 pass
 
     wants_test = "test" in terms or "tests" in terms
@@ -294,7 +317,7 @@ def build_larger_lazy_repo_map(
         return None
 
     cache_root, max_parse_bytes, generation = _open_larger_generation(root, deadline_monotonic)
-    config_meta = _prepare_service._build_config_meta(root, cache_root, max_parse_bytes)
+    config_meta = build_config_meta(root, cache_root, max_parse_bytes)
     test_paths = [c for c in context_files if _repo_map._is_test_file(c)]
     tests = [str(c) for c in test_paths]
     source_files = [str(c) for c in context_files if not _repo_map._is_test_file(c)] or tests
@@ -415,6 +438,7 @@ def scope_lazy_rm(rm: dict[str, Any]) -> dict[str, Any]:
         return rm
     return {
         **rm,
+        "lazy_larger_scoped": True,
         "files": [p for p in (rm.get("files") or []) if p in parsed_set] or sorted(parsed_set),
         "tests": [p for p in (rm.get("tests") or []) if p in parsed_set],
         "related_paths": sorted(parsed_set),

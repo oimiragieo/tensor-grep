@@ -62,7 +62,8 @@ use tensor_grep_rs::python_sidecar::{
 };
 use tensor_grep_rs::rg_passthrough::{
     execute_ripgrep_pcre2_version, execute_ripgrep_search, execute_ripgrep_type_list,
-    is_unbounded_implicit_search_walk_refusal, ripgrep_is_available, RipgrepSearchArgs,
+    extract_search_tail_args, is_unbounded_implicit_search_walk_refusal,
+    resolve_no_ignore_from_argv, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
     gpu_proof_fields, native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
@@ -248,11 +249,11 @@ pub struct PositionalCli {
     pub max_filesize: Option<String>,
 
     /// Ignore configured ignore files
-    #[arg(long = "no-ignore")]
+    #[arg(long = "no-ignore", overrides_with = "ignore")]
     pub no_ignore: bool,
 
     /// Respect configured ignore files. This is the default; accepted for rg CLI compatibility.
-    #[arg(long = "ignore")]
+    #[arg(long = "ignore", overrides_with = "no_ignore")]
     pub ignore: bool,
 
     /// Show normal diagnostic messages. This is the default; accepted for rg CLI compatibility.
@@ -387,11 +388,11 @@ pub struct SearchArgs {
     pub globs: Vec<String>,
 
     /// Ignore .gitignore / ignore files
-    #[arg(long = "no-ignore")]
+    #[arg(long = "no-ignore", overrides_with = "ignore")]
     pub no_ignore: bool,
 
     /// Respect .gitignore / ignore files. This is the default; accepted for rg CLI compatibility.
-    #[arg(long = "ignore")]
+    #[arg(long = "ignore", overrides_with = "no_ignore")]
     pub ignore: bool,
 
     /// Don't respect .ignore or .rgignore files
@@ -1344,29 +1345,31 @@ fn main_inner() -> anyhow::Result<()> {
 
     if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
         if let Some(search_args) = normalize_top_level_search_args(&raw_args) {
-            let cli = CommandCli::parse_from(search_args);
-            return run_command_cli(cli);
+            return run_command_cli(parse_command_cli_with_ignore(&search_args));
         }
     }
-
     if let Some(exit_code) = try_early_positional_ripgrep_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }
         return Ok(());
     }
-
     if should_use_positional_cli(&raw_args) {
-        let cli = PositionalCli::parse_from(raw_args);
-        let json = cli.json;
-        let ndjson = cli.ndjson;
+        let mut cli = PositionalCli::parse_from(&raw_args);
+        cli.no_ignore = resolve_no_ignore_from_argv(&raw_args, cli.no_ignore);
+        let (json, ndjson) = (cli.json, cli.ndjson);
         return run_positional_cli(cli)
             .or_else(|err| handle_search_runtime_error(json, ndjson, false, err));
     }
+    run_command_cli(parse_command_cli_with_ignore(&raw_args))
+}
 
-    let cli = CommandCli::parse_from(raw_args);
-
-    run_command_cli(cli)
+fn parse_command_cli_with_ignore(args: &[OsString]) -> CommandCli {
+    let mut cli = CommandCli::parse_from(args);
+    if let Commands::Search(ref mut s) = cli.command {
+        s.no_ignore = resolve_no_ignore_from_argv(args, s.no_ignore);
+    }
+    cli
 }
 
 fn print_native_top_level_help() -> anyhow::Result<()> {
@@ -1551,11 +1554,7 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
 fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<String>> {
     let search_args = normalize_top_level_search_args(raw_args)?;
 
-    let args = search_args
-        .iter()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
+    let args = extract_search_tail_args(&search_args);
     // External audit #138/#140: `--index` selects the Rust-native trigram-index engine
     // (route_search -> handle_index_search -> index_flag_violations), which the Python sidecar
     // does not implement at all. Every check below exists to route some OTHER flag to Python --
@@ -1659,11 +1658,7 @@ fn json_aggregate_render_flag_conflicts(raw_args: &[OsString]) -> Vec<String> {
     let Some(search_args) = normalize_top_level_search_args(raw_args) else {
         return Vec::new();
     };
-    let args = search_args
-        .iter()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
+    let args = extract_search_tail_args(&search_args);
     if !args.iter().any(|arg| arg == "--json") {
         return Vec::new();
     }
@@ -2831,7 +2826,8 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
 }
 
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
-    let cli = PositionalCli::try_parse_from(raw_args).ok()?;
+    let mut cli = PositionalCli::try_parse_from(raw_args).ok()?;
+    cli.no_ignore = resolve_no_ignore_from_argv(raw_args, cli.no_ignore);
     let pattern = cli.pattern.clone()?;
     let paths = implicit_search_paths(&cli.path, stdin_should_search_implicit_path());
 

@@ -97,45 +97,7 @@ def _prepare_cache_context(
     return root, cache_root, signing_key
 
 
-def _build_config_meta(
-    context_root: Path,
-    cache_root: Path,
-    max_bytes: int,
-) -> dict[str, dict[str, Any]]:
-    from tensor_grep.io.confined import read_confined
-
-    roots = [context_root]
-    if cache_root != context_root:
-        roots.append(cache_root)
-    meta: dict[str, dict[str, Any]] = {}
-    for base in roots:
-        for cfg_name in _PROJECT_CONFIG_FILES:
-            cfg_path = base / cfg_name
-            stat_key = _lstat_regular_file(cfg_path)
-            if stat_key is None:
-                continue
-            key = str(cfg_path)
-            if stat_key[2] > max_bytes:
-                meta[key] = {
-                    "mtime_ns": stat_key[0],
-                    "ctime_ns": stat_key[1],
-                    "size": stat_key[2],
-                    "oversized": True,
-                }
-                continue
-            try:
-                content = read_confined(cache_root, cfg_path, max_bytes)
-                digest = hashlib.sha256(content).hexdigest()
-            except OSError:
-                meta[key] = {"unreadable": True}
-                continue
-            meta[key] = {
-                "mtime_ns": stat_key[0],
-                "ctime_ns": stat_key[1],
-                "size": stat_key[2],
-                "sha256": digest,
-            }
-    return meta
+_build_config_meta = _prepare_larger.build_config_meta
 
 
 def _build_file_meta(
@@ -598,6 +560,8 @@ def _save_warm_prepare_cache(
             if _build_config_meta(context_root, cache_root, max_parse_bytes) != config_meta:
                 return
             for p_str, meta in file_meta.items():
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    return
                 fp = Path(p_str)
                 cur_stat = _lstat_regular_file(fp)
                 if cur_stat != (
@@ -916,8 +880,10 @@ def _build_prepare_payload(
             if hydrated_dirty:
                 cache_dirty = True
         else:
-            lazy_result = _build_larger_lazy_repo_map(
-                path, max_repo_files, query, deadline_monotonic
+            lazy_result = (
+                _build_larger_lazy_repo_map(path, max_repo_files, query, deadline_monotonic)
+                if can_use_warm_cache
+                else None
             )
             if lazy_result is not None:
                 rm, cached_file_meta, pre_build_stats = lazy_result
@@ -946,7 +912,7 @@ def _build_prepare_payload(
                 rm,
                 cached_floors,
                 cached_file_meta,
-                None,
+                deadline_monotonic,
                 pre_build_stats=pre_build_stats,
             )
             cache_dirty = False
@@ -1199,6 +1165,9 @@ def _build_prepare_payload(
             related_call_sites=related_call_sites,
             deadline_monotonic=deadline_monotonic,
         )
+        if scoped_rm.get("lazy_larger_scoped"):
+            floor["lazy_larger_scope"] = True
+            floor["possibly_incomplete"] = True
         if (
             can_use_warm_cache
             and not floor_deadline_partial
@@ -1218,12 +1187,15 @@ def _build_prepare_payload(
             rm,
             cached_floors,
             cached_file_meta,
-            None
-            if (not rm.get("partial") and not rm.get("unreadable_paths"))
-            else deadline_monotonic,
+            deadline_monotonic,
             pre_build_stats=pre_build_stats,
         )
-    if Path(resolved_path).is_dir() and not rm_truncated and not content_receipts_active():
+    if (
+        Path(resolved_path).is_dir()
+        and not rm_truncated
+        and not rm.get("lazy_larger")
+        and not content_receipts_active()
+    ):
         try:
             from tensor_grep.cli.tdad_kg_ast import ensure_tdad_dependency_map
 

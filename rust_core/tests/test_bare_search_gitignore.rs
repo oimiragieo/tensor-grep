@@ -58,4 +58,25 @@ fn gitignore_bare_search() {
             "args={args:?} expected both visible.py and secret.py in stdout: {stdout}"
         );
     }
+
+    // Passing `--no-ignore --ignore` must honor the last flag (`--ignore`) and exclude secret.py.
+    for extra in [
+        &["--no-ignore", "--ignore"][..],
+        &["--cpu", "--no-ignore", "--ignore"][..],
+    ] {
+        let mut args = vec!["needle", "."];
+        args.extend_from_slice(extra);
+        let output = tg().current_dir(dir.path()).args(&args).output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "args={args:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
+            output.status.code()
+        );
+        assert!(
+            stdout.contains("TOKEN = 'needle'") && !stdout.contains("secret.py"),
+            "args={args:?} --no-ignore --ignore must honor final --ignore: {stdout}"
+        );
+    }
 }

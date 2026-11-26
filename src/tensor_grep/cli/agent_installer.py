@@ -30,17 +30,18 @@ Use `tg` exclusively for searching and locating code patterns:
 {END_SENTINEL}"""
 
 
-def _resolve_tg_command() -> str:
+def _resolve_tg_command(home_dir: Path | None = None) -> str:
     """Resolve the appropriate command string for `tg`, preferring the stable managed shim."""
     exe_name = "tg.exe" if sys.platform == "win32" else "tg"
-    managed_shim = Path.home() / ".tensor-grep" / "bin" / exe_name
-    if managed_shim.exists():
+    base_home = home_dir or Path.home()
+    managed_shim = base_home / ".tensor-grep" / "bin" / exe_name
+    if managed_shim.is_file():
         return str(managed_shim)
 
     if sys.prefix != sys.base_prefix:
         scripts_dir = Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin")
         tg_bin = scripts_dir / exe_name
-        if tg_bin.exists():
+        if tg_bin.is_file():
             resolved = tg_bin.resolve()
             if "runtimes" not in resolved.parts:
                 return str(resolved)
@@ -51,7 +52,7 @@ def _resolve_tg_command() -> str:
 
     python_bin_dir = Path(sys.executable).parent
     tg_candidate = python_bin_dir / exe_name
-    if tg_candidate.exists():
+    if tg_candidate.is_file():
         resolved = tg_candidate.resolve()
         if "runtimes" not in resolved.parts:
             return str(resolved)
@@ -121,7 +122,13 @@ def _atomic_write_text(path: Path, content: str) -> None:
     atomic_write_bytes(path, content.encode("utf-8"))
 
 
-def _update_json_mcp(path: Path, add_entry: bool = True, *, opencode: bool = False) -> bool:
+def _update_json_mcp(
+    path: Path,
+    add_entry: bool = True,
+    *,
+    opencode: bool = False,
+    home_dir: Path | None = None,
+) -> bool:
     data: dict[str, Any] = {}
     if path.exists():
         raw_text = path.read_text(encoding="utf-8")
@@ -150,7 +157,15 @@ def _update_json_mcp(path: Path, add_entry: bool = True, *, opencode: bool = Fal
     mcp_servers = data.setdefault(section_key, {})
     changed = False
 
-    tg_cmd = _resolve_tg_command()
+    if opencode:
+        legacy_servers = data.get("mcpServers")
+        if isinstance(legacy_servers, dict) and "tensor_grep" in legacy_servers:
+            del legacy_servers["tensor_grep"]
+            if not legacy_servers:
+                del data["mcpServers"]
+            changed = True
+
+    tg_cmd = _resolve_tg_command(home_dir)
     new_entry: dict[str, Any] = (
         {"type": "local", "command": [tg_cmd, "mcp"]}
         if opencode
@@ -170,16 +185,16 @@ def _update_json_mcp(path: Path, add_entry: bool = True, *, opencode: bool = Fal
     return changed
 
 
-def _update_toml_codex(path: Path, add_entry: bool = True) -> bool:
+def _update_toml_codex(path: Path, add_entry: bool = True, *, home_dir: Path | None = None) -> bool:
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     pattern = re.compile(
-        r"\[mcp_servers\.tensor_grep(?:\.[^\]]+)?\][\s\S]*?(?=\n\[(?!mcp_servers\.tensor_grep)|\Z)",
+        r"^\[mcp_servers\.tensor_grep(?:\.[^\]]+)?\][\s\S]*?(?=\n\[|\Z)",
         re.MULTILINE,
     )
 
-    tg_cmd = _resolve_tg_command().replace("\\", "\\\\")
+    tg_cmd_toml = json.dumps(_resolve_tg_command(home_dir))
     if add_entry:
-        block = f'[mcp_servers.tensor_grep]\ncommand = "{tg_cmd}"\nargs = ["mcp"]\n'
+        block = f'[mcp_servers.tensor_grep]\ncommand = {tg_cmd_toml}\nargs = ["mcp"]\n'
         if pattern.search(content):
             new_content = pattern.sub(lambda _m: block.strip(), content)
         else:
@@ -261,21 +276,21 @@ def install_agent_integration(
         md = home / ".claude" / "CLAUDE.md"
         files_modified.extend([cfg, md])
         if not dry_run:
-            _update_json_mcp(cfg, add_entry=True)
+            _update_json_mcp(cfg, add_entry=True, home_dir=home)
             _update_markdown_guidance(md, add_entry=True)
 
     elif target_lower == "cursor":
         cfg = home / ".cursor" / "mcp.json"
         files_modified.append(cfg)
         if not dry_run:
-            _update_json_mcp(cfg, add_entry=True)
+            _update_json_mcp(cfg, add_entry=True, home_dir=home)
 
     elif target_lower == "codex":
         cfg = home / ".codex" / "config.toml"
         md = home / ".codex" / "AGENTS.md"
         files_modified.extend([cfg, md])
         if not dry_run:
-            _update_toml_codex(cfg, add_entry=True)
+            _update_toml_codex(cfg, add_entry=True, home_dir=home)
             _update_markdown_guidance(md, add_entry=True)
 
     elif target_lower == "opencode":
@@ -283,7 +298,7 @@ def install_agent_integration(
         md = home / ".config" / "opencode" / "AGENTS.md"
         files_modified.extend([cfg, md])
         if not dry_run:
-            _update_json_mcp(cfg, add_entry=True, opencode=True)
+            _update_json_mcp(cfg, add_entry=True, opencode=True, home_dir=home)
             _update_markdown_guidance(md, add_entry=True)
 
     elif target_lower == "qwen":
@@ -291,7 +306,7 @@ def install_agent_integration(
         md = home / ".qwen" / "QWEN.md"
         files_modified.extend([cfg, md])
         if not dry_run:
-            _update_json_mcp(cfg, add_entry=True)
+            _update_json_mcp(cfg, add_entry=True, home_dir=home)
             _update_markdown_guidance(md, add_entry=True)
 
     status = "dry_run" if dry_run else "installed"
@@ -336,7 +351,7 @@ def uninstall_agent_integration(
         files_modified.extend([cfg, md])
         if not dry_run:
             if cfg.exists():
-                _update_json_mcp(cfg, add_entry=False)
+                _update_json_mcp(cfg, add_entry=False, home_dir=home)
             if md.exists():
                 _update_markdown_guidance(md, add_entry=False)
 
@@ -344,7 +359,7 @@ def uninstall_agent_integration(
         cfg = home / ".cursor" / "mcp.json"
         files_modified.append(cfg)
         if not dry_run and cfg.exists():
-            _update_json_mcp(cfg, add_entry=False)
+            _update_json_mcp(cfg, add_entry=False, home_dir=home)
 
     elif target_lower == "codex":
         cfg = home / ".codex" / "config.toml"
@@ -352,7 +367,7 @@ def uninstall_agent_integration(
         files_modified.extend([cfg, md])
         if not dry_run:
             if cfg.exists():
-                _update_toml_codex(cfg, add_entry=False)
+                _update_toml_codex(cfg, add_entry=False, home_dir=home)
             if md.exists():
                 _update_markdown_guidance(md, add_entry=False)
 
@@ -362,7 +377,7 @@ def uninstall_agent_integration(
         files_modified.extend([cfg, md])
         if not dry_run:
             if cfg.exists():
-                _update_json_mcp(cfg, add_entry=False, opencode=True)
+                _update_json_mcp(cfg, add_entry=False, opencode=True, home_dir=home)
             if md.exists():
                 _update_markdown_guidance(md, add_entry=False)
 
@@ -372,7 +387,7 @@ def uninstall_agent_integration(
         files_modified.extend([cfg, md])
         if not dry_run:
             if cfg.exists():
-                _update_json_mcp(cfg, add_entry=False)
+                _update_json_mcp(cfg, add_entry=False, home_dir=home)
             if md.exists():
                 _update_markdown_guidance(md, add_entry=False)
 

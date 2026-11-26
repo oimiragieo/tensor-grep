@@ -4,7 +4,51 @@ use crate::runtime_paths::{
 use anyhow::{anyhow, Context};
 use ignore::WalkBuilder;
 use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+
+pub fn resolve_no_ignore_from_argv(raw_args: &[OsString], parsed_no_ignore: bool) -> bool {
+    let (mut state, mut saw_either) = (parsed_no_ignore, false);
+    for arg in raw_args.iter().skip(1) {
+        let s = arg.to_string_lossy();
+        if s == "--" {
+            break;
+        }
+        if s == "--no-ignore" {
+            (state, saw_either) = (true, true);
+        } else if s == "--ignore" {
+            (state, saw_either) = (false, true);
+        }
+    }
+    if saw_either {
+        state
+    } else {
+        parsed_no_ignore
+    }
+}
+
+pub fn strip_overridden_ignore_flags(args: &mut Vec<String>, search_args: &[OsString]) {
+    if args.iter().any(|a| a == "--no-ignore") && args.iter().any(|a| a == "--ignore") {
+        let last_no_ignore = resolve_no_ignore_from_argv(search_args, false);
+        args.retain(|a| {
+            if last_no_ignore {
+                a != "--ignore"
+            } else {
+                a != "--no-ignore"
+            }
+        });
+    }
+}
+
+pub fn extract_search_tail_args(search_args: &[OsString]) -> Vec<String> {
+    let mut args = search_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    strip_overridden_ignore_flags(&mut args, search_args);
+    args
+}
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
