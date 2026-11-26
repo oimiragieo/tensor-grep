@@ -78,7 +78,7 @@ def _seed_larger_candidates(
     *,
     generation: Any = None,
     deadline_monotonic: float | None = None,
-) -> list[Path]:
+) -> tuple[list[Path], bool]:
     from tensor_grep.cli import repo_map as _repo_map
     from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
@@ -86,6 +86,7 @@ def _seed_larger_candidates(
     norm_to_path = {os.path.normcase(os.path.abspath(str(p))): p for p in context_files}
     lexical_hits: set[str] = set()
     symbol_hits: set[str] = set()
+    lexical_ok = not terms
 
     if terms:
         timeout_s = _LARGER_SEARCH_TIMEOUT_S
@@ -111,13 +112,15 @@ def _seed_larger_candidates(
                     errors="replace",
                     timeout=timeout_s,
                 )
-                for line in proc.stdout.splitlines():
-                    c = line.strip()
-                    if c:
-                        fp = Path(c) if Path(c).is_absolute() else root / c
-                        key = os.path.normcase(os.path.abspath(str(fp)))
-                        if key in norm_to_path:
-                            lexical_hits.add(key)
+                if proc.returncode in (0, 1):
+                    lexical_ok = True
+                    for line in proc.stdout.splitlines():
+                        c = line.strip()
+                        if c:
+                            fp = Path(c) if Path(c).is_absolute() else root / c
+                            key = os.path.normcase(os.path.abspath(str(fp)))
+                            if key in norm_to_path:
+                                lexical_hits.add(key)
             except (OSError, subprocess.SubprocessError):
                 pass
 
@@ -140,7 +143,7 @@ def _seed_larger_candidates(
             str(fp),
         ),
     )
-    return scored[:_LARGER_SEED_CAP]
+    return scored[:_LARGER_SEED_CAP], lexical_ok
 
 
 def _expand_larger_ego_files(
@@ -303,9 +306,13 @@ def build_larger_lazy_repo_map(
     test_paths = [c for c in context_files if _repo_map._is_test_file(c)]
     tests = [str(c) for c in test_paths]
     source_files = [str(c) for c in context_files if not _repo_map._is_test_file(c)] or tests
-    seed_files = _seed_larger_candidates(
+    seed_files, lexical_ok = _seed_larger_candidates(
         root, query, context_files, generation=generation, deadline_monotonic=deadline_monotonic
     )
+    if not lexical_ok:
+        if generation.connection is not None:
+            generation.connection.close()
+        return None
     parsed_paths, symbols, imports, parsed_meta, pre_stats = _expand_larger_ego_files(
         cache_root=cache_root,
         seed_files=seed_files,
@@ -378,10 +385,10 @@ def hydrate_warm_larger_repo_map(
     context_files = [Path(p) for p in (rm.get("related_paths") or [])]
     test_paths = [Path(p) for p in (rm.get("tests") or [])]
     cache_root, max_parse_bytes, generation = _open_larger_generation(root, deadline_monotonic)
-    seed_files = _seed_larger_candidates(
+    seed_files, lexical_ok = _seed_larger_candidates(
         root, query, context_files, generation=generation, deadline_monotonic=deadline_monotonic
     )
-    if not any(str(sf) not in already_parsed for sf in seed_files):
+    if not lexical_ok or not any(str(sf) not in already_parsed for sf in seed_files):
         if generation.connection is not None:
             generation.connection.close()
         return rm, file_meta, False

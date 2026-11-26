@@ -185,9 +185,22 @@ def _update_json_mcp(
     return changed
 
 
+def _parse_toml_table_header(line: str) -> dict[str, Any] | None:
+    """Parse a single-line TOML table/array-of-tables header using stdlib tomllib."""
+    import tomllib
+
+    stripped = line.lstrip(" \t")
+    if not stripped.startswith("["):
+        return None
+    try:
+        parsed = tomllib.loads(stripped + "\n")
+    except tomllib.TOMLDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _strip_toml_tensor_grep_sections(content: str) -> str:
     """Remove [mcp_servers.tensor_grep] and its subtables without cutting arrays/strings."""
-    header_re = re.compile(r"^[ \t]*\[{1,2}([^\[\]]+)\]{1,2}[ \t]*(?:#.*)?$")
     kept: list[str] = []
     skipping = False
     depth = 0
@@ -195,12 +208,10 @@ def _strip_toml_tensor_grep_sections(content: str) -> str:
     in_ml_lit = False
     for line in content.splitlines(keepends=True):
         if depth == 0 and not in_ml_str and not in_ml_lit:
-            m = header_re.match(line.rstrip("\r\n"))
-            if m:
-                name = m.group(1).strip()
-                skipping = not line.lstrip(" \t").startswith("[[") and (
-                    name == "mcp_servers.tensor_grep" or name.startswith("mcp_servers.tensor_grep.")
-                )
+            parsed_hdr = _parse_toml_table_header(line.rstrip("\r\n"))
+            if parsed_hdr is not None:
+                mcp_servers = parsed_hdr.get("mcp_servers")
+                skipping = isinstance(mcp_servers, dict) and "tensor_grep" in mcp_servers
         if not skipping:
             kept.append(line)
         i, n = 0, len(line)
