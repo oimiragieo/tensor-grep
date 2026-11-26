@@ -16,6 +16,13 @@ fn cmdline_indices(matches: &clap::ArgMatches, id: &str) -> Vec<usize> {
         .unwrap_or_default()
 }
 
+pub fn apply_last_ignore_wins(matches: &clap::ArgMatches, no_ignore: &mut bool, ignore: &mut bool) {
+    *no_ignore = resolve_no_ignore_from_matches(matches, *no_ignore);
+    if *no_ignore {
+        *ignore = false;
+    }
+}
+
 pub fn resolve_no_ignore_from_matches(matches: &clap::ArgMatches, parsed_no_ignore: bool) -> bool {
     let no_idx = cmdline_indices(matches, "no_ignore");
     let ig_idx = cmdline_indices(matches, "ignore");

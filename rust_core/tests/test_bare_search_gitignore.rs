@@ -79,4 +79,24 @@ fn gitignore_bare_search() {
             "args={args:?} --no-ignore --ignore must honor final --ignore: {stdout}"
         );
     }
+
+    // Inverse ordering `--ignore --no-ignore` must honor final `--no-ignore` across all routes.
+    for extra in [
+        &["needle", ".", "--ignore", "--no-ignore"][..],
+        &["needle", ".", "--cpu", "--ignore", "--no-ignore"][..],
+        &["search", "-F", "--ignore", "--no-ignore", "needle", "."][..],
+    ] {
+        let output = tg().current_dir(dir.path()).args(extra).output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "args={extra:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
+            output.status.code()
+        );
+        assert!(
+            stdout.contains("visible.py") && stdout.contains("secret.py"),
+            "args={extra:?} --ignore --no-ignore must honor final --no-ignore: {stdout}"
+        );
+    }
 }

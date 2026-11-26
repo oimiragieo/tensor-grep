@@ -185,22 +185,53 @@ def _update_json_mcp(
     return changed
 
 
+def _strip_toml_tensor_grep_sections(content: str) -> str:
+    """Remove [mcp_servers.tensor_grep] and its subtables without cutting multiline arrays."""
+    header_re = re.compile(r"^[ \t]*\[([^\[\]]+)\][ \t]*(?:#.*)?$")
+    kept: list[str] = []
+    skipping = False
+    depth = 0
+    for line in content.splitlines(keepends=True):
+        if depth == 0:
+            m = header_re.match(line.rstrip("\r\n"))
+            if m:
+                name = m.group(1).strip()
+                skipping = name == "mcp_servers.tensor_grep" or name.startswith(
+                    "mcp_servers.tensor_grep."
+                )
+        if not skipping:
+            kept.append(line)
+        in_str = False
+        esc = False
+        for ch in line:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\" and in_str:
+                esc = True
+            elif ch == '"':
+                in_str = not in_str
+            elif not in_str:
+                if ch == "#":
+                    break
+                if ch == "[":
+                    depth += 1
+                elif ch == "]" and depth > 0:
+                    depth -= 1
+    return "".join(kept)
+
+
 def _update_toml_codex(path: Path, add_entry: bool = True, *, home_dir: Path | None = None) -> bool:
     content = path.read_text(encoding="utf-8") if path.exists() else ""
-    pattern = re.compile(
-        r"^[ \t]*\[mcp_servers\.tensor_grep(?:\.[^\]]+)?\][\s\S]*?(?=\n[ \t]*\[|\Z)",
-        re.MULTILINE,
-    )
-
-    tg_cmd_toml = json.dumps(_resolve_tg_command(home_dir))
+    stripped = _strip_toml_tensor_grep_sections(content).strip()
+    tg_cmd_toml = json.dumps(_resolve_tg_command(home_dir), ensure_ascii=False)
     if add_entry:
         block = f'[mcp_servers.tensor_grep]\ncommand = {tg_cmd_toml}\nargs = ["mcp"]\n'
-        stripped = pattern.sub("", content).strip()
         new_content = f"{stripped}\n\n{block}" if stripped else block
     else:
-        new_content = (
-            pattern.sub("", content).strip() + "\n" if pattern.search(content) else content
-        )
+        new_content = f"{stripped}\n" if (stripped and stripped != content.strip()) else content
+        if stripped != content.strip() and not stripped:
+            new_content = ""
 
     if new_content != content:
         _atomic_write_text(path, new_content)

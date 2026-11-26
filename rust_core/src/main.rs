@@ -61,10 +61,9 @@ use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command_with_stdin, execute_sidecar_command, SidecarError,
 };
 use tensor_grep_rs::rg_passthrough::{
-    execute_ripgrep_pcre2_version, execute_ripgrep_search, execute_ripgrep_type_list,
-    extract_search_tail_with_matches, implicit_search_paths,
-    is_unbounded_implicit_search_walk_refusal, resolve_no_ignore_from_matches,
-    ripgrep_is_available, RipgrepSearchArgs,
+    apply_last_ignore_wins, execute_ripgrep_pcre2_version, execute_ripgrep_search,
+    execute_ripgrep_type_list, extract_search_tail_with_matches, implicit_search_paths,
+    is_unbounded_implicit_search_walk_refusal, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
     gpu_proof_fields, native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
@@ -1358,7 +1357,7 @@ fn main_inner() -> anyhow::Result<()> {
     if should_use_positional_cli(&raw_args) {
         let mut cli = PositionalCli::parse_from(&raw_args);
         if let Ok(m) = PositionalCli::command().try_get_matches_from(&raw_args) {
-            cli.no_ignore = resolve_no_ignore_from_matches(&m, cli.no_ignore);
+            apply_last_ignore_wins(&m, &mut cli.no_ignore, &mut cli.ignore);
         }
         let (json, ndjson) = (cli.json, cli.ndjson);
         return run_positional_cli(cli)
@@ -1374,7 +1373,7 @@ fn parse_command_cli_with_ignore(args: &[OsString]) -> CommandCli {
         CommandCli::command().try_get_matches_from(args),
     ) {
         if let Some(sub) = m.subcommand_matches("search") {
-            s.no_ignore = resolve_no_ignore_from_matches(sub, s.no_ignore);
+            apply_last_ignore_wins(sub, &mut s.no_ignore, &mut s.ignore);
         }
     }
     cli
@@ -2838,7 +2837,7 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let mut cli = PositionalCli::try_parse_from(raw_args).ok()?;
     if let Ok(m) = PositionalCli::command().try_get_matches_from(raw_args) {
-        cli.no_ignore = resolve_no_ignore_from_matches(&m, cli.no_ignore);
+        apply_last_ignore_wins(&m, &mut cli.no_ignore, &mut cli.ignore);
     }
     let pattern = cli.pattern.clone()?;
     let paths = implicit_search_paths(&cli.path, stdin_should_search_implicit_path());

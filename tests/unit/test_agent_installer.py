@@ -383,9 +383,9 @@ def test_codex_reinstall_with_subtable_produces_valid_toml(fake_home):
     codex_cfg = fake_home / ".codex" / "config.toml"
     codex_cfg.parent.mkdir(parents=True, exist_ok=True)
     codex_cfg.write_text(
-        '[mcp_servers.tensor_grep]\ncommand = "old"\nargs = ["mcp"]\n\n'
-        '[mcp_servers.tensor_grep.env]\nFOO = "bar"\n\n'
-        '[mcp_servers.other]\ncommand = "other"\n',
+        '  [mcp_servers.tensor_grep]\ncommand = "old"\nargs = [\n  ["mcp"]\n]\n\n'
+        '  [mcp_servers.tensor_grep.env]\nFOO = "bar"\n\n'
+        '  [mcp_servers.other]\ncommand = "other"\n',
         encoding="utf-8",
     )
 
