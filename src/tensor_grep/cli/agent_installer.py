@@ -188,7 +188,7 @@ def _update_json_mcp(
 def _update_toml_codex(path: Path, add_entry: bool = True, *, home_dir: Path | None = None) -> bool:
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     pattern = re.compile(
-        r"^\[mcp_servers\.tensor_grep(?:\.[^\]]+)?\][\s\S]*?(?=\n\[|\Z)",
+        r"^[ \t]*\[mcp_servers\.tensor_grep(?:\.[^\]]+)?\][\s\S]*?(?=\n[ \t]*\[|\Z)",
         re.MULTILINE,
     )
 

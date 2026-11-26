@@ -4,132 +4,80 @@ use crate::runtime_paths::{
 use anyhow::{anyhow, Context};
 use ignore::WalkBuilder;
 use std::env;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-fn takes_option_value(flag: &str) -> bool {
-    matches!(
-        flag,
-        "-e" | "--regexp"
-            | "-f"
-            | "--file"
-            | "-g"
-            | "--glob"
-            | "--iglob"
-            | "-t"
-            | "--type"
-            | "-T"
-            | "--type-not"
-            | "--type-add"
-            | "--type-clear"
-            | "-A"
-            | "--after-context"
-            | "-B"
-            | "--before-context"
-            | "-C"
-            | "--context"
-            | "-m"
-            | "--max-count"
-            | "--max-depth"
-            | "--max-filesize"
-            | "--color"
-            | "--colors"
-            | "--path-separator"
-            | "-r"
-            | "--replace"
-            | "--encoding"
-            | "-E"
-            | "--ignore-file"
-            | "--gpu-device-ids"
-            | "--threads"
-            | "-j"
-            | "--sort"
-            | "--sortr"
-            | "--field-context-separator"
-            | "--field-match-separator"
-            | "--heading"
-            | "--max-columns"
-            | "-M"
-            | "--engine"
-    )
-}
-
-fn ignore_flag_positions(args: &[OsString], start_idx: usize) -> (bool, bool, Vec<usize>) {
-    let mut state = false;
-    let mut saw_either = false;
-    let mut flag_indices = Vec::new();
-    let mut skip_next = false;
-    for (idx, arg) in args.iter().enumerate().skip(start_idx) {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        let s = arg.to_string_lossy();
-        if s == "--" {
-            break;
-        }
-        if s == "--no-ignore" {
-            (state, saw_either) = (true, true);
-            flag_indices.push(idx);
-        } else if s == "--ignore" {
-            (state, saw_either) = (false, true);
-            flag_indices.push(idx);
-        } else if takes_option_value(&s) {
-            skip_next = true;
-        }
+fn cmdline_indices(matches: &clap::ArgMatches, id: &str) -> Vec<usize> {
+    if matches.value_source(id) != Some(clap::parser::ValueSource::CommandLine) {
+        return Vec::new();
     }
-    (state, saw_either, flag_indices)
+    matches
+        .indices_of(id)
+        .map(|it| it.collect())
+        .unwrap_or_default()
 }
 
-pub fn resolve_no_ignore_from_argv(raw_args: &[OsString], parsed_no_ignore: bool) -> bool {
-    let (state, saw_either, _) = ignore_flag_positions(raw_args, 1);
-    if saw_either {
-        state
+pub fn resolve_no_ignore_from_matches(matches: &clap::ArgMatches, parsed_no_ignore: bool) -> bool {
+    let no_idx = cmdline_indices(matches, "no_ignore");
+    let ig_idx = cmdline_indices(matches, "ignore");
+    match (no_idx.iter().max(), ig_idx.iter().max()) {
+        (Some(n), Some(i)) => n > i,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => parsed_no_ignore,
+    }
+}
+
+pub fn implicit_search_paths(
+    explicit_paths: &[String],
+    stdin_searches_implicit_path: bool,
+) -> Vec<String> {
+    if !explicit_paths.is_empty() {
+        return explicit_paths.to_vec();
+    }
+    if stdin_searches_implicit_path {
+        Vec::new()
     } else {
-        parsed_no_ignore
+        vec![".".to_string()]
     }
 }
 
-pub fn strip_overridden_ignore_flags(args: &mut Vec<String>, search_args: &[OsString]) {
-    let (last_no_ignore, saw_either, flag_indices) = ignore_flag_positions(search_args, 2);
-    if !saw_either {
-        return;
-    }
-    let has_no_ignore = flag_indices
+pub fn extract_search_tail_with_matches(
+    search_args: &[std::ffi::OsString],
+    root_matches: Option<&clap::ArgMatches>,
+) -> Vec<String> {
+    let mut args: Vec<String> = search_args
         .iter()
-        .any(|&i| search_args[i].to_string_lossy() == "--no-ignore");
-    let has_ignore = flag_indices
-        .iter()
-        .any(|&i| search_args[i].to_string_lossy() == "--ignore");
-    if !(has_no_ignore && has_ignore) {
-        return;
-    }
-    let drop_flag = if last_no_ignore {
-        "--ignore"
-    } else {
-        "--no-ignore"
-    };
-    let drop_tail_indices: std::collections::HashSet<usize> = flag_indices
-        .into_iter()
-        .filter(|&i| search_args[i].to_string_lossy() == drop_flag)
-        .map(|i| i - 2)
+        .skip(2)
+        .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    if let Some(sub) = root_matches.and_then(|m| m.subcommand_matches("search")) {
+        strip_overridden_ignore_flags_with_matches(&mut args, sub);
+    }
+    args
+}
+
+pub fn strip_overridden_ignore_flags_with_matches(
+    args: &mut Vec<String>,
+    matches: &clap::ArgMatches,
+) {
+    let no_idx = cmdline_indices(matches, "no_ignore");
+    let ig_idx = cmdline_indices(matches, "ignore");
+    if no_idx.is_empty() || ig_idx.is_empty() {
+        return;
+    }
+    let last_no_ignore = no_idx.iter().max() > ig_idx.iter().max();
+    let drop_indices: std::collections::HashSet<usize> =
+        if last_no_ignore { ig_idx } else { no_idx }
+            .into_iter()
+            .filter(|&i| i >= 2)
+            .map(|i| i - 2)
+            .collect();
     let mut idx = 0usize;
     args.retain(|_| {
-        let keep = !drop_tail_indices.contains(&idx);
+        let keep = !drop_indices.contains(&idx);
         idx += 1;
         keep
     });
-}
-
-pub fn extract_search_tail_args(search_args: &[OsString]) -> Vec<String> {
-    let mut args = search_args
-        .iter()
-        .skip(2)
-        .map(|arg| arg.to_string_lossy().to_string())
-        .collect::<Vec<_>>();
-    strip_overridden_ignore_flags(&mut args, search_args);
-    args
 }
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
