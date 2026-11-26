@@ -16,6 +16,17 @@ from tensor_grep.cli.unified_cache import (
 
 
 def _seed_unified_cache(root: Path, files: list[Path]) -> str:
+    import sqlite3
+
+    for rel in (
+        Path(".tg_cache") / "symbols_v1" / "metadata.sqlite3",
+        Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3",
+    ):
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(target)
+        conn.execute("CREATE TABLE IF NOT EXISTS _seed(x INT)")
+        conn.close()
     merkle_root, source_address = build_source_address_contract(root, files)
     assert update_view_states(
         root,

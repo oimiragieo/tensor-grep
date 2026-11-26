@@ -351,3 +351,35 @@ def test_post_open_corrupt_fts_triggers_graceful_rebuild(tmp_path: Path) -> None
             "calculate_sales_tax", chunks, k=0, cache_root=tmp_path, telemetry=telemetry_param
         )
     assert "hybrid_index_rebuilt_reason" not in telemetry_param
+
+
+def test_persisted_v3_hybrid_index_reconstructs_content_on_reopen(tmp_path: Path) -> None:
+    from tensor_grep.core.hybrid_rrf import HybridSQLiteIndex
+
+    src_file = tmp_path / "billing.py"
+    src_file.write_text(
+        "def header(): pass\ndef calculate_sales_tax(x):\n    return x * 0.07\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / HYBRID_INDEX_REL_PATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    idx1 = HybridSQLiteIndex(db_path=db_path)
+    idx1.upsert_documents([
+        {
+            "doc_id": "c1",
+            "content": "def calculate_sales_tax(x):\n    return x * 0.07",
+            "file_path": str(src_file),
+            "start_line": 2,
+            "end_line": 3,
+            "embedding": None,
+        }
+    ])
+    idx1.close()
+
+    idx2 = HybridSQLiteIndex(db_path=db_path)
+    try:
+        hits = idx2.search("calculate sales tax", limit=5)
+        assert hits
+        assert "calculate_sales_tax" in str(hits[0].get("content", ""))
+    finally:
+        idx2.close()

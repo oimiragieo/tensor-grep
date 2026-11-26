@@ -396,7 +396,11 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 
     cache_root = resolve_canonical_cache_root(scope)
-    _, manifest_fresh = _unified_manifest_covers_scope(scope, cache_root, files, floor)
+    manifest_exists, manifest_fresh = _unified_manifest_covers_scope(
+        scope, cache_root, files, floor
+    )
+    if manifest_exists and not manifest_fresh:
+        warnings.append("unified cache manifest .tg_cache/manifest_v1.json failed verification")
     stale: list[dict[str, str]] = []
     unindexed: list[str] = []
     has_index = bool(receipts)
@@ -430,7 +434,13 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     caps = ["max_repo_files"] if cap_hit else []
     if unreadable.hit:
         caps.append("unreadable_paths")
-    complete = not stale and not unindexed and not unparsed and not caps
+    complete = (
+        not stale
+        and not unindexed
+        and not unparsed
+        and not caps
+        and not (manifest_exists and not manifest_fresh)
+    )
     payload_out: dict[str, Any] = {
         "path": str(root),
         "files_total": len(files),

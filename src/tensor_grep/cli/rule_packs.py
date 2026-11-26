@@ -894,20 +894,6 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "message": "Avoid child_process.execSync() with untrusted commands.",
                 },
                 {
-                    "id": "javascript-exec",
-                    "pattern": "exec($$$ARGS)",
-                    "language": "javascript",
-                    "severity": "high",
-                    "message": "Avoid exec() with untrusted commands.",
-                },
-                {
-                    "id": "javascript-exec-sync",
-                    "pattern": "execSync($$$ARGS)",
-                    "language": "javascript",
-                    "severity": "high",
-                    "message": "Avoid execSync() with untrusted commands.",
-                },
-                {
                     "id": "javascript-require-child-process-exec",
                     "pattern": 'require("child_process").exec($$$ARGS)',
                     "language": "javascript",
@@ -935,6 +921,20 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "high",
                     "message": 'Avoid spawning a shell directly with spawn("bash", ...).',
                 },
+                {
+                    "id": "javascript-child-process-spawn-shell",
+                    "pattern": "child_process.spawn($$$BEFORE, { shell: true })",
+                    "language": "javascript",
+                    "severity": "high",
+                    "message": "Avoid child_process.spawn(..., { shell: true }) with untrusted input.",
+                },
+                {
+                    "id": "javascript-child-process-spawn-sync-shell",
+                    "pattern": "child_process.spawnSync($$$BEFORE, { shell: true })",
+                    "language": "javascript",
+                    "severity": "high",
+                    "message": "Avoid child_process.spawnSync(..., { shell: true }) with untrusted input.",
+                },
             ],
             "typescript": [
                 {
@@ -950,20 +950,6 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid child_process.execSync() with untrusted commands.",
-                },
-                {
-                    "id": "typescript-exec",
-                    "pattern": "exec($$$ARGS)",
-                    "language": "typescript",
-                    "severity": "high",
-                    "message": "Avoid exec() with untrusted commands.",
-                },
-                {
-                    "id": "typescript-exec-sync",
-                    "pattern": "execSync($$$ARGS)",
-                    "language": "typescript",
-                    "severity": "high",
-                    "message": "Avoid execSync() with untrusted commands.",
                 },
                 {
                     "id": "typescript-require-child-process-exec",
@@ -992,6 +978,20 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "typescript",
                     "severity": "high",
                     "message": 'Avoid spawning a shell directly with spawn("bash", ...).',
+                },
+                {
+                    "id": "typescript-child-process-spawn-shell",
+                    "pattern": "child_process.spawn($$$BEFORE, { shell: true })",
+                    "language": "typescript",
+                    "severity": "high",
+                    "message": "Avoid child_process.spawn(..., { shell: true }) with untrusted input.",
+                },
+                {
+                    "id": "typescript-child-process-spawn-sync-shell",
+                    "pattern": "child_process.spawnSync($$$BEFORE, { shell: true })",
+                    "language": "typescript",
+                    "severity": "high",
+                    "message": "Avoid child_process.spawnSync(..., { shell: true }) with untrusted input.",
                 },
             ],
             "rust": [

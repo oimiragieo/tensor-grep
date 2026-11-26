@@ -179,7 +179,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
 # compact outputSchema, tg_session preconditions & safety notes
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.28.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.29.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1788,7 +1788,7 @@ def tg_doctor(
     path: str = ".",
     config: str | None = "sgconfig.yml",
     with_lsp: bool = True,
-    fast: bool = True,
+    fast: bool = False,
 ) -> str:
     """
     Return system, GPU, cache, AST, daemon, shell-escaping, and LSP-provider diagnostics.
@@ -1858,7 +1858,7 @@ def tg_doctor(
                 if accepts_fast
                 else builder(path, config=config, with_lsp=with_lsp)
             )
-            if isinstance(doctor_payload, dict) and "lsp" in doctor_payload:
+            if fast and isinstance(doctor_payload, dict) and "lsp" in doctor_payload:
                 doctor_payload.pop("lsp_providers", None)
                 doctor_payload.pop("lsp_provider_items", None)
             return _self._inject_mcp_contract_fields(json.dumps(doctor_payload, indent=2))
@@ -4872,7 +4872,7 @@ def tg_explore(
     json_output: bool = True,
     compact: bool = False,
 ) -> str:
-    """Repo orientation & diagnostics: orient (capsule), repo_map (inventory), doctor (system/GPU/LSP), devices (GPUs). compact=True bounds JSON responses to <=4000 bytes (requires json_output=True)."""
+    """Repo orient/repo_map/doctor/devices. compact=True bounds JSON <=4000B (requires json_output=True)."""
     try:
         try:
             path = str(_confine_mcp_path(path, label="path"))
@@ -4901,6 +4901,14 @@ def tg_explore(
                 result_json = _self.tg_doctor(
                     path=path, config=config, with_lsp=with_lsp, fast=fast
                 )
+                try:
+                    parsed_doc = json.loads(result_json)
+                    if isinstance(parsed_doc, dict) and "lsp" in parsed_doc:
+                        parsed_doc.pop("lsp_providers", None)
+                        parsed_doc.pop("lsp_provider_items", None)
+                        result_json = json.dumps(parsed_doc, indent=2)
+                except (ValueError, TypeError):
+                    pass
             elif action == "devices":
                 result_json = _self.tg_devices(json_output=json_output)
             else:

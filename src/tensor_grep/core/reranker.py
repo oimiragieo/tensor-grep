@@ -36,7 +36,7 @@ from tensor_grep.core.retrieval_lexical import split_terms
 from tensor_grep.io.confined import prepare_directory
 
 HYBRID_INDEX_REL_PATH = Path(".tg_cache") / "hybrid_v1" / "index.sqlite3"
-MAX_HYBRID_INDEX_BYTES = 64 * 1024 * 1024
+MAX_HYBRID_INDEX_BYTES = 512 * 1024 * 1024
 _HYBRID_CACHE_LOCK_TIMEOUT_S = 5.0
 _HYBRID_CACHE_RETRY_BASE_S = 0.01
 _HYBRID_CACHE_RETRY_MAX_S = 0.08
@@ -300,27 +300,10 @@ def _with_hybrid_cache_lock(
 
 
 def _canonical_hybrid_cache_root(cache_root: Path) -> Path:
-    """Anchor ``.tg_cache`` to the canonical git/project root without escaping temp/home."""
-    import tempfile
+    """Anchor ``.tg_cache`` to the canonical git/project root under confinement bounds."""
+    from tensor_grep.cli.repo_map_fast_cache import resolve_canonical_cache_root
 
-    resolved = Path(cache_root).resolve()
-    start = resolved if resolved.is_dir() else resolved.parent
-    try:
-        stop_dirs = {Path.home().resolve(), Path(tempfile.gettempdir()).resolve()}
-    except OSError:
-        stop_dirs = set()
-    markers = ("pyproject.toml", "package.json", "Cargo.toml", "tsconfig.json")
-    for candidate in (start, *start.parents):
-        if candidate != start and candidate in stop_dirs:
-            break
-        try:
-            if (candidate / ".git").exists() or any(
-                (candidate / marker).is_file() for marker in markers
-            ):
-                return candidate
-        except OSError:
-            continue
-    return resolved
+    return resolve_canonical_cache_root(Path(cache_root))
 
 
 def _validate_hybrid_sqlite_schema(work_db: Path) -> str | None:

@@ -159,8 +159,9 @@ def build_source_address_contract(
     files: Iterable[str | Path],
 ) -> tuple[str, dict[str, Any]]:
     """Build generation Merkle root and source-address contract dictionary."""
-    resolved_root = resolve_canonical_cache_root(repo_root)
-    entries = collect_source_address_entries(resolved_root, files)
+    scope_root = Path(repo_root).resolve()
+    resolved_root = resolve_canonical_cache_root(scope_root)
+    entries = collect_source_address_entries(scope_root, files)
     if not entries:
         merkle_root = hashlib.sha256(b"tg-merkle-empty-v1\0").hexdigest()
     else:
@@ -201,12 +202,16 @@ def _stat_confined_regular_artifact(repo_root: Path, path: Path) -> tuple[int, i
 
 
 def compute_view_artifact_fingerprint(repo_root: Path, view_name: str) -> str | None:
-    """Return a confined regular-file fingerprint for ``hybrid_v1`` or ``index_v1``, else None."""
+    """Return a confined regular-file fingerprint for cached view artifacts, else None."""
     resolved_root = resolve_canonical_cache_root(repo_root)
-    if view_name == "hybrid_v1":
-        fp = _stat_confined_regular_artifact(
-            resolved_root, resolved_root / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
-        )
+    rel_map = {
+        "hybrid_v1": Path(".tg_cache") / "hybrid_v1" / "index.sqlite3",
+        "symbols_v1": Path(".tg_cache") / "symbols_v1" / "metadata.sqlite3",
+        "graph_v1": Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3",
+        "prepare_v1": Path(".tg_cache") / "prepare_v1" / "repo_map_cache.json",
+    }
+    if view_name in rel_map:
+        fp = _stat_confined_regular_artifact(resolved_root, resolved_root / rel_map[view_name])
         if fp is None:
             return None
         return hashlib.sha256(f"{fp[0]}:{fp[1]}:{fp[2]}".encode()).hexdigest()
@@ -344,7 +349,13 @@ def check_view_freshness(
             and entry.get("merkle_root") == current_merkle_root
             and entry.get("ready") is True
         )
-        if is_fresh and view_name in ("hybrid_v1", "index_v1"):
+        if is_fresh and view_name in (
+            "hybrid_v1",
+            "index_v1",
+            "symbols_v1",
+            "graph_v1",
+            "prepare_v1",
+        ):
             if resolved_root is None:
                 is_fresh = False
             else:
@@ -352,7 +363,13 @@ def check_view_freshness(
                 recorded_fp = (
                     entry.get("artifact_fingerprint") if isinstance(entry, Mapping) else None
                 )
-                if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
+                if fp is None:
+                    is_fresh = False
+                elif view_name in ("hybrid_v1", "index_v1") and (
+                    not isinstance(recorded_fp, str) or recorded_fp != fp
+                ):
+                    is_fresh = False
+                elif isinstance(recorded_fp, str) and recorded_fp != fp:
                     is_fresh = False
         result[view_name] = is_fresh
     return result

@@ -837,13 +837,45 @@ class HybridSQLiteIndex:
         scored.sort(key=lambda item: (-item[0], item[1]))
         top = scored[:limit]
 
+        missing_ids = [doc_id for _, doc_id, _, _ in top if doc_id not in self._content_cache]
+        reconstructed: dict[str, str] = {}
+        if missing_ids:
+            placeholders = ",".join("?" for _ in missing_ids)
+            rows = self._conn.execute(
+                f"""
+                SELECT d.doc_id, f.file_path, d.start_line, d.end_line
+                FROM documents d
+                JOIN files f ON f.id = d.file_id
+                WHERE d.doc_id IN ({placeholders})
+                """,
+                missing_ids,
+            ).fetchall()
+            file_lines_cache: dict[str, list[str]] = {}
+            for row_doc_id, file_path_str, start_line, end_line in rows:
+                lines = file_lines_cache.get(file_path_str)
+                if lines is None:
+                    try:
+                        lines = (
+                            Path(file_path_str)
+                            .read_text(encoding="utf-8", errors="replace")
+                            .splitlines()
+                        )
+                    except OSError:
+                        lines = []
+                    file_lines_cache[file_path_str] = lines
+                s_idx = max(0, int(start_line) - 1)
+                e_idx = max(s_idx, int(end_line))
+                reconstructed[str(row_doc_id)] = "\n".join(lines[s_idx:e_idx])
+
         return [
             {
                 "doc_id": doc_id,
                 "score": score,
                 "fts_rank": f_rank,
                 "vec_rank": v_rank,
-                "content": self._content_cache.get(doc_id, ""),
+                "content": self._content_cache.get(doc_id)
+                if doc_id in self._content_cache
+                else reconstructed.get(doc_id, ""),
             }
             for score, doc_id, f_rank, v_rank in top
         ]

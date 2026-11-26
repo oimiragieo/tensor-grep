@@ -633,7 +633,14 @@ def compact_payload_for_cli(payload: dict[str, Any]) -> dict[str, Any]:
         return bounded
 
     # 6. Drop whole primary structured objects (excluding envelope/safety/omissions) if needed.
-    for key in (*_LIST_OMIT_ORDER, "plan", "source_budget"):
+    # Shed `edit_order` last so blast-radius-plan preserves the ordered edit plan whenever possible.
+    _drop_order = (
+        *[k for k in _LIST_OMIT_ORDER if k != "edit_order"],
+        "plan",
+        "source_budget",
+        "edit_order",
+    )
+    for key in _drop_order:
         if key in bounded and key not in (_ENVELOPE_KEYS | _SAFETY_AND_OMISSION_KEYS):
             _drop_key_with_omission(bounded, key)
             if len(_json_bytes(bounded)) <= COMPACT_MAX_BYTES:

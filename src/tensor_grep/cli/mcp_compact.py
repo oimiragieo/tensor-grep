@@ -705,18 +705,14 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "tg_query": "Code search.",
     "tg_context": "Context pack/capsule.",
     "tg_explore": "Repo map/orient/doctor.",
-    "tg_session": "Sessions (mutates cache).",
+    "tg_session": "Sessions (mutates).",
     "tg_scan": "Security scans.",
     "tg_audit": "Audit/signing gates.",
-    "tg_checkpoint": "Checkpoints; mutates files.",
-    "tg_rewrite": "AST rewrites; apply mutates (plan/verify/gate).",
+    "tg_checkpoint": "Checkpoints (mutates).",
+    "tg_rewrite": "AST rewrites; apply mutates.",
     "tg_mcp_capabilities": "Capabilities.",
     "tg_classify_logs": "Log anomalies.",
-    "tg_batch": (
-        "Batch <=16 $prev/$steps[i]; return_final_only; "
-        "Invalid top-level requests error; item errors->result_incomplete=true; "
-        "120 seconds."
-    ),
+    "tg_batch": "Batch <=16 $prev/$steps[i]; return_final_only; 120s max.",
     "tg_coverage": "Cache coverage.",
     "tg_discover_tools": "Discover tools.",
 }

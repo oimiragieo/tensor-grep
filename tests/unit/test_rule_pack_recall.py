@@ -71,7 +71,7 @@ def test_rule_pack_recall_on_multi_kwarg_vulnerable_corpus(tmp_path: Path) -> No
             "child_process.exec(cmd, { cwd: '/tmp' }, cb);",
             "child_process.execSync(cmd, { encoding: 'utf8' });",
             'require("child_process").exec(cmd, { timeout: 1000 }, cb);',
-            "execSync(cmd, { stdio: 'inherit' });",
+            "child_process.execSync(cmd, { stdio: 'inherit' });",
         ])
         + "\n",
         encoding="utf-8",
@@ -123,7 +123,7 @@ def test_rule_pack_negative_controls_have_zero_false_positives(tmp_path: Path) -
         encoding="utf-8",
     )
     (clean_dir / "safe.js").write_text(
-        "child_process.execFile('ls', ['-la'], cb);\n",
+        "child_process.execFile('ls', ['-la'], cb);\nexec(query, params);\n",
         encoding="utf-8",
     )
 

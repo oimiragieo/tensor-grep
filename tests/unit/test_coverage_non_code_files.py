@@ -99,6 +99,31 @@ def test_coverage_unified_cache_manifest_marks_repo_complete(tmp_path: Path) -> 
     main_py.write_text("def run() -> int:\n    return 1\n", encoding="utf-8")
     (project / "README.md").write_text("# Demo\n", encoding="utf-8")
 
+    import sqlite3
+
+    for rel in (
+        Path(".tg_cache") / "symbols_v1" / "metadata.sqlite3",
+        Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3",
+    ):
+        target = project / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(target)
+        if rel.parts[1] == "symbols_v1":
+            conn.executescript(
+                """
+                CREATE TABLE entries (key TEXT PRIMARY KEY, payload TEXT NOT NULL,
+                    receipt TEXT NOT NULL, generation INTEGER NOT NULL);
+                CREATE TABLE generations (id INTEGER PRIMARY KEY, scope TEXT NOT NULL,
+                    merkle TEXT NOT NULL, complete INTEGER NOT NULL, created REAL NOT NULL);
+                CREATE TABLE files (scope TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,
+                    entry_key TEXT NOT NULL, generation INTEGER NOT NULL,
+                    PRIMARY KEY(scope,path));
+                PRAGMA user_version=1;
+                """
+            )
+        else:
+            conn.execute("CREATE TABLE IF NOT EXISTS _seed(x INT)")
+        conn.close()
     merkle_root, source_address = build_source_address_contract(project, [main_py])
     assert update_view_states(
         project,
@@ -125,6 +150,31 @@ def test_coverage_unified_cache_subdirectory_and_stale_file(tmp_path: Path) -> N
     mod_py = src / "mod.py"
     mod_py.write_text("def run() -> int:\n    return 1\n", encoding="utf-8")
 
+    import sqlite3
+
+    for rel in (
+        Path(".tg_cache") / "symbols_v1" / "metadata.sqlite3",
+        Path(".tg_cache") / "graph_v1" / "incremental_edges.sqlite3",
+    ):
+        target = project / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(target)
+        if rel.parts[1] == "symbols_v1":
+            conn.executescript(
+                """
+                CREATE TABLE entries (key TEXT PRIMARY KEY, payload TEXT NOT NULL,
+                    receipt TEXT NOT NULL, generation INTEGER NOT NULL);
+                CREATE TABLE generations (id INTEGER PRIMARY KEY, scope TEXT NOT NULL,
+                    merkle TEXT NOT NULL, complete INTEGER NOT NULL, created REAL NOT NULL);
+                CREATE TABLE files (scope TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,
+                    entry_key TEXT NOT NULL, generation INTEGER NOT NULL,
+                    PRIMARY KEY(scope,path));
+                PRAGMA user_version=1;
+                """
+            )
+        else:
+            conn.execute("CREATE TABLE IF NOT EXISTS _seed(x INT)")
+        conn.close()
     merkle_root, source_address = build_source_address_contract(project, [mod_py])
     assert update_view_states(
         project,
@@ -147,3 +197,48 @@ def test_coverage_unified_cache_subdirectory_and_stale_file(tmp_path: Path) -> N
     stale_payload = json.loads(stale.stdout)
     assert stale_payload["complete"] is False
     assert stale_payload["unindexed"] == ["mod.py"]
+
+
+def test_coverage_fails_closed_on_tampered_manifest_or_missing_artifact(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    mod_py = project / "mod.py"
+    mod_py.write_text("def run() -> int:\n    return 1\n", encoding="utf-8")
+
+    import sqlite3
+
+    sym_ddl = """
+        CREATE TABLE entries (key TEXT PRIMARY KEY, payload TEXT NOT NULL,
+            receipt TEXT NOT NULL, generation INTEGER NOT NULL);
+        CREATE TABLE generations (id INTEGER PRIMARY KEY, scope TEXT NOT NULL,
+            merkle TEXT NOT NULL, complete INTEGER NOT NULL, created REAL NOT NULL);
+        CREATE TABLE files (scope TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL,
+            entry_key TEXT NOT NULL, generation INTEGER NOT NULL,
+            PRIMARY KEY(scope,path));
+        PRAGMA user_version=1;
+    """
+    sym_db = project / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    sym_db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(sym_db)
+    conn.executescript(sym_ddl)
+    conn.close()
+    merkle_root, source_address = build_source_address_contract(project, [mod_py])
+    assert update_view_states(
+        project, merkle_root, {"symbols_v1": (True, 1)}, source_address=source_address
+    )
+
+    runner = CliRunner()
+    sym_db.unlink()
+    missing_art = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert missing_art.exit_code == 2
+    assert json.loads(missing_art.stdout)["complete"] is False
+
+    conn2 = sqlite3.connect(sym_db)
+    conn2.executescript(sym_ddl)
+    conn2.close()
+    manifest_path = project / ".tg_cache" / "manifest_v1.json"
+    manifest_path.write_text('{"corrupt": true}', encoding="utf-8")
+    tampered = runner.invoke(app, ["coverage", str(project), "--json"])
+    assert tampered.exit_code == 2
+    assert json.loads(tampered.stdout)["complete"] is False

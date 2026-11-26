@@ -168,8 +168,8 @@ def test_resolve_rule_pack_exposes_new_multilanguage_rules(
             "subprocess-safe",
             "typescript",
             "a.ts",
-            "execSync($$$ARGS)\n",
-            "typescript-exec-sync",
+            "child_process.spawn($$$BEFORE, { shell: true })\n",
+            "typescript-child-process-spawn-shell",
         ),
         (
             "subprocess-safe",
