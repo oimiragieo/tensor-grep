@@ -2,7 +2,7 @@
 # Save this in a homebrew-tap repository (e.g. oimiragieo/homebrew-tap/tensor-grep.rb)
 
 class TensorGrep < Formula
-  desc "Fast local code search, symbol navigation, and token-budgeted AI context (Rust + tree-sitter + MCP; zero API key required, GPU experimental)"
+  desc "Fast local code search, symbol navigation, and AI context via Rust & MCP"
   homepage "https://github.com/oimiragieo/tensor-grep"
   TENSOR_GREP_VERSION = "1.142.0"
   version TENSOR_GREP_VERSION

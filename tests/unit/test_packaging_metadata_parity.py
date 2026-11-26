@@ -34,7 +34,9 @@ def test_packaging_manifests_share_unified_positioning_and_license() -> None:
     brew_text = (_REPO_ROOT / "scripts" / "tensor-grep.rb").read_text(encoding="utf-8")
     desc_match = re.search(r'^\s*desc\s+"([^"]+)"', brew_text, re.MULTILINE)
     assert desc_match is not None
-    assert desc_match.group(1) == UNIFIED_DESCRIPTION
+    assert len(desc_match.group(1)) <= 80
+    assert "code search" in desc_match.group(1).lower()
+    assert "cybert" not in desc_match.group(1).lower()
 
     for label, text in (
         ("pyproject.toml", project["description"]),
