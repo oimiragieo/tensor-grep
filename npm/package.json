@@ -1,7 +1,7 @@
 {
   "name": "tensor-grep",
   "version": "1.142.0",
-  "description": "GPU-Accelerated Semantic Log Parsing CLI",
+  "description": "Fast local code search, symbol navigation, and token-budgeted AI context (Rust + tree-sitter + MCP; zero API key required, GPU experimental)",
   "bin": {
     "tensor-grep": "bin/tg.js",
     "tg": "bin/tg.js"

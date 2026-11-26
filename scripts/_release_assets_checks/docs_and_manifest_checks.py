@@ -57,7 +57,7 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
             "PackageLocale": "en-US",
             "PackageName": "tensor-grep",
             "Publisher": "oimiragieo",
-            "License": "MIT",
+            "License": "Apache-2.0",
             "ManifestType": "singleton",
             "ManifestVersion": "1.12.0",
         }

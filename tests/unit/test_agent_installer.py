@@ -240,3 +240,130 @@ def test_jsonc_urls_and_escaped_quotes_in_strings_survive(fake_home):
     assert data["$schema"] == "https://example.com/s.json"
     assert data["note"] == 'a,]b /* x */ " // y'
     assert "tensor_grep" in data["mcpServers"]
+
+
+def test_resolve_tg_command_prefers_managed_shim_and_never_pins_runtimes(fake_home, monkeypatch):
+    import sys
+
+    from tensor_grep.cli import agent_installer
+
+    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
+    shim_path = fake_home / ".tensor-grep" / "bin" / exe_name
+    shim_path.parent.mkdir(parents=True, exist_ok=True)
+    shim_path.write_text("", encoding="utf-8")
+
+    # Even when running inside a hash-pinned managed runtime venv, prefer the stable shim.
+    runtime_prefix = fake_home / ".tensor-grep" / "runtimes" / "abc123" / ".venv"
+    scripts_dir = runtime_prefix / ("Scripts" if sys.platform == "win32" else "bin")
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    (scripts_dir / exe_name).write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    monkeypatch.setattr(sys, "prefix", str(runtime_prefix))
+    monkeypatch.setattr(sys, "base_prefix", str(fake_home / "base_py"))
+
+    assert agent_installer._resolve_tg_command() == str(shim_path)
+
+    # Even if the shim is absent, never pin a hash-versioned runtimes/<hash>/.venv path.
+    shim_path.unlink()
+    monkeypatch.setattr(agent_installer.shutil, "which", lambda _name: "/usr/local/bin/tg")
+    resolved = agent_installer._resolve_tg_command()
+    assert "runtimes" not in Path(resolved).parts
+    assert resolved == "tg"
+
+
+def test_guidance_block_uses_valid_v1142_commands():
+    from tensor_grep.cli.agent_installer import GUIDANCE_BLOCK
+
+    assert "tg blast-radius <path> <symbol> --json" in GUIDANCE_BLOCK
+    assert "--symbol" not in GUIDANCE_BLOCK
+    assert 'tg checkpoint create . --label "<label>" --json' in GUIDANCE_BLOCK
+    assert "tg checkpoint undo <id> . --json" in GUIDANCE_BLOCK
+    assert "tg checkpoint create <name>" not in GUIDANCE_BLOCK
+
+
+def test_install_and_uninstall_opencode_schema(fake_home, monkeypatch):
+    from tensor_grep.cli import agent_installer
+
+    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda: "/stable/tg")
+    cfg = fake_home / ".config" / "opencode" / "opencode.json"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(
+        json.dumps({
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {"other_mcp": {"type": "local", "command": ["other", "mcp"]}},
+        }),
+        encoding="utf-8",
+    )
+
+    res = install_agent_integration("opencode", home_dir=fake_home)
+    assert res["status"] == "installed"
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert "mcpServers" not in data
+    assert data["$schema"] == "https://opencode.ai/config.json"
+    assert data["mcp"]["other_mcp"] == {"type": "local", "command": ["other", "mcp"]}
+    assert data["mcp"]["tensor_grep"] == {"type": "local", "command": ["/stable/tg", "mcp"]}
+
+    uninstall_res = uninstall_agent_integration("opencode", home_dir=fake_home)
+    assert uninstall_res["status"] == "uninstalled"
+    after = json.loads(cfg.read_text(encoding="utf-8"))
+    assert after["$schema"] == "https://opencode.ai/config.json"
+    assert "tensor_grep" not in after["mcp"]
+    assert "other_mcp" in after["mcp"]
+
+
+def test_uninstall_all_targets_preserves_existing_user_keys(fake_home):
+    claude_cfg = fake_home / ".claude.json"
+    claude_cfg.write_text(
+        json.dumps({"theme": "dark", "mcpServers": {"keep": {"command": "k", "args": []}}}),
+        encoding="utf-8",
+    )
+    cursor_cfg = fake_home / ".cursor" / "mcp.json"
+    cursor_cfg.parent.mkdir(parents=True, exist_ok=True)
+    cursor_cfg.write_text(
+        json.dumps({"mcpServers": {"keep": {"command": "k", "args": []}}}),
+        encoding="utf-8",
+    )
+    codex_cfg = fake_home / ".codex" / "config.toml"
+    codex_cfg.parent.mkdir(parents=True, exist_ok=True)
+    codex_cfg.write_text('model = "gpt-5"\n\n[mcp_servers.keep]\ncommand = "k"\n', encoding="utf-8")
+    opencode_cfg = fake_home / ".config" / "opencode" / "opencode.json"
+    opencode_cfg.parent.mkdir(parents=True, exist_ok=True)
+    opencode_cfg.write_text(
+        json.dumps({"theme": "opencode", "mcp": {"keep": {"type": "local", "command": ["k"]}}}),
+        encoding="utf-8",
+    )
+    qwen_cfg = fake_home / ".qwen" / "settings.json"
+    qwen_cfg.parent.mkdir(parents=True, exist_ok=True)
+    qwen_cfg.write_text(
+        json.dumps({"ui": {"compact": True}, "mcpServers": {"keep": {"command": "k", "args": []}}}),
+        encoding="utf-8",
+    )
+
+    install_agent_integration("all", home_dir=fake_home)
+    res = uninstall_agent_integration("all", home_dir=fake_home)
+    assert res["status"] == "uninstalled"
+
+    claude_data = json.loads(claude_cfg.read_text(encoding="utf-8"))
+    assert claude_data["theme"] == "dark"
+    assert "keep" in claude_data["mcpServers"]
+    assert "tensor_grep" not in claude_data["mcpServers"]
+
+    cursor_data = json.loads(cursor_cfg.read_text(encoding="utf-8"))
+    assert "keep" in cursor_data["mcpServers"]
+    assert "tensor_grep" not in cursor_data["mcpServers"]
+
+    codex_data = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
+    assert codex_data["model"] == "gpt-5"
+    assert "keep" in codex_data["mcp_servers"]
+    assert "tensor_grep" not in codex_data["mcp_servers"]
+
+    opencode_data = json.loads(opencode_cfg.read_text(encoding="utf-8"))
+    assert opencode_data["theme"] == "opencode"
+    assert "keep" in opencode_data["mcp"]
+    assert "tensor_grep" not in opencode_data["mcp"]
+
+    qwen_data = json.loads(qwen_cfg.read_text(encoding="utf-8"))
+    assert qwen_data["ui"] == {"compact": True}
+    assert "keep" in qwen_data["mcpServers"]
+    assert "tensor_grep" not in qwen_data["mcpServers"]

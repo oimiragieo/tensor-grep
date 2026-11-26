@@ -25,27 +25,36 @@ GUIDANCE_BLOCK = f"""{START_SENTINEL}
 Use `tg` exclusively for searching and locating code patterns:
 - Text search: `tg search "<pattern>" <path>`
 - Edit readiness: `tg prepare <path> "<task>" --json`
-- Symbol blast radius: `tg blast-radius <path> --symbol <name> --json`
-- Checkpoint snapshots: `tg checkpoint create <name>` / `tg checkpoint undo <id>`
+- Symbol blast radius: `tg blast-radius <path> <symbol> --json`
+- Checkpoint snapshots: `tg checkpoint create . --label "<label>" --json` / `tg checkpoint undo <id> . --json`
 {END_SENTINEL}"""
 
 
 def _resolve_tg_command() -> str:
-    """Dynamically resolve the appropriate command string for `tg`."""
+    """Resolve the appropriate command string for `tg`, preferring the stable managed shim."""
+    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
+    managed_shim = Path.home() / ".tensor-grep" / "bin" / exe_name
+    if managed_shim.exists():
+        return str(managed_shim)
+
     if sys.prefix != sys.base_prefix:
         scripts_dir = Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin")
-        tg_bin = scripts_dir / ("tg.exe" if sys.platform == "win32" else "tg")
+        tg_bin = scripts_dir / exe_name
         if tg_bin.exists():
-            return str(tg_bin.resolve())
+            resolved = tg_bin.resolve()
+            if "runtimes" not in resolved.parts:
+                return str(resolved)
 
     which_tg = shutil.which("tg")
     if which_tg:
         return "tg"
 
     python_bin_dir = Path(sys.executable).parent
-    tg_candidate = python_bin_dir / ("tg.exe" if sys.platform == "win32" else "tg")
+    tg_candidate = python_bin_dir / exe_name
     if tg_candidate.exists():
-        return str(tg_candidate.resolve())
+        resolved = tg_candidate.resolve()
+        if "runtimes" not in resolved.parts:
+            return str(resolved)
 
     return "tg"
 
@@ -112,7 +121,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
     atomic_write_bytes(path, content.encode("utf-8"))
 
 
-def _update_json_mcp(path: Path, add_entry: bool = True) -> bool:
+def _update_json_mcp(path: Path, add_entry: bool = True, *, opencode: bool = False) -> bool:
     data: dict[str, Any] = {}
     if path.exists():
         raw_text = path.read_text(encoding="utf-8")
@@ -132,16 +141,21 @@ def _update_json_mcp(path: Path, add_entry: bool = True) -> bool:
         raise ValueError(
             f"Configuration file '{path}' must contain a JSON object; refusing to modify it."
         )
-    if "mcpServers" in data and not isinstance(data["mcpServers"], dict):
-        raise ValueError(f"'mcpServers' in '{path}' must be a JSON object; refusing to modify it.")
+    section_key = "mcp" if opencode else "mcpServers"
+    if section_key in data and not isinstance(data[section_key], dict):
+        raise ValueError(
+            f"'{section_key}' in '{path}' must be a JSON object; refusing to modify it."
+        )
 
-    mcp_servers = data.setdefault("mcpServers", {})
+    mcp_servers = data.setdefault(section_key, {})
     changed = False
 
-    new_entry = {
-        "command": _resolve_tg_command(),
-        "args": ["mcp"],
-    }
+    tg_cmd = _resolve_tg_command()
+    new_entry: dict[str, Any] = (
+        {"type": "local", "command": [tg_cmd, "mcp"]}
+        if opencode
+        else {"command": tg_cmd, "args": ["mcp"]}
+    )
     if add_entry:
         if mcp_servers.get("tensor_grep") != new_entry:
             mcp_servers["tensor_grep"] = new_entry
@@ -269,7 +283,7 @@ def install_agent_integration(
         md = home / ".config" / "opencode" / "AGENTS.md"
         files_modified.extend([cfg, md])
         if not dry_run:
-            _update_json_mcp(cfg, add_entry=True)
+            _update_json_mcp(cfg, add_entry=True, opencode=True)
             _update_markdown_guidance(md, add_entry=True)
 
     elif target_lower == "qwen":
@@ -348,7 +362,7 @@ def uninstall_agent_integration(
         files_modified.extend([cfg, md])
         if not dry_run:
             if cfg.exists():
-                _update_json_mcp(cfg, add_entry=False)
+                _update_json_mcp(cfg, add_entry=False, opencode=True)
             if md.exists():
                 _update_markdown_guidance(md, add_entry=False)
 
