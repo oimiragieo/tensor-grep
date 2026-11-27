@@ -189,6 +189,7 @@ class TestRunJsonModeRewritePlan:
                 "x",
                 tmpdir,
                 rewrite="y",
+                json_mode=True,
                 fake_plan=minimal_plan,
                 fake_plan_exit=0,
             )
@@ -219,6 +220,7 @@ class TestRunJsonModeRewritePlan:
                 "x",
                 tmpdir,
                 rewrite="y",
+                json_mode=True,
                 fake_plan=plan_with_extras,
             )
             payload = json.loads(stdout)

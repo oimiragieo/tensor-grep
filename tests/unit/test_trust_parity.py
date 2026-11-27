@@ -185,7 +185,7 @@ def test_mcp_tool_listing_includes_new_trust_tools() -> None:
 def test_tg_help_lists_new_trust_commands() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["--help-all"])
 
     assert result.exit_code == 0
     assert "audit" in result.stdout

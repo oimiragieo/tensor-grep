@@ -4,7 +4,6 @@ import dataclasses
 import os
 import subprocess
 import sys
-import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -398,7 +397,7 @@ def _cli_deadline_monotonic(deadline_seconds: float | None) -> float | None:
     docs/CONTRACTS.md rather than fixed here."""
     if deadline_seconds is None:
         return None
-    return time.monotonic() + deadline_seconds
+    return _self.time.monotonic() + deadline_seconds
 
 
 def _positive_int(value: Any) -> int | None:

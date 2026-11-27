@@ -12,6 +12,7 @@ import shutil as shutil
 # `implicit_reexport = false`, under which a plain `import subprocess` binds privately.
 import subprocess as subprocess
 import sys
+import time as time
 from typing import TYPE_CHECKING
 
 import typer

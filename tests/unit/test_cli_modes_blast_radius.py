@@ -213,7 +213,9 @@ def test_cli_later_invalid_regexp_is_rejected_before_native_delegation(monkeypat
     assert "cmd" not in seen
 
 
-def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch):
+def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch, tmp_path: Path):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.chdir(tmp_path)
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".claude": [".claude/lib/utils.cjs"]}
     _FAKE_BACKEND = _FakeBackend(
@@ -247,7 +249,7 @@ def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch)
 
     result = CliRunner().invoke(
         app,
-        ["search", "safeParseJSON", ".claude", "--json"],
+        ["search", "safeParseJSON", ".claude", "--json", "--allow-broad-generated-scan"],
     )
 
     assert result.exit_code == 0
@@ -256,7 +258,9 @@ def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch)
     assert payload["matches"][0]["file"] == ".claude/lib/utils.cjs"
 
 
-def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
+def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch, tmp_path: Path):
+    (tmp_path / ".claude").mkdir()
+    monkeypatch.chdir(tmp_path)
     seen: dict[str, object] = {}
     global _FAKE_WALK
     _FAKE_WALK = {".claude": [".claude/lib/utils.cjs"]}
@@ -305,7 +309,7 @@ def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
 
     result = CliRunner().invoke(
         app,
-        ["search", "safeParseJSON", ".claude", "--json"],
+        ["search", "safeParseJSON", ".claude", "--json", "--allow-broad-generated-scan"],
     )
 
     assert result.exit_code == 0

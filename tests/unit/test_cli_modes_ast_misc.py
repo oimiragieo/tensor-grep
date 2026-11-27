@@ -618,7 +618,13 @@ def test_full_cli_run_accepts_ast_grep_pattern_option(monkeypatch, tmp_path: Pat
 
 
 def test_app_help_should_expose_the_python_public_top_level_surface():
-    result = CliRunner().invoke(app, ["--help"], terminal_width=80)
+    concise_result = CliRunner().invoke(app, ["--help"], terminal_width=80)
+    assert concise_result.exit_code == 0
+    concise_text = _strip_ansi(concise_result.stdout)
+    assert "Search supports a validated rg-compatible subset." in re.sub(r"\s+", " ", concise_text)
+    assert "--help-all" in concise_text
+
+    result = CliRunner().invoke(app, ["--help-all"], terminal_width=80)
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
@@ -630,7 +636,6 @@ def test_app_help_should_expose_the_python_public_top_level_surface():
         and "Agent:" in help_text
         and "State and evidence:" in help_text
         and "Operations:" in help_text
-        and "Search supports a validated rg-compatible subset." in help_text
     )
     assert "Environment overrides" not in help_text
     assert "TG_SIDECAR_PYTHON" not in help_text

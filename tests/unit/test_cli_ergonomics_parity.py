@@ -366,7 +366,7 @@ def test_checkpoint_create_json_invalid_label_emits_structured_error(tmp_path: P
 def test_readme_clarifies_search_rank_vs_find() -> None:
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
     assert "--rank" in readme
-    assert "tg find" in readme
+    assert "find --hybrid" in readme
 
 
 def test_checkpoint_undo_does_not_rewrite_positional_double_dash_json(
