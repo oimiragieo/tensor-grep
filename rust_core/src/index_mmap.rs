@@ -873,6 +873,13 @@ mod tests {
             MmapIndex::serialize_from_parts(croot, fp, no_ignore, files, postings).unwrap();
         bytes[28..32].copy_from_slice(&(u32::MAX).to_le_bytes());
         fs::write(&mmap_path, &bytes).unwrap();
-        assert!(MmapIndex::open_confined(&mmap_path).is_err());
+        let err = match MmapIndex::open_confined(&mmap_path) {
+            Ok(_) => panic!("expected file_count limit error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("file_count exceeds limit"),
+            "unexpected error: {err:#}"
+        );
     }
 }

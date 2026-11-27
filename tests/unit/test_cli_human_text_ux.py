@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import ast_workflows
@@ -284,11 +285,10 @@ def test_venv_direct_search_refused_without_no_ignore(tmp_path: Path) -> None:
 
 
 def test_evidence_signing_handles_base64_slash_and_rejects_oversize_non_utf8_pub(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import base64
-
-    import pytest
+    import os
 
     from tensor_grep.cli.evidence_signing import EvidenceSigningError, resolve_trusted_public_keys
 
@@ -303,5 +303,21 @@ def test_evidence_signing_handles_base64_slash_and_rejects_oversize_non_utf8_pub
 
     oversize = tmp_path / "huge.pub"
     oversize.write_bytes(b"A" * 5000)
+    real_fdopen = os.fdopen
+    read_calls: list[int] = []
+
+    def _spy_fdopen(fd: int, mode: str = "r", *args: object, **kwargs: object):
+        handle = real_fdopen(fd, mode, *args, **kwargs)
+        orig_read = handle.read
+
+        def _spy_read(n: int = -1):
+            read_calls.append(n)
+            return orig_read(n)
+
+        handle.read = _spy_read  # type: ignore[method-assign]
+        return handle
+
+    monkeypatch.setattr(os, "fdopen", _spy_fdopen)
     with pytest.raises(EvidenceSigningError, match="4096"):
         resolve_trusted_public_keys([str(oversize)])
+    assert read_calls == []
