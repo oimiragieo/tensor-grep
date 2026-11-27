@@ -16,7 +16,13 @@ assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
-NATIVE = ("tg-linux-amd64-cpu", "tg-macos-amd64-cpu", "tg-windows-amd64-cpu.exe")
+NATIVE = (
+    "tg-linux-amd64-cpu",
+    "tg-linux-arm64-cpu",
+    "tg-macos-amd64-cpu",
+    "tg-macos-arm64-cpu",
+    "tg-windows-amd64-cpu.exe",
+)
 
 
 @pytest.fixture
@@ -45,8 +51,8 @@ def test_prepare_release_asset_paths_returns_exact_managed_sets(artifacts: Path)
     )
     assert {path.name for path in subjects} == {*NATIVE, *MODULE.MANAGED_ASSETS}
     assert set(subjects).issubset(uploads)
-    assert len(subjects) == 6
-    assert len(uploads) == 10
+    assert len(subjects) == 8
+    assert len(uploads) == 12
 
 
 @pytest.mark.parametrize("missing", ["sbom-rust.json", "CHECKSUMS.txt"])
