@@ -17,16 +17,16 @@ The managed install script is the simplest choice for most individual users. It 
 **Windows PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/v1.142.0/scripts/install.ps1 | iex
 ```
 
 **Linux or macOS Bash:**
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/v1.142.0/scripts/install.sh | bash
 ```
 
-The script installs `tg` and prints its version. These commands fetch an installer from the mutable `main` branch. For a pinned install, use an exact PyPI version or download a GitHub Release asset and verify its checksum before running it.
+The commands above pin a release tag (`v1.142.0`) rather than a mutable branch ref; substitute any newer release tag from [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases).
 
 The native installers compare downloaded bytes with the release's `CHECKSUMS.txt`. This checks consistency with that manifest; it does not independently authenticate a release or protect against an attacker who can replace both the asset and its checksum. These installers do not verify a release signature.
 

@@ -48,7 +48,14 @@ def verify_release_channels(root: Path = ROOT) -> list[str]:
     if not ci_path.is_file():
         errors.append("Missing .github/workflows/ci.yml")
     else:
-        ci_data = yaml.safe_load(ci_path.read_text(encoding="utf-8")) or {}
+        ci_text = ci_path.read_text(encoding="utf-8")
+        ci_data = yaml.safe_load(ci_text) or {}
+        for line in ci_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("if:") and "secrets." in stripped:
+                errors.append("ci.yml must not reference secrets.* inside step/job if: conditions")
+            if stripped.startswith("uses:") and "@stable" in stripped:
+                errors.append(f"ci.yml must pin action SHA instead of @stable: {stripped}")
         jobs = ci_data.get("jobs", {}) if isinstance(ci_data, dict) else {}
         native_job = jobs.get("build-release-native-assets", {}) if isinstance(jobs, dict) else {}
         include = (
@@ -112,6 +119,16 @@ def verify_release_channels(root: Path = ROOT) -> list[str]:
         scripts_block = npm_data.get("scripts") or {}
         if "postinstall" in scripts_block:
             errors.append("npm/package.json must not define a postinstall script")
+        npm_lock_path = root / "npm" / "package-lock.json"
+        if not npm_lock_path.is_file():
+            errors.append("Missing npm/package-lock.json")
+        else:
+            lock_data = json.loads(npm_lock_path.read_text(encoding="utf-8"))
+            if str(lock_data.get("version")) != expected_version:
+                errors.append(f"npm/package-lock.json version != {expected_version}")
+            root_pkg = (lock_data.get("packages") or {}).get("") or {}
+            if root_pkg.get("hasInstallScript"):
+                errors.append("npm/package-lock.json root package must not set hasInstallScript")
         opt_deps = npm_data.get("optionalDependencies") or {}
         for pkg_name in REQUIRED_NPM_OPTIONAL_PACKAGES:
             if opt_deps.get(pkg_name) != expected_version:
@@ -127,8 +144,13 @@ def verify_release_channels(root: Path = ROOT) -> list[str]:
                 if (
                     sub_data.get("name") != pkg_name
                     or str(sub_data.get("version")) != expected_version
+                    or not sub_data.get("os")
+                    or not sub_data.get("cpu")
+                    or not sub_data.get("files")
                 ):
-                    errors.append(f"Invalid name/version in {sub_pkg.relative_to(root)}")
+                    errors.append(
+                        f"Invalid name/version/os/cpu/files in {sub_pkg.relative_to(root)}"
+                    )
 
     # 5. rust_core/Cargo.toml
     cargo_path = root / "rust_core" / "Cargo.toml"
@@ -157,6 +179,8 @@ def verify_release_channels(root: Path = ROOT) -> list[str]:
             errors.append("Dockerfile must use a distroless runtime base image")
         if "ghcr.io/oimiragieo/tensor-grep" not in dockerfile_text:
             errors.append("Dockerfile must reference ghcr.io/oimiragieo/tensor-grep")
+        if "src/tensor_grep/cli/commands.py" not in dockerfile_text:
+            errors.append("Dockerfile must copy src/tensor_grep/cli/commands.py for include_str!")
         if "ENTRYPOINT" not in dockerfile_text:
             errors.append("Dockerfile must declare ENTRYPOINT")
 

@@ -236,20 +236,11 @@ def prepare_bundle(
         windows_installer_sha = _windows_installer_sha_from_checksums(release_checksums)
         macos_native_sha = _asset_sha_from_checksums(release_checksums, MACOS_NATIVE_ASSET)
         linux_native_sha = _asset_sha_from_checksums(release_checksums, LINUX_NATIVE_ASSET)
+        macos_arm64_sha = _asset_sha_from_checksums(release_checksums, MACOS_ARM64_NATIVE_ASSET)
+        linux_arm64_sha = _asset_sha_from_checksums(release_checksums, LINUX_ARM64_NATIVE_ASSET)
     except ValueError as exc:
         print(f"ERROR: {exc}")
         return 1
-
-    macos_arm64_sha: str | None = None
-    linux_arm64_sha: str | None = None
-    try:
-        macos_arm64_sha = _asset_sha_from_checksums(release_checksums, MACOS_ARM64_NATIVE_ASSET)
-    except ValueError:
-        macos_arm64_sha = None
-    try:
-        linux_arm64_sha = _asset_sha_from_checksums(release_checksums, LINUX_ARM64_NATIVE_ASSET)
-    except ValueError:
-        linux_arm64_sha = None
 
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
     winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"

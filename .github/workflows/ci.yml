@@ -236,7 +236,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -905,7 +905,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Setup Python for PyO3 Linker
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -982,7 +982,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Setup Python for PyO3 Linker
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -1025,7 +1025,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Setup Python for PyO3 Linker
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -1811,7 +1811,7 @@ jobs:
 
       - name: Setup Rust stable
         if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
       - name: Setup Python for PyO3 Linker
         if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
@@ -1862,13 +1862,17 @@ jobs:
           "$src" --help >/dev/null
 
       - name: Sign Windows native binary (Authenticode)
-        if: ${{ runner.os == 'Windows' && (matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu') && secrets.WINDOWS_SIGNING_CERT_PFX != '' && secrets.WINDOWS_SIGNING_CERT_PASSWORD != '' }}
+        if: ${{ runner.os == 'Windows' && (matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu') }}
         shell: pwsh
         env:
           SIGN_CERT_PFX: ${{ secrets.WINDOWS_SIGNING_CERT_PFX }}
           SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
           NATIVE_ASSET_NAME: ${{ matrix.asset_name }}
         run: |
+          if ([string]::IsNullOrEmpty($env:SIGN_CERT_PFX) -or [string]::IsNullOrEmpty($env:SIGN_CERT_PASSWORD)) {
+            Write-Host "Windows Authenticode secrets not configured; skipping optional Authenticode signing."
+            exit 0
+          }
           $certPath = Join-Path $env:RUNNER_TEMP "tg-codesign.pfx"
           [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SIGN_CERT_PFX))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
@@ -1877,7 +1881,7 @@ jobs:
           Remove-Item -LiteralPath $certPath -Force -ErrorAction SilentlyContinue
 
       - name: Sign and notarize macOS native binary (Developer ID)
-        if: ${{ runner.os == 'macOS' && secrets.APPLE_DEVELOPER_ID_CERT_P12 != '' && secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD != '' }}
+        if: ${{ runner.os == 'macOS' }}
         shell: bash
         env:
           APPLE_CERT_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12 }}
@@ -1889,6 +1893,10 @@ jobs:
           NATIVE_ASSET_NAME: ${{ matrix.asset_name }}
         run: |
           set -euo pipefail
+          if [ -z "${APPLE_CERT_P12:-}" ] || [ -z "${APPLE_CERT_PASSWORD:-}" ]; then
+            echo "Apple Developer ID secrets not configured; skipping optional macOS codesign."
+            exit 0
+          fi
           keychain="$RUNNER_TEMP/tg-signing.keychain-db"
           cert_path="$RUNNER_TEMP/tg-dev-id.p12"
           echo "$APPLE_CERT_P12" | base64 --decode > "$cert_path"

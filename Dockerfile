@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /build
 COPY rust_core/ ./rust_core/
+COPY src/tensor_grep/cli/commands.py ./src/tensor_grep/cli/commands.py
 
 WORKDIR /build/rust_core
 RUN cargo build --release --locked --no-default-features --bin tg

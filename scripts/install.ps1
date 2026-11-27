@@ -207,11 +207,13 @@ function Install-NativeFrontdoorBinary {
             if ($expectedSha -ne $actualSha) {
                 throw "checksum MISMATCH for $nativeAssetName (expected $expectedSha, got $actualSha)"
             }
+            $cosignVerified = $false
             Test-CosignSignature `
                 -FilePath $nativeTempPath `
                 -BundleUrl "$nativeDownloadUrl.sigstore.json" `
                 -BundleTempPath $nativeBundlePath `
                 -RequireCosign $requireCosign
+            $cosignVerified = $true
             Remove-Item -LiteralPath $nativeBundlePath -Force -ErrorAction SilentlyContinue
             Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
             & $nativeFrontdoorPath --version | Out-Host
@@ -225,6 +227,9 @@ function Install-NativeFrontdoorBinary {
         } catch {
             Remove-Item -LiteralPath $nativeTempPath -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $nativeFrontdoorPath -Force -ErrorAction SilentlyContinue
+            if ($requireCosign -and -not $cosignVerified) {
+                throw
+            }
             if ($nativeFlavor -eq "nvidia" -and ($nativeAssetCandidates -contains "tg-windows-amd64-cpu.exe")) {
                 Write-Warning (
                     "Falling back to CPU native tg front-door asset after NVIDIA asset failed. " +

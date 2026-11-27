@@ -37,14 +37,14 @@ tg doctor --fast --json
 
 ### 2. Upgrade `tg`
 
-- **Managed install (recommended):**
+- **Managed install (recommended, tag-pinned):**
   - Linux / macOS:
     ```bash
-    curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+    curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/v1.142.0/scripts/install.sh | bash
     ```
   - Windows PowerShell:
     ```powershell
-    irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/v1.142.0/scripts/install.ps1 | iex
     ```
 - **Python package (`pip` or `uv`):**
   ```bash

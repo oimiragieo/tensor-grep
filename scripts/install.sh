@@ -399,6 +399,10 @@ if [ -n "$INSTALLED_VERSION" ]; then
             fi
             if ! _verify_cosign_bundle "$STAGING_NATIVE_BINARY.tmp" "${NATIVE_URL}.sigstore.json" "$STAGING_NATIVE_BINARY.sigstore.json"; then
                 rm -f "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY.sigstore.json"
+                if [ "$VERIFY_COSIGN" = "1" ] || [ "$VERIFY_COSIGN" = "true" ]; then
+                    echo "ERROR: Required Cosign Sigstore verification failed for $NATIVE_ASSET; aborting install." >&2
+                    exit 1
+                fi
                 if [ "$NATIVE_FLAVOR" = "nvidia" ]; then
                     echo "      Falling back to CPU native tg front-door asset after NVIDIA Cosign verification failed." >&2
                     continue
