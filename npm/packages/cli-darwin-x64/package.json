@@ -1,6 +1,6 @@
 {
   "name": "@tensor-grep/cli-darwin-x64",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "macOS Intel (x64) native binary for tensor-grep",
   "os": [
     "darwin"
