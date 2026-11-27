@@ -747,3 +747,11 @@ def test_constant_diff_impact_isolated_from_unrelated_parse_gaps(tmp_path: Path)
     assert res["constant_resolution_incomplete"] is False
     assert res["partial"] is False
     assert res["resolution_gaps_count"] == 0
+
+
+def test_build_change_slice_empty_manifest_no_error(tmp_path: Path) -> None:
+    from tensor_grep.cli.tdad_kg_ast import build_change_slice_from_manifest
+
+    res = build_change_slice_from_manifest({"files": []}, root=tmp_path)
+    assert res["slice"]["nodes"] == []
+    assert "omitted_symbols_count" not in res

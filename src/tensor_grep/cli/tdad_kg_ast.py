@@ -977,6 +977,7 @@ def build_change_slice_from_manifest(
     callers: list[dict[str, Any]] = []
     affected_files: set[str] = set(changed_files)
     tdad_tests: list[dict[str, Any]] = []
+    omitted_symbols: list[str] = []
     if changed_files and root.is_dir():
         from tensor_grep.cli import repo_map
 
@@ -1002,7 +1003,6 @@ def build_change_slice_from_manifest(
         )
         seen_callers: set[tuple[str, str, int]] = set()
         seen_names: list[str] = []
-        omitted_symbols: list[str] = []
         for sym in changed_symbols:
             sym_name = str(sym["name"])
             if sym_name not in seen_names:

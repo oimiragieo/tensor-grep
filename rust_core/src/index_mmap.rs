@@ -860,4 +860,19 @@ mod tests {
         fs::write(&mmap_path, &bytes).unwrap();
         assert!(MmapIndex::open_confined(&mmap_path).is_err());
     }
+
+    #[test]
+    fn index_mmap_rejects_oversized_file_count() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.rs"), "fn alpha_needle() {}\n").unwrap();
+        let trigram_index = TrigramIndex::build(root).unwrap();
+        let mmap_path = root.join("oversized.tg_index.mmap");
+        let (croot, fp, no_ignore, files, postings) = trigram_index.mmap_parts();
+        let mut bytes =
+            MmapIndex::serialize_from_parts(croot, fp, no_ignore, files, postings).unwrap();
+        bytes[28..32].copy_from_slice(&(u32::MAX).to_le_bytes());
+        fs::write(&mmap_path, &bytes).unwrap();
+        assert!(MmapIndex::open_confined(&mmap_path).is_err());
+    }
 }

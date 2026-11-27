@@ -578,8 +578,8 @@ def run_index_vs_rg(
     tg_median = tg_res.get("median_s")
     matches_equal = tg_payload is not None and rg_sigs == tg_sigs
     files_equal = tg_payload is not None and rg_files == tg_files
-    tg_ok = tg_res.get("status") == "OK" and tg_res.get("exit_code") in (0, 1)
-    rg_ok = rg_res.get("status") == "OK" and rg_res.get("exit_code") in (0, 1)
+    tg_ok = tg_res.get("status") == "PASS" and tg_res.get("exit_code") in (0, 1)
+    rg_ok = rg_res.get("status") == "PASS" and rg_res.get("exit_code") in (0, 1)
     index_route = (
         str(tg_payload.get("routing_reason") or tg_payload.get("routing_backend") or "")
         if isinstance(tg_payload, dict)

@@ -122,11 +122,15 @@ fn format_walked_path(path: &Path, strip_dot_prefix: bool) -> String {
 pub(crate) fn supports_native_files_search(args: &SearchArgs) -> bool {
     args.file_type.is_empty()
         && args.sort.is_none()
+        && args.sort_reverse.is_none()
+        && !args.sort_files
+        && args.path_separator.is_none()
         && args.gpu_device_ids.is_empty()
         && !args.json
         && !args.ndjson
         && !args.vimgrep
         && !args.count
+        && !args.count_matches
         && !args.files_with_matches
         && !args.files_without_match
         && !args.pcre2
@@ -225,12 +229,22 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
         b"\n".as_slice()
     };
     let writer = Mutex::new(BufWriter::new(io::stdout()));
+    let write_error: Mutex<Option<io::Error>> = Mutex::new(None);
     let emitted = AtomicUsize::new(0);
     let errors = AtomicUsize::new(0);
+
+    fn record_write_err(slot: &Mutex<Option<io::Error>>, err: io::Error) {
+        if let Ok(mut guard) = slot.lock() {
+            if guard.is_none() {
+                *guard = Some(err);
+            }
+        }
+    }
 
     struct ThreadBuf<'a> {
         local: Vec<u8>,
         shared: &'a Mutex<BufWriter<io::Stdout>>,
+        write_error: &'a Mutex<Option<io::Error>>,
         emitted: &'a AtomicUsize,
         errors: &'a AtomicUsize,
         terminator: &'static [u8],
@@ -239,8 +253,16 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
     impl Drop for ThreadBuf<'_> {
         fn drop(&mut self) {
             if !self.local.is_empty() {
-                if let Ok(mut guard) = self.shared.lock() {
-                    let _ = guard.write_all(&self.local);
+                match self.shared.lock() {
+                    Ok(mut guard) => {
+                        if let Err(err) = guard.write_all(&self.local) {
+                            record_write_err(self.write_error, err);
+                        }
+                    }
+                    Err(_) => record_write_err(
+                        self.write_error,
+                        io::Error::other("stdout writer mutex poisoned"),
+                    ),
                 }
             }
         }
@@ -250,6 +272,7 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
         let mut state = ThreadBuf {
             local: Vec::with_capacity(8192),
             shared: &writer,
+            write_error: &write_error,
             emitted: &emitted,
             errors: &errors,
             terminator,
@@ -263,8 +286,22 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
                         state.local.extend_from_slice(state.terminator);
                         state.emitted.fetch_add(1, Ordering::Relaxed);
                         if state.local.len() >= 16384 {
-                            if let Ok(mut guard) = state.shared.lock() {
-                                let _ = guard.write_all(&state.local);
+                            match state.shared.lock() {
+                                Ok(mut guard) => {
+                                    if let Err(err) = guard.write_all(&state.local) {
+                                        record_write_err(state.write_error, err);
+                                        state.local.clear();
+                                        return WalkState::Quit;
+                                    }
+                                }
+                                Err(_) => {
+                                    record_write_err(
+                                        state.write_error,
+                                        io::Error::other("stdout writer mutex poisoned"),
+                                    );
+                                    state.local.clear();
+                                    return WalkState::Quit;
+                                }
                             }
                             state.local.clear();
                         }
@@ -280,9 +317,15 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
         })
     });
 
-    if let Ok(mut guard) = writer.lock() {
-        guard.flush()?;
+    if let Ok(mut err_guard) = write_error.lock() {
+        if let Some(err) = err_guard.take() {
+            return Err(err.into());
+        }
     }
+    writer
+        .lock()
+        .map_err(|_| anyhow::anyhow!("stdout writer mutex poisoned"))?
+        .flush()?;
     let total_emitted = emitted.load(Ordering::Relaxed);
     let total_errors = errors.load(Ordering::Relaxed);
     if total_errors > 0 {

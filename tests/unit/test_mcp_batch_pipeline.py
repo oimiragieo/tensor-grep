@@ -335,3 +335,32 @@ def test_tg_sql_helper_executes_read_only_sql(
     payload = json.loads(raw)
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert any(row.get("symbol") == "greet" for row in payload.get("rows", []))
+
+
+def test_tg_batch_return_final_only_non_ascii_and_long_id_under_4000_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_worker(
+        server: object, item: dict[str, object], common_path: str, remaining: float | None = None
+    ):
+        return _make_worker_run({
+            "id": str(item["id"]),
+            "kind": "capsule",
+            "result": {
+                "version": 1,
+                "mcp_contract_version": mcp_server._TG_MCP_SERVER_CONTRACT_VERSION,
+                "routing_backend": "RepoMap",
+                "routing_reason": "capsule",
+                "sidecar_used": False,
+                "rendered_context": "é" * 5000,
+            },
+        })
+
+    monkeypatch.setattr(mcp_batch_tools, "run_contained_worker", fake_worker)
+    raw = mcp_batch_tools.run_tg_batch(
+        mcp_server,
+        [{"id": "long-id-" + ("x" * 5000), "kind": "capsule", "query": "run"}],
+        path=str(tmp_path),
+        return_final_only=True,
+    )
+    assert len(raw.encode("utf-8")) <= 4000

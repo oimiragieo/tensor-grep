@@ -182,6 +182,10 @@ def _resolve_trusted_key_entry(entry: str) -> str:
             st = os.fstat(handle.fileno())
             if not stat.S_ISREG(st.st_mode):
                 raise EvidenceSigningError(f"Trusted public key file is not regular: {candidate}")
+            if st.st_size > 4096:
+                raise EvidenceSigningError(
+                    f"Trusted public key file exceeds 4096 byte limit: {candidate}"
+                )
             raw = handle.read(4097)
     except OSError as exc:
         raise EvidenceSigningError(

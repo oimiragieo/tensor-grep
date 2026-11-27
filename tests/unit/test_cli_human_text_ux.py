@@ -281,3 +281,27 @@ def test_venv_direct_search_refused_without_no_ignore(tmp_path: Path) -> None:
     res = CliRunner().invoke(app, ["search", "ERROR", str(venv)])
     assert res.exit_code == 2
     assert "broad generated-root scan refused" in res.output
+
+
+def test_evidence_signing_handles_base64_slash_and_rejects_oversize_non_utf8_pub(
+    tmp_path: Path,
+) -> None:
+    import base64
+
+    import pytest
+
+    from tensor_grep.cli.evidence_signing import EvidenceSigningError, resolve_trusted_public_keys
+
+    slash_b64 = base64.b64encode(b"\xff" * 31 + b"\x00").decode("ascii")
+    assert "/" in slash_b64
+    assert resolve_trusted_public_keys([slash_b64]) == [slash_b64]
+
+    bad_utf8 = tmp_path / "bad.pub"
+    bad_utf8.write_bytes(b"\xff\xfe\xfd")
+    with pytest.raises(EvidenceSigningError, match="UTF-8"):
+        resolve_trusted_public_keys([str(bad_utf8)])
+
+    oversize = tmp_path / "huge.pub"
+    oversize.write_bytes(b"A" * 5000)
+    with pytest.raises(EvidenceSigningError, match="4096"):
+        resolve_trusted_public_keys([str(oversize)])
