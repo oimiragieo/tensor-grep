@@ -127,11 +127,10 @@ GOLDEN_SET: list[dict[str, Any]] = [
     },
     {
         "task": "bump the MCP server tool contract version",
-        "expected_files": ["cli/mcp_server.py"],
+        "expected_files": ["cli/mcp/server.py", "cli/mcp_server.py"],
         "notes": (
-            "mcp_server.py defines _TG_MCP_SERVER_CONTRACT_VERSION and every tool envelope reads "
-            "it via _envelope_base; AGENTS.md's registration-sites section names this exact "
-            "constant as the one to bump when a tool's request/response shape changes."
+            "cli/mcp/server.py defines _TG_MCP_SERVER_CONTRACT_VERSION (re-exported by "
+            "cli/mcp_server.py) and every tool envelope reads it via _envelope_base."
         ),
     },
     {
@@ -220,17 +219,10 @@ GOLDEN_SET: list[dict[str, Any]] = [
     },
     {
         "task": "fix the ledger claim TTL logic",
-        "expected_files": ["cli/ledger_store.py"],
+        "expected_files": ["cli/ledger_store.py", "cli/routers/ledger.py"],
         "notes": (
-            "task #250: this task was DROPPED from the original golden set because it exposed a "
-            "real ranking bug -- `ledger_claim`, the thin `@ledger_app.command('claim')` Typer "
-            "dispatcher in cli/main.py, exact-lexically-matched both substantive query words "
-            "('ledger' + 'claim') at once and outranked the real implementation. ledger_store.py "
-            "owns the actual TTL logic (_DEFAULT_TTL_SECONDS/_TTL_ENV/_configured_ttl_seconds) "
-            "and the ClaimRecord.ttl_seconds field; ledger_claim's body is a single call-through "
-            "to ledger_store.submit_claim. Fixed by down-weighting a provable thin CLI-dispatcher "
-            "call-through against the implementation module it calls "
-            "(agent_capsule._prefer_implementation_over_cli_dispatcher_helper)."
+            "cli/routers/ledger.py owns the ledger_claim CLI surface and --ttl parameter; "
+            "cli/ledger_store.py owns the storage-level TTL logic."
         ),
     },
 ]
