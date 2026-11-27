@@ -422,3 +422,67 @@ def test_scan_invalid_format_mentions_sarif_and_json() -> None:
     res = runner.invoke(app, ["scan", "--format", "xml"])
     assert res.exit_code != 0
     assert "sarif" in res.output and "json" in res.output
+
+
+def test_search_gpu_device_ids_json_emits_structured_error_on_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample = tmp_path / "sample.py"
+    sample.write_text("needle = 1\n", encoding="utf-8")
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.backends.cudf_backend.CuDFBackend.is_available",
+        lambda self: False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.torch_backend.TorchBackend.is_available",
+        lambda self: False,
+    )
+
+    res = runner.invoke(app, ["search", "needle", str(sample), "--gpu-device-ids", "0", "--json"])
+    assert res.exit_code == 2
+    payload = json.loads(res.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "configuration_error"
+
+    bad_id = runner.invoke(
+        app, ["search", "needle", str(sample), "--gpu-device-ids", "abc", "--json"]
+    )
+    assert bad_id.exit_code == 2
+    bad_payload = json.loads(bad_id.stdout)
+    assert bad_payload["ok"] is False
+    assert bad_payload["error"] == "configuration_error"
+
+
+def test_search_semantic_natural_language_falls_back_to_bm25_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sample = tmp_path / "routing.py"
+    sample.write_text(
+        "def gpu_routing_handler():\n    return 'routing works'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.core.retrieval_dense.dense_available",
+        lambda: (
+            False,
+            "BM25 lexical ranking active (100% functional). For dense semantic vector reranking, "
+            "run `tg install-dense` (or pip install 'tensor-grep[semantic]'): "
+            "model2vec not installed (No module named 'model2vec')",
+        ),
+    )
+
+    res = runner.invoke(
+        app,
+        ["search", "how does gpu routing work", str(tmp_path), "--semantic", "--json"],
+    )
+    assert res.exit_code == 0, res.output
+    assert "BM25 lexical ranking active" in res.stderr
+    payload = json.loads(res.stdout)
+    assert payload["total_matches"] >= 1
+    assert len(payload["matches"]) >= 1
+    assert payload["routing_reason"] == "semantic_bm25_fallback"
+    assert "BM25 lexical ranking active" in payload["rank_fallback_reason"]

@@ -71,7 +71,7 @@ use tensor_grep_rs::routing::{
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
 };
 use tensor_grep_rs::search_error::{
-    exit_json_search_runtime_error_if_needed, exit_structured_search_error_if_needed,
+    self, exit_json_search_runtime_error_if_needed, exit_structured_search_error_if_needed,
     handle_search_runtime_error, refuse_structured_pcre2,
 };
 mod ast_run_remediation;
@@ -13009,27 +13009,7 @@ fn gpu_cpu_fallback_unhonorable_flag(params: &GpuSearchParams<'_>) -> Option<&'s
     }
 }
 
-/// Fail closed (exit 2, mirrors `require_ripgrep_or_exit`'s `--pcre2` convention) when `flag_name`
-/// is set on a `--gpu-device-ids` search that fell back to CPU, `NativeSearchConfig` cannot
-/// express it, and the rg-passthrough escape hatch this fallback would otherwise use is not
-/// usable here. Never silently drops `flag_name` (Backend Fail-Closed Contract, same class as
-/// `--pcre2`).
-fn exit_gpu_cpu_fallback_flag_unhonorable(flag_name: &str, rg_available: bool) {
-    if rg_available {
-        eprintln!(
-            "error: {flag_name} is not supported by native GPU-fallback CPU search, and ripgrep's \
-             output shape cannot represent structured --json/--ndjson output here; refusing rather \
-             than silently ignoring {flag_name}. Drop --json/--ndjson, or drop {flag_name}."
-        );
-    } else {
-        eprintln!(
-            "error: {flag_name} is not supported by native GPU-fallback CPU search, and the \
-             ripgrep (`rg`) backend is unavailable to honor it instead; refusing rather than \
-             silently ignoring {flag_name}. Install `rg`, set TG_RG_PATH, or drop {flag_name}."
-        );
-    }
-    std::process::exit(2);
-}
+// `exit_gpu_cpu_fallback_flag_unhonorable` lives in `tensor_grep_rs::search_error`.
 
 /// Builds a `RipgrepSearchArgs` from a `GpuSearchParams` for the fail-closed CPU-fallback redirect
 /// (task #131 F3). Every field this function does NOT set is one `GpuSearchParams` itself never
@@ -13095,7 +13075,12 @@ fn handle_gpu_unavailable_cpu_fallback(
     // output shape is usable here) or refuse outright -- never drop the flag.
     if let Some(flag_name) = gpu_cpu_fallback_unhonorable_flag(&params) {
         if !decision.allow_rg_fallback {
-            exit_gpu_cpu_fallback_flag_unhonorable(flag_name, rg_available);
+            search_error::exit_gpu_cpu_fallback_flag_unhonorable(
+                flag_name,
+                rg_available,
+                params.json,
+                params.ndjson,
+            );
         }
         if params.verbose {
             emit_verbose_metadata(RoutingDecision::ripgrep());
@@ -13886,11 +13871,20 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
     match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
         Ok(result) => {
             if result.exit_code != 0 {
-                if let Some(reason) =
-                    classify_gpu_sidecar_unavailable(&result.stderr, "Python sidecar exited")
-                {
+                if let Some(reason) = search_error::classify_gpu_sidecar_unavailable(
+                    &result.stderr,
+                    "Python sidecar exited",
+                ) {
                     let warning = format!("native GPU unavailable: {reason}");
                     return handle_gpu_unavailable_cpu_fallback(params, &warning);
+                }
+                if result.stdout.trim().is_empty() {
+                    search_error::exit_gpu_sidecar_error_if_structured(
+                        params.json,
+                        params.ndjson,
+                        &result.stderr,
+                        Some(result.exit_code),
+                    );
                 }
                 if !result.stdout.is_empty() {
                     print!("{}", result.stdout);
@@ -13899,6 +13893,19 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                     eprint!("{}", result.stderr);
                 }
                 std::process::exit(result.exit_code.max(1));
+            }
+            if result.stdout.trim().is_empty() {
+                let msg = if result.stderr.trim().is_empty() {
+                    "GPU sidecar returned empty output"
+                } else {
+                    &result.stderr
+                };
+                search_error::exit_gpu_sidecar_error_if_structured(
+                    params.json,
+                    params.ndjson,
+                    msg,
+                    None,
+                );
             }
             if !result.stdout.is_empty() {
                 if params.ndjson {
@@ -13953,44 +13960,24 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
             Ok(())
         }
         Err(err) => {
-            if let Some(reason) = classify_gpu_sidecar_unavailable(&err.stderr, &err.message) {
+            if let Some(reason) =
+                search_error::classify_gpu_sidecar_unavailable(&err.stderr, &err.message)
+            {
                 let warning = format!("native GPU unavailable: {reason}");
                 return handle_gpu_unavailable_cpu_fallback(params, &warning);
             }
+            search_error::exit_gpu_sidecar_error_if_structured(
+                params.json,
+                params.ndjson,
+                &format!("{} {}", err.stderr.trim(), err.message.trim()),
+                Some(err.exit_code),
+            );
             exit_with_sidecar_error(err)
         }
     }
 }
 
-fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<String> {
-    let mut raw = String::new();
-    if !stderr.trim().is_empty() {
-        raw.push_str(stderr.trim());
-    }
-    if !message.trim().is_empty() {
-        if !raw.is_empty() {
-            raw.push(' ');
-        }
-        raw.push_str(message.trim());
-    }
-    let lower = raw.to_ascii_lowercase();
-    let unavailable = lower.contains("cuda_visible_devices is empty")
-        || lower.contains("no gpus are visible")
-        || lower.contains("cuda is unavailable")
-        || lower.contains("no usable gpu devices")
-        || lower.contains("no cuda devices")
-        || lower.contains("available device ids: none")
-        || (lower.contains("requested gpu device ids") && lower.contains("not available"));
-    if unavailable {
-        Some(if raw.is_empty() {
-            "sidecar reported no usable GPU devices".to_string()
-        } else {
-            raw
-        })
-    } else {
-        None
-    }
-}
+// `classify_gpu_sidecar_unavailable` lives in `tensor_grep_rs::search_error`.
 
 // #92: classify's --stdin/--text share the sidecar's pre-existing `payload["content"]` path
 // (sidecar.py:_classify_payload already prefers payload content over the positional file
