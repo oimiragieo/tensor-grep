@@ -5,7 +5,7 @@ class TensorGrep < Formula
   desc "Fast local code search, symbol navigation, and AI context via Rust & MCP"
   homepage "https://github.com/oimiragieo/tensor-grep"
   license "Apache-2.0"
-  TENSOR_GREP_VERSION = "1.142.0"
+  TENSOR_GREP_VERSION = "2.0.0"
   version TENSOR_GREP_VERSION
 
   # NOTE: a `sha256 "<digest>"` line is stamped after each url into the PUBLISHED formula at

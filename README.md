@@ -1,5 +1,5 @@
 <!--
-release_docs_current_tag: v1.142.0
+release_docs_current_tag: v2.0.0
 -->
 
 <div align="center">
