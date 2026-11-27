@@ -104,9 +104,27 @@ def file_size_with_receipt(path: Path) -> int:
     return path.stat().st_size
 
 
+def decode_source_bytes(raw: bytes, *, encoding: str = "utf-8") -> str:
+    """Decode UTF-16LE/BE BOM, UTF-8 BOM, UTF-8, or Latin-1 source bytes cleanly."""
+    if raw.startswith(b"\xff\xfe"):
+        return raw[2:].decode("utf-16-le")
+    if raw.startswith(b"\xfe\xff"):
+        return raw[2:].decode("utf-16-be")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw[3:].decode("utf-8")
+    try:
+        return raw.decode(encoding)
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
 def read_text_with_receipt(path: Path, *, encoding: str = "utf-8") -> str:
     """Match Path.read_text's newline behavior while receipting the exact input bytes."""
-    return read_content_bytes(path).decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+    return (
+        decode_source_bytes(read_content_bytes(path), encoding=encoding)
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+    )
 
 
 def is_file_with_receipt(path: Path, *, raise_on_error: bool = False) -> bool:

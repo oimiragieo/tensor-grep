@@ -571,7 +571,7 @@ CALLER_SCAN_ORDER_PROBE_CEILING = 4 * CALLER_SCAN_FILE_CEILING
 # add a time.monotonic() call per file; checking too rarely risks overrunning a tight --deadline
 # by a wide margin. 64 is a compromise consistent with other bounded-scan loops in this module.
 _CALLER_SCAN_ORDER_PROBE_DEADLINE_STRIDE = 64
-_DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 2.0
+_DEFAULT_LSP_OPERATION_BUDGET_SECONDS = 10.0
 _LSP_OPERATION_BUDGET_ENV_VAR = "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS"
 _SKIP_DIR_NAMES = {
     ".tensor-grep",

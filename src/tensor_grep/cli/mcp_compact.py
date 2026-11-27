@@ -365,20 +365,21 @@ def _bound_non_dict_payload(wrapper: dict[str, Any], *, max_bytes: int) -> str:
     return json.dumps({"compact_truncated": True}, ensure_ascii=True, separators=(",", ":"))
 
 
-def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
+def compact_mcp_json_result(
+    raw_json: str, *, action: str | None = None, max_bytes: int = COMPACT_RESULT_MAX_BYTES
+) -> str:
     """Apply action-aware, bounded <=4000-byte compaction to a serialized MCP JSON tool response."""
+    limit = max(128, int(max_bytes))
     try:
         payload = json.loads(raw_json)
     except (json.JSONDecodeError, ValueError):
-        if len(raw_json.encode("utf-8")) <= COMPACT_RESULT_MAX_BYTES:
+        if len(raw_json.encode("utf-8")) <= limit:
             return raw_json
-        return _bound_non_dict_payload(
-            {"raw_preview": raw_json}, max_bytes=COMPACT_RESULT_MAX_BYTES
-        )
+        return _bound_non_dict_payload({"raw_preview": raw_json}, max_bytes=limit)
     if not isinstance(payload, dict):
-        if len(raw_json.encode("utf-8")) <= COMPACT_RESULT_MAX_BYTES:
+        if len(raw_json.encode("utf-8")) <= limit:
             return raw_json
-        return _bound_non_dict_payload({"value": payload}, max_bytes=COMPACT_RESULT_MAX_BYTES)
+        return _bound_non_dict_payload({"value": payload}, max_bytes=limit)
 
     primary_keys, omitted_keys = _infer_action_profile(payload, action)
     protected_keys = _MANDATORY_ENVELOPE_KEYS | primary_keys
@@ -409,7 +410,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
         bounded["compact_truncated"] = True
 
     serialized = _dump_compact_bytes(bounded)
-    if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+    if len(serialized) <= limit:
         return serialized.decode("utf-8")
 
     # Trim secondary keys first, preserving mandatory envelope, primary deliverables, and evidence.
@@ -421,7 +422,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
             bounded.pop(trim_key, None)
             bounded["compact_truncated"] = True
             serialized = _dump_compact_bytes(bounded)
-            if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+            if len(serialized) <= limit:
                 return serialized.decode("utf-8")
 
     for key in sorted(
@@ -432,13 +433,13 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
         bounded.pop(key, None)
         bounded["compact_truncated"] = True
         serialized = _dump_compact_bytes(bounded)
-        if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+        if len(serialized) <= limit:
             return serialized.decode("utf-8")
 
     # Next, trim primary deliverables while keeping mandatory envelope fields intact.
     bounded["compact_truncated"] = True
     if isinstance(bounded.get("rendered_context"), str) and _shrink_string_to_fit(
-        bounded, "rendered_context", COMPACT_RESULT_MAX_BYTES
+        bounded, "rendered_context", limit
     ):
         return _dump_compact_bytes(bounded).decode("utf-8")
 
@@ -447,7 +448,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
     for key in _EVIDENCE_OMIT_ORDER:
         val = bounded.get(key)
         if isinstance(val, list):
-            while val and len(_dump_compact_bytes(bounded)) > COMPACT_RESULT_MAX_BYTES:
+            while val and len(_dump_compact_bytes(bounded)) > limit:
                 val.pop()
                 omitted_counts[key] = omitted_counts.get(key, 0) + 1
     if omitted_counts:
@@ -455,10 +456,10 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
         for key in _EVIDENCE_OMIT_ORDER:
             val = bounded.get(key)
             if isinstance(val, list):
-                while val and len(_dump_compact_bytes(bounded)) > COMPACT_RESULT_MAX_BYTES:
+                while val and len(_dump_compact_bytes(bounded)) > limit:
                     val.pop()
                     _record_omissions(bounded, {key: 1})
-        if len(_dump_compact_bytes(bounded)) <= COMPACT_RESULT_MAX_BYTES:
+        if len(_dump_compact_bytes(bounded)) <= limit:
             return _dump_compact_bytes(bounded).decode("utf-8")
 
     no_slice_keys = (
@@ -485,7 +486,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
                 shrunk[k] = _truncate_value_for_budget(v, max_str, max_list, max_dict)
         shrunk["compact_truncated"] = True
         serialized = _dump_compact_bytes(shrunk)
-        if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+        if len(serialized) <= limit:
             return serialized.decode("utf-8")
 
     # Whole-entry omission of entire actionable evidence objects rather than slicing inside them.
@@ -494,7 +495,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
             bounded.pop(key, None)
             _record_omissions(bounded, {key: 1})
             serialized = _dump_compact_bytes(bounded)
-            if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+            if len(serialized) <= limit:
                 return serialized.decode("utf-8")
 
     # Last resort: retain ALL mandatory envelope fields (truncating oversized values if any)
@@ -519,7 +520,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
         )
     minimal["compact_truncated"] = True
     serialized = _dump_compact_bytes(minimal)
-    if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+    if len(serialized) <= limit:
         return serialized.decode("utf-8")
 
     shrunk_min: dict[str, Any] = minimal
@@ -550,7 +551,7 @@ def compact_mcp_json_result(raw_json: str, *, action: str | None = None) -> str:
             else:
                 shrunk_min[k] = _truncate_value_for_budget(v, max_str, max_list, max_dict)
         serialized = _dump_compact_bytes(shrunk_min)
-        if len(serialized) <= COMPACT_RESULT_MAX_BYTES:
+        if len(serialized) <= limit:
             return serialized.decode("utf-8")
 
     return _dump_compact_bytes(shrunk_min).decode("utf-8")
@@ -722,8 +723,10 @@ def _strip_property_defaults(node: Any, *, _in_properties_map: bool = False) -> 
     if isinstance(node, dict):
         if _in_properties_map:
             for prop_schema in node.values():
-                if isinstance(prop_schema, dict) and prop_schema.get("default", 0) is None:
-                    prop_schema.pop("default", None)
+                if isinstance(prop_schema, dict):
+                    default_val = prop_schema.get("default", 0)
+                    if default_val is None or default_val is False:
+                        prop_schema.pop("default", None)
                 _strip_property_defaults(prop_schema, _in_properties_map=False)
             return
         node.pop("title", None)

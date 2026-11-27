@@ -1051,9 +1051,16 @@ def _agent_capsule_error(message: str, *, code: str, query: str, path: str) -> s
 
 def _mcp_capabilities_payload() -> dict[str, Any]:
     native_tg, native_error = _self._resolve_native_tg_binary_for_mcp()
+    native_path: str | None = None
+    if native_tg is not None:
+        native_path = str(native_tg)
+        if native_path.startswith("\\\\?\\UNC\\"):
+            native_path = "\\\\" + native_path[len("\\\\?\\UNC\\") :]
+        elif native_path.startswith("\\\\?\\"):
+            native_path = native_path[len("\\\\?\\") :]
     native_tg_payload: dict[str, Any] = {
         "available": native_tg is not None,
-        "path": None if native_tg is None else str(native_tg),
+        "path": native_path,
     }
     if native_error is not None:
         native_tg_payload["error"] = native_error
@@ -1160,6 +1167,59 @@ def tg_mcp_capabilities(summary: bool = False) -> str:
             },
             indent=2,
         )
+
+
+def tg_sql(
+    query: str,
+    path: str = ".",
+    limit: int = 100,
+    max_repo_files: int = _DEFAULT_MCP_REPO_SCAN_LIMIT,
+    deadline: float = 2.0,
+    scan_deadline: float = 30.0,
+) -> str:
+    """Execute a read-only SQL query over AST symbols and imports (for tg_batch kind='sql')."""
+    import contextlib
+    import io
+
+    import typer
+
+    from tensor_grep.cli.sql_query import sql_command
+
+    try:
+        confined_path = str(_confine_mcp_path(path, label="path"))
+    except PathConfinementError as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+            },
+            indent=2,
+        )
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            sql_command(
+                arg1=confined_path,
+                arg2=query,
+                query_file=None,
+                limit=limit,
+                max_repo_files=max_repo_files,
+                deadline=deadline,
+                scan_deadline=scan_deadline,
+                json_output=True,
+            )
+    except (typer.Exit, SystemExit):
+        pass
+    raw = buf.getvalue().strip()
+    try:
+        parsed = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        parsed = {
+            "error": {"code": "internal_error", "message": "sql_command returned invalid JSON"}
+        }
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+        parsed["error"] = {"code": "invalid_input", "message": parsed["error"]}
+    return _self._inject_mcp_contract_fields(json.dumps(parsed, indent=2))
 
 
 @_register_tool  # type: ignore

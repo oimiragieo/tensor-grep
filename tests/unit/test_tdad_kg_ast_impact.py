@@ -699,3 +699,51 @@ def test_tdad_sqlite_cache_missing_required_columns_rebuilds_gracefully(tmp_path
     assert rebuilt["edge_count"] > 0
     hits = query_tdad_tests(repo, ["src/billing.py"])
     assert any(h["test_file"] == "tests/test_billing.py" for h in hits)
+
+
+def test_build_change_slice_from_manifest_populates_symbols_callers_and_tests(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "src" / "service.py").write_text(
+        "def compute_tax(amount):\n    return amount * 0.1\n", encoding="utf-8"
+    )
+    (repo / "src" / "caller.py").write_text(
+        "from src.service import compute_tax\n\ndef checkout(x):\n    return compute_tax(x)\n",
+        encoding="utf-8",
+    )
+    (repo / "tests" / "test_service.py").write_text(
+        "from src.service import compute_tax\n\ndef test_tax():\n    assert compute_tax(10) == 1.0\n",
+        encoding="utf-8",
+    )
+    manifest_path = repo / "audit_manifest.json"
+    _write_audit_manifest(manifest_path, project_root=repo)
+    bundle = audit_manifest.create_review_bundle(manifest_path, include_change_slice=True)
+    change_slice = bundle["change_slice"]
+    node_ids = {n["id"] for n in change_slice["nodes"]}
+    assert any(nid.startswith("sym:") and "compute_tax" in nid for nid in node_ids)
+    assert any(nid.startswith("test:") and "test_service.py" in nid for nid in node_ids)
+    assert any(e["kind"] in {"defines", "calls", "tested_by"} for e in change_slice["edges"])
+
+
+def test_constant_diff_impact_isolated_from_unrelated_parse_gaps(tmp_path: Path) -> None:
+    from tensor_grep.cli.diff_impact_constants import resolve_constant_blast_radius
+    from tensor_grep.cli.repo_map import build_repo_map
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "config.py").write_text(
+        "TAX_RATE = 0.2\n\ndef calc(x):\n    return x * TAX_RATE\n", encoding="utf-8"
+    )
+    (repo / "broken_unrelated.py").write_text("def syntax_error(:\n", encoding="utf-8")
+    rm = build_repo_map(repo)
+    res = resolve_constant_blast_radius(
+        rm,
+        {"name": "TAX_RATE", "file": "config.py", "line": 1, "kind": "constant"},
+        root=repo,
+    )
+    assert res["constant_resolution_incomplete"] is False
+    assert res["partial"] is False
+    assert res["resolution_gaps_count"] == 0

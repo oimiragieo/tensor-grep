@@ -570,15 +570,34 @@ def _scope_block(
 
 
 def _blast_radius_block_from_capsule(capsule: dict[str, Any]) -> dict[str, Any]:
+    primary_target = _as_dict(capsule.get("primary_target"))
+    raw_primary_symbol = primary_target.get("symbol") if primary_target is not None else None
+    primary_symbol = (
+        raw_primary_symbol.strip()
+        if isinstance(raw_primary_symbol, str) and raw_primary_symbol.strip()
+        else None
+    )
     call_site_evidence = _as_dict(capsule.get("call_site_evidence"))
     if call_site_evidence is None:
-        return {"status": "unavailable", "reason": "capsule has no call_site_evidence block"}
+        block: dict[str, Any] = {
+            "status": "unavailable",
+            "reason": "capsule has no call_site_evidence block",
+        }
+        if primary_symbol is not None:
+            block["symbol"] = primary_symbol
+        return block
     status = str(call_site_evidence.get("status") or "unknown")
     related_call_sites = capsule.get("related_call_sites")
-    block: dict[str, Any] = {
+    raw_cse_symbol = call_site_evidence.get("symbol")
+    resolved_symbol = (
+        raw_cse_symbol.strip()
+        if isinstance(raw_cse_symbol, str) and raw_cse_symbol.strip()
+        else primary_symbol
+    )
+    block = {
         "status": status,
         "source": "capsule",
-        "symbol": call_site_evidence.get("symbol"),
+        "symbol": resolved_symbol,
         "callers": related_call_sites if isinstance(related_call_sites, list) else [],
         "returned_call_sites": call_site_evidence.get("returned_call_sites"),
         "omitted_callers": call_site_evidence.get("omitted_call_sites"),

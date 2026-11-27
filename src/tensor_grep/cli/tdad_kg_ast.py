@@ -963,7 +963,7 @@ def build_change_slice_from_manifest(
     *,
     root: Path,
 ) -> dict[str, Any]:
-    """Build a minimal change-directed graph slice from an audit manifest for review bundles."""
+    """Build a change-directed graph slice from an audit manifest for review bundles."""
     raw_files = manifest.get("files")
     changed_files: list[str] = []
     if isinstance(raw_files, Sequence):
@@ -973,15 +973,64 @@ def build_change_slice_from_manifest(
             elif isinstance(item, str):
                 changed_files.append(_norm_path(item))
     changed_files = sorted(set(changed_files))
-    tdad_tests = (
-        query_tdad_tests(root, changed_files, persist=False)
-        if changed_files and root.is_dir()
-        else []
-    )
+    changed_symbols: list[dict[str, Any]] = []
+    callers: list[dict[str, Any]] = []
+    affected_files: set[str] = set(changed_files)
+    tdad_tests: list[dict[str, Any]] = []
+    if changed_files and root.is_dir():
+        from tensor_grep.cli import repo_map
+
+        repo_map_payload = repo_map.build_repo_map(root)
+        changed_set = set(changed_files)
+        for sym in repo_map_payload.get("symbols", []):
+            if not isinstance(sym, Mapping):
+                continue
+            sym_file = _norm_path(str(sym.get("file", "")), repo_root=root)
+            if sym_file in changed_set and sym.get("name"):
+                changed_symbols.append({
+                    "file": sym_file,
+                    "name": str(sym["name"]),
+                    "kind": str(sym.get("kind", "symbol")),
+                    **({"line": int(sym["line"])} if sym.get("line") is not None else {}),
+                })
+        tdad_tests = query_tdad_tests(
+            root,
+            changed_files,
+            changed_symbols,
+            repo_map_payload=repo_map_payload,
+            persist=False,
+        )
+        seen_callers: set[tuple[str, str, int]] = set()
+        seen_names: list[str] = []
+        for sym in changed_symbols:
+            sym_name = str(sym["name"])
+            if sym_name not in seen_names:
+                seen_names.append(sym_name)
+                if len(seen_names) >= 20:
+                    break
+        for sym_name in seen_names:
+            radius = repo_map.build_symbol_blast_radius_from_map(repo_map_payload, sym_name)
+            for caller in radius.get("callers", []):
+                if not isinstance(caller, Mapping):
+                    continue
+                c_file = _norm_path(str(caller.get("file", "")), repo_root=root)
+                c_name = str(caller.get("caller", caller.get("name", "")))
+                c_line = int(caller.get("line", 0))
+                key = (c_file, c_name, c_line)
+                if key not in seen_callers:
+                    seen_callers.add(key)
+                    c_copy = dict(caller)
+                    c_copy["file"] = c_file
+                    callers.append(c_copy)
+            for af in radius.get("affected_files", []):
+                affected_files.add(_norm_path(str(af), repo_root=root))
+        for test_hit in tdad_tests:
+            affected_files.add(_norm_path(str(test_hit["test_file"]), repo_root=root))
     return extract_change_directed_slice(
         changed_files,
-        [],
-        [],
-        [str(t["test_file"]) for t in tdad_tests],
+        changed_symbols,
+        callers,
+        sorted(affected_files),
         tdad_tests,
+        repo_root=root,
     )

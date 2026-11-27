@@ -523,7 +523,10 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                         "workspace": {
                             "configuration": True,
                             "workspaceFolders": True,
-                        }
+                        },
+                        "window": {
+                            "workDoneProgress": True,
+                        },
                     },
                     "initializationOptions": _configuration_settings(self.language).get(
                         "settings", {}

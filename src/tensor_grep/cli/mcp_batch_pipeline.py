@@ -168,8 +168,10 @@ def resolve_item_arguments(
 
 def compact_final_batch_response(
     result_slots: Sequence[dict[str, object]],
+    *,
+    max_bytes: int = 4000,
 ) -> list[dict[str, object]]:
-    """Return only the final batch result slot, compacting its dict payload if present."""
+    """Return only the final batch result slot, compacting its payload within max_bytes."""
     if not result_slots:
         return []
     final_slot = dict(result_slots[-1])
@@ -177,6 +179,16 @@ def compact_final_batch_response(
     if isinstance(payload, dict):
         from tensor_grep.cli.mcp_compact import compact_mcp_json_result
 
-        compacted = json.loads(compact_mcp_json_result(json.dumps(payload)))
+        compacted = json.loads(
+            compact_mcp_json_result(json.dumps(payload), max_bytes=max(128, max_bytes))
+        )
         final_slot["result"] = compacted
+    elif isinstance(payload, str):
+        encoded = payload.encode("utf-8")
+        if len(encoded) > max_bytes:
+            keep = max(0, max_bytes - 32)
+            final_slot["result"] = (
+                encoded[:keep].decode("utf-8", errors="ignore") + "\n...[truncated]"
+            )
+            final_slot["result_incomplete"] = True
     return [final_slot]

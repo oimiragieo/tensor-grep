@@ -25,17 +25,6 @@ from tensor_grep.cli.mcp_batch_supervisor import (
 )
 from tensor_grep.cli.mcp_search_bounds import mcp_plain_search_output_is_incomplete
 
-BatchQueriesWire = Annotated[
-    object,
-    Field(
-        json_schema_extra={
-            "type": "array",
-            "items": {"type": "object", "additionalProperties": True},
-            "maxItems": 16,
-        },
-    ),
-]
-
 _KIND_TO_TOOL = {
     "search": "tg_search",
     "find": "tg_find",
@@ -43,8 +32,33 @@ _KIND_TO_TOOL = {
     "refs": "tg_symbol_refs",
     "callers": "tg_symbol_callers",
     "source": "tg_symbol_source",
+    "orient": "tg_orient",
+    "blast_radius": "tg_symbol_blast_radius",
+    "edit_plan": "tg_edit_plan",
+    "capsule": "tg_agent_capsule",
+    "importers": "tg_file_importers",
+    "scan": "tg_ruleset_scan",
+    "sql": "tg_sql",
 }
-_DEADLINE_KINDS = {"find", "refs", "callers"}
+_DEADLINE_KINDS = {"find", "refs", "callers", "blast_radius", "importers", "capsule", "sql"}
+
+BatchQueriesWire = Annotated[
+    object,
+    Field(
+        json_schema_extra={
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "kind": {"type": "string", "enum": sorted(_KIND_TO_TOOL)},
+                },
+                "required": ["id", "kind"],
+            },
+            "maxItems": 16,
+        },
+    ),
+]
 _BATCH_SLOTS = threading.BoundedSemaphore(4)
 _MAX_BATCH_RESPONSE_BYTES = 64 * 1024 * 1024
 _BATCH_RESPONSE_LIMIT_MESSAGE = "tool result exceeded the batch response size limit"
@@ -614,6 +628,26 @@ def run_tg_batch(
             result_incomplete=True,
         )
     response = json.dumps(payload, indent=2)
+    if return_final_only and len(response) > 4000:
+        # Enforce <= 4,000 B total response for return_final_only including outer envelope.
+        for inner_budget in (3200, 2400, 1600, 800, 256):
+            compacted_results = compact_final_batch_response(result_slots, max_bytes=inner_budget)
+            candidate_payload = _response_payload(
+                server, compacted_results, result_incomplete=overall_incomplete
+            )
+            candidate_response = json.dumps(candidate_payload, indent=2)
+            if len(candidate_response) <= 4000:
+                response = candidate_response
+                break
+        else:
+            response = json.dumps(
+                _response_payload(
+                    server,
+                    compact_final_batch_response(result_slots, max_bytes=128),
+                    result_incomplete=True,
+                ),
+                indent=2,
+            )
     if len(response) > _MAX_BATCH_RESPONSE_BYTES:
         # ensure_ascii=True makes len(response) the UTF-8 byte count without an extra copy.
         payload = {

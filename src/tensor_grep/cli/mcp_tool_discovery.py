@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -354,6 +355,15 @@ def compute_intent_schema_overlap(query_tokens: Sequence[str], entry: _CatalogEn
     return min(1.0, iso)
 
 
+def _legacy_tools_enabled() -> bool:
+    return os.environ.get("TG_MCP_LEGACY_TOOLS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _score_entries(
     query_tokens: list[str], entries: Sequence[_CatalogEntry]
 ) -> tuple[list[float], list[float]]:
@@ -386,12 +396,14 @@ def _score_entries(
         iso_scores.append(compute_intent_schema_overlap(list(unique_q), entry))
 
     max_bm25 = max(bm25_raw, default=0.0)
+    legacy_enabled = _legacy_tools_enabled()
+    compact_boost = 0.05 if legacy_enabled else 0.25
     combined: list[float] = []
     for entry, bm25, iso in zip(entries, bm25_raw, iso_scores, strict=True):
         bm25_norm = (bm25 / max_bm25) if max_bm25 > 0.0 else 0.0
         score = 0.45 * bm25_norm + 0.55 * iso
         if not entry.is_legacy and score > 0.0:
-            score += 0.05
+            score += compact_boost
         combined.append(score)
     return combined, iso_scores
 

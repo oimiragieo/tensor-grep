@@ -649,7 +649,40 @@ def resolve_constant_blast_radius(
                 max_depth=max(0, max_depth - 1),
                 deadline_monotonic=deadline_monotonic,
             )
+            unrelated_coverage_gap = False
             if (
+                sub_radius.get("result_incomplete")
+                and sub_radius.get("incomplete_reason_class") == "coverage_gap"
+                and not sub_radius.get("no_match")
+                and not sub_radius.get("partial")
+                and not sub_radius.get("incomplete")
+            ):
+                gap_rows = sub_radius.get("resolution_gaps")
+                if isinstance(gap_rows, list) and gap_rows:
+                    unrelated_coverage_gap = True
+                    for gap in gap_rows:
+                        if not isinstance(gap, dict):
+                            unrelated_coverage_gap = False
+                            break
+                        sample = gap.get("files_sample")
+                        affected_count = int(gap.get("files_affected", 0) or 0)
+                        if not isinstance(sample, list) or affected_count > len(sample):
+                            unrelated_coverage_gap = False
+                            break
+                        for rel_gap_file in sample:
+                            gap_path = Path(str(rel_gap_file))
+                            if not gap_path.is_absolute():
+                                gap_path = root / gap_path
+                            try:
+                                if repo_map._file_may_contain_literal_symbol(gap_path, fn_name):
+                                    unrelated_coverage_gap = False
+                                    break
+                            except OSError:
+                                unrelated_coverage_gap = False
+                                break
+                        if not unrelated_coverage_gap:
+                            break
+            if not unrelated_coverage_gap and (
                 sub_radius.get("no_match")
                 or sub_radius.get("partial")
                 or sub_radius.get("result_incomplete")

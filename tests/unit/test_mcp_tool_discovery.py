@@ -169,3 +169,16 @@ def test_tg_discover_tools_includes_state_preconditions_and_next_steps() -> None
         assert isinstance(tool["session_actions_requiring_session"], list)
         assert isinstance(tool["next_steps"], list)
         assert all(isinstance(step, str) for step in tool["next_steps"])
+
+
+def test_tg_discover_tools_ranks_active_compact_tools_ahead_of_disabled_legacy(
+    monkeypatch,
+) -> None:
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_LEGACY_TOOLS", "0")
+    payload = json.loads(mcp_server.tg_discover_tools("blast radius callers symbol", limit=4))
+    names = [tool["name"] for tool in payload["tools"]]
+    assert "tg_impact" in names
+    assert "tg_symbol_blast_radius" in names
+    assert names.index("tg_impact") < names.index("tg_symbol_blast_radius")

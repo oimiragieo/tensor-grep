@@ -1215,6 +1215,22 @@ def _gc_orphaned_blobs(root: Path, live_records: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _infer_artifact_symbol(artifact: dict[str, Any]) -> str | None:
+    """Extract a symbol name from an evidence receipt, NL capsule, or blast-radius artifact."""
+    blast_radius = artifact.get("blast_radius")
+    primary_target = artifact.get("primary_target")
+    call_site_evidence = artifact.get("call_site_evidence")
+    for candidate in (
+        artifact.get("symbol"),
+        blast_radius.get("symbol") if isinstance(blast_radius, dict) else None,
+        primary_target.get("symbol") if isinstance(primary_target, dict) else None,
+        call_site_evidence.get("symbol") if isinstance(call_site_evidence, dict) else None,
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
 def record_finding(
     path: str,
     *,
@@ -1267,7 +1283,9 @@ def record_finding(
             key_id = candidate_key_id
 
     resolved_agent_id = resolve_agent_id(agent_id)
-    resolved_symbol = symbol.strip() if symbol and symbol.strip() else None
+    resolved_symbol = (
+        symbol.strip() if symbol and symbol.strip() else _infer_artifact_symbol(artifact)
+    )
     resolved_ttl = _configured_finding_ttl_seconds(ttl_seconds)
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=resolved_ttl)
