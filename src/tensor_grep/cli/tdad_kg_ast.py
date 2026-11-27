@@ -1002,12 +1002,14 @@ def build_change_slice_from_manifest(
         )
         seen_callers: set[tuple[str, str, int]] = set()
         seen_names: list[str] = []
+        omitted_symbols: list[str] = []
         for sym in changed_symbols:
             sym_name = str(sym["name"])
             if sym_name not in seen_names:
-                seen_names.append(sym_name)
-                if len(seen_names) >= 20:
-                    break
+                if len(seen_names) < 20:
+                    seen_names.append(sym_name)
+                elif sym_name not in omitted_symbols:
+                    omitted_symbols.append(sym_name)
         for sym_name in seen_names:
             radius = repo_map.build_symbol_blast_radius_from_map(repo_map_payload, sym_name)
             for caller in radius.get("callers", []):
@@ -1026,7 +1028,7 @@ def build_change_slice_from_manifest(
                 affected_files.add(_norm_path(str(af), repo_root=root))
         for test_hit in tdad_tests:
             affected_files.add(_norm_path(str(test_hit["test_file"]), repo_root=root))
-    return extract_change_directed_slice(
+    result_slice = extract_change_directed_slice(
         changed_files,
         changed_symbols,
         callers,
@@ -1034,3 +1036,10 @@ def build_change_slice_from_manifest(
         tdad_tests,
         repo_root=root,
     )
+    if omitted_symbols:
+        result_slice["omitted_symbols_count"] = len(omitted_symbols)
+        result_slice["result_incomplete"] = True
+        result_slice["omissions"] = [
+            f"{len(omitted_symbols)} changed symbols omitted past the 20-symbol caller expansion limit"
+        ]
+    return result_slice

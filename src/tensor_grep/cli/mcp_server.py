@@ -179,7 +179,7 @@ def _mcp_server_version() -> str:
 # Earlier contracts added primary path confinement, tools, and task-shaped meta-tools.
 # Pass-through producers are public MCP wire surfaces; review their payload changes too.
 # compact outputSchema, tg_session preconditions & safety notes
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.29.0"
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.30.0"
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

@@ -105,14 +105,18 @@ def file_size_with_receipt(path: Path) -> int:
 
 
 def decode_source_bytes(raw: bytes, *, encoding: str = "utf-8") -> str:
-    """Decode UTF-16LE/BE BOM, UTF-8 BOM, UTF-8, or Latin-1 source bytes cleanly."""
-    if raw.startswith(b"\xff\xfe"):
-        return raw[2:].decode("utf-16-le")
-    if raw.startswith(b"\xfe\xff"):
-        return raw[2:].decode("utf-16-be")
-    if raw.startswith(b"\xef\xbb\xbf"):
-        return raw[3:].decode("utf-8")
+    """Decode UTF-32/UTF-16/UTF-8 BOM, UTF-8, or Latin-1 source bytes cleanly."""
     try:
+        if raw.startswith(b"\xff\xfe\x00\x00"):
+            return raw[4:].decode("utf-32-le")
+        if raw.startswith(b"\x00\x00\xfe\xff"):
+            return raw[4:].decode("utf-32-be")
+        if raw.startswith(b"\xff\xfe"):
+            return raw[2:].decode("utf-16-le")
+        if raw.startswith(b"\xfe\xff"):
+            return raw[2:].decode("utf-16-be")
+        if raw.startswith(b"\xef\xbb\xbf"):
+            return raw[3:].decode("utf-8")
         return raw.decode(encoding)
     except UnicodeDecodeError:
         return raw.decode("latin-1")

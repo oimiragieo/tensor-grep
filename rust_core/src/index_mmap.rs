@@ -209,7 +209,7 @@ impl MmapIndex {
             }
         }
 
-        let tag = compute_hmac(&buf[..trigram_table_offset])?;
+        let tag = compute_hmac(&buf[..payload_len])?;
         buf[payload_len..payload_len + MMAP_HMAC_LEN].copy_from_slice(&tag);
         Ok(buf)
     }
@@ -238,6 +238,14 @@ impl MmapIndex {
     }
 
     pub fn from_file(file: &fs::File) -> Result<Self> {
+        const MAX_MMAP_INDEX_BYTES: u64 = 1024 * 1024 * 1024;
+        const MAX_MMAP_FILE_COUNT: usize = 10_000_000;
+        const MAX_MMAP_TRIGRAM_COUNT: usize = 16_777_216;
+
+        let file_len = file.metadata()?.len();
+        if file_len > MAX_MMAP_INDEX_BYTES {
+            anyhow::bail!("mmap index file exceeds {MAX_MMAP_INDEX_BYTES} byte limit");
+        }
         let mmap = unsafe { MmapOptions::new().map(file)? };
         if mmap.len() < MMAP_HEADER_LEN + MMAP_HMAC_LEN {
             anyhow::bail!("mmap index file is truncated");
@@ -261,13 +269,28 @@ impl MmapIndex {
         let postings_offset = read_u64_at(&mmap, 64) as usize;
         let payload_len = read_u64_at(&mmap, 72) as usize;
 
+        if file_count > MAX_MMAP_FILE_COUNT {
+            anyhow::bail!("mmap index file_count exceeds limit");
+        }
+        if trigram_count > MAX_MMAP_TRIGRAM_COUNT {
+            anyhow::bail!("mmap index trigram_count exceeds limit");
+        }
         if payload_len.checked_add(MMAP_HMAC_LEN) != Some(mmap.len()) {
             anyhow::bail!("mmap index payload length mismatch");
         }
         if trigram_table_offset > postings_offset || postings_offset > payload_len {
             anyhow::bail!("mmap index section offsets out of bounds");
         }
-        verify_hmac(&mmap[..trigram_table_offset], &mmap[payload_len..])?;
+        let trigram_table_end = trigram_table_offset
+            .checked_add(
+                trigram_count
+                    .checked_mul(MMAP_TRIGRAM_RECORD_LEN)
+                    .ok_or_else(|| anyhow::anyhow!("mmap index trigram count overflow"))?,
+            )
+            .filter(|&end| end <= postings_offset)
+            .ok_or_else(|| anyhow::anyhow!("mmap index trigram table out of bounds"))?;
+        let _ = trigram_table_end;
+        verify_hmac(&mmap[..payload_len], &mmap[payload_len..])?;
 
         let root_end = canonical_root_offset
             .checked_add(canonical_root_len)
@@ -543,8 +566,10 @@ impl MmapIndex {
         lists.sort_unstable_by_key(|&(_, count)| count);
 
         let (first_off, first_count) = lists[0];
-        let mut candidates: Vec<(u32, u32)> = Vec::with_capacity(first_count);
-        for i in 0..first_count {
+        let max_possible = (self.payload_len.saturating_sub(first_off)) / 8;
+        let bounded_count = first_count.min(max_possible);
+        let mut candidates: Vec<(u32, u32)> = Vec::with_capacity(bounded_count);
+        for i in 0..bounded_count {
             candidates.push(self.posting_at(first_off, i));
         }
 
@@ -818,5 +843,21 @@ mod tests {
             "warm mmap index query took {:?}, expected < 0.15s",
             warm_elapsed
         );
+    }
+
+    #[test]
+    fn index_mmap_integrity_rejects_tampered_postings() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.rs"), "fn alpha_needle() {}\n").unwrap();
+        let trigram_index = TrigramIndex::build(root).unwrap();
+        let mmap_path = root.join("tamper.tg_index.mmap");
+        let (croot, fp, no_ignore, files, postings) = trigram_index.mmap_parts();
+        let mut bytes =
+            MmapIndex::serialize_from_parts(croot, fp, no_ignore, files, postings).unwrap();
+        let trigram_off = read_u64_at(&bytes, 56) as usize;
+        bytes[trigram_off] ^= 0xFF;
+        fs::write(&mmap_path, &bytes).unwrap();
+        assert!(MmapIndex::open_confined(&mmap_path).is_err());
     }
 }

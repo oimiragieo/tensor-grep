@@ -119,15 +119,28 @@ fn format_walked_path(path: &Path, strip_dot_prefix: bool) -> String {
     display.to_string_lossy().into_owned()
 }
 
+pub(crate) fn supports_native_files_search(args: &SearchArgs) -> bool {
+    args.file_type.is_empty()
+        && args.sort.is_none()
+        && args.gpu_device_ids.is_empty()
+        && !args.json
+        && !args.ndjson
+        && !args.vimgrep
+        && !args.count
+        && !args.files_with_matches
+        && !args.files_without_match
+        && !args.pcre2
+}
+
 pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     let paths = collect_files_paths(args);
     let hidden = args.hidden && !args.no_hidden;
     let bounded = !args.globs.is_empty() || args.max_depth.is_some();
-    if !args.allow_broad_generated_scan
-        && !bounded
-        && (hidden || args.no_ignore || args.no_ignore_files || args.no_ignore_vcs)
-    {
-        let generated_dirs = generated_scan_dir_names(&paths, true);
+    if !args.allow_broad_generated_scan && !bounded {
+        let check_nested = hidden || args.no_ignore || args.no_ignore_files || args.no_ignore_vcs;
+        let generated_dirs = generated_scan_dir_names(&paths, check_nested);
         if !generated_dirs.is_empty() {
             eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
             std::process::exit(2);
@@ -206,51 +219,77 @@ pub(crate) fn run_native_files_search(args: &SearchArgs) -> Result<()> {
         );
     }
 
-    struct ThreadFiles<'a> {
-        local: Vec<String>,
-        shared: &'a Mutex<Vec<String>>,
+    let terminator = if args.null {
+        b"\0".as_slice()
+    } else {
+        b"\n".as_slice()
+    };
+    let writer = Mutex::new(BufWriter::new(io::stdout()));
+    let emitted = AtomicUsize::new(0);
+    let errors = AtomicUsize::new(0);
+
+    struct ThreadBuf<'a> {
+        local: Vec<u8>,
+        shared: &'a Mutex<BufWriter<io::Stdout>>,
+        emitted: &'a AtomicUsize,
+        errors: &'a AtomicUsize,
+        terminator: &'static [u8],
     }
 
-    impl Drop for ThreadFiles<'_> {
+    impl Drop for ThreadBuf<'_> {
         fn drop(&mut self) {
             if !self.local.is_empty() {
                 if let Ok(mut guard) = self.shared.lock() {
-                    guard.append(&mut self.local);
+                    let _ = guard.write_all(&self.local);
                 }
             }
         }
     }
 
-    let collected = Mutex::new(Vec::<String>::new());
     builder.build_parallel().run(|| {
-        let mut state = ThreadFiles {
-            local: Vec::new(),
-            shared: &collected,
+        let mut state = ThreadBuf {
+            local: Vec::with_capacity(8192),
+            shared: &writer,
+            emitted: &emitted,
+            errors: &errors,
+            terminator,
         };
         Box::new(move |entry| {
-            if let Ok(entry) = entry {
-                if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                    state
-                        .local
-                        .push(format_walked_path(entry.path(), strip_dot_prefix));
+            match entry {
+                Ok(entry) => {
+                    if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                        let formatted = format_walked_path(entry.path(), strip_dot_prefix);
+                        state.local.extend_from_slice(formatted.as_bytes());
+                        state.local.extend_from_slice(state.terminator);
+                        state.emitted.fetch_add(1, Ordering::Relaxed);
+                        if state.local.len() >= 16384 {
+                            if let Ok(mut guard) = state.shared.lock() {
+                                let _ = guard.write_all(&state.local);
+                            }
+                            state.local.clear();
+                        }
+                    }
+                }
+                Err(err) => {
+                    if state.errors.fetch_add(1, Ordering::Relaxed) < 5 {
+                        eprintln!("tg: file walk error: {err}");
+                    }
                 }
             }
             WalkState::Continue
         })
     });
 
-    let files = collected.into_inner().unwrap_or_default();
-    if files.is_empty() {
-        std::process::exit(1);
+    if let Ok(mut guard) = writer.lock() {
+        guard.flush()?;
     }
-
-    let stdout = io::stdout();
-    let mut writer = BufWriter::new(stdout.lock());
-    let terminator = if args.null { "\0" } else { "\n" };
-    for file in &files {
-        writer.write_all(file.as_bytes())?;
-        writer.write_all(terminator.as_bytes())?;
+    let total_emitted = emitted.load(Ordering::Relaxed);
+    let total_errors = errors.load(Ordering::Relaxed);
+    if total_errors > 0 {
+        eprintln!("tg: {total_errors} traversal error(s) encountered during --files walk");
     }
-    writer.flush()?;
+    if total_emitted == 0 {
+        std::process::exit(if total_errors > 0 { 2 } else { 1 });
+    }
     Ok(())
 }

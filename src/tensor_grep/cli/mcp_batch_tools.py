@@ -628,26 +628,43 @@ def run_tg_batch(
             result_incomplete=True,
         )
     response = json.dumps(payload, indent=2)
-    if return_final_only and len(response) > 4000:
+    if return_final_only and len(response.encode("utf-8")) > 4000:
         # Enforce <= 4,000 B total response for return_final_only including outer envelope.
-        for inner_budget in (3200, 2400, 1600, 800, 256):
+        for inner_budget in (3200, 2400, 1600, 800, 256, 64):
             compacted_results = compact_final_batch_response(result_slots, max_bytes=inner_budget)
             candidate_payload = _response_payload(
                 server, compacted_results, result_incomplete=overall_incomplete
             )
             candidate_response = json.dumps(candidate_payload, indent=2)
-            if len(candidate_response) <= 4000:
+            if len(candidate_response.encode("utf-8")) <= 4000:
                 response = candidate_response
                 break
         else:
-            response = json.dumps(
-                _response_payload(
-                    server,
-                    compact_final_batch_response(result_slots, max_bytes=128),
-                    result_incomplete=True,
-                ),
-                indent=2,
+            minimal_payload = _response_payload(
+                server,
+                [
+                    {
+                        "id": str(item.get("id", ""))[:64],
+                        "kind": str(item.get("kind", "")),
+                        "result_incomplete": True,
+                        "compact_truncated": True,
+                    }
+                    for item in compacted_results[-1:]
+                ],
+                result_incomplete=True,
             )
+            response = json.dumps(minimal_payload, indent=2)
+            if len(response.encode("utf-8")) > 4000:
+                response = json.dumps(
+                    {
+                        "version": 1,
+                        "mcp_contract_version": server._TG_MCP_SERVER_CONTRACT_VERSION,
+                        "results": [],
+                        "result_incomplete": True,
+                        "compact_truncated": True,
+                    },
+                    indent=2,
+                )
     if len(response) > _MAX_BATCH_RESPONSE_BYTES:
         # ensure_ascii=True makes len(response) the UTF-8 byte count without an extra copy.
         payload = {

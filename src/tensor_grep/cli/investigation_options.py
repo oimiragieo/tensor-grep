@@ -91,6 +91,11 @@ def apply_semantic_zero_match_bm25_fallback(
     set_fallback_reason_fn: object,
 ) -> None:
     """Populate BM25 lexical hits when ``tg search --semantic`` found 0 literal regex matches."""
+    from tensor_grep.core.retrieval_dense import dense_available
+
+    available, _reason = dense_available()
+    if available:
+        return
     if callable(set_fallback_reason_fn):
         set_fallback_reason_fn(all_results)
     if not candidate_files_ordered:

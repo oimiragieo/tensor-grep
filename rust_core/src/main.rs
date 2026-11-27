@@ -1487,8 +1487,13 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         Vec::new()
     };
     if !generated_dirs.is_empty() {
-        eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
-        return Ok(Some(2));
+        let msg = format_broad_generated_scan_error(&generated_dirs);
+        exit_structured_search_error_if_needed(
+            rg_args.json,
+            false,
+            "broad_generated_scan_refused",
+            &msg,
+        );
     }
 
     let exit_code = match execute_ripgrep_search(&rg_args) {
@@ -9530,7 +9535,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    if args.files {
+    if args.files && search_files::supports_native_files_search(&args) {
         return search_files::run_native_files_search(&args);
     }
 
@@ -9567,8 +9572,13 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     {
         let generated_dirs = generated_scan_dir_names(&request.paths, false);
         if !generated_dirs.is_empty() {
-            eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
-            std::process::exit(2);
+            let msg = format_broad_generated_scan_error(&generated_dirs);
+            exit_structured_search_error_if_needed(
+                args.json,
+                args.ndjson,
+                "broad_generated_scan_refused",
+                &msg,
+            );
         }
     }
 

@@ -576,8 +576,21 @@ def run_index_vs_rg(
 
     rg_median = rg_res.get("median_s")
     tg_median = tg_res.get("median_s")
+    matches_equal = tg_payload is not None and rg_sigs == tg_sigs
+    files_equal = tg_payload is not None and rg_files == tg_files
+    tg_ok = tg_res.get("status") == "OK" and tg_res.get("exit_code") in (0, 1)
+    rg_ok = rg_res.get("status") == "OK" and rg_res.get("exit_code") in (0, 1)
+    index_route = (
+        str(tg_payload.get("routing_reason") or tg_payload.get("routing_backend") or "")
+        if isinstance(tg_payload, dict)
+        else ""
+    )
     strictly_faster = (
-        _is_valid_positive_finite_seconds(rg_median)
+        tg_ok
+        and rg_ok
+        and matches_equal
+        and files_equal
+        and _is_valid_positive_finite_seconds(rg_median)
         and _is_valid_positive_finite_seconds(tg_median)
         and float(tg_median) < float(rg_median)
     )
@@ -592,6 +605,10 @@ def run_index_vs_rg(
         "benchmark": "dyno_ratchet_index_vs_rg",
         "repo_root": target,
         "pattern": pattern,
+        "tg_bin": tg_bin,
+        "index_route": index_route,
+        "matches_equal": matches_equal,
+        "files_equal": files_equal,
         "rg": {
             "status": rg_res["status"],
             "exit_code": rg_res.get("exit_code"),
@@ -606,8 +623,6 @@ def run_index_vs_rg(
             "match_count": len(tg_sigs),
             "file_count": len(tg_files),
         },
-        "matches_equal": tg_payload is not None and tg_sigs == rg_sigs,
-        "files_equal": tg_payload is not None and tg_files == rg_files,
         "strictly_faster": strictly_faster,
         "speedup": speedup,
     }

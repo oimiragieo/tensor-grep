@@ -241,7 +241,7 @@ Recommended consumer behavior:
 
 ## End-to-End MCP Flow
 
-By default (`TG_MCP_LEGACY_TOOLS=0`, contract `1.29.0`), `tg mcp` exposes **15 compact tools** (10 task-shaped meta-tools + 4 always-on tools + `tg_discover_tools`). Prefer the compact meta-tools and `tg_batch` chaining below; set `TG_MCP_LEGACY_TOOLS=1` only when an older client needs the 46 gated legacy tool names (61 tools total).
+By default (`TG_MCP_LEGACY_TOOLS=0`, contract `1.30.0`), `tg mcp` exposes **15 compact tools** (10 task-shaped meta-tools + 4 always-on tools + `tg_discover_tools`). Prefer the compact meta-tools and `tg_batch` chaining below; set `TG_MCP_LEGACY_TOOLS=1` only when an older client needs the 46 gated legacy tool names (61 tools total).
 
 Default compact MCP chain:
 
@@ -603,7 +603,7 @@ Read stdout line-by-line and parse each row independently.
 
 Use MCP when the consumer speaks tool calls instead of shelling out directly.
 
-Default 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=0`, contract `1.29.0`):
+Default 15-tool compact surface (`TG_MCP_LEGACY_TOOLS=0`, contract `1.30.0`):
 
 - Always-on: `tg_mcp_capabilities`, `tg_batch`, `tg_classify_logs`, `tg_discover_tools`
 - Task-shaped meta-tools (`action=...`): `tg_explore`, `tg_query`, `tg_navigate`, `tg_impact`, `tg_context`, `tg_session`, `tg_scan`, `tg_rewrite`, `tg_audit`, `tg_checkpoint`
