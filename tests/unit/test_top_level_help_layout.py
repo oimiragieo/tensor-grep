@@ -7,7 +7,12 @@ from click import Command
 from click.testing import CliRunner
 from typer.main import get_command
 
-from tensor_grep.cli.help_catalog import HELP_FOOTER, HELP_SUMMARY, TopLevelHelpGroup
+from tensor_grep.cli.help_catalog import (
+    CORE_WORKFLOW_COMMANDS,
+    HELP_FOOTER,
+    HELP_SUMMARY,
+    TopLevelHelpGroup,
+)
 from tensor_grep.cli.main import app, main_entry
 
 EXPECTED_PUBLIC_COMMANDS = frozenset(
@@ -35,9 +40,30 @@ def _command_rows(output: str) -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize("width", [80, 120])
-def test_RenderRootHelp_SupportedWidth_ShowsCommandsOnceInOrder(width):
+def test_RenderRootHelp_SupportedWidth_ShowsCoreWorkflowConcise(width):
     command_group = get_command(app)
     result = CliRunner().invoke(command_group, ["--help"], terminal_width=width)
+    output = result.output
+    rendered_commands = _command_rows(output)
+
+    assert result.exit_code == 0
+    assert len(output.splitlines()) <= 45
+    assert rendered_commands == CORE_WORKFLOW_COMMANDS
+    assert "--help-all" in output
+    assert "Core workflow:" in output
+    assert "**" not in output and "`" not in output and "\b" not in output
+    assert "TG_SIDECAR_PYTHON" not in output
+    assert "  tg search -F TODO src" in output.splitlines()
+    assert "  tg callers src create_invoice --json" in output.splitlines()
+    assert '  tg prepare src "add invoice tax" --json' in output.splitlines()
+    assert "  tg mcp" in output.splitlines()
+    assert max(map(len, output.splitlines())) <= width
+
+
+@pytest.mark.parametrize("width", [80, 120])
+def test_RenderRootHelpAll_SupportedWidth_ShowsCommandsOnceInOrder(width):
+    command_group = get_command(app)
+    result = CliRunner().invoke(command_group, ["--help-all"], terminal_width=width)
     output = result.output
     rendered_commands = _command_rows(output)
 
@@ -56,19 +82,13 @@ def test_RenderRootHelp_SupportedWidth_ShowsCommandsOnceInOrder(width):
     )
     assert "**" not in output and "`" not in output and "\b" not in output
     assert "TG_SIDECAR_PYTHON" not in output
-    assert "  tg search -F TODO src" in output.splitlines()
-    assert "  tg callers src create_invoice --json" in output.splitlines()
-    assert '  tg prepare src "add invoice tax" --json' in output.splitlines()
-    assert "  tg mcp" in output.splitlines()
     assert output.index("Examples:") < output.index("Options:")
     assert output.index("Options:") < output.index("Search and structure:")
-    assert output.index("Operations:") < output.index(
-        "Search supports a validated rg-compatible subset."
-    )
+    assert output.index("Operations:") < output.index("Use tg --help-all for all commands")
     assert max(map(len, output.splitlines())) <= width
 
 
-def test_RenderRootHelp_NoArguments_ShowsCompleteSurface(monkeypatch, capsys):
+def test_RenderRootHelp_NoArguments_ShowsCoreWorkflow(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["tg"])
 
     with pytest.raises(SystemExit) as exited:
@@ -77,6 +97,19 @@ def test_RenderRootHelp_NoArguments_ShowsCompleteSurface(monkeypatch, capsys):
 
     assert exited.value.code == 0
     assert "Usage: tg" in captured.out and captured.err == ""
+    rendered_commands = _command_rows(captured.out)
+    assert rendered_commands == CORE_WORKFLOW_COMMANDS
+    assert len(captured.out.splitlines()) <= 45
+
+
+def test_RenderRootHelpAll_ArgvRouting_ShowsCompleteSurface(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["tg", "--help-all"])
+
+    with pytest.raises(SystemExit) as exited:
+        main_entry()
+    captured = capsys.readouterr()
+
+    assert exited.value.code == 0
     rendered_commands = _command_rows(captured.out)
     assert set(rendered_commands) == EXPECTED_PUBLIC_COMMANDS
     assert len(rendered_commands) == 58
@@ -97,7 +130,11 @@ def test_RenderRootHelp_LongDescription_StaysOnOneLine(width):
         Command("long-description-command", short_help="A registered short help sentence " * 8)
     )
 
-    output = CliRunner().invoke(group, ["--help"], terminal_width=width).output
+    output = (
+        CliRunner()
+        .invoke(group, ["--help"], terminal_width=width, obj={"show_all_commands": True})
+        .output
+    )
     lines = output.splitlines()
     rows = tuple(re.findall(r"(?m)^  long-description-command[^\n]*", output))
 
@@ -113,7 +150,11 @@ def test_RenderRootHelp_HiddenAndFutureCommands_PreservesVisibility():
     group.add_command(Command("hidden-command", help="Hidden command.", hidden=True))
     group.add_command(Command("future-visible", help="Future command."))
 
-    output = CliRunner().invoke(group, ["--help"], terminal_width=80).output
+    output = (
+        CliRunner()
+        .invoke(group, ["--help"], terminal_width=80, obj={"show_all_commands": True})
+        .output
+    )
 
     assert _command_rows(output) == ("search", "future-visible")
     assert output.index("Operations:") < output.index("future-visible")
