@@ -1799,7 +1799,7 @@ jobs:
             acceleration: cpu
             cargo_args: --no-default-features
             asset_name: tg-macos-amd64-cpu
-          - os: macos-14
+          - os: macos-latest
             acceleration: cpu
             cargo_args: --no-default-features
             asset_name: tg-macos-arm64-cpu
