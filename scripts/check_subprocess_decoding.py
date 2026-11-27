@@ -1166,9 +1166,9 @@ def check_repository(rows: list[Sink]) -> list[str]:
         problems.append(
             f"production callsite identity/fingerprint manifest changed; missing={missing}; added={added}; changed={changed}"
         )
-    if len(rows) != 90:
+    if len(rows) != 92:
         problems.append(
-            f"production output-capable sink population changed: expected 90, found {len(rows)}"
+            f"production output-capable sink population changed: expected 92, found {len(rows)}"
         )
     generated = [row for row in rows if row.generated_from is not None]
     if len(generated) != 12:
@@ -1176,7 +1176,7 @@ def check_repository(rows: list[Sink]) -> list[str]:
             f"embedded subprocess population changed: expected 12, found {len(generated)}"
         )
     expected_launches = {
-        "cli/main.py::<-c:": 10,
+        "cli/routers/upgrade.py::<-c:": 10,
         "cli/windows_launcher.py::<-c:": 2,
     }
     for launch, expected in expected_launches.items():

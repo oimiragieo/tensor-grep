@@ -80,6 +80,7 @@ def _seed_larger_candidates(
     deadline_monotonic: float | None = None,
 ) -> tuple[list[Path], bool]:
     from tensor_grep.cli import repo_map as _repo_map
+    from tensor_grep.cli.frontdoor_hops import probe_env
     from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
     terms = _larger_query_terms(query)
@@ -95,6 +96,7 @@ def _seed_larger_candidates(
         pattern = "|".join(re.escape(t) for t in terms)
         native_tg = resolve_native_tg_binary()
         rg_bin = None if native_tg is not None else resolve_ripgrep_binary()
+        child_env = probe_env() if native_tg is not None else None
         cmd = (
             [str(native_tg), "search", "-i", "-l", pattern, str(root)]
             if native_tg is not None
@@ -106,6 +108,7 @@ def _seed_larger_candidates(
             try:
                 proc = subprocess.run(
                     cmd,
+                    env=child_env,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
@@ -138,6 +141,7 @@ def _seed_larger_candidates(
                 try:
                     def_proc = subprocess.run(
                         def_cmd,
+                        env=child_env,
                         capture_output=True,
                         text=True,
                         encoding="utf-8",

@@ -218,58 +218,46 @@ def _truncated() -> dict[str, Any]:
 
 
 def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
-    source = _MAIN.read_text(encoding="utf-8")
-    lines = source.splitlines()
-    gates: list[tuple[int, str, str | None, str | None]] = []
-    for i, line in enumerate(lines):
-        if not line.strip().startswith("if "):
-            continue
-        m = re.search(r"_scan_incomplete\((\w+)\)", line)
-        # A GATE is defined by BEHAVIOUR -- it exits 2 -- not by mentioning `_scan_incomplete`.
-        # Two other uses exist and neither owes a disclosure: this file's own helper guards on it
-        # (`if not _scan_incomplete(...): return False`) and `_scan_truncation_warning` ends with
-        # a fail-closed tail that RETURNS a message on it. An earlier cut exempted the first by
-        # name; the second then appeared from another PR and was flagged as a missing disclosure
-        # in the one function whose entire job is producing that disclosure.
-        #
-        # Keying on `typer.Exit(2)` in the body is self-maintaining: a new non-gate use needs no
-        # exemption, and a new real gate cannot dodge the check by living somewhere unexpected.
-        # 8 lines, not 4: the two `agent` gates put `raise typer.Exit(2)` 5-7 lines below their
-        # `if`, and a 4-line window silently dropped BOTH -- the ratchet covering less while
-        # still reading green, which is exactly the failure this file warns about elsewhere.
-        # Caught by the control arm naming 9 gates where the previous form named 12.
-        body = "\n".join(lines[i : i + 8])
-        if "Exit(2)" not in body:
-            continue
-        if m:
-            gates.append((i, m.group(1), None, None))
-            continue
+    scanned_paths = [_MAIN, *sorted((_MAIN.parent / "routers").glob("*.py"))]
+    gates: list[tuple[Path, str, list[str], int, str, str | None, str | None]] = []
+    for path in scanned_paths:
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for i, line in enumerate(lines):
+            if not line.strip().startswith("if "):
+                continue
+            m = re.search(r"_scan_incomplete\((\w+)\)", line)
+            body = "\n".join(lines[i : i + 8])
+            if "Exit(2)" not in body:
+                continue
+            if m:
+                gates.append((path, source, lines, i, m.group(1), None, None))
+                continue
 
-        # The shared annotation path classifies the same payload once, then gates on the
-        # returned boolean. Preserve that dataflow in the ratchet instead of exempting the
-        # command by name: payload -> annotation -> is_truncation -> Exit(2), with disclosure
-        # rendered from the paired caveat value.
-        condition = re.fullmatch(r"if (\w+):", line.strip())
-        if condition is None:
-            continue
-        start = next((j for j in range(i, 0, -1) if lines[j].startswith("def ")), 0)
-        before_gate = "\n".join(lines[start:i])
-        annotation = re.search(
-            rf"(\w+),\s*{re.escape(condition.group(1))}\s*=\s*"
-            r"_annotate_result_completeness\((\w+)\)",
-            before_gate,
-        )
-        if annotation:
-            gates.append((i, annotation.group(2), annotation.group(1), condition.group(1)))
-    # PREMISE: the gates still exist and are plural. If a refactor renamed them this test would
-    # otherwise pass over an empty list -- a ratchet that quietly covers nothing still reads green.
+            condition = re.fullmatch(r"if (\w+):", line.strip())
+            if condition is None:
+                continue
+            start = next((j for j in range(i, 0, -1) if lines[j].startswith("def ")), 0)
+            before_gate = "\n".join(lines[start:i])
+            annotation = re.search(
+                rf"(\w+),\s*{re.escape(condition.group(1))}\s*=\s*"
+                r"_annotate_result_completeness\((\w+)\)",
+                before_gate,
+            )
+            if annotation:
+                gates.append((
+                    path,
+                    source,
+                    lines,
+                    i,
+                    annotation.group(2),
+                    annotation.group(1),
+                    condition.group(1),
+                ))
     assert len(gates) >= 12, f"expected the exit-2 gate family, found {len(gates)}"
-    # By NAME, not just by count. A count floor cannot say WHICH gate vanished, and the window bug
-    # above dropped precisely the two that sit furthest from their `raise`. These are commands
-    # whose text output an agent is most likely to read as a finished answer.
     covered = {
         next((lines[j] for j in range(i, 0, -1) if lines[j].startswith("def ")), "").split("(")[0]
-        for i, _, _, _ in gates
+        for _p, _s, lines, i, _, _, _ in gates
     }
     for command in ("def map", "def agent", "def context", "def edit_plan", "def prepare"):
         assert command in covered, (
@@ -278,12 +266,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         )
 
     undisclosed = []
-    for idx, var, caveat_var, gate_var in gates:
-        # Scoped to the ENCLOSING FUNCTION, not a fixed line window. A 40-line window flagged
-        # `prepare`, whose banner is correctly placed but sits ~50 lines above its gate with the
-        # capsule-writing block in between. An arbitrary window makes the ratchet's verdict depend
-        # on unrelated code length -- a false positive whose obvious cure is to widen the window
-        # until it stops complaining, which is how a ratchet quietly stops ratcheting.
+    for path, source, lines, idx, var, caveat_var, gate_var in gates:
         start = next((j for j in range(idx, 0, -1) if lines[j].startswith("def ")), 0)
         window = "\n".join(lines[start:idx])
         if (
@@ -294,18 +277,11 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
             continue
         if f"{_CALL}({var})" in window:
             continue
-        # `codemap` discloses through its own older `PARTIAL:` line; it is not silent, and
-        # double-disclosing would be worse than either shape. Its POSITION (trailing) is a
-        # separate, tracked defect and deliberately not changed here.
         if "PARTIAL:" in window:
             continue
-        # `inventory` delegates its text to `render_inventory_text`, which ends with its own
-        # "[!] truncated at max_files=..." notice. A source-only ratchet cannot see into the
-        # callee, so the exemption is named here rather than inferred -- and naming it is what
-        # stops the next reader "fixing" inventory into disclosing twice.
         if "render_inventory_text(" in window:
             continue
-        undisclosed.append((idx + 1, var))
+        undisclosed.append((path.name, idx + 1, var))
     assert not undisclosed, (
         f"these exit-2 gates have no disclosure on their text branch: {undisclosed}. "
         f"Add {_CALL}(<the same var the gate reads>) at the TOP of the `else` of the "

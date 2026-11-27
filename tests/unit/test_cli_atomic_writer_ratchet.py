@@ -134,7 +134,12 @@ def _discover_scanned_production_files() -> tuple[str, ...]:
     construction: no second edit required to add it to the population. See
     ``test_scanned_population_floor`` for the guard against a truncated/empty walk silently
     reading as "no violations"."""
-    return tuple(sorted([*(p.name for p in _CLI_SRC.glob("*.py")), *_SHARED_WRITER_FILES]))
+    cli_files = (
+        p.relative_to(_CLI_SRC).as_posix()
+        for p in _CLI_SRC.rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+    return tuple(sorted([*cli_files, *_SHARED_WRITER_FILES]))
 
 
 _SCANNED_PRODUCTION_FILES = _discover_scanned_production_files()
@@ -1496,23 +1501,17 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     Recursing this detector into generated-source payloads is left as an explicit follow-up, not
     silently declared clean.
     """
-    # SCOPE WIDENED 2026-08-20 (the cli/main.py split): this used to scan ONLY main.py and then
-    # assert every other module had ZERO sites. Two of the three roots below then moved into
-    # main.py's extracted siblings, which would have made the "everyone else has zero" half red
-    # and -- worse, had the pin been relaxed instead -- could have let a site LEAVE main.py and
-    # leave the population entirely. The pin is now over the whole discovered walk, keyed by
-    # (module, function), so relocating a root is visible but not a loophole.
     sites: list[tuple[str, str]] = []
     for fname in _SCANNED_PRODUCTION_FILES:
         sites.extend(_real_subprocess_dash_c_sites(_read(_source_path(fname)), fname))
     assert sorted(sites) == [
         ("dogfood_features.py", "_artifact_identity"),
-        ("main.py", "_schedule_windows_self_upgrade"),
         ("managed_runtime_candidate.py", "_managed_candidate_profile"),
         ("managed_runtime_candidate.py", "_managed_cuda_profile"),
         ("managed_runtime_candidate.py", "_verify_managed_candidate_python"),
         ("native_frontdoor.py", "_schedule_managed_activation"),
         ("native_frontdoor.py", "_verify_target_python_tensor_grep_version"),
+        ("routers/upgrade.py", "_schedule_windows_self_upgrade"),
         ("windows_launcher.py", "_schedule_windows_native_frontdoor_refresh"),
     ], (
         f"the set of real subprocess '-c' execution roots under cli/ changed: {sorted(sites)}. "
@@ -1665,7 +1664,7 @@ _EXPECTED_HELPER_BACKED = {
         "_write_ast_project_scaffold",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
-    ("main.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
+    ("routers/ast_security.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
     (
         "session_daemon_trust.py",
         "_write_secret_posix",

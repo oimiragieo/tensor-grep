@@ -81,7 +81,9 @@ def test_known_giant_is_measured_and_classified() -> None:
     assert repo_map is not None, "repo_map.py vanished from the census"
     assert repo_map.category == "core"
     assert repo_map.limit == budget.CORE_LIMIT
-    assert repo_map.lines > 1500, "repo_map.py is expected to be a known violation"
+    assert 500 < repo_map.lines <= budget.CORE_LIMIT, (
+        "repo_map.py was split under the core limit and should stay substantial"
+    )
 
 
 # --------------------------------------------------------------------------

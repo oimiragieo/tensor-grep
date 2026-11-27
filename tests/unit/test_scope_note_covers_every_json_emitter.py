@@ -37,8 +37,9 @@ import re
 from pathlib import Path
 
 _RUST = Path(__file__).resolve().parents[2] / "rust_core" / "src"
-_MAIN_RS = _RUST / "main.rs"
-_NATIVE_SEARCH_RS = _RUST / "native_search.rs"
+_MAIN_RS = _RUST / "cli_app" / "output.rs"
+_NATIVE_SEARCH_MOD_RS = _RUST / "native_search" / "mod.rs"
+_NATIVE_SEARCH_RS = _RUST / "native_search" / "output.rs"
 
 # The gate every emitter must route through. One shared helper is the whole point: a route that
 # re-derives "was the path defaulted" locally is a route that can disagree with its siblings.
@@ -78,16 +79,14 @@ def _function_body(source: str, name: str) -> str:
     is an adequate terminator in this codebase because these emitters are all top-level, and the
     arm below fails loudly if a name stops resolving at all.
     """
-    match = re.search(rf"^fn {re.escape(name)}\b", source, re.M)
-    if match is None:
-        match = re.search(rf"^pub fn {re.escape(name)}\b", source, re.M)
+    match = re.search(rf"^(?:pub(?:\([^)]+\))?\s+)?fn {re.escape(name)}\b", source, re.M)
     assert match is not None, (
         f"emitter `{name}` no longer exists. This census is now BLIND to it: it cannot verify a "
         "function it cannot find. Either the function was renamed (update _EMITTERS) or it was "
         "deleted (confirm its route no longer emits a search JSON document)."
     )
     rest = source[match.end() :]
-    next_fn = re.search(r"^(pub )?fn ", rest, re.M)
+    next_fn = re.search(r"^(?:pub(?:\([^)]+\))?\s+)?fn ", rest, re.M)
     return rest[: next_fn.start()] if next_fn else rest
 
 
@@ -114,7 +113,7 @@ def test_the_gate_has_exactly_one_definition() -> None:
     definition, in the lib crate, reachable from both crates.
     """
     definitions = []
-    for path in (_MAIN_RS, _NATIVE_SEARCH_RS):
+    for path in (_MAIN_RS, _NATIVE_SEARCH_MOD_RS, _NATIVE_SEARCH_RS):
         source = path.read_text(encoding="utf-8")
         definitions += [
             f"{path.name}:{m.start()}" for m in re.finditer(rf"fn {_GATE}\s*\(", source)
@@ -125,7 +124,7 @@ def test_the_gate_has_exactly_one_definition() -> None:
         "Two copies of one rule is how the engines drift apart -- the exact failure #26 closes."
     )
 
-    native_search = _NATIVE_SEARCH_RS.read_text(encoding="utf-8")
+    native_search = _NATIVE_SEARCH_MOD_RS.read_text(encoding="utf-8")
     assert re.search(rf"pub fn {_GATE}\s*\(", native_search), (
         "the shared gate is not `pub` in native_search.rs (the LIB crate). main.rs is the BINARY "
         "crate, so a definition living there is unreachable from the lib and forces a second copy."

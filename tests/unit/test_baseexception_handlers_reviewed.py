@@ -25,17 +25,17 @@ PY_SRC = Path(__file__).resolve().parents[2] / "src" / "tensor_grep"
 
 # (module relative to src/tensor_grep, enclosing function, index within it) -> why it may not re-raise
 _REVIEWED_NON_RERAISING: dict[tuple[str, str, int], str] = {
-    ("cli/mcp_server.py", "_log_tool_exception", 0): (
+    ("cli/mcp/security.py", "_log_tool_exception", 0): (
         "strictly non-throwing stderr diagnostics (documented in the docstring): formatting the "
         "traceback of an ALREADY-CAUGHT tool error must never raise into the MCP transport"
     ),
-    ("cli/mcp_server.py", "_log_tool_exception", 1): (
+    ("cli/mcp/security.py", "_log_tool_exception", 1): (
         "same helper: str(exc) of a hostile exception may itself raise; falls back to '<unprintable>'"
     ),
-    ("cli/mcp_server.py", "_log_tool_exception", 2): (
+    ("cli/mcp/security.py", "_log_tool_exception", 2): (
         "same helper: outermost guard so a failing stderr write/flush cannot escape the logger"
     ),
-    ("cli/mcp_server.py", "_safe_exception_class_name", 0): (
+    ("cli/mcp/security.py", "_safe_exception_class_name", 0): (
         "type introspection hardened against hostile exceptions (spoofed metaclass / __class__): any "
         "failure degrades to the fixed string 'InternalError' and never raises into the caller"
     ),

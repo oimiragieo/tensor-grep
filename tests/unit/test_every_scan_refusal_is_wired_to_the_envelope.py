@@ -28,7 +28,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_MAIN = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "main.py"
+_CLI_DIR = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
+_SCANNED_SOURCES = (
+    _CLI_DIR / "error_handling.py",
+    *sorted((_CLI_DIR / "routers").glob("*.py")),
+)
+
+
+def _combined_ast() -> ast.Module:
+    body: list[ast.stmt] = []
+    for path in _SCANNED_SOURCES:
+        body.extend(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)).body)
+    return ast.Module(body=body, type_ignores=[])
 
 
 def _refusal_formatters(tree: ast.Module) -> set[str]:
@@ -53,7 +64,7 @@ def _first_arg_callee(call: ast.Call) -> str | None:
 
 def test_no_refusal_is_emitted_through_a_bare_typer_echo() -> None:
     """THE DEFECT: two sites printed the refusal and exited 2 with nothing on stdout."""
-    tree = ast.parse(_MAIN.read_text(encoding="utf-8"))
+    tree = _combined_ast()
     formatters = _refusal_formatters(tree)
 
     # PREMISE: the matcher really found the refusal formatters. Without this, a rename would make
@@ -90,7 +101,7 @@ def test_every_refusal_formatter_reaches_the_envelope() -> None:
     Without this, deleting the two call sites entirely would satisfy the test above -- an
     emitter that prints nothing at all also prints no bare typer.echo.
     """
-    tree = ast.parse(_MAIN.read_text(encoding="utf-8"))
+    tree = _combined_ast()
     formatters = _refusal_formatters(tree)
 
     wired: set[str] = set()
@@ -116,7 +127,7 @@ def test_the_envelope_helper_still_exists_under_this_name() -> None:
     the first test green (nothing routes through a name that no longer exists) while the second
     fails loudly -- this makes the cause obvious rather than leaving a confusing half-failure.
     """
-    tree = ast.parse(_MAIN.read_text(encoding="utf-8"))
+    tree = _combined_ast()
     names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
     assert "_emit_broad_scan_refusal" in names, (
         "_emit_broad_scan_refusal was renamed; update this file's matchers with it"

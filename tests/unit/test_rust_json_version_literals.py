@@ -32,7 +32,16 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RUST_MAIN = REPO_ROOT / "rust_core" / "src" / "main.rs"
+RUST_SRC = REPO_ROOT / "rust_core" / "src"
+RUST_MAIN = RUST_SRC / "cli_app" / "output.rs"
+_PAYLOAD_RS_FILES = (
+    RUST_SRC / "main.rs",
+    *sorted((RUST_SRC / "cli_app").glob("*.rs")),
+    *sorted((RUST_SRC / "native_search").glob("*.rs")),
+    RUST_SRC / "native_checkpoint_publication.rs",
+    RUST_SRC / "native_search_binary_summary.rs",
+    RUST_SRC / "search_error.rs",
+)
 
 #: A JSON-payload key whose value must be the constant, never a bare integer.
 _VERSION_KEY_LITERAL = re.compile(r'"(?:schema_version|version)"\s*:\s*(\d+)')
@@ -66,8 +75,10 @@ def test_positive_control_the_source_is_readable_and_uses_the_constant() -> None
     """Guard the guard: a file that failed to load, or a constant that was renamed,
     would make the emptiness check below vacuous rather than failing it."""
     assert RUST_MAIN.is_file(), f"{RUST_MAIN} missing -- run from a dev checkout"
-    source = RUST_MAIN.read_text(encoding="utf-8")
-    uses = source.count(_CONSTANT_NAME)
+    uses = sum(
+        path.read_text(encoding="utf-8").count(_CONSTANT_NAME)
+        for path in sorted(RUST_SRC.rglob("*.rs"))
+    )
     assert uses > 5, (
         f"only {uses} references to {_CONSTANT_NAME}; the constant was probably "
         "renamed, which would silently make this whole suite meaningless."
@@ -96,7 +107,11 @@ def test_detector_accepts_the_constant_form() -> None:
 
 def test_no_hardcoded_version_literals_in_rust_json_payloads() -> None:
     """The live rule."""
-    sites = _literal_version_sites(RUST_MAIN.read_text(encoding="utf-8"))
+    sites: list[tuple[str, str]] = []
+    for path in _PAYLOAD_RS_FILES:
+        rel = path.relative_to(RUST_SRC).as_posix()
+        for lineno, line in _literal_version_sites(path.read_text(encoding="utf-8")):
+            sites.append((f"{rel}:{lineno}", line))
     assert sites == [], (
         "hardcoded schema-version literal(s) in a Rust JSON payload -- these go "
         f"stale the day {_CONSTANT_NAME} is bumped, while every sibling payload "

@@ -21,7 +21,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_RS = REPO_ROOT / "rust_core" / "src" / "search_flag_registry.rs"
-MAIN_RS = REPO_ROOT / "rust_core" / "src" / "main.rs"
+MAIN_RS = REPO_ROOT / "rust_core" / "src" / "cli_app" / "args.rs"
 
 
 def _registry_flags() -> set[str]:

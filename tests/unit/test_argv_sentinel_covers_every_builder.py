@@ -314,9 +314,9 @@ def test_the_generated_upgrade_script_guards_its_daemon_root() -> None:
     import inspect
     import re
 
-    from tensor_grep.cli import main as cli_main
+    from tensor_grep.cli.routers import upgrade as cli_upgrade
 
-    source = inspect.getsource(cli_main)
+    source = inspect.getsource(cli_upgrade)
     occurrences = re.findall(
         r'"(status|start)",\s+"--json",\s+"--",\s+daemon_root,',
         source,

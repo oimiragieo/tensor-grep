@@ -30,7 +30,7 @@ import ast
 import re
 from pathlib import Path
 
-_MAIN = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "main.py"
+_MAIN = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "output_envelope.py"
 # Commands split out of main.py for the file-size ratchet stay under this gate: moving a
 # command into its own module must not move it out of the disclosure obligation.
 _SPLIT_COMMAND_MODULES = (_MAIN.parent / "sql_query.py",)

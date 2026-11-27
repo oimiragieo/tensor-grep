@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-_NATIVE_SEARCH_RS = _REPO / "rust_core" / "src" / "native_search.rs"
+_NATIVE_SEARCH_RS = _REPO / "rust_core" / "src" / "native_search" / "mod.rs"
 
 # `pub const DEFAULTED_SCOPE_NOTE: &str = "... \` + continuation lines + `";`
 _RUST_CONST = re.compile(

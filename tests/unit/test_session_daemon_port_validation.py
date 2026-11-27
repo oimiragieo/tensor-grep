@@ -71,7 +71,7 @@ def _metadata_shape(value: object) -> dict[str, bool]:
     }
 
 
-_DAEMON_REQUEST_CALL_LINES = {537: "connect", 542: "send", 544: "read"}
+_DAEMON_REQUEST_CALL_LINES = {641: "connect", 646: "send", 648: "read"}
 
 
 def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:
@@ -160,7 +160,10 @@ def _prepared_ping_handler(secret: bytes, diagnostics: dict[str, dict[str, Any]]
             real_handle.__code__,
             {
                 **real_handle.__globals__,
-                "_ping_proof_fields": _observe_call(proof, diagnostics, "proof_fields"),
+                "session_daemon": SimpleNamespace(**{
+                    **vars(sd),
+                    "_ping_proof_fields": _observe_call(proof, diagnostics, "proof_fields"),
+                }),
             },
             argdefs=real_handle.__defaults__,
             closure=real_handle.__closure__,
@@ -233,12 +236,12 @@ def _running_daemon(tmp_path: Path) -> Iterator[tuple[Path, sd._ThreadedSessionD
 def test_prepared_handler_owns_actual_proof_code_without_global_signer_patch() -> None:
     key = b"fixture-owned-test-key"
     handler = _prepared_ping_handler(key, {})
-    observed = handler.handle.__globals__["_ping_proof_fields"]
+    observed = handler.handle.__globals__["session_daemon"]._ping_proof_fields
     proof = inspect.getclosurevars(observed).nonlocals["real"]
     assert handler.handle.__code__ is sd._SessionDaemonHandler.handle.__code__
     assert proof.__code__ is trust._ping_proof_fields.__code__
     for bound, original, changed in (
-        (handler.handle, sd._SessionDaemonHandler.handle, {"_ping_proof_fields"}),
+        (handler.handle, sd._SessionDaemonHandler.handle, {"session_daemon"}),
         (
             proof,
             trust._ping_proof_fields,

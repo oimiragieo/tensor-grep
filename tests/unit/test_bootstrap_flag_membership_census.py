@@ -123,7 +123,8 @@ _R_SITES = {"_requires_full_cli"}
 _X_SITES = {"_scan_requires_full_cli", "_run_requires_ast_workflow"}
 _PTH_SITES = {
     "_search_args_include_guarded_broad_root",
-    "_search_paths_include_generated_root",
+    "search_paths_directly_target_generated_root",
+    "search_paths_include_generated_root",
     "_search_paths_include_oversized_implicit_root",
     "_search_paths_include_workspace_root",
     "_names_stdin_path",
