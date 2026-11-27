@@ -76,7 +76,7 @@ def test_package_manifests_limit_private_configuration():
         exclusions
     )
     npm = json.loads((ROOT / "npm/package.json").read_text(encoding="utf-8"))
-    assert set(npm["files"]) == {"bin/tg.js", "install.js", "LICENSE", "NOTICE"}
+    assert set(npm["files"]) == {"bin/tg.js", "LICENSE", "NOTICE"}
 
 
 def test_source_distribution_excludes_private_files_even_when_tracked(tmp_path):
@@ -199,7 +199,6 @@ def test_npm_archive_has_only_public_launcher_files(tmp_path):
     package = payload[0] if isinstance(payload, list) else next(iter(payload.values()))
     assert {item["path"] for item in package["files"]} == {
         "bin/tg.js",
-        "install.js",
         "package.json",
         "LICENSE",
         "NOTICE",
