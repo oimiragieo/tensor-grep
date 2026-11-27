@@ -38,6 +38,9 @@ from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
+from tensor_grep.cli.completeness_output import (
+    _output_limit_note as _output_limit_note,
+)
 from tensor_grep.cli.dogfood_command import dogfood
 from tensor_grep.cli.investigation_options import (
     _note_late_rerank_degraded as _note_late_rerank_degraded,

@@ -1,5 +1,4 @@
 #![allow(unused_imports, dead_code)]
-#![cfg(windows)]
 
 use std::fs;
 use std::path::Path;

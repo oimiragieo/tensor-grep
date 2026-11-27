@@ -303,7 +303,11 @@ def test_every_rg_documented_flag_is_recognised_by_the_native_root_door() -> Non
     registry_src = (root / "rust_core" / "src" / "search_flag_registry.rs").read_text("utf-8")
     body = registry_src.split("pub(crate) fn raw_args_contain_any_flag")[0]
     known = set(re.findall(r'^\s*"(-{1,2}[\w-]+)",', body, re.M))
-    main_src = (root / "rust_core" / "src" / "main.rs").read_text("utf-8")
+    main_src = (
+        (root / "rust_core" / "src" / "main.rs").read_text("utf-8")
+        + "\n"
+        + (root / "rust_core" / "src" / "cli_app" / "args.rs").read_text("utf-8")
+    )
     struct = re.search(r"pub struct PositionalCli \{(.*?)\n\}\n", main_src, re.S)
     assert struct is not None, "PositionalCli struct not found"
     for fm in re.finditer(r"#\[arg\(([^\]]*)\)\]\s*\n\s*pub (\w+):", struct.group(1)):

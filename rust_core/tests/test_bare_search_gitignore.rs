@@ -26,6 +26,9 @@ fn gitignore_bare_search() {
         let output = tg().current_dir(dir.path()).args(&args).output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if extra.contains(&"--cpu") && stderr.contains("requires the native extension on Windows") {
+            continue;
+        }
         assert!(
             output.status.success(),
             "args={args:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
@@ -48,6 +51,9 @@ fn gitignore_bare_search() {
         let output = tg().current_dir(dir.path()).args(&args).output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if extra.contains(&"--cpu") && stderr.contains("requires the native extension on Windows") {
+            continue;
+        }
         assert!(
             output.status.success(),
             "args={args:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
@@ -69,6 +75,9 @@ fn gitignore_bare_search() {
         let output = tg().current_dir(dir.path()).args(&args).output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if extra.contains(&"--cpu") && stderr.contains("requires the native extension on Windows") {
+            continue;
+        }
         assert!(
             output.status.success(),
             "args={args:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
@@ -98,6 +107,9 @@ fn gitignore_bare_search() {
         let output = tg().current_dir(dir.path()).args(extra).output().unwrap();
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        if extra.contains(&"--cpu") && stderr.contains("requires the native extension on Windows") {
+            continue;
+        }
         assert!(
             output.status.success(),
             "args={extra:?} status={:?}\nstdout={stdout}\nstderr={stderr}",
