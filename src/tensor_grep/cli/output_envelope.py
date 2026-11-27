@@ -9,9 +9,17 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-import click
+import click as _std_click
 import typer
 from typer.core import TyperGroup
+
+if TYPE_CHECKING:
+    import typer._click as click
+else:
+    try:
+        import typer._click as click
+    except ImportError:
+        import click
 
 from tensor_grep.cli import _index_lock as _index_lock
 from tensor_grep.cli import compact_payloads as _compact_payloads
@@ -161,6 +169,18 @@ if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
 
 
+try:
+    from typer._click.exceptions import UsageError as _TyperUsageError
+
+    _USAGE_ERRORS: tuple[type[Any], ...] = (
+        click.exceptions.UsageError,
+        _std_click.exceptions.UsageError,
+        _TyperUsageError,
+    )
+except ImportError:
+    _USAGE_ERRORS = (click.exceptions.UsageError, _std_click.exceptions.UsageError)
+
+
 class _EvidenceGroup(TyperGroup):
     """Nudge `tg evidence <path>` toward the `emit` subcommand.
 
@@ -177,7 +197,7 @@ class _EvidenceGroup(TyperGroup):
     ) -> tuple[str | None, click.Command | None, list[str]]:
         try:
             return super().resolve_command(ctx, args)
-        except click.exceptions.UsageError as exc:
+        except _USAGE_ERRORS as exc:
             token = args[0] if args else ""
             if (
                 token
@@ -187,7 +207,7 @@ class _EvidenceGroup(TyperGroup):
                 # Re-raise a NEW UsageError with the hint appended -- `UsageError.message` is a
                 # Final attribute (cannot be reassigned in place); a fresh error carrying the same
                 # `ctx` renders identically (Usage + "Try --help" + Error:) and keeps exit code 2.
-                raise click.exceptions.UsageError(
+                raise type(exc)(
                     f"{exc.format_message()}\n"
                     "Hint: `tg evidence` is a command group; its receipt action is "
                     f"`emit`. Did you mean `tg evidence emit {token}`? "

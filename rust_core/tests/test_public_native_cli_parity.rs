@@ -118,11 +118,7 @@ fn test_search_explicit_path_keeps_path_when_stdin_is_piped() {
 #[test]
 fn test_root_no_path_piped_stdin_forwards_no_default_path_to_rg() {
     let dir = tempdir().unwrap();
-    let fake_rg = fake_rg_exact_args_script(
-        dir.path(),
-        &["--no-ignore", "-e", "needle"],
-        "stdin needle\n",
-    );
+    let fake_rg = fake_rg_exact_args_script(dir.path(), &["-e", "needle"], "stdin needle\n");
 
     let mut child = tg()
         .current_dir(dir.path())

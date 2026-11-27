@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import textwrap
+from typing import TYPE_CHECKING
 
-import click
 from typer.core import TyperGroup
+
+if TYPE_CHECKING:
+    import typer._click as click
+else:
+    try:
+        import typer._click as click
+    except ImportError:
+        import click
 
 HELP_SUMMARY = "Search code, follow symbols, and prepare a bounded edit."
 HELP_EXAMPLES = (
@@ -79,7 +87,7 @@ class TopLevelHelpGroup(TyperGroup):
     """Render only root commands in five plain, task-oriented sections."""
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        super(TyperGroup, self).format_help(ctx, formatter)  # type: ignore[arg-type]
+        super(TyperGroup, self).format_help(ctx, formatter)
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         show_all = bool(

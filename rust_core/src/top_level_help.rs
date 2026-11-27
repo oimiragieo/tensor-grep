@@ -82,7 +82,7 @@ pub fn print_help(command: &Command, writer: &mut impl Write) -> io::Result<()> 
     let mut root = command.clone();
     root.build();
     writeln!(writer, "{}\n\n{SUMMARY}\n", root.render_usage())?;
-    writeln!(writer, "Core commands:")?;
+    writeln!(writer, "Core workflow:")?;
     for name in CORE_COMMANDS {
         if let Some(cmd) = root.get_subcommands().find(|cmd| cmd.get_name() == *name) {
             write_row(

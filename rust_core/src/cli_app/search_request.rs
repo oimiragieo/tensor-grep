@@ -520,7 +520,10 @@ pub(crate) const INDEX_FLAG_POLICY: &[(&str, IndexFlagPolicy)] = &[
     ("type_list", IndexFlagPolicy::PassthroughSafe),
     ("version", IndexFlagPolicy::PassthroughSafe),
     ("files", IndexFlagPolicy::Refuse),
-    ("allow_broad_generated_scan", IndexFlagPolicy::PassthroughSafe),
+    (
+        "allow_broad_generated_scan",
+        IndexFlagPolicy::PassthroughSafe,
+    ),
 ];
 
 /// Detects warm-index routing state, loading the persisted index AT MOST ONCE (audit #138 item

@@ -21,7 +21,11 @@ fn read_file(path: &Path) -> String {
 }
 
 fn read_backend_source() -> String {
-    std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/backend_cpu/mod.rs")).unwrap()
+    std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/backend_cpu/mod.rs"
+    ))
+    .unwrap()
 }
 
 fn extract_function_body<'a>(source: &'a str, function_name: &str) -> &'a str {

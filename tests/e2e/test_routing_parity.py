@@ -1419,21 +1419,27 @@ def test_top_level_help__Action_cli__Condition_public_contract__ExpectedOutcome_
     python_help = run_command("python-m", ["--help"], cwd=parity_env)
     python_help_all = run_command("python-m", ["--help-all"], cwd=parity_env)
     native_help = _run_native_front_door(["--help"], cwd=parity_env)
+    native_help_all = _run_native_front_door(["--help-all"], cwd=parity_env)
 
     assert python_help.returncode == 0
     assert python_help_all.returncode == 0
     assert native_help.returncode == 0
+    assert native_help_all.returncode == 0
     python_commands = _extract_visible_help_commands(python_help.stdout)
     python_all_commands = _extract_visible_help_commands(python_help_all.stdout)
     native_commands = _extract_visible_help_commands(native_help.stdout)
+    native_all_commands = _extract_visible_help_commands(native_help_all.stdout)
 
     assert python_commands == set(CORE_WORKFLOW_COMMANDS)
     assert len(python_help.stdout.splitlines()) <= 45
     assert python_all_commands == PUBLIC_TOP_LEVEL_COMMANDS
-    assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert native_commands == set(CORE_WORKFLOW_COMMANDS)
+    assert len(native_help.stdout.splitlines()) <= 45
+    assert native_all_commands == PUBLIC_TOP_LEVEL_COMMANDS
     _assert_help_rows_once(python_help.stdout)
     _assert_help_rows_once(python_help_all.stdout)
     _assert_help_rows_once(native_help.stdout)
+    _assert_help_rows_once(native_help_all.stdout)
     catalog_commands = set().union(*dict(COMMAND_GROUPS).values())
     assert catalog_commands == PUBLIC_TOP_LEVEL_COMMANDS
 
@@ -1447,7 +1453,7 @@ def test_empty_invocation__Action_cli__Condition_noargs__ExpectedOutcome_exact_o
     python_commands = _extract_visible_help_commands(python_help.stdout)
     native_commands = _extract_visible_help_commands(native_help.stdout)
     assert python_commands == set(CORE_WORKFLOW_COMMANDS)
-    assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert native_commands == set(CORE_WORKFLOW_COMMANDS)
     assert len(_extract_visible_help_command_rows(python_help.stdout)) == len(
         CORE_WORKFLOW_COMMANDS
     )
@@ -1493,33 +1499,36 @@ def _assert_legacy_moat_commands(stdout: str) -> None:
         )
 
 
+_CORE_HELP_COMMANDS = frozenset({
+    "search",
+    "find",
+    "run",
+    "scan",
+    "orient",
+    "defs",
+    "callers",
+    "blast-radius",
+    "prepare",
+    "diff-impact",
+    "checkpoint",
+    "mcp",
+})
+
+
 def _assert_native_root_help_contract(stdout: str) -> None:
     native_commands = _extract_visible_help_commands(stdout)
-    assert native_commands <= PUBLIC_TOP_LEVEL_COMMANDS, (
-        "native fallback help exposed commands outside the public contract: "
-        f"{sorted(native_commands - PUBLIC_TOP_LEVEL_COMMANDS)}"
-    )
-    missing_real = (PUBLIC_TOP_LEVEL_COMMANDS - native_commands) - PUBLIC_TOP_LEVEL_ALIASES
-    assert not missing_real, (
-        f"native fallback help is missing real (non-alias) commands: {sorted(missing_real)}"
+    assert native_commands == _CORE_HELP_COMMANDS, (
+        "native fallback help mismatch against 12-command core workflow: "
+        f"extra={sorted(native_commands - _CORE_HELP_COMMANDS)} "
+        f"missing={sorted(_CORE_HELP_COMMANDS - native_commands)}"
     )
     rows = _extract_visible_help_command_rows(stdout)
-    assert len(rows) == len(PUBLIC_TOP_LEVEL_COMMANDS)
+    assert len(rows) == len(_CORE_HELP_COMMANDS)
     assert len(rows) == len(set(rows))
-    headings = (
-        "Search and structure:",
-        "Navigate:",
-        "Agent:",
-        "State and evidence:",
-        "Operations:",
-    )
-    positions = tuple(stdout.find(f"\n{heading}\n") for heading in headings)
-    assert all(position >= 0 for position in positions) and positions == tuple(sorted(positions)), (
-        stdout
-    )
+    assert len(stdout.splitlines()) <= 45, f"native --help exceeded 45 lines:\n{stdout}"
+    assert "\nCore workflow:\n  search  " in stdout
+    assert "tg --help-all" in stdout
     assert "Search code, follow symbols, and prepare a bounded edit." in stdout
-    assert "\nSearch and structure:\n  search  " in stdout
-    _assert_legacy_moat_commands(stdout)
     examples = (
         "tg search -F TODO src",
         "tg callers src create_invoice --json",

@@ -237,6 +237,7 @@ fn test_tg_classify_text_flag_stdout_matches_python_module() {
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
     tg.current_dir(repo_root())
         .arg("classify")
+        .arg("--json")
         .arg("--text")
         .arg(literal);
     configure_classify_env(&mut tg);
@@ -247,6 +248,7 @@ fn test_tg_classify_text_flag_stdout_matches_python_module() {
         .arg("-m")
         .arg("tensor_grep")
         .arg("classify")
+        .arg("--json")
         .arg("--text")
         .arg(literal);
     configure_classify_env(&mut py);
@@ -281,7 +283,10 @@ fn test_tg_classify_stdin_flag_stdout_matches_python_module() {
     let content = b"INFO ok\nERROR database failed\nWARN retrying\n".to_vec();
 
     let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
-    tg.current_dir(repo_root()).arg("classify").arg("--stdin");
+    tg.current_dir(repo_root())
+        .arg("classify")
+        .arg("--json")
+        .arg("--stdin");
     configure_classify_env(&mut tg);
     let tg_output = run_with_stdin_timeout(tg, content.clone(), Duration::from_secs(40));
 
@@ -290,6 +295,7 @@ fn test_tg_classify_stdin_flag_stdout_matches_python_module() {
         .arg("-m")
         .arg("tensor_grep")
         .arg("classify")
+        .arg("--json")
         .arg("--stdin");
     configure_classify_env(&mut py);
     let py_output = run_with_stdin_timeout(py, content, Duration::from_secs(40));
