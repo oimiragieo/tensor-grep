@@ -241,10 +241,10 @@ def _apply_semantic_rerank(all_results: SearchResult, pattern: str) -> SearchRes
                 dense_index=None,
             )
         chunks.extend(file_chunks)
-        if len(chunks) > _SEMANTIC_CORPUS_CHUNK_CAP:
+        if len(chunks) > _self._SEMANTIC_CORPUS_CHUNK_CAP:
             reason = (
                 "semantic ranking unavailable: corpus chunk cap "
-                f"({_SEMANTIC_CORPUS_CHUNK_CAP}) exceeded across the matched file set -- narrow "
+                f"({_self._SEMANTIC_CORPUS_CHUNK_CAP}) exceeded across the matched file set -- narrow "
                 "the search to fewer files for a semantic rerank"
             )
             all_results.rank_fallback_reason = _maybe_append_late_skip(reason)
@@ -663,9 +663,9 @@ def _execute_find(
             continue
         chunks.extend(file_chunks)
         chunked_file_count += 1
-        if len(chunks) > _FIND_CORPUS_CHUNK_CAP:
+        if len(chunks) > _self._FIND_CORPUS_CHUNK_CAP:
             reason = (
-                f"find corpus chunk cap ({_FIND_CORPUS_CHUNK_CAP}) reached over "
+                f"find corpus chunk cap ({_self._FIND_CORPUS_CHUNK_CAP}) reached over "
                 f"{chunked_file_count} of {len(all_files)} files -- ranking covers a partial corpus"
             )
             incomplete_reasons.append(reason)

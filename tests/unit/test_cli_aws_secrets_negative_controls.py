@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -30,7 +31,7 @@ from tests.unit import test_cli_modes_ast_backend as modes
     ],
 )
 def test_secrets_negative_controls_reject_other_rule_findings(
-    monkeypatch, target: str, content: str, negative_line: int, positive_line: int
+    monkeypatch, tmp_path: Path, target: str, content: str, negative_line: int, positive_line: int
 ):
     payload = {
         "findings": [
@@ -53,8 +54,10 @@ def test_secrets_negative_controls_reject_other_rule_findings(
     monkeypatch.setattr(CliRunner, "invoke", fake_invoke)
     with pytest.raises(AssertionError, match="secrets-basic findings on negative lines"):
         if target == "modes":
-            modes.test_scan_secrets_basic_does_not_flag_non_credentials(monkeypatch, content, False)
+            modes.test_scan_secrets_basic_does_not_flag_non_credentials(
+                monkeypatch, content, False, tmp_path
+            )
         else:
             language_rules.test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
-                monkeypatch, "python", ".py", content
+                monkeypatch, tmp_path, "python", ".py", content
             )

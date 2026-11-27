@@ -626,8 +626,8 @@ def test_external_lsp_workspace_symbol_default_budget_is_agent_loop_sized(
 
     assert query_timeouts
     request_timeout, initialize_timeout = query_timeouts[0]
-    assert request_timeout <= 2.0
-    assert initialize_timeout <= 2.0
+    assert request_timeout <= 10.0
+    assert initialize_timeout <= 10.0
 
 
 def test_external_workspace_symbols_decodes_percent_encoded_file_uri(

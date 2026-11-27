@@ -70,7 +70,6 @@ from tensor_grep.cli.output_envelope import (
     _scan_incomplete,
 )
 from tensor_grep.cli.prepare_service import _build_prepare_payload as _build_prepare_payload
-from tensor_grep.cli.routers.agent import _maybe_edit_plan_via_running_daemon
 from tensor_grep.cli.routers.search_helpers import (
     _parse_gpu_device_ids_cli,
     _warn_unavailable_gpu_device_ids,
@@ -525,7 +524,7 @@ def edit_plan(
             compact, "standard", json_output=json_output
         )
         daemon_payload = (
-            _maybe_edit_plan_via_running_daemon(
+            _self._maybe_edit_plan_via_running_daemon(
                 path=resolved_path,
                 query=resolved_query,
                 max_files=max_files,

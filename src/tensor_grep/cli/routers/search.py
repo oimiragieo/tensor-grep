@@ -56,7 +56,6 @@ from tensor_grep.cli._main_binding import _self
 # their actual per-file scan work at 512 regardless of how large this default is -- the
 # chokepoint, not a per-command repoint, is what keeps them fast.
 from tensor_grep.cli.error_handling import (
-    _LARGE_ROOT_SCAN_FILE_CEILING,
     _combine_multi_patterns,
     _eligible_for_pcre2_inline_flag_fallback,
     _emit_broad_scan_refusal,
@@ -1105,11 +1104,11 @@ def search_command(
         and not allow_broad_generated_scan
         and config.max_depth is None
         and _implicit_glob_search_walk_exceeds_ceiling(
-            paths_to_search, config, _LARGE_ROOT_SCAN_FILE_CEILING
+            paths_to_search, config, _self._LARGE_ROOT_SCAN_FILE_CEILING
         )
     ):
         _emit_broad_scan_refusal(
-            _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
+            _format_unbounded_large_root_scan_error(_self._LARGE_ROOT_SCAN_FILE_CEILING),
             json_output=json,
             path=str(paths_to_search[0]) if paths_to_search else ".",
         )

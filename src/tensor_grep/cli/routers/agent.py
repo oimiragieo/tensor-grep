@@ -462,7 +462,7 @@ def orient(
     # requested (a warm session's cached repo_map cannot honor a fresh per-request scan deadline),
     # mirroring refs/callers/impact/blast-radius's own daemon gate.
     daemon_payload = (
-        _maybe_orient_via_running_daemon(
+        _self._maybe_orient_via_running_daemon(
             path=path,
             max_tokens=max_tokens,
             max_central_files=max_central_files,
@@ -1148,7 +1148,7 @@ def context_render(
         # session's cached repo_map cannot honor a fresh per-request scan deadline) -- mirrors
         # refs/callers/impact/blast-radius's own daemon gate.
         daemon_payload = (
-            _maybe_context_render_via_running_daemon(
+            _self._maybe_context_render_via_running_daemon(
                 path=resolved_path,
                 query=resolved_query,
                 max_files=max_files,

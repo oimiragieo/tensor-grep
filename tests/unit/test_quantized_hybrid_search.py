@@ -198,12 +198,12 @@ def test_corrupt_sqlite_blobs_and_oversized_inputs_fail_safely() -> None:
     with HybridSQLiteIndex(":memory:") as index:
         index.upsert_documents([("valid_doc", "clean symbol", [1.0, 0.0, 1.0, 0.0])])
         index._conn.execute(
-            "INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob) "
+            "INSERT INTO documents (doc_id, inline_content, alias_tokens, content_hash, embedding_blob, binary_blob) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("corrupt_text", "bad binary text", "", "h1", b"\x01\x02\x03", "text-not-blob"),
         )
         index._conn.execute(
-            "INSERT INTO documents (doc_id, content, alias_tokens, content_hash, embedding_blob, binary_blob) "
+            "INSERT INTO documents (doc_id, inline_content, alias_tokens, content_hash, embedding_blob, binary_blob) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             ("corrupt_int", "bad binary int", "", "h2", "text-emb", 999999999999),
         )

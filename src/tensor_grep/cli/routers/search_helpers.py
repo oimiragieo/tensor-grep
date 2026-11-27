@@ -414,10 +414,10 @@ def _delegate_to_native_tg_search(
     if child_env is None:
         return refusal
     try:
-        completed = subprocess.run(
+        completed = _self.subprocess.run(
             command, check=False, timeout=configured_ripgrep_timeout_seconds(), env=child_env
         )
-    except subprocess.TimeoutExpired:
+    except _self.subprocess.TimeoutExpired:
         sys.stderr.write(
             "tensor-grep: native search exceeded the configured timeout and was stopped. For a "
             "large repo, scope the search to a path (e.g. `tg search PATTERN src/`), or raise "

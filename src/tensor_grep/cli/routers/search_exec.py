@@ -38,7 +38,6 @@ from tensor_grep.cli._main_binding import _self
 # `_self` to this module and keeps every real signature.
 # scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
 from tensor_grep.cli.error_handling import (
-    _LARGE_ROOT_SCAN_FILE_CEILING,
     _combine_multi_patterns,
     _config_with_guarded_broad_root_globs,
     _eligible_for_pcre2_inline_flag_fallback,
@@ -70,7 +69,7 @@ from tensor_grep.cli.output_envelope import (
 )
 from tensor_grep.cli.prepare_service import _build_prepare_payload as _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
-from tensor_grep.cli.routers.find import _SEMANTIC_CORPUS_CHUNK_CAP, _apply_semantic_rerank
+from tensor_grep.cli.routers.find import _apply_semantic_rerank
 from tensor_grep.cli.routers.search_helpers import (
     _can_passthrough_rg,
     _collect_candidate_files,
@@ -368,7 +367,7 @@ def _execute_search_command(
         paths_defaulted=paths_defaulted,
     ):
         _emit_broad_scan_refusal(
-            _format_unbounded_large_root_scan_error(_LARGE_ROOT_SCAN_FILE_CEILING),
+            _format_unbounded_large_root_scan_error(_self._LARGE_ROOT_SCAN_FILE_CEILING),
             json_output=json,
             path=str(paths_to_search[0]) if paths_to_search else ".",
         )
@@ -658,7 +657,7 @@ def _execute_search_command(
                 pattern,
                 candidate_files_ordered,
                 max_count=max_count,
-                corpus_chunk_cap=_SEMANTIC_CORPUS_CHUNK_CAP,
+                corpus_chunk_cap=_self._SEMANTIC_CORPUS_CHUNK_CAP,
                 set_fallback_reason_fn=_set_semantic_rank_fallback_reason,
             )
     elif config.rank_bm25 and all_results.matches:
