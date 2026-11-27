@@ -44,6 +44,12 @@ from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored as atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.investigation_options import (
+    _note_late_rerank_degraded as _note_late_rerank_degraded,
+)
+from tensor_grep.cli.investigation_options import (
+    _set_semantic_rank_fallback_reason as _set_semantic_rank_fallback_reason,
+)
 from tensor_grep.cli.prepare_service import _build_prepare_payload as _build_prepare_payload
 from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.root_app import create_root_app
@@ -925,37 +931,6 @@ _search_with_cpu_fallback = _backend_fallback.search_with_cpu_fallback
 # unbounded memory. Cap the CORPUS total here too, sharing the same threshold as the per-file guard
 # (no separate magic number to keep in sync).
 _SEMANTIC_CORPUS_CHUNK_CAP = MAX_CHUNKS
-
-
-def _set_semantic_rank_fallback_reason(all_results: "SearchResult") -> None:
-    """Probe dense-leg availability and set ``rank_fallback_reason`` .
-
-    Used for the 0-match `--semantic` case: with no matches there is nothing to rerank, so the
-    full :func:`_apply_semantic_rerank` path (chunking, model load) is skipped entirely -- but the
-    availability probe must still run so the JSON envelope stays honest (a dense-unavailable
-    search must report that even when it happens to find zero matches, not silently omit
-    ``rank_fallback_reason``).
-    """
-    from tensor_grep.core.retrieval_dense import dense_available
-
-    available, unavailable_reason = dense_available()
-    if not available:
-        all_results.rank_fallback_reason = unavailable_reason
-        sys.stderr.write(f"tg: {unavailable_reason}\n")
-
-
-def _note_late_rerank_degraded(all_results: "SearchResult", reason: str) -> None:
-    """Append (or set) ``rank_fallback_reason`` for a RECOVERABLE late-rerank degrade (the
-    ``rerank`` extra absent, or the model not fetched) and echo the same ``tg:``-prefixed stderr
-    line the dense leg uses (T6, design doc "Fail-closed contract"). Appends rather than
-    overwrites so a simultaneous dense-leg degrade is never clobbered -- both signals must survive
-    on the returned envelope.
-    """
-    if all_results.rank_fallback_reason:
-        all_results.rank_fallback_reason = f"{all_results.rank_fallback_reason}; {reason}"
-    else:
-        all_results.rank_fallback_reason = reason
-    sys.stderr.write(f"tg: {reason}\n")
 
 
 def _apply_semantic_rerank(all_results: "SearchResult", pattern: str) -> "SearchResult":
@@ -3258,7 +3233,14 @@ def search_command(
 
     follow, no_follow = _search_follow_options.resolve_flags(follow)
 
-    parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
+    from tensor_grep.cli.investigation_options import parse_gpu_device_ids_or_exit
+
+    parsed_gpu_device_ids = parse_gpu_device_ids_or_exit(
+        gpu_device_ids,
+        parse_fn=_parse_gpu_device_ids_cli,
+        json_mode=json,
+        exit_error_fn=_exit_search_error,
+    )
     _warn_unavailable_gpu_device_ids(parsed_gpu_device_ids)
 
     effective_force_cpu = cpu or env_flag_enabled("TG_FORCE_CPU")
@@ -4127,10 +4109,18 @@ def search_command(
                     typer.echo(f"tg: {exc}", err=True)
                 sys.exit(2)
         else:
-            # F16 : probe dense-leg availability even on a 0-match search so
-            # `rank_fallback_reason` is set whenever the leg is unavailable, regardless of match
-            # count -- skipping the probe here silently made the JSON envelope dishonest.
-            _set_semantic_rank_fallback_reason(all_results)
+            from tensor_grep.cli.investigation_options import (
+                apply_semantic_zero_match_bm25_fallback,
+            )
+
+            apply_semantic_zero_match_bm25_fallback(
+                all_results,
+                pattern,
+                candidate_files_ordered,
+                max_count=max_count,
+                corpus_chunk_cap=_SEMANTIC_CORPUS_CHUNK_CAP,
+                set_fallback_reason_fn=_set_semantic_rank_fallback_reason,
+            )
     elif config.rank_bm25 and all_results.matches:
         from tensor_grep.core.reranker import rerank_by_bm25
 

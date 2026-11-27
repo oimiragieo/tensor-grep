@@ -110,3 +110,80 @@ pub fn handle_search_runtime_error(
     }
     crate::exit_codes::exit_with_run_error(err)
 }
+
+pub fn exit_gpu_sidecar_error_if_structured(
+    json: bool,
+    ndjson: bool,
+    raw_detail: &str,
+    exit_code: Option<i32>,
+) {
+    if !json && !ndjson {
+        return;
+    }
+    let trimmed = raw_detail.trim();
+    let detail = if trimmed.is_empty() {
+        match exit_code {
+            Some(code) => format!("GPU sidecar exited with code {code}"),
+            None => "GPU sidecar execution failed".to_string(),
+        }
+    } else {
+        trimmed.to_string()
+    };
+    exit_structured_search_error_if_needed(json, ndjson, "sidecar_error", detail);
+}
+
+pub fn exit_gpu_cpu_fallback_flag_unhonorable(
+    flag_name: &str,
+    rg_available: bool,
+    json: bool,
+    ndjson: bool,
+) -> ! {
+    let message = if rg_available {
+        format!(
+            "error: {flag_name} is not supported by native GPU-fallback CPU search, and ripgrep's \
+             output shape cannot represent structured --json/--ndjson output here; refusing rather \
+             than silently ignoring {flag_name}. Drop --json/--ndjson, or drop {flag_name}."
+        )
+    } else {
+        format!(
+            "error: {flag_name} is not supported by native GPU-fallback CPU search, and the \
+             ripgrep (`rg`) backend is unavailable to honor it instead; refusing rather than \
+             silently ignoring {flag_name}. Install `rg`, set TG_RG_PATH, or drop {flag_name}."
+        )
+    };
+    exit_structured_search_error_if_needed(json, ndjson, "unsupported_flag", message);
+}
+
+pub fn classify_gpu_sidecar_unavailable(stderr: &str, message: &str) -> Option<String> {
+    let mut raw = String::new();
+    if !stderr.trim().is_empty() {
+        raw.push_str(stderr.trim());
+    }
+    if !message.trim().is_empty() {
+        if !raw.is_empty() {
+            raw.push(' ');
+        }
+        raw.push_str(message.trim());
+    }
+    let lower = raw.to_ascii_lowercase();
+    let unavailable = lower.contains("cuda_visible_devices is empty")
+        || lower.contains("no gpus are visible")
+        || lower.contains("cuda is unavailable")
+        || lower.contains("no usable gpu devices")
+        || lower.contains("no cuda devices")
+        || lower.contains("available device ids: none")
+        || lower.contains("could not initialize a gpu backend")
+        || lower.contains("cudf and torch gpu backends were unavailable")
+        || lower.contains("no routable gpu chunk plan was available")
+        || lower.contains("torch backend imports failed")
+        || (lower.contains("requested gpu device ids") && lower.contains("not available"));
+    if unavailable {
+        Some(if raw.is_empty() {
+            "sidecar reported no usable GPU devices".to_string()
+        } else {
+            raw
+        })
+    } else {
+        None
+    }
+}
