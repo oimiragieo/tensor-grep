@@ -146,19 +146,19 @@ def _seed_larger_candidates(
                 rf"\b(?:def|class|fn|func|function|struct|enum|trait|interface|type)\s+(?:{pattern})\b",
                 re.IGNORECASE,
             )
-            for fp in context_files:
-                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-                    break
-                try:
+            try:
+                for fp in context_files:
+                    if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                        break
                     text = fp.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    continue
-                if term_re.search(text):
-                    key = os.path.normcase(os.path.abspath(str(fp)))
-                    lexical_hits.add(key)
-                    if def_re.search(text):
-                        symbol_hits.add(key)
-            lexical_ok = True
+                    if term_re.search(text):
+                        key = os.path.normcase(os.path.abspath(str(fp)))
+                        lexical_hits.add(key)
+                        if def_re.search(text):
+                            symbol_hits.add(key)
+                lexical_ok = True
+            except OSError:
+                lexical_ok = False
         elif active_bin is not None:
             def_pat = rf"\b(?:def|class|fn|func|function|struct|enum|trait|interface|type)\s+(?:{pattern})\b"
             def_cmd = (

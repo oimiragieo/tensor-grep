@@ -849,7 +849,7 @@
     "identity": "cli/main.py:main_entry:subprocess.run:0241cf601f399a9ed8a04ae2868b61175a97c1679f09154b8867bb0f07204951:0",
     "path": "cli/main.py",
     "function": "main_entry",
-    "line": 720,
+    "line": 722,
     "column": 24,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -1229,7 +1229,7 @@
     "identity": "cli/prepare_larger.py:_seed_larger_candidates:subprocess.run:632d5cdc0706ec0339b40f66e517577f2271521adc5493c0c84d23dae6a2ab35:0",
     "path": "cli/prepare_larger.py",
     "function": "_seed_larger_candidates",
-    "line": 109,
+    "line": 117,
     "column": 23,
     "target": "subprocess.run",
     "policy": "diagnostic-utf8-replace",
@@ -1243,14 +1243,14 @@
     "positional_options": false,
     "generated_from": null,
     "call_fingerprint": "632d5cdc0706ec0339b40f66e517577f2271521adc5493c0c84d23dae6a2ab35",
-    "producer_fingerprint": "a46288723e60564d78801d066f2d3a5262bce64024cf3b6e44a1db40cb2df401"
+    "producer_fingerprint": "326dbb1cad5948c8d927dc096ca70bd7d31573e0c6ff9880374600f6900ea03e"
   },
   {
-    "identity": "cli/prepare_larger.py:_seed_larger_candidates:subprocess.run:83be7aeccacf393d2272c8e572d74708f9f22dd1da12232c1d1ac0b96b5c641d:0",
+    "identity": "cli/prepare_larger.py:_seed_larger_candidates:subprocess.run:71994a0d07bb090d4a6db788d039d32724877904b9546adac13b5b91f4dbac6e:0",
     "path": "cli/prepare_larger.py",
     "function": "_seed_larger_candidates",
-    "line": 142,
-    "column": 31,
+    "line": 170,
+    "column": 27,
     "target": "subprocess.run",
     "policy": "diagnostic-utf8-replace",
     "rationale": "Captured human-facing diagnostics use explicit UTF-8 with replacement so malformed bytes remain reportable.",
@@ -1262,8 +1262,8 @@
     "output_captured": true,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "83be7aeccacf393d2272c8e572d74708f9f22dd1da12232c1d1ac0b96b5c641d",
-    "producer_fingerprint": "a46288723e60564d78801d066f2d3a5262bce64024cf3b6e44a1db40cb2df401"
+    "call_fingerprint": "71994a0d07bb090d4a6db788d039d32724877904b9546adac13b5b91f4dbac6e",
+    "producer_fingerprint": "326dbb1cad5948c8d927dc096ca70bd7d31573e0c6ff9880374600f6900ea03e"
   },
   {
     "identity": "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",

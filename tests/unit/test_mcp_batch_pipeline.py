@@ -340,9 +340,9 @@ def test_tg_sql_helper_executes_read_only_sql(
 def test_tg_batch_return_final_only_non_ascii_and_long_id_under_4000_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def fake_worker(
-        server: object, item: dict[str, object], common_path: str, remaining: float | None = None
-    ):
+    def fake_worker(request: dict[str, object], item_end: float, cancel_event=None) -> WorkerRun:
+        del item_end, cancel_event
+        item = dict(request["item"])  # type: ignore[arg-type]
         return _make_worker_run({
             "id": str(item["id"]),
             "kind": "capsule",
@@ -364,3 +364,4 @@ def test_tg_batch_return_final_only_non_ascii_and_long_id_under_4000_bytes(
         return_final_only=True,
     )
     assert len(raw.encode("utf-8")) <= 4000
+    assert "error" not in json.loads(raw)["results"][0]
