@@ -454,11 +454,22 @@ class HybridSQLiteIndex:
             }
             existing_rows = self._conn.execute(
                 "SELECT id, doc_id, file_id, start_line, end_line, content_hash, "
-                "length(embedding_blob), length(binary_blob) FROM documents"
+                "length(embedding_blob), length(binary_blob), inline_content IS NOT NULL "
+                "FROM documents"
             ).fetchall()
             existing: dict[
                 str,
-                tuple[int, int | None, int, int, str | None, int | None, int | None, bytes | None],
+                tuple[
+                    int,
+                    int | None,
+                    int,
+                    int,
+                    str | None,
+                    int | None,
+                    int | None,
+                    bytes | None,
+                    bool,
+                ],
             ] = {
                 str(r[1]): (
                     int(r[0]),
@@ -469,6 +480,7 @@ class HybridSQLiteIndex:
                     int(r[6]) if r[6] is not None else None,
                     int(r[7]) if r[7] is not None else None,
                     None,
+                    bool(r[8]),
                 )
                 for r in existing_rows
             }
@@ -497,6 +509,16 @@ class HybridSQLiteIndex:
                         self._dirty = True
                 emb_len = len(emb_blob) if emb_blob is not None else None
                 bin_len = len(bin_blob) if bin_blob is not None else None
+                can_reconstruct = bool(
+                    file_id is not None and start_line > 0 and end_line >= start_line
+                )
+                if can_reconstruct and file_path:
+                    try:
+                        if Path(file_path).lstat().st_size > _MAX_RECONSTRUCT_BYTES:
+                            can_reconstruct = False
+                    except OSError:
+                        pass
+                needs_inline = not can_reconstruct
                 prev = existing.get(doc_id)
                 if prev is not None:
                     (
@@ -508,12 +530,14 @@ class HybridSQLiteIndex:
                         prev_len,
                         prev_bin_len,
                         prev_blob,
+                        prev_has_inline,
                     ) = prev
                     if (
                         prev_hash == c_hash
                         and prev_file_id == file_id
                         and prev_start == start_line
                         and prev_end == end_line
+                        and prev_has_inline == needs_inline
                     ):
                         if (
                             emb_blob is None
@@ -542,6 +566,7 @@ class HybridSQLiteIndex:
                                     emb_len,
                                     bin_len,
                                     prev_blob,
+                                    prev_has_inline,
                                 )
                                 continue
                         self._conn.execute(
@@ -558,19 +583,11 @@ class HybridSQLiteIndex:
                             emb_len,
                             bin_len,
                             emb_blob,
+                            prev_has_inline,
                         )
                         continue
                 aliases = _extract_alias_tokens(content)
-                can_reconstruct = bool(
-                    file_id is not None and start_line > 0 and end_line >= start_line
-                )
-                if can_reconstruct and file_path:
-                    try:
-                        if Path(file_path).lstat().st_size > _MAX_RECONSTRUCT_BYTES:
-                            can_reconstruct = False
-                    except OSError:
-                        pass
-                inline_val = None if can_reconstruct else content
+                inline_val = content if needs_inline else None
                 if prev is not None:
                     row_id = prev[0]
                     self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
@@ -631,6 +648,7 @@ class HybridSQLiteIndex:
                     emb_len,
                     bin_len,
                     emb_blob,
+                    needs_inline,
                 )
             self._conn.commit()
             for doc_id, content, *_ in normalized:

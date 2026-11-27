@@ -292,6 +292,7 @@ def record_tdad_edges(
     edges: Iterable[tuple[str, str, str, str, float]],
     *,
     replace: bool = False,
+    replace_files: Iterable[str] | None = None,
     metadata_updates: Mapping[str, str] | None = None,
 ) -> int:
     """Persist explicit (source_file, source_symbol, test_file, edge_kind, weight) rows."""
@@ -312,6 +313,15 @@ def record_tdad_edges(
         with conn:
             if replace:
                 conn.execute("DELETE FROM source_test_deps")
+            elif replace_files is not None:
+                scoped_sources = sorted({
+                    _norm_path(src, repo_root=resolved_root) for src in replace_files if src
+                })
+                if scoped_sources:
+                    conn.executemany(
+                        "DELETE FROM source_test_deps WHERE source_file = ?",
+                        [(src,) for src in scoped_sources],
+                    )
             if rows:
                 conn.executemany(
                     """
@@ -463,10 +473,15 @@ def build_tdad_dependency_map(
             resolved_root,
             edges,
             replace=replace_canonical,
-            metadata_updates={
-                "repo_fingerprint": fingerprint,
-                "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
-            },
+            replace_files=None if replace_canonical else tracked_files,
+            metadata_updates=(
+                {
+                    "repo_fingerprint": fingerprint,
+                    "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
+                }
+                if replace_canonical
+                else None
+            ),
         )
         persisted = True
 
@@ -529,7 +544,7 @@ def ensure_tdad_dependency_map(
                     "cache_path": str(db_path).replace("\\", "/"),
                 }
     result = build_tdad_dependency_map(
-        resolved_root,
+        repo_root if repo_map_payload is not None else resolved_root,
         repo_map_payload=repo_map_payload,
         persist=persist,
     )
@@ -577,14 +592,20 @@ def query_tdad_tests(
             if persist and resolved_root.is_dir():
                 tracked_files = _collect_repo_map_file_paths(repo_map_payload, resolved_root)
                 fingerprint = _compute_repo_fingerprint(resolved_root, tracked_files)
+                replace_canonical = Path(repo_root).expanduser().resolve() == resolved_root
                 record_tdad_edges(
                     resolved_root,
                     rows,
-                    replace=True,
-                    metadata_updates={
-                        "repo_fingerprint": fingerprint,
-                        "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
-                    },
+                    replace=replace_canonical,
+                    replace_files=None if replace_canonical else tracked_files,
+                    metadata_updates=(
+                        {
+                            "repo_fingerprint": fingerprint,
+                            "tracked_files": json.dumps(tracked_files, separators=(",", ":")),
+                        }
+                        if replace_canonical
+                        else None
+                    ),
                 )
         elif (cache_stale or (db_path.exists() and not has_fingerprint)) and resolved_root.is_dir():
             build_tdad_dependency_map(resolved_root, repo_map_payload=None, persist=persist)
