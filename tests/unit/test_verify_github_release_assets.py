@@ -287,8 +287,10 @@ def test_should_expose_gpu_ready_native_frontdoor_release_asset_profile():
     module = _load_module()
     assert module.BINARY_ASSET_PROFILES["native-frontdoor-gpu"] == [
         "tg-linux-amd64-cpu",
+        "tg-linux-arm64-cpu",
         "tg-linux-amd64-nvidia",
         "tg-macos-amd64-cpu",
+        "tg-macos-arm64-cpu",
         "tg-windows-amd64-cpu.exe",
         "tg-windows-amd64-nvidia.exe",
     ]
@@ -688,7 +690,9 @@ def test_release_asset_sets_include_exact_profile_signatures():
     expected, checksummed = module._release_asset_sets("native-frontdoor")
     subjects = [
         "tg-linux-amd64-cpu",
+        "tg-linux-arm64-cpu",
         "tg-macos-amd64-cpu",
+        "tg-macos-arm64-cpu",
         "tg-windows-amd64-cpu.exe",
         "sbom-rust.json",
         "sbom-python.json",

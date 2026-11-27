@@ -200,22 +200,28 @@ def _download_text(url: str, token: str | None = None) -> str:
 
 FULL_BINARY_ASSETS = [
     "tg-linux-amd64-cpu",
+    "tg-linux-arm64-cpu",
     "tg-linux-amd64-nvidia",
     "tg-macos-amd64-cpu",
+    "tg-macos-arm64-cpu",
     "tg-windows-amd64-cpu.exe",
     "tg-windows-amd64-nvidia.exe",
 ]
 
 NATIVE_FRONTDOOR_BINARY_ASSETS = [
     "tg-linux-amd64-cpu",
+    "tg-linux-arm64-cpu",
     "tg-macos-amd64-cpu",
+    "tg-macos-arm64-cpu",
     "tg-windows-amd64-cpu.exe",
 ]
 
 GPU_READY_NATIVE_FRONTDOOR_BINARY_ASSETS = [
     "tg-linux-amd64-cpu",
+    "tg-linux-arm64-cpu",
     "tg-linux-amd64-nvidia",
     "tg-macos-amd64-cpu",
+    "tg-macos-arm64-cpu",
     "tg-windows-amd64-cpu.exe",
     "tg-windows-amd64-nvidia.exe",
 ]
