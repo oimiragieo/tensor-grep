@@ -54,6 +54,12 @@ def test_unified_manifest_creation_and_cross_view_freshness(tmp_path: Path) -> N
     hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
     hybrid_path.parent.mkdir(parents=True, exist_ok=True)
     hybrid_path.write_bytes(b"valid-hybrid-v1")
+    symbols_path = tmp_path / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    symbols_path.parent.mkdir(parents=True, exist_ok=True)
+    symbols_path.write_bytes(b"valid-symbols-v1")
+    graph_path = tmp_path / ".tg_cache" / "graph_v1" / "incremental_edges.sqlite3"
+    graph_path.parent.mkdir(parents=True, exist_ok=True)
+    graph_path.write_bytes(b"valid-graph-v1")
     hybrid_fp = compute_view_artifact_fingerprint(tmp_path, "hybrid_v1")
     assert hybrid_fp is not None
 
@@ -468,6 +474,12 @@ def test_save_and_check_view_freshness_fail_closed_on_missing_or_mismatched_arti
     hybrid_path = tmp_path / ".tg_cache" / "hybrid_v1" / "index.sqlite3"
     hybrid_path.parent.mkdir(parents=True, exist_ok=True)
     hybrid_path.write_bytes(b"valid-hybrid-v1")
+    symbols_path = tmp_path / ".tg_cache" / "symbols_v1" / "metadata.sqlite3"
+    symbols_path.parent.mkdir(parents=True, exist_ok=True)
+    symbols_path.write_bytes(b"valid-symbols-v1")
+    graph_path = tmp_path / ".tg_cache" / "graph_v1" / "incremental_edges.sqlite3"
+    graph_path.parent.mkdir(parents=True, exist_ok=True)
+    graph_path.write_bytes(b"valid-graph-v1")
     hybrid_fp = compute_view_artifact_fingerprint(tmp_path, "hybrid_v1")
     assert hybrid_fp is not None
     assert update_view_states(

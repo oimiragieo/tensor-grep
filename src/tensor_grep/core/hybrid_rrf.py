@@ -183,6 +183,7 @@ def _extract_alias_tokens(content: str) -> str:
 
 
 _MAX_BLOB_BYTES = 1024 * 1024
+_MAX_RECONSTRUCT_BYTES = 16 * 1024 * 1024
 
 
 def _coerce_blob(raw: object) -> bytes | None:
@@ -560,10 +561,16 @@ class HybridSQLiteIndex:
                         )
                         continue
                 aliases = _extract_alias_tokens(content)
-                has_valid_offsets = bool(
+                can_reconstruct = bool(
                     file_id is not None and start_line > 0 and end_line >= start_line
                 )
-                inline_val = None if has_valid_offsets else content
+                if can_reconstruct and file_path:
+                    try:
+                        if Path(file_path).lstat().st_size > _MAX_RECONSTRUCT_BYTES:
+                            can_reconstruct = False
+                    except OSError:
+                        pass
+                inline_val = None if can_reconstruct else content
                 if prev is not None:
                     row_id = prev[0]
                     self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
@@ -893,8 +900,8 @@ class HybridSQLiteIndex:
                         fd = open_regular_nontraversing_fd(src_path)
                         if fd is not None:
                             with os.fdopen(fd, "rb") as handle:
-                                raw_bytes = handle.read(16 * 1024 * 1024 + 1)
-                            if len(raw_bytes) <= 16 * 1024 * 1024:
+                                raw_bytes = handle.read(_MAX_RECONSTRUCT_BYTES + 1)
+                            if len(raw_bytes) <= _MAX_RECONSTRUCT_BYTES:
                                 lines = decode_text_with_bom(raw_bytes).splitlines(keepends=True)
                     except OSError:
                         lines = []

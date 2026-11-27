@@ -451,17 +451,18 @@ def build_tdad_dependency_map(
     if payload is None:
         from tensor_grep.cli import repo_map as _repo_map
 
-        payload = _repo_map.build_repo_map(input_root)
+        payload = _repo_map.build_repo_map(resolved_root)
 
     edges = _extract_tdad_edges_from_repo_map(payload, repo_root=resolved_root)
     tracked_files = _collect_repo_map_file_paths(payload, resolved_root)
     fingerprint = _compute_repo_fingerprint(resolved_root, tracked_files)
     persisted = False
     if persist and resolved_root.is_dir():
+        replace_canonical = repo_map_payload is None or input_root == resolved_root
         record_tdad_edges(
             resolved_root,
             edges,
-            replace=True,
+            replace=replace_canonical,
             metadata_updates={
                 "repo_fingerprint": fingerprint,
                 "tracked_files": json.dumps(tracked_files, separators=(",", ":")),

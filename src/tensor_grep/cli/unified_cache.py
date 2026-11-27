@@ -499,11 +499,12 @@ def update_view_states(
     now = time.time()
     views_payload: dict[str, dict[str, Any]] = {}
     for view_name, (ready, schema_ver) in view_updates.items():
-        fp = (
-            artifact_fingerprints.get(view_name)
-            if artifact_fingerprints is not None
-            else (compute_view_artifact_fingerprint(repo_root, view_name) if ready else None)
-        )
+        if artifact_fingerprints is not None and view_name in artifact_fingerprints:
+            fp = artifact_fingerprints[view_name]
+        elif ready:
+            fp = compute_view_artifact_fingerprint(repo_root, view_name)
+        else:
+            fp = None
         views_payload[view_name] = ViewFreshnessRecord(
             name=view_name,
             merkle_root=merkle_root,

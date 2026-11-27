@@ -254,6 +254,8 @@ def _unified_manifest_covers_scope(
     cache_root: Path,
     files: list[Path],
     floor: Path | None,
+    *,
+    is_directory: bool = True,
 ) -> tuple[bool, bool]:
     if floor is not None and not _under_confinement(cache_root, floor):
         return False, False
@@ -282,7 +284,7 @@ def _unified_manifest_covers_scope(
     if "symbols_v1" not in ready_views:
         return True, False
 
-    if scope == cache_root:
+    if scope == cache_root and is_directory:
         scope_files = files
     else:
         cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
@@ -391,7 +393,7 @@ def check_coverage(path: Path, *, confinement_root: Path | None = None) -> dict[
     except ValueError:
         cache_root = scope
     manifest_exists, manifest_fresh = _unified_manifest_covers_scope(
-        scope, cache_root, files, floor
+        scope, cache_root, files, floor, is_directory=is_directory
     )
     if manifest_exists and not manifest_fresh:
         warnings.append("unified cache manifest .tg_cache/manifest_v1.json failed verification")
