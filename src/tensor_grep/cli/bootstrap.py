@@ -474,7 +474,7 @@ def _emit_unknown_command_json(first_arg: str, nearest: list[str]) -> None:
 
 
 def _is_public_help_invocation(argv: list[str]) -> bool:
-    if len(argv) == 1 and argv[0] in {"--help", "-h"}:
+    if len(argv) == 1 and argv[0] in {"--help", "-h", "--help-all"}:
         return True
     if len(argv) == 2 and argv[0] in _PYTHON_FULL_HELP_COMMANDS and argv[1] in {"--help", "-h"}:
         return True

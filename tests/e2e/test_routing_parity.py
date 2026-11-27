@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from tensor_grep.backends.ast_backend import get_supported_languages
-from tensor_grep.cli.help_catalog import COMMAND_GROUPS
+from tensor_grep.cli.help_catalog import COMMAND_GROUPS, CORE_WORKFLOW_COMMANDS
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
@@ -1053,6 +1053,7 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
         stripped = line.strip()
         if stripped in {
             "Commands:",
+            "Core workflow:",
             "Search and structure:",
             "Navigate:",
             "Agent:",
@@ -1416,16 +1417,22 @@ def test_top_level_help__Action_cli__Condition_public_contract__ExpectedOutcome_
     parity_env,
 ):
     python_help = run_command("python-m", ["--help"], cwd=parity_env)
+    python_help_all = run_command("python-m", ["--help-all"], cwd=parity_env)
     native_help = _run_native_front_door(["--help"], cwd=parity_env)
 
     assert python_help.returncode == 0
+    assert python_help_all.returncode == 0
     assert native_help.returncode == 0
     python_commands = _extract_visible_help_commands(python_help.stdout)
+    python_all_commands = _extract_visible_help_commands(python_help_all.stdout)
     native_commands = _extract_visible_help_commands(native_help.stdout)
 
-    assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert python_commands == set(CORE_WORKFLOW_COMMANDS)
+    assert len(python_help.stdout.splitlines()) <= 45
+    assert python_all_commands == PUBLIC_TOP_LEVEL_COMMANDS
     assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
     _assert_help_rows_once(python_help.stdout)
+    _assert_help_rows_once(python_help_all.stdout)
     _assert_help_rows_once(native_help.stdout)
     catalog_commands = set().union(*dict(COMMAND_GROUPS).values())
     assert catalog_commands == PUBLIC_TOP_LEVEL_COMMANDS
@@ -1439,10 +1446,10 @@ def test_empty_invocation__Action_cli__Condition_noargs__ExpectedOutcome_exact_o
     assert native_help.returncode == 0
     python_commands = _extract_visible_help_commands(python_help.stdout)
     native_commands = _extract_visible_help_commands(native_help.stdout)
-    assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert python_commands == set(CORE_WORKFLOW_COMMANDS)
     assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
     assert len(_extract_visible_help_command_rows(python_help.stdout)) == len(
-        PUBLIC_TOP_LEVEL_COMMANDS
+        CORE_WORKFLOW_COMMANDS
     )
 
 
