@@ -51,6 +51,7 @@ use tensor_grep_rs::gpu_native::{
     probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats, GpuPipelineStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
+use tensor_grep_rs::index_mmap::{mmap_index_path, LoadedIndex, MmapIndex};
 use tensor_grep_rs::native_search::{
     defaulted_scope_fields, emit_index_binary_match_warning, native_json_text_fields,
     native_search_pattern_compiles, run_native_search, smart_case_pattern_is_case_insensitive,
@@ -78,9 +79,11 @@ mod ast_run_remediation;
 mod main_env;
 mod scan_routing;
 mod search_citations_routing;
+mod search_files;
 mod search_flag_registry;
 mod top_level_help;
 use main_env::env_flag_enabled;
+use search_files::{format_broad_generated_scan_error, generated_scan_dir_names};
 use search_flag_registry::{
     raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
     SEARCH_PYTHON_PASSTHROUGH_FLAGS,
@@ -100,30 +103,6 @@ const TG_VALIDATION_TIMEOUT_MS_ENV: &str = "TG_VALIDATION_TIMEOUT_MS";
 /// `--test-cmd` run (audit #34): an 800-edited-file batch-rewrite would otherwise fan out 800
 /// serial subprocesses per command.
 const DEFAULT_MAX_VALIDATION_TARGETS: usize = 50;
-const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
-    "__pycache__",
-    ".claude",
-    ".cache",
-    ".cargo",
-    ".git",
-    ".gradle",
-    ".mypy_cache",
-    ".npm",
-    ".nuget",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".rustup",
-    ".tox",
-    ".venv",
-    "AppData",
-    "artifacts",
-    "build",
-    "coverage",
-    "dist",
-    "node_modules",
-    "target",
-    "venv",
-];
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(bin_name = "tg")]
@@ -492,8 +471,16 @@ pub struct SearchArgs {
     pub regexp: Vec<String>,
 
     /// The search pattern (regex or string)
-    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list", "version"])]
+    #[arg(required_unless_present_any = ["regexp", "pcre2_version", "type_list", "version", "files"])]
     pub pattern: Option<String>,
+
+    /// Print files that would be searched and exit
+    #[arg(long)]
+    pub files: bool,
+
+    /// Allow unbounded scans across generated/dependency directories
+    #[arg(long = "allow-broad-generated-scan")]
+    pub allow_broad_generated_scan: bool,
 
     /// Paths to search
     #[arg(value_name = "PATH")]
@@ -1587,12 +1574,10 @@ fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<St
     if search_args_contain_any_flag(&args, SEARCH_PYTHON_PASSTHROUGH_FLAGS) {
         return Some(args);
     }
-    if args.iter().any(|arg| {
-        matches!(
-            arg.as_str(),
-            "--files" | "--allow-broad-generated-scan" | "--ast"
-        )
-    }) {
+    let has_files = args.iter().any(|arg| arg == "--files");
+    if args.iter().any(|arg| arg == "--ast")
+        || (!has_files && args.iter().any(|arg| arg == "--allow-broad-generated-scan"))
+    {
         return Some(args);
     }
     let structured_output = args
@@ -2288,9 +2273,13 @@ fn search_args_allow_plain_text_native(args: &SearchArgs) -> bool {
         pcre2_version,
         type_list,
         version,
+        files,
+        allow_broad_generated_scan,
     } = args;
 
     !*no_fixed_strings
+        && !*files
+        && !*allow_broad_generated_scan
         && !*invert_match
         && !*no_invert_match
         && !*count
@@ -2367,72 +2356,7 @@ fn search_args_need_broad_generated_guard(args: &SearchArgs) -> bool {
         && (args.no_ignore || args.no_ignore_files || args.no_ignore_vcs)
 }
 
-fn is_broad_generated_scan_dir_name(name: &str) -> bool {
-    BROAD_GENERATED_SCAN_DIR_NAMES
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(name))
-}
-
-fn generated_scan_dir_names(paths: &[String], include_child_dirs: bool) -> Vec<String> {
-    let mut found = BTreeSet::new();
-    for raw_path in paths {
-        if raw_path.is_empty() || raw_path == "-" || raw_path.starts_with('-') {
-            continue;
-        }
-        let path = Path::new(raw_path);
-        if !path.is_dir() {
-            continue;
-        }
-        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
-            if is_broad_generated_scan_dir_name(name) {
-                found.insert(name.to_string());
-            }
-        }
-        if !include_child_dirs {
-            continue;
-        }
-        let entries = match std::fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let is_dir = entry
-                .file_type()
-                .map(|file_type| file_type.is_dir())
-                .unwrap_or(false);
-            if !is_dir {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if is_broad_generated_scan_dir_name(&name) {
-                found.insert(name);
-            }
-        }
-    }
-    found.into_iter().collect()
-}
-
-fn format_broad_generated_scan_error(generated_dirs: &[String]) -> String {
-    let mut visible_dirs = generated_dirs
-        .iter()
-        .take(8)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    if generated_dirs.len() > 8 {
-        visible_dirs.push_str(", ...");
-    }
-    format!(
-        "Error: broad generated-root scan refused as a safety guard, not a zero-match result: \
-path contains generated, cache, \
-or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, \
-or --max-depth, or pass --allow-broad-generated-scan to opt in.\n\
-For bounded output:\n\
-tg search --files <path> --hidden --max-depth <N>\n\
-For intentional broad scans:\n\
---allow-broad-generated-scan"
-    )
-}
+// Broad generated-scan helpers moved to search_files.rs.
 
 // Bug #88/#480/#100: `IMPLICIT_SEARCH_WALK_FILE_CEILING`, `implicit_search_walk_exceeds_ceiling`,
 // and `format_unbounded_implicit_search_walk_error` used to live here. They are now HOISTED into
@@ -3464,8 +3388,10 @@ mod tests {
             no_config: _,         // NO-OP (this backend never reads an rg config file either)
             pcre2_version: _,     // MOOT-OR-UNREACHABLE (early return at the very top of
             // handle_ripgrep_search, before any routing)
-            type_list: _, // MOOT-OR-UNREACHABLE (ditto)
-            version: _,   // MOOT-OR-UNREACHABLE (ditto)
+            type_list: _,                  // MOOT-OR-UNREACHABLE (ditto)
+            version: _,                    // MOOT-OR-UNREACHABLE (ditto)
+            files: _,                      // MOOT-OR-UNREACHABLE (ditto)
+            allow_broad_generated_scan: _, // MOOT-OR-UNREACHABLE (ditto)
         } = args;
     }
 
@@ -3632,8 +3558,10 @@ mod tests {
             no_config: _,         // NO-OP (this backend never reads an rg config file either)
             pcre2_version: _,     // MOOT-OR-UNREACHABLE (early return at the top of
             // handle_ripgrep_search)
-            type_list: _, // MOOT-OR-UNREACHABLE (ditto)
-            version: _,   // MOOT-OR-UNREACHABLE (ditto)
+            type_list: _,                  // MOOT-OR-UNREACHABLE (ditto)
+            version: _,                    // MOOT-OR-UNREACHABLE (ditto)
+            files: _,                      // MOOT-OR-UNREACHABLE (ditto)
+            allow_broad_generated_scan: _, // MOOT-OR-UNREACHABLE (ditto)
         } = args;
     }
 
@@ -8282,7 +8210,13 @@ fn index_flag_violations(args: &SearchArgs, request: &ResolvedSearchRequest) -> 
         pcre2_version: _, // PassthroughSafe: early-exit flag (handle_ripgrep_search top), unreachable here.
         type_list: _,     // PassthroughSafe: early-exit flag, unreachable here.
         version: _,       // PassthroughSafe: early-exit flag, unreachable here.
+        files,
+        allow_broad_generated_scan: _,
     } = args;
+
+    if *files {
+        violations.push("--files");
+    }
 
     if *invert_match {
         violations.push("-v/--invert-match");
@@ -8528,7 +8462,7 @@ const INDEX_FLAG_POLICY: &[(&str, IndexFlagPolicy)] = &[
 fn detect_warm_index_state(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
-) -> (IndexRoutingState, Option<TrigramIndex>) {
+) -> (IndexRoutingState, Option<LoadedIndex>) {
     if args.index
         || request.paths.len() != 1
         || request.patterns.len() != 1
@@ -8543,7 +8477,7 @@ fn detect_warm_index_state(
         return (IndexRoutingState::default(), None);
     }
 
-    match TrigramIndex::load(&index_path) {
+    match LoadedIndex::load_for_search(&index_path) {
         Ok(index) => {
             // M17 (audit-m17): the ROOT check runs FIRST, before any staleness work -- a
             // `.tg_index` reached from a DIFFERENT tree than it was built for must never be
@@ -9588,6 +9522,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if args.files {
+        return search_files::run_native_files_search(&args);
+    }
 
     let request = resolve_search_request(&args)?;
     exit_json_search_input_error_if_needed(
@@ -9951,8 +9888,18 @@ fn save_index_locked(index: &TrigramIndex, index_path: &Path, verbose: bool) {
         Ok(_guard) => {
             if let Err(e) = index.save_anchored(&index_dir, file_name) {
                 eprintln!("[index] warning: failed to persist index: {e}");
-            } else if verbose {
-                eprintln!("[index] persisted index to {}", index_path.display());
+            } else {
+                let mmap_path = mmap_index_path(index_path);
+                if let Some(mmap_name) = mmap_path.file_name() {
+                    if let Err(e) =
+                        MmapIndex::save_from_trigram_index_anchored(index, &index_dir, mmap_name)
+                    {
+                        eprintln!("[index] warning: failed to persist mmap index: {e}");
+                    }
+                }
+                if verbose {
+                    eprintln!("[index] persisted index to {}", index_path.display());
+                }
             }
         }
         Err(timeout) => {
@@ -9968,7 +9915,7 @@ fn handle_index_search(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
     query: &str,
-    preloaded_index: Option<TrigramIndex>,
+    preloaded_index: Option<LoadedIndex>,
 ) -> anyhow::Result<()> {
     if request.paths.len() != 1 {
         anyhow::bail!("index search currently supports exactly one path root");
@@ -10029,8 +9976,12 @@ fn handle_index_search(
             );
         }
         loaded
-    } else if tensor_grep_rs::index_cache::confined_regular_file_exists(&index_paths.read_path) {
-        let loaded = match TrigramIndex::load(&index_paths.read_path) {
+    } else if tensor_grep_rs::index_cache::confined_regular_file_exists(&index_paths.read_path)
+        || tensor_grep_rs::index_cache::confined_regular_file_exists(&mmap_index_path(
+            &index_paths.read_path,
+        ))
+    {
+        let loaded = match LoadedIndex::load_for_search(&index_paths.read_path) {
             Ok(idx) => idx,
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
@@ -10049,15 +10000,9 @@ fn handle_index_search(
                         fresh.total_postings()
                     );
                 }
-                return run_index_query(args, request, query, &fresh);
+                return run_index_query(args, request, query, &LoadedIndex::Memory(fresh));
             }
         };
-        // M17 (audit-m17): the ROOT check runs BEFORE `staleness_reason`/incremental
-        // update -- the per-file walk asks the STORED root for its health, so on a
-        // mismatched tree it must not be the decision maker. A mismatch full-rebuilds from
-        // the QUERY root (never incremental: file identity from a different tree makes
-        // incremental both wasteful and semantically confusing), disclosing the reason
-        // through the same "[index] stale" channel as every other rebuild decision.
         if let Some(reason) = loaded.root_servability_reason(Path::new(request.primary_path())) {
             if args.verbose {
                 eprintln!("[index] stale: {reason}");
@@ -10077,32 +10022,45 @@ fn handle_index_search(
                     fresh.total_postings()
                 );
             }
-            return run_index_query(args, request, query, &fresh);
+            return run_index_query(args, request, query, &LoadedIndex::Memory(fresh));
         }
         if let Some(reason) = loaded.staleness_reason(args.no_ignore) {
             if args.verbose {
                 eprintln!("[index] stale: {reason}");
             }
             let started = Instant::now();
-            let update = loaded.rebuild_incremental_with_options(
-                Path::new(request.primary_path()),
-                args.no_ignore,
-            )?;
-            save_index_locked(&update.index, &index_paths.write_path, args.verbose);
-            if args.verbose {
-                eprintln!(
-                    "[index] incremental update complete in {:?}: reused {} unchanged files, added {}, modified {}, deleted {}; {} files, {} trigrams, {} postings",
-                    started.elapsed(),
-                    update.stats.reused_files,
-                    update.stats.added_files,
-                    update.stats.modified_files,
-                    update.stats.deleted_files,
-                    update.index.file_count(),
-                    update.index.trigram_count(),
-                    update.index.total_postings()
-                );
-            }
-            update.index
+            let base = match loaded {
+                LoadedIndex::Memory(idx) => Ok(idx),
+                LoadedIndex::Mmap(_) => TrigramIndex::load(&index_paths.read_path),
+            };
+            let fresh_or_updated = match base {
+                Ok(base_idx) => {
+                    let update = base_idx.rebuild_incremental_with_options(
+                        Path::new(request.primary_path()),
+                        args.no_ignore,
+                    )?;
+                    if args.verbose {
+                        eprintln!(
+                            "[index] incremental update complete in {:?}: reused {} unchanged files, added {}, modified {}, deleted {}; {} files, {} trigrams, {} postings",
+                            started.elapsed(),
+                            update.stats.reused_files,
+                            update.stats.added_files,
+                            update.stats.modified_files,
+                            update.stats.deleted_files,
+                            update.index.file_count(),
+                            update.index.trigram_count(),
+                            update.index.total_postings()
+                        );
+                    }
+                    update.index
+                }
+                Err(_) => TrigramIndex::build_with_options(
+                    Path::new(request.primary_path()),
+                    args.no_ignore,
+                )?,
+            };
+            save_index_locked(&fresh_or_updated, &index_paths.write_path, args.verbose);
+            LoadedIndex::Memory(fresh_or_updated)
         } else {
             if args.verbose {
                 eprintln!(
@@ -10133,7 +10091,7 @@ fn handle_index_search(
                 fresh.total_postings()
             );
         }
-        fresh
+        LoadedIndex::Memory(fresh)
     };
 
     run_index_query(args, request, query, &index)
@@ -10143,7 +10101,7 @@ fn run_index_query(
     args: &SearchArgs,
     request: &ResolvedSearchRequest,
     query: &str,
-    index: &TrigramIndex,
+    index: &LoadedIndex,
 ) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::warm_index());
