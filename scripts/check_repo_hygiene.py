@@ -23,6 +23,7 @@ APPROVED_ROOT_FILES = frozenset({
     "CLAUDE.md",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
+    "Dockerfile",
     "LICENSE",
     "NOTICE",
     "README.md",
