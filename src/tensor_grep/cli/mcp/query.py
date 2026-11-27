@@ -527,7 +527,7 @@ def tg_search(
                 selected_backend_name=selected_backend_name,
                 selected_backend_reason=selected_backend_reason,
             )
-            _finalize_aggregate_result(all_results)
+            _self._finalize_aggregate_result(all_results)
 
             # audit #95 Part 2: mirror main.py search_command's --rank/--semantic post-processing
             # (`if config.semantic_rank: ... elif config.rank_bm25 and all_results.matches:`) so an
@@ -933,12 +933,13 @@ def tg_query(
             return _meta_invalid_input_error("tg_query", action, refusal)
         confined_roots: list[tuple[str, bool]] | None = None
         if workspace_roots:
-            if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
+            max_roots = _self._MAX_WORKSPACE_ROOTS
+            if len(workspace_roots) > max_roots:
                 return _meta_workspace_roots_cap_error(
                     "tg_query",
                     action,
                     count=len(workspace_roots),
-                    cap=_MAX_WORKSPACE_ROOTS,
+                    cap=max_roots,
                 )
             try:
                 confined_roots = [

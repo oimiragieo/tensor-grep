@@ -178,10 +178,15 @@ async def _read_bounded_line(stdin: anyio.AsyncFile[bytes], limit: int) -> bytes
 
 
 async def _read_stdio_message_payload(stdin: anyio.AsyncFile[bytes]) -> str | None:
-    line = await _read_bounded_line(stdin, _MAX_MCP_STDIO_FIRST_LINE_BYTES)
+    first_line_cap = _self._MAX_MCP_STDIO_FIRST_LINE_BYTES
+    message_cap = _self._MAX_MCP_STDIO_MESSAGE_BYTES
+    header_lines_cap = _self._MAX_MCP_STDIO_HEADER_LINES
+    header_bytes_cap = _self._MAX_MCP_STDIO_HEADER_BYTES
+
+    line = await _read_bounded_line(stdin, first_line_cap)
     if line == b"":
         return None
-    if len(line) >= _MAX_MCP_STDIO_FIRST_LINE_BYTES and not line.endswith(b"\n"):
+    if len(line) >= first_line_cap and not line.endswith(b"\n"):
         # Fail closed: line 1 reached the read cap with no newline terminator. This is the last
         # unbounded-read vector -- either a `Content-Length:` header line with no newline (memory
         # growth BEFORE the size check below), or a newline-delimited message larger than
@@ -205,17 +210,17 @@ async def _read_stdio_message_payload(stdin: anyio.AsyncFile[bytes]) -> str | No
             return line.decode("utf-8")
         except UnicodeDecodeError:
             return None
-    if content_length <= 0 or content_length > _MAX_MCP_STDIO_MESSAGE_BYTES:
+    if content_length <= 0 or content_length > message_cap:
         # Fail closed: a non-positive or oversized frame is refused rather than read unbounded.
         return None
 
     header_bytes_total = 0
-    for _ in range(_MAX_MCP_STDIO_HEADER_LINES):
-        header = await _read_bounded_line(stdin, _MAX_MCP_STDIO_HEADER_BYTES)
+    for _ in range(header_lines_cap):
+        header = await _read_bounded_line(stdin, header_bytes_cap)
         if header == b"":
             return None
         header_bytes_total += len(header)
-        if header_bytes_total > _MAX_MCP_STDIO_HEADER_BYTES:
+        if header_bytes_total > header_bytes_cap:
             # Fail closed: the header preamble (one oversized line, or too many small ones)
             # exceeded its byte budget before a blank-line terminator ever showed up. Worst case
             # here is bounded to ~2x the byte cap (the over-budget line that tripped this check),

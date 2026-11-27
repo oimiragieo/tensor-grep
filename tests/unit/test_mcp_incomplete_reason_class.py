@@ -52,6 +52,12 @@ def test_a_results_object_without_the_attribute_is_tolerated() -> None:
     assert mcp_server._incomplete_class_fragment(object()) == {}
 
 
+def _mcp_layer_sources() -> list[tuple[str, str]]:
+    facade = pathlib.Path(mcp_server.__file__)
+    files = [facade, *sorted((facade.parent / "mcp").glob("*.py"))]
+    return [(f.name, f.read_text(encoding="utf-8")) for f in files]
+
+
 def test_every_class_the_mcp_layer_can_set_is_in_the_closed_vocabulary() -> None:
     """The allow-list rule (#282): a value outside the closed set is worse than no value.
 
@@ -59,10 +65,9 @@ def test_every_class_the_mcp_layer_can_set_is_in_the_closed_vocabulary() -> None
     invents `"backend_error"` or copies MCP's hyphenated `truncation_cause` members fails here.
     #293 settled that those two vocabularies must NOT be unified.
     """
-    import inspect
     import re
 
-    source = inspect.getsource(mcp_server)
+    source = "\n".join(text for _, text in _mcp_layer_sources())
     assigned = set(re.findall(r'incomplete_reason_class\s*=\s*"([^"]+)"', source))
     unexpected = assigned - _CLOSED_VOCABULARY
     assert not unexpected, (
@@ -100,20 +105,22 @@ def test_every_serialized_result_incomplete_payload_is_covered() -> None:
     """
     import re
 
-    source = pathlib.Path(mcp_server.__file__).read_text(encoding="utf-8")
-    lines = source.splitlines()
-    emitters = [i for i, line in enumerate(lines) if re.search(r'"result_incomplete":', line)]
-    assert emitters, "no result_incomplete emitters found -- this detector has gone blind"
+    emitters: list[tuple[str, int, str]] = []
+    uncovered: list[str] = []
+    for filename, source in _mcp_layer_sources():
+        lines = source.splitlines()
+        for index, line in enumerate(lines):
+            if re.search(r'"result_incomplete":', line):
+                emitters.append((filename, index, line))
+                # A class decision must appear in the same dict literal, within a short window.
+                window = "\n".join(lines[index : index + 12])
+                if (
+                    "_incomplete_class_fragment(" not in window
+                    and '"incomplete_reason_class"' not in window
+                ):
+                    uncovered.append(f"{filename}:{index + 1}: {line.strip()}")
 
-    uncovered = []
-    for index in emitters:
-        # A class decision must appear in the same dict literal, within a short window.
-        window = "\n".join(lines[index : index + 12])
-        if (
-            "_incomplete_class_fragment(" not in window
-            and '"incomplete_reason_class"' not in window
-        ):
-            uncovered.append(f"line {index + 1}: {lines[index].strip()}")
+    assert emitters, "no result_incomplete emitters found -- this detector has gone blind"
 
     assert not uncovered, (
         "these payloads disclose result_incomplete with NO class decision -- an agent there is "

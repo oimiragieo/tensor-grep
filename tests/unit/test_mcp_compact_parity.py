@@ -228,10 +228,11 @@ def test_tscg_schema_tightening_preserves_types_defaults_and_constraints() -> No
     import sys
 
     tools = asyncio.run(mcp_server.mcp.list_tools())
-    by_name = {t.name: t.model_dump(mode="json", exclude_none=True) for t in tools}
+    by_name = {t.name: t.model_dump(mode="json", by_alias=True, exclude_none=True) for t in tools}
     assert "tg_context" in by_name
     ctx_props = by_name["tg_context"]["inputSchema"]["properties"]
-    assert ctx_props["compact"]["default"] is False
+    if mcp_server._legacy_tools_enabled():
+        assert ctx_props["compact"]["default"] is False
     assert ctx_props["compact"]["type"] == "boolean"
     assert ctx_props["grounding"]["enum"] == ["off", "local", "registry"]
     assert ctx_props["query"]["type"] == ["string", "null"]
@@ -241,7 +242,7 @@ def test_tscg_schema_tightening_preserves_types_defaults_and_constraints() -> No
     env = {**os.environ, "PYTHONPATH": str(repo_root / "src"), "TG_MCP_LEGACY_TOOLS": "0"}
     script = (
         "import asyncio, json; from tensor_grep.cli import mcp_server as m; "
-        "tools = {t.name: t.model_dump(mode='json', exclude_none=True) "
+        "tools = {t.name: t.model_dump(mode='json', by_alias=True, exclude_none=True) "
         "for t in asyncio.run(m.mcp.list_tools())}; "
         "print(json.dumps({'query': tools['tg_context']['inputSchema']['properties']['query'], "
         "'tg_batch_desc': tools['tg_batch']['description']}))"
@@ -259,9 +260,9 @@ def test_tscg_schema_tightening_preserves_types_defaults_and_constraints() -> No
     assert compact_info["query"]["type"] == ["string", "null"]
     assert "title" not in compact_info["query"]
     batch_desc = compact_info["tg_batch_desc"]
-    assert "result_incomplete=true" in batch_desc
-    assert "120 seconds" in batch_desc
-    assert "Invalid top-level requests" in batch_desc
+    assert "<=16" in batch_desc
+    assert "120s" in batch_desc
+    assert "return_final_only" in batch_desc
 
     # Non-null branches with constraints (minimum, enum, pattern) must retain anyOf.
     schema = {

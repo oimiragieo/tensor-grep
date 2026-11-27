@@ -366,10 +366,10 @@ def _bound_non_dict_payload(wrapper: dict[str, Any], *, max_bytes: int) -> str:
 
 
 def compact_mcp_json_result(
-    raw_json: str, *, action: str | None = None, max_bytes: int = COMPACT_RESULT_MAX_BYTES
+    raw_json: str, *, action: str | None = None, max_bytes: int | None = None
 ) -> str:
     """Apply action-aware, bounded <=4000-byte compaction to a serialized MCP JSON tool response."""
-    limit = max(128, int(max_bytes))
+    limit = max(128, int(COMPACT_RESULT_MAX_BYTES if max_bytes is None else max_bytes))
     try:
         payload = json.loads(raw_json)
     except (json.JSONDecodeError, ValueError):
@@ -710,7 +710,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "tg_scan": "Security scans.",
     "tg_audit": "Audit/signing gates.",
     "tg_checkpoint": "Checkpoints (mutates).",
-    "tg_rewrite": "AST rewrites; apply mutates.",
+    "tg_rewrite": "Plan/apply AST rewrites; apply mutates (verify diff).",
     "tg_mcp_capabilities": "Capabilities.",
     "tg_classify_logs": "Log anomalies.",
     "tg_batch": "Batch <=16 $prev/$steps[i]; return_final_only; 120s max.",
