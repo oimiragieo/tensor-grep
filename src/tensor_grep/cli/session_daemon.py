@@ -1,37 +1,36 @@
 from __future__ import annotations
 
-import argparse
-import copy
 import getpass
-import hashlib
-import hmac
 import json
-import os
+import os as os
 import secrets
 import socket
-import socketserver
 import subprocess
-import sys
-import threading
-import time
-from collections import OrderedDict
-from datetime import UTC, datetime, timedelta
+import sys as sys
+
+if __name__ == "__main__":
+    sys.modules.setdefault("tensor_grep.cli.session_daemon", sys.modules[__name__])
+import time as time
 from pathlib import Path
-from time import monotonic
+from time import monotonic as monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from tensor_grep.cli import session_daemon_implicit as _implicit_sessions
-from tensor_grep.cli._index_lock import (  # noqa: F401 (re-exported for tests/helpers)
-    IndexLockTimeoutError,
-    index_lock,
-    replace_with_retry,
+from tensor_grep.cli._index_lock import (
+    IndexLockTimeoutError as IndexLockTimeoutError,
 )
-from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli._index_lock import (
+    index_lock as index_lock,
+)
+from tensor_grep.cli._index_lock import (
+    replace_with_retry as replace_with_retry,
+)
+from tensor_grep.cli.runtime_paths import _expected_tg_version as _expected_tg_version
 from tensor_grep.cli.session_daemon_deadlines import (
-    _HandlerAdmissionThreads,
-    _load_payload_with_status_retry,
-    _read_bounded_request_line,
+    _load_payload_with_status_retry as _load_payload_with_status_retry,
+)
+from tensor_grep.cli.session_daemon_deadlines import (
+    _read_bounded_request_line as _read_bounded_request_line,
 )
 from tensor_grep.cli.session_daemon_metrics_sanitize import (
     _empty_metrics_day_bucket as _empty_metrics_day_bucket,
@@ -39,74 +38,180 @@ from tensor_grep.cli.session_daemon_metrics_sanitize import (
 from tensor_grep.cli.session_daemon_metrics_sanitize import (
     _sanitize_metrics_days as _sanitize_metrics_days,
 )
-from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_response_cache import (
+    _SessionResponseCache as _SessionResponseCache,
+)
 from tensor_grep.cli.session_daemon_start_capture import (
-    cleanup_daemon_start_capture,
-    read_daemon_start_capture,
-    spawn_daemon_subprocess,
+    cleanup_daemon_start_capture as cleanup_daemon_start_capture,
+)
+from tensor_grep.cli.session_daemon_start_capture import (
+    read_daemon_start_capture as read_daemon_start_capture,
+)
+from tensor_grep.cli.session_daemon_start_capture import (
+    spawn_daemon_subprocess as spawn_daemon_subprocess,
 )
 from tensor_grep.cli.session_daemon_start_diagnostics import (
-    DaemonStartError,
-    daemon_start_failure,
+    DaemonStartError as DaemonStartError,
 )
-from tensor_grep.cli.session_daemon_start_lock import (  # noqa: F401  (re-exported for tests)
-    _DAEMON_START_LOCK_FILE,
-    _daemon_start_lock_path,
-    _release_daemon_start_lock,
-    _try_acquire_daemon_start_lock,
+from tensor_grep.cli.session_daemon_start_diagnostics import (
+    daemon_start_failure as daemon_start_failure,
+)
+from tensor_grep.cli.session_daemon_start_lock import (
+    _DAEMON_START_LOCK_FILE as _DAEMON_START_LOCK_FILE,
+)
+from tensor_grep.cli.session_daemon_start_lock import (
+    _daemon_start_lock_path as _daemon_start_lock_path,
+)
+from tensor_grep.cli.session_daemon_start_lock import (
+    _release_daemon_start_lock as _release_daemon_start_lock,
+)
+from tensor_grep.cli.session_daemon_start_lock import (
+    _try_acquire_daemon_start_lock as _try_acquire_daemon_start_lock,
 )
 from tensor_grep.cli.session_daemon_stop import _stop_rejected_daemon
-from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
-    _METADATA_REASONS,
-    DAEMON_HOST,
-    _attestation_fields,
-    _await_endpoint_refused,
-    _classify_daemon_pid,
-    _daemon_invocation_root,
-    _daemon_pid_state,
-    _daemon_ping_proof,
-    _daemon_secret_path,
-    _DaemonRefreshFailed,
-    _endpoint_flag,
-    _is_loopback_host,
-    _load_or_create_user_secret,
-    _metadata_state,
-    _metadata_unconfirmed,
-    _ping_proof_fields,
-    _process_info,
-    _read_user_secret,
-    _refresh_failed_error,
-    _stale_success_fields,
-    _stale_unconfirmed,
-    _stop_success,
-    _terminate_identified,
-    _unconfirmed_fields,
-    _valid_daemon_port,
-    _verify_ping_reply,
-    diagnose_user_secret,
+from tensor_grep.cli.session_daemon_trust import (
+    _METADATA_REASONS as _METADATA_REASONS,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    DAEMON_HOST as DAEMON_HOST,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _attestation_fields as _attestation_fields,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _await_endpoint_refused as _await_endpoint_refused,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _classify_daemon_pid as _classify_daemon_pid,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _daemon_invocation_root as _daemon_invocation_root,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _daemon_pid_state as _daemon_pid_state,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _daemon_ping_proof as _daemon_ping_proof,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _daemon_secret_path as _daemon_secret_path,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _DaemonRefreshFailed as _DaemonRefreshFailed,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _endpoint_flag as _endpoint_flag,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _is_loopback_host as _is_loopback_host,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _load_or_create_user_secret as _load_or_create_user_secret,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _metadata_state as _metadata_state,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _metadata_unconfirmed as _metadata_unconfirmed,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _ping_proof_fields as _ping_proof_fields,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _process_info as _process_info,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _read_user_secret as _read_user_secret,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _refresh_failed_error as _refresh_failed_error,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _stale_success_fields as _stale_success_fields,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _stale_unconfirmed as _stale_unconfirmed,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _stop_success as _stop_success,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _terminate_identified as _terminate_identified,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _unconfirmed_fields as _unconfirmed_fields,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _valid_daemon_port as _valid_daemon_port,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    _verify_ping_reply as _verify_ping_reply,
+)
+from tensor_grep.cli.session_daemon_trust import (
+    diagnose_user_secret as diagnose_user_secret,
 )
 from tensor_grep.cli.session_store import (
-    _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
-    _SESSION_VERSION,
-    WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
-    _ensure_session_not_stale,
-    _index_path,  # noqa: F401 (late-bound helper seam)
-    _load_index,  # noqa: F401 (late-bound helper seam)
-    _resolve_request_session_target,
-    _resolve_root,
-    _session_health_payload,
-    _session_payload_path,  # noqa: F401 (late-bound helper seam)
-    _sessions_dir,
-    _SessionServeCache,
-    _write_index,  # noqa: F401 (late-bound helper seam)
-    _write_json_atomic,
-    open_session,  # noqa: F401 (late-bound helper seam)
-    refresh_session,
-    serve_session_request,
+    _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT as _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
+)
+from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT as _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
+)
+from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT as _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
+)
+from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT as _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT,
+)
+from tensor_grep.cli.session_store import (
+    _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT as _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
+)
+from tensor_grep.cli.session_store import (
+    _SESSION_VERSION as _SESSION_VERSION,
+)
+from tensor_grep.cli.session_store import (
+    WARM_DAEMON_DEFAULT_DEADLINE_SECONDS as WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
+)
+from tensor_grep.cli.session_store import (
+    _ensure_session_not_stale as _ensure_session_not_stale,
+)
+from tensor_grep.cli.session_store import (
+    _index_path as _index_path,
+)
+from tensor_grep.cli.session_store import (
+    _load_index as _load_index,
+)
+from tensor_grep.cli.session_store import (
+    _resolve_request_session_target as _resolve_request_session_target,
+)
+from tensor_grep.cli.session_store import (
+    _resolve_root as _resolve_root,
+)
+from tensor_grep.cli.session_store import (
+    _session_health_payload as _session_health_payload,
+)
+from tensor_grep.cli.session_store import (
+    _session_payload_path as _session_payload_path,
+)
+from tensor_grep.cli.session_store import (
+    _sessions_dir as _sessions_dir,
+)
+from tensor_grep.cli.session_store import (
+    _SessionServeCache as _SessionServeCache,
+)
+from tensor_grep.cli.session_store import (
+    _write_index as _write_index,
+)
+from tensor_grep.cli.session_store import (
+    _write_json_atomic as _write_json_atomic,
+)
+from tensor_grep.cli.session_store import (
+    open_session as open_session,
+)
+from tensor_grep.cli.session_store import (
+    refresh_session as refresh_session,
+)
+from tensor_grep.cli.session_store import (
+    serve_session_request as serve_session_request,
 )
 
 _DAEMON_METADATA_FILE = "daemon.json"
@@ -258,7 +363,6 @@ def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
-    from tensor_grep.cli.session_store import _write_json_atomic
 
     # audit S3: daemon.json carries the IPC token; write it 0600 so the secret is not exposed.
     metadata_path = _daemon_metadata_path(root)
@@ -1018,421 +1122,6 @@ def request_running_session_daemon(path: str, request: dict[str, Any]) -> dict[s
     )
 
 
-def _path_cache_key(path: str) -> str:
-    resolved = str(_resolve_root(Path(path)))
-    return resolved.lower() if sys.platform.startswith("win") else resolved
-
-
-def _request_cache_value(
-    request: dict[str, Any],
-    name: str,
-    default: Any = "",
-) -> str:
-    value = request.get(name, default)
-    if value in (None, ""):
-        return ""
-    return str(value)
-
-
-def _session_payload_fingerprint(payload: dict[str, Any]) -> tuple[str, ...]:
-    repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
-    return (
-        str(payload.get("root", "")),
-        str(payload.get("created_at", "")),
-        str(payload.get("refreshed_at", "")),
-        str(len(cast(list[Any], repo_map.get("files", [])))),
-        str(len(cast(list[Any], repo_map.get("symbols", [])))),
-    )
-
-
-def _context_edit_plan_response_cache_key(
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...]:
-    return (
-        _path_cache_key(path),
-        session_id,
-        *_session_payload_fingerprint(payload),
-        str(request.get("query", "")).strip(),
-        _request_cache_value(request, "max_files", 3),
-        _request_cache_value(request, "max_sources"),
-        _request_cache_value(request, "max_tokens"),
-        _request_cache_value(request, "max_symbols", 5),
-        _request_cache_value(
-            request,
-            "max_repo_files",
-            _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
-        ),
-    )
-
-
-def _context_render_response_cache_key(
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...]:
-    return (
-        _path_cache_key(path),
-        session_id,
-        *_session_payload_fingerprint(payload),
-        str(request.get("query", "")).strip(),
-        _request_cache_value(request, "max_files", 3),
-        _request_cache_value(request, "max_sources", 5),
-        _request_cache_value(request, "max_symbols_per_file", 6),
-        _request_cache_value(request, "max_render_chars"),
-        _request_cache_value(request, "max_tokens"),
-        _request_cache_value(request, "model"),
-        _request_cache_value(request, "optimize_context", False),
-        _request_cache_value(request, "render_profile", "full"),
-        _request_cache_value(request, "profile", False),
-        _request_cache_value(
-            request,
-            "max_repo_files",
-            _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
-        ),
-    )
-
-
-def _symbol_command_response_cache_key(
-    command: str,
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...]:
-    # audit #113: one key function shared by all 5 symbol commands (defs/impact/refs/callers/
-    # blast_radius), so `command` MUST be a key field -- otherwise a `callers(foo)` lookup could
-    # serve a cached `defs(foo)` response (cross-command response bleed). Completeness of the
-    # REST of this tuple is equally load-bearing: a missing field (provider/max_tests/max_depth/
-    # max_repo_files) would let two requests that differ only in that field collide on the same
-    # cached answer (cross-request response bleed) -- see _symbol_command_response_cache_key's
-    # sibling _context_render_response_cache_key above for the same discipline.
-    return (
-        _path_cache_key(path),
-        session_id,
-        *_session_payload_fingerprint(payload),
-        command,
-        str(request.get("symbol", "")).strip(),
-        _request_cache_value(request, "provider", "native"),
-        _request_cache_value(request, "max_tests"),
-        _request_cache_value(request, "max_depth", 3),
-        _request_cache_value(
-            request,
-            "max_repo_files",
-            _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
-        ),
-    )
-
-
-def _orient_response_cache_key(
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...]:
-    # task #108 (Tier-2 daemon capability): `orient` has NO query (it is a whole-repo capsule, unlike
-    # every other cacheable command) -- the literal "orient" command-string field below is what
-    # keeps this key isolated from every OTHER command's key space (test: orient-key never
-    # collides with agent-key), same anti-bleed discipline as _symbol_command_response_cache_key.
-    return (
-        _path_cache_key(path),
-        session_id,
-        *_session_payload_fingerprint(payload),
-        "orient",
-        _request_cache_value(request, "max_tokens", 3000),
-        _request_cache_value(request, "max_central_files", 10),
-        str(tuple(request.get("ignore") or ())),
-        _request_cache_value(request, "auto_deweight", True),
-    )
-
-
-def _agent_response_cache_key(
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...]:
-    # task #108 (Tier-2 daemon capability): EVERY output-affecting flag `tg agent` exposes is a key
-    # field (query + max_files/max_sources/max_tokens/model/provider/max_repo_files/ignore) -- a
-    # missing field here would let two requests differing only in that field collide on the same
-    # cached answer, same discipline as _context_render_response_cache_key /
-    # _symbol_command_response_cache_key above. `include_blast_radius`/`gpu_device_ids` are
-    # deliberately excluded: neither is reachable from a daemon request (see
-    # build_agent_capsule_from_map's docstring), so there is nothing to distinguish.
-    return (
-        _path_cache_key(path),
-        session_id,
-        *_session_payload_fingerprint(payload),
-        "agent",
-        str(request.get("query", "")).strip(),
-        _request_cache_value(request, "max_files", 3),
-        _request_cache_value(request, "max_sources", 5),
-        _request_cache_value(request, "max_tokens", 1200),
-        _request_cache_value(request, "model"),
-        _request_cache_value(request, "provider", "native"),
-        str(tuple(request.get("ignore") or ())),
-        _request_cache_value(
-            request,
-            "max_repo_files",
-            _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
-        ),
-    )
-
-
-def _response_cache_key_for_command(
-    command: str,
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-) -> tuple[str, ...] | None:
-    if command == "context_render":
-        return _context_render_response_cache_key(session_id, path, request, payload)
-    if command == "context_edit_plan":
-        return _context_edit_plan_response_cache_key(session_id, path, request, payload)
-    if command == "orient":
-        return _orient_response_cache_key(session_id, path, request, payload)
-    if command == "agent":
-        return _agent_response_cache_key(session_id, path, request, payload)
-    if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
-        return _symbol_command_response_cache_key(command, session_id, path, request, payload)
-    return None
-
-
-def _session_payload_is_possibly_truncated(payload: dict[str, Any]) -> bool:
-    repo_map = payload.get("repo_map")
-    candidates: list[Any] = [payload.get("scan_limit")]
-    if isinstance(repo_map, dict):
-        candidates.append(repo_map.get("scan_limit"))
-    for candidate in candidates:
-        if isinstance(candidate, dict) and candidate.get("possibly_truncated") is True:
-            return True
-    return False
-
-
-def _optional_positive_int(value: object) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return max(1, int(cast(int | str, value)))
-    except (TypeError, ValueError):
-        return None
-
-
-# task #94 Part A -- the CORE SCOPE-FIX. Before this, _implicit_session_id_for_request only
-# recognized context_render/context_edit_plan: a symbol command (defs/impact/refs/callers/
-# blast_radius) sent with no explicit session_id fell through with session_id="" unchanged,
-# which reaches get_session("", path) -> FileNotFoundError (session_store.py get_session,
-# ~line 810) -> the daemon returns an {"error": ...} response -> every fail-open client wrapper
-# (_maybe_symbol_command_via_running_daemon in main.py) reads that as a miss and falls back to
-# the cold path FOREVER. That silently defeated the whole point of a default warm-daemon fast
-# path for these 5 commands. _IMPLICIT_SESSION_SYMBOL_COMMANDS is deliberately narrower than
-# _DAEMON_METRICS_SYMBOL_COMMANDS above (which also counts blast_radius_render/
-# blast_radius_plan for demand metrics) -- those two render/plan variants are Tier-2 scope,
-# explicitly deferred, and must not gain an implicit session as a side effect of this fix.
-_IMPLICIT_SESSION_SYMBOL_COMMANDS = frozenset({
-    "defs",
-    "impact",
-    "refs",
-    "callers",
-    "blast_radius",
-})
-# task #108: orient/agent gain an implicit session exactly like the 5 symbol commands above (no
-# explicit session_id required from the client) -- kept as a separate frozenset (not folded into
-# _IMPLICIT_SESSION_SYMBOL_COMMANDS) since neither is symbol-shaped (no `symbol` request field,
-# no `_symbol_command_response_cache_key` sharing) and that name is reused verbatim elsewhere for
-# the 5-command-specific added-file discipline (audit #113).
-_TIER2_MAP_CAPSULE_COMMANDS = frozenset({"orient", "agent"})
-_IMPLICIT_SESSION_COMMANDS = (
-    frozenset({"context_render", "context_edit_plan"})
-    | _IMPLICIT_SESSION_SYMBOL_COMMANDS
-    | _TIER2_MAP_CAPSULE_COMMANDS
-)
-# audit #113 extended to task #108: orient/agent are ALSO added-file-sensitive like the 5 symbol
-# commands (a new central file changes orient's centrality ranking; a new call site changes
-# agent's call-site evidence) -- see _serve_daemon_response_with_cache's detect_added_files gate
-# below, which branches on this set instead of _IMPLICIT_SESSION_SYMBOL_COMMANDS directly so a
-# cached response for either family busts on an added file, not just on a modified/removed one.
-_ADDED_FILE_SENSITIVE_COMMANDS = _IMPLICIT_SESSION_SYMBOL_COMMANDS | _TIER2_MAP_CAPSULE_COMMANDS
-
-
-def _implicit_session_max_repo_files(command: str, request: dict[str, Any]) -> int | None:
-    requested = _optional_positive_int(request.get("max_repo_files"))
-    if requested is not None:
-        return requested
-    if command == "context_render":
-        return _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT
-    if command == "context_edit_plan":
-        return _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT
-    if command in _IMPLICIT_SESSION_SYMBOL_COMMANDS:
-        return _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT
-    if command == "orient":
-        return _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT
-    if command == "agent":
-        return _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT
-    return None
-
-
-def _remove_implicit_session_payload(
-    path: str, session_id: str, *, deadline_monotonic: float | None = None
-) -> None:
-    _implicit_sessions.remove_payload(
-        sys.modules[__name__], path, session_id, deadline_monotonic=deadline_monotonic
-    )
-
-
-def _implicit_session_id_for_request(
-    server: Any,
-    *,
-    command: str,
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    deadline_monotonic: float | None = None,
-    pin_receipt: list[Any] | None = None,
-) -> str:
-    return _implicit_sessions.resolve(
-        sys.modules[__name__],
-        server,
-        command=command,
-        session_id=session_id,
-        path=path,
-        request=request,
-        deadline_monotonic=deadline_monotonic,
-        pin_receipt=pin_receipt,
-    )
-
-
-def _release_implicit_session_pin(
-    server: Any, pin_receipt: list[Any] | None, *, deadline_monotonic: float | None = None
-) -> None:
-    _implicit_sessions.release(
-        sys.modules[__name__], server, pin_receipt, deadline_monotonic=deadline_monotonic
-    )
-
-
-def _reacquire_missing_implicit_session(
-    server: Any,
-    *,
-    path: str,
-    request: dict[str, Any],
-    session_id: str,
-    pin_receipt: list[Any],
-    deadline_monotonic: float | None,
-    exc: BaseException,
-) -> str | None:
-    return _implicit_sessions.reacquire_missing(
-        sys.modules[__name__],
-        server,
-        path=path,
-        request=request,
-        session_id=session_id,
-        pin_receipt=pin_receipt,
-        deadline_monotonic=deadline_monotonic,
-        exc=exc,
-    )
-
-
-def _serve_daemon_response_with_cache(
-    *,
-    server: Any,
-    command: str,
-    session_id: str,
-    path: str,
-    request: dict[str, Any],
-    payload: dict[str, Any],
-    deadline_monotonic: float | None = None,
-) -> tuple[dict[str, Any], str]:
-    session_request = dict(request)
-    if deadline_monotonic is None:
-        deadline_monotonic = monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
-    if bool(session_request.get("refresh_on_stale")) and _session_payload_is_possibly_truncated(
-        payload
-    ):
-        # Truncated snapshots validate included files below; added-file detection would
-        # treat files omitted by the cap as stale and prevent response-cache writes.
-        session_request["refresh_on_stale"] = False
-    response_cache_key = _response_cache_key_for_command(
-        command, session_id, path, session_request, payload
-    )
-    if response_cache_key is None:
-        return serve_session_request(
-            session_id,
-            session_request,
-            path,
-            payload=payload,
-            deadline_monotonic=deadline_monotonic,
-        ), "bypass"
-
-    # audit #113 trap #1: context_render/context_edit_plan intentionally use
-    # detect_added_files=False here (see docs/CONTRACTS.md) so a cache HIT never pays for a
-    # directory walk -- new files stay invisible to those two commands until an explicit
-    # refresh. The 5 symbol commands (task #108: now also orient/agent, via
-    # _ADDED_FILE_SENSITIVE_COMMANDS) are a correctness-sensitive code-intelligence surface (a
-    # blast-radius/callers answer that silently omits a newly-added call site is a WRONG
-    # answer, not just a stale one -- and identically, a new central file changes orient's
-    # ranking and a new call site changes agent's call-site evidence), so they must honor the
-    # caller's real refresh_on_stale flag here instead of copying the context-command False -- a
-    # new call site in a brand-new file (nothing about any already-tracked file changes) must
-    # still bust the cache.
-    detect_added_files = (
-        bool(session_request.get("refresh_on_stale", False))
-        if command in _ADDED_FILE_SENSITIVE_COMMANDS
-        else False
-    )
-    _ensure_session_not_stale(
-        payload,
-        detect_added_files=detect_added_files,
-        deadline_monotonic=deadline_monotonic,
-    )
-    with server._response_cache_lock:
-        cached_response = server.response_cache.get(response_cache_key)
-    if cached_response is not None:
-        cached_response.pop("serve_response_cache", None)
-        return cached_response, "hit"
-
-    if detect_added_files:
-        # The gate above already walked for added files and proved `payload` fresh for THIS
-        # request -- flip refresh_on_stale off before the miss-path recompute so
-        # serve_session_request's own internal _ensure_session_not_stale (session_store.py)
-        # does not re-walk the same added-file probe a second time in one request (mirrors the
-        # truncated-snapshot flip above). Guarded on detect_added_files (not unconditional):
-        # context_render/context_edit_plan never ran the walk above (detect_added_files=False
-        # for them, by design), so for THEM the inner call below is the ONLY place a miss
-        # discovers an added file -- flipping the flag unconditionally would silently disable
-        # that discovery (regression caught by
-        # test_session_daemon_refresh_on_added_file_response_is_cached).
-        session_request["refresh_on_stale"] = False
-    response = serve_session_request(
-        session_id, session_request, path, payload=payload, deadline_monotonic=deadline_monotonic
-    )
-    # #200: a deadline-truncated (`partial=True`) response must NEVER be cached and replayed to a
-    # later request that would have had a full budget to finish -- the response cache has no TTL
-    # tied to "how much of the original deadline is left", so a cached partial answer would be
-    # served indefinitely to every subsequent identical request, silently downgrading them all to
-    # the same truncated result even though each gets its own fresh
-    # WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget (session_store.py). Excluding it from the cache
-    # entirely is the simplest correct option: a follow-up identical request just recomputes with
-    # its own fresh budget instead of replaying a stale truncation.
-    #
-    # review nit (PR #647): this guard is SHARED by every command this function serves,
-    # including the 5 symbol commands (defs/impact/refs/callers/blast_radius), not just the 4
-    # #200 targets. It is currently a proven no-op for the symbol commands: `open_session` builds
-    # the cached map with no deadline (session_store.open_session), and the warm symbol path
-    # never threads a per-request deadline into their builders either (the still-open #390 gap),
-    # so a warm symbol response can never be `partial=True` today. If #390 is ever closed by
-    # threading a deadline into the symbol commands too, this guard starts applying to them as
-    # well -- which is the CORRECT behavior (a truncated symbol answer must not be cached either),
-    # but flagging it here so that future change doesn't have to rediscover this coupling.
-    if not response.get("partial"):
-        with server._response_cache_lock:
-            server.response_cache.put(response_cache_key, response)
-    return response, "miss"
-
-
 # --------------------------------------------------------------------------------------------
 # tg-ledger step-0: demand instrumentation (docs/multi_agent_context_plane.md)
 #
@@ -1445,677 +1134,59 @@ def _serve_daemon_response_with_cache(
 # --------------------------------------------------------------------------------------------
 
 
-def _metrics_file_path(root: Path) -> Path:
-    return _sessions_dir(root) / _DAEMON_METRICS_FILE
+_IMPLICIT_SESSION_SYMBOL_COMMANDS = frozenset({
+    "defs",
+    "impact",
+    "refs",
+    "callers",
+    "blast_radius",
+})
+_TIER2_MAP_CAPSULE_COMMANDS = frozenset({"orient", "agent"})
+_IMPLICIT_SESSION_COMMANDS = (
+    frozenset({"context_render", "context_edit_plan"})
+    | _IMPLICIT_SESSION_SYMBOL_COMMANDS
+    | _TIER2_MAP_CAPSULE_COMMANDS
+)
+_ADDED_FILE_SENSITIVE_COMMANDS = _IMPLICIT_SESSION_SYMBOL_COMMANDS | _TIER2_MAP_CAPSULE_COMMANDS
 
+from tensor_grep.cli.state import daemon_cache as _daemon_cache  # noqa: E402
+from tensor_grep.cli.state import daemon_metrics as _daemon_metrics  # noqa: E402
+from tensor_grep.cli.state import daemon_server as _daemon_server  # noqa: E402
 
-def _metrics_target_hash(command: str, target: str) -> str:
-    digest = hashlib.sha256(f"{command}\x00{target}".encode()).hexdigest()
-    return digest[:16]
-
-
-def _metrics_target_for_request(command: str, request: dict[str, Any]) -> str:
-    if command in _DAEMON_METRICS_SYMBOL_COMMANDS:
-        return str(request.get("symbol", "")).strip().lower()
-    if command in _DAEMON_METRICS_QUERY_COMMANDS:
-        return str(request.get("query", "")).strip().lower()
-    return ""
-
-
-def _utc_day_bucket(epoch_seconds: float) -> str:
-    return datetime.fromtimestamp(epoch_seconds, tz=UTC).strftime("%Y-%m-%d")
-
-
-def _normalize_client_pid(client_pid: object) -> int | None:
-    try:
-        pid = int(cast(Any, client_pid))
-    except (TypeError, ValueError):
-        return None
-    return pid if pid > 0 else None
-
-
-class _DemandMetrics:
-    """In-memory, fail-open, PII-free demand counters for the tg-ledger step-0 gate.
-
-    Guarded by its own lock (independent of ``server._request_lock`` /
-    ``_response_cache_lock``) so metrics bookkeeping never contends with request dispatch or
-    the response cache. Every public method is defensive: bad input degrades to a no-op rather
-    than raising, because a metrics bug must never take the daemon down.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._clients: dict[int, float] = {}  # client_pid -> last_seen (monotonic)
-        self._day_pid_sets: dict[str, set[int]] = {}  # day -> distinct client pids seen this run
-        self._dup_lru: OrderedDict[str, float] = OrderedDict()  # target_hash -> last_seen (wall)
-        self._days: dict[str, dict[str, Any]] = {}
-        self._dirty = False
-
-    def load(self, days: object) -> None:
-        """Seed from a previously-persisted ``daemon_metrics.json`` (startup load-merge)."""
-        with self._lock:
-            self._days = _sanitize_metrics_days(days)
-
-    def record(self, *, command: str, client_pid: object, request: dict[str, Any]) -> None:
-        if command in _DAEMON_METRICS_EXCLUDED_COMMANDS or not _daemon_metrics_enabled():
-            return
-        now_monotonic = monotonic()
-        now_wall = time.time()
-        day = _utc_day_bucket(now_wall)
-        pid = _normalize_client_pid(client_pid)
-        with self._lock:
-            bucket = self._days.setdefault(day, _empty_metrics_day_bucket())
-            bucket["requests"] += 1
-            by_command = cast(dict[str, int], bucket["by_command"])
-            by_command[command] = by_command.get(command, 0) + 1
-
-            if pid is not None:
-                stale = [
-                    seen_pid
-                    for seen_pid, last_seen in self._clients.items()
-                    if now_monotonic - last_seen > _DAEMON_METRICS_CLIENT_WINDOW_SECONDS
-                ]
-                for seen_pid in stale:
-                    del self._clients[seen_pid]
-                self._clients[pid] = now_monotonic
-                concurrent = len(self._clients)
-                bucket["max_concurrent_distinct_clients"] = max(
-                    cast(int, bucket["max_concurrent_distinct_clients"]), concurrent
-                )
-                day_pids = self._day_pid_sets.setdefault(day, set())
-                if len(day_pids) < _DAEMON_METRICS_DAY_PID_SET_CAP:
-                    day_pids.add(pid)
-                bucket["distinct_client_pids"] = max(
-                    cast(int, bucket["distinct_client_pids"]), len(day_pids)
-                )
-                if concurrent >= 2:
-                    bucket["overlap_events"] += 1
-
-            if command in _DAEMON_METRICS_EXPENSIVE_COMMANDS:
-                bucket["expensive_requests"] += 1
-                target = _metrics_target_for_request(command, request)
-                target_hash = _metrics_target_hash(command, target)
-                last_seen_wall = self._dup_lru.get(target_hash)
-                if (
-                    last_seen_wall is not None
-                    and (now_wall - last_seen_wall) <= _DAEMON_METRICS_DUP_WINDOW_SECONDS
-                ):
-                    bucket["dup_requests"] += 1
-                    dup_targets = cast(dict[str, int], bucket["dup_targets"])
-                    if target_hash in dup_targets:
-                        dup_targets[target_hash] += 1
-                    elif len(dup_targets) < _DAEMON_METRICS_MAX_DUP_TARGETS_PER_DAY:
-                        dup_targets[target_hash] = 1
-                self._dup_lru[target_hash] = now_wall
-                self._dup_lru.move_to_end(target_hash)
-                while len(self._dup_lru) > _DAEMON_METRICS_DUP_LRU_MAX_ENTRIES:
-                    self._dup_lru.popitem(last=False)
-
-            self._dirty = True
-
-    def consume_dirty(self) -> bool:
-        with self._lock:
-            was_dirty = self._dirty
-            self._dirty = False
-            return was_dirty
-
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            if len(self._days) > _DAEMON_METRICS_MAX_DAY_BUCKETS:
-                newest_days = sorted(self._days)[-_DAEMON_METRICS_MAX_DAY_BUCKETS:]
-                self._days = {day: self._days[day] for day in newest_days}
-            return copy.deepcopy(self._days)
-
-
-def _write_demand_metrics(root: Path, metrics: _DemandMetrics) -> None:
-    payload = {
-        "version": _DAEMON_METRICS_SCHEMA_VERSION,
-        "root": str(root),
-        "days": metrics.snapshot(),
-    }
-    _write_json_atomic(_metrics_file_path(root), payload)
-
-
-def _flush_demand_metrics_if_dirty(server: _ThreadedSessionDaemon, *, force: bool = False) -> None:
-    dirty = server.demand_metrics.consume_dirty()
-    if not (force or dirty):
-        return
-    try:
-        _write_demand_metrics(server.root, server.demand_metrics)
-    except Exception:
-        pass  # metrics persistence must never crash the daemon
-
-
-def _read_demand_metrics_days(root: Path) -> dict[str, Any]:
-    path = _metrics_file_path(root)
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return {}
-    days = data.get("days") if isinstance(data, dict) else None
-    return days if isinstance(days, dict) else {}
-
-
-def _demand_metrics_status_payload(
-    root: Path, *, reference: datetime | None = None
-) -> dict[str, Any]:
-    """Read ``daemon_metrics.json`` from disk (works even with the daemon STOPPED) and roll the
-    trailing 14 days up into a build-decision-ready summary for the tg-ledger step-0 gate.
-    """
-    days = _sanitize_metrics_days(_read_demand_metrics_days(root))
-    now = reference or datetime.now(UTC)
-    cutoff_14 = (now - timedelta(days=_DAEMON_METRICS_ROLLUP_WINDOW_DAYS)).date()
-    cutoff_7 = (now - timedelta(days=_DAEMON_METRICS_ROLLUP_SHORT_WINDOW_DAYS)).date()
-
-    days_covered = 0
-    days_with_2plus_concurrent = 0
-    overlap_events_14d = 0
-    dup_requests_7d = 0
-    dup_requests_14d = 0
-    max_distinct_client_pids_14d = 0
-
-    for day_str, bucket in days.items():
-        try:
-            day_date = datetime.strptime(day_str, "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if day_date > now.date() or day_date < cutoff_14:
-            continue
-        days_covered += 1
-        if cast(int, bucket["max_concurrent_distinct_clients"]) >= 2:
-            days_with_2plus_concurrent += 1
-        overlap_events_14d += cast(int, bucket["overlap_events"])
-        dup_requests_14d += cast(int, bucket["dup_requests"])
-        if day_date >= cutoff_7:
-            dup_requests_7d += cast(int, bucket["dup_requests"])
-        max_distinct_client_pids_14d = max(
-            max_distinct_client_pids_14d, cast(int, bucket["distinct_client_pids"])
-        )
-
-    pre_gate_met = (
-        days_covered > 0
-        and days_with_2plus_concurrent >= _DAEMON_METRICS_PRE_GATE_MIN_CONCURRENT_DAYS
-        and dup_requests_14d >= _DAEMON_METRICS_PRE_GATE_MIN_DUP_REQUESTS_14D
-    )
-
-    return {
-        "window_days": _DAEMON_METRICS_ROLLUP_WINDOW_DAYS,
-        "days_covered": days_covered,
-        "days_with_2plus_concurrent": days_with_2plus_concurrent,
-        "overlap_events_14d": overlap_events_14d,
-        "dup_requests_7d": dup_requests_7d,
-        "dup_requests_14d": dup_requests_14d,
-        "max_distinct_client_pids_14d": max_distinct_client_pids_14d,
-        "pre_gate_met": pre_gate_met,
-        "pre_gate_thresholds": {
-            "min_concurrent_days": _DAEMON_METRICS_PRE_GATE_MIN_CONCURRENT_DAYS,
-            "min_dup_requests_14d": _DAEMON_METRICS_PRE_GATE_MIN_DUP_REQUESTS_14D,
-        },
-    }
-
-
-def _attach_demand_metrics(status: dict[str, Any], metrics_root: Path) -> dict[str, Any]:
-    try:
-        status["demand_metrics"] = _demand_metrics_status_payload(metrics_root)
-    except Exception:
-        # Read-back must never break `tg doctor` / `tg session daemon status` (fail-open,
-        # mirrors the record()-side contract).
-        status["demand_metrics"] = {"error": "unavailable"}
-    return status
-
-
-class _ThreadedSessionDaemon(_HandlerAdmissionThreads, socketserver.TCPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-    _max_concurrent_connections = 32
-
-    def __init__(self, root: Path, server_address: tuple[str, int], *, token: str = "") -> None:
-        super().__init__(server_address, _SessionDaemonHandler)
-        self._init_handler_admission(_DAEMON_HANDLER_TIMEOUT_SECONDS)
-        self.root = root
-        # audit S3: shared secret every client must present before any command is dispatched.
-        self.token = token
-        self.payload_cache = _SessionServeCache()
-        self.response_cache = _SessionResponseCache()
-        # tg-ledger step-0: demand instrumentation, see docs/multi_agent_context_plane.md.
-        self.demand_metrics = _DemandMetrics()
-        self.implicit_session_ids: OrderedDict[tuple[str, str, str], str] = OrderedDict()
-        self._implicit_inflight: dict[tuple[str, str, str], threading.Event] = {}
-        self._implicit_active_pins: dict[tuple[str, str], int] = {}
-        self._implicit_pending_evictions: set[tuple[str, str]] = set()
-        self._implicit_cleanup_owned: set[tuple[str, str]] = set()
-        self.started_at = monotonic()
-        self.request_count = 0
-        # audit I7: track last client activity so an idle daemon can shut itself down.
-        self.last_activity_at = monotonic()
-        # audit r8: count in-flight (dispatched, not-yet-completed) requests so the lifecycle
-        # monitor never tears the daemon down mid-request. Guarded by _request_lock.
-        self.inflight_requests = 0
-        self._request_lock = threading.Lock()
-        self._response_cache_lock = threading.Lock()
-        self._implicit_session_lock = threading.Lock()
-
-    def note_activity(self) -> None:
-        # audit I7: bump the idle clock on every authenticated request.
-        with self._request_lock:
-            self.last_activity_at = monotonic()
-
-    def is_authorized(self, request: dict[str, Any]) -> bool:
-        # POLICY REVERSAL (2026-08-01, PR-B): a tokenless daemon fails CLOSED. This
-        # reverses the earlier pinned behavior (tokenless => authorize everything,
-        # "legacy/in-test path") that test_tokenless_server_stays_backward_compatible
-        # used to pin. Production always generates a token in the serve path
-        # (run_session_daemon_server -> secrets.token_urlsafe(32)); a tokenless daemon
-        # is a misconfiguration and must refuse everything, never accept everything.
-        # Tokenless CONSTRUCTION stays legal (see
-        # test_lifecycle_monitor_returns_when_both_limits_disabled) -- only tokenless
-        # AUTHORIZATION is forbidden. Hold this invariant in this one place only; the
-        # constructor deliberately does not also raise on an empty token.
-        if not self.token:
-            return False
-        # audit S3: constant-time compare to avoid leaking the token via timing.
-        provided = request.get(_DAEMON_TOKEN_FIELD)
-        if not isinstance(provided, str) or not provided:
-            return False
-        return hmac.compare_digest(provided, self.token)
-
-
-class _SessionDaemonHandler(socketserver.StreamRequestHandler):
-    # audit (round-3 pre-auth DoS): time out a silent/slow client so it cannot pin a worker
-    # thread indefinitely before authenticating. StreamRequestHandler.setup() applies this via
-    # connection.settimeout().
-    timeout = _DAEMON_HANDLER_TIMEOUT_SECONDS
-
-    def _write_response(self, response: dict[str, Any], deadline: float) -> bool:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            self.connection.close()
-            return False
-        self.connection.settimeout(remaining)
-        self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-        self.wfile.flush()
-        return True
-
-    def handle(self) -> None:
-        server = cast(_ThreadedSessionDaemon, self.server)
-        with server._handler_deadline_lock:
-            handler_request = getattr(self, "request", None)
-            admitted_at = server._handler_admissions.get(handler_request, monotonic())
-            handler_deadline = server._handler_deadlines.get(handler_request)
-        if handler_deadline is None:
-            handler_deadline = admitted_at + _DAEMON_HANDLER_TIMEOUT_SECONDS
-        work_deadline = admitted_at + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS
-        line = _read_bounded_request_line(
-            self.rfile,
-            max_bytes=_MAX_DAEMON_REQUEST_BYTES,
-            deadline=handler_deadline,
-            connection=getattr(self, "connection", None),
-        )
-        if not line:
-            return
-        response: dict[str, Any]
-        with server._request_lock:
-            server.request_count += 1
-        request_session_id = ""
-        request_path = str(server.root)
-        implicit_pin_receipt: list[Any] = []
-        inflight_incremented = False
-
-        try:
-            request = cast(dict[str, Any], json.loads(line))
-            # audit S3: authenticate before dispatching any command or resolving any path.
-            if not server.is_authorized(request):
-                response = {
-                    "version": _SESSION_VERSION,
-                    "session_id": "",
-                    "error": {"code": "unauthorized", "message": "invalid or missing daemon token"},
-                }
-                self._write_response(response, work_deadline)
-                return
-            server.note_activity()
-            # audit r8: mark this request in-flight (after auth, so unauthorized clients don't
-            # count) so the lifecycle monitor won't shut the daemon down mid-dispatch.
-            with server._request_lock:
-                server.inflight_requests += 1
-            inflight_incremented = True
-            session_id = str(request.get("session_id", "")).strip()
-            request_path = _resolve_daemon_request_path(
-                server.root,
-                request.get("path", request.get("root", str(server.root))),
-            )
-            request = dict(request)
-            request["path"] = request_path
-            request_session_id, request_path = _resolve_request_session_target(
-                request, session_id, request_path
-            )
-            command = str(request.get("command", "")).strip().lower()
-            try:
-                server.demand_metrics.record(
-                    command=command,
-                    client_pid=request.get("client_pid"),
-                    request=request,
-                )
-            except Exception:
-                pass  # tg-ledger step-0 metrics must never break serving
-            request_session_id = _implicit_session_id_for_request(
-                server,
-                command=command,
-                session_id=request_session_id,
-                path=request_path,
-                request=request,
-                deadline_monotonic=work_deadline,
-                pin_receipt=implicit_pin_receipt,
-            )
-            if request_session_id:
-                request["session_id"] = request_session_id
-
-            if command == "stop":
-                response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
-                if not self._write_response(response, work_deadline):
-                    return
-                threading.Thread(target=server.shutdown, daemon=True).start()
-                return
-            if command == "ping":
-                response = {"version": _SESSION_VERSION, "ok": True}
-                response.update(
-                    _ping_proof_fields(
-                        request.get("nonce"), server.root, int(server.server_address[1])
-                    )
-                )
-                self._write_response(response, work_deadline)
-                return
-
-            if command == "stats":
-                response = {
-                    "version": _SESSION_VERSION,
-                    "ok": True,
-                    "cache_hits": server.payload_cache.hits,
-                    "cache_misses": server.payload_cache.misses,
-                    "refresh_count": server.payload_cache.refreshes,
-                    "root_count": server.payload_cache.root_count,
-                    "session_count": server.payload_cache.session_count,
-                    "sessions": server.payload_cache.sessions,
-                    "cache_size_bytes": server.payload_cache.size_bytes,
-                    "response_cache_hits": server.response_cache.hits,
-                    "response_cache_misses": server.response_cache.misses,
-                    "response_cache_puts": server.response_cache.puts,
-                    "response_cache_entries": server.response_cache.entry_count,
-                    "response_cache_size_bytes": server.response_cache.size_bytes,
-                    "response_cache_max_size_bytes": server.response_cache.max_size_bytes,
-                    "response_cache_oversized_skips": server.response_cache.oversized_skips,
-                    "response_cache_scope": _DAEMON_RESPONSE_CACHE_SCOPE,
-                    "response_cache_stale_detection": _DAEMON_RESPONSE_CACHE_STALE_DETECTION,
-                    "response_cache_added_file_detection": _DAEMON_RESPONSE_CACHE_ADDED_FILE_DETECTION,
-                    "response_cache_refresh_hint": (
-                        "Use tg session refresh or request refresh_on_stale when new files must "
-                        "invalidate daemon response-cache hits."
-                    ),
-                    "uptime_seconds": max(0.0, monotonic() - server.started_at),
-                    "request_count": server.request_count,
-                    "inflight_requests": server.inflight_requests,
-                }
-            elif command == "health":
-                payload, cache_status = _load_payload_with_status_retry(
-                    server.payload_cache,
-                    request_session_id,
-                    request_path,
-                    deadline_monotonic=work_deadline,
-                )
-                response = _session_health_payload(
-                    request_session_id, payload, deadline_monotonic=work_deadline
-                )
-                response["serve_cache"] = {
-                    "status": cache_status,
-                    "session_count": server.payload_cache.session_count,
-                    "root_count": server.payload_cache.root_count,
-                }
-            else:
-                overall_started_at = admitted_at
-                response_cache_status = "bypass"
-                refresh_trigger = ""
-                try:
-                    load_started_at = monotonic()
-                    try:
-                        payload, cache_status = _load_payload_with_status_retry(
-                            server.payload_cache,
-                            request_session_id,
-                            request_path,
-                            deadline_monotonic=work_deadline,
-                        )
-                    except FileNotFoundError as missing:
-                        replacement = _reacquire_missing_implicit_session(
-                            server,
-                            path=request_path,
-                            request=request,
-                            session_id=request_session_id,
-                            pin_receipt=implicit_pin_receipt,
-                            deadline_monotonic=work_deadline,
-                            exc=missing,
-                        )
-                        if replacement is None:
-                            raise
-                        request_session_id = replacement
-                        request["session_id"] = replacement
-                        payload, cache_status = _load_payload_with_status_retry(
-                            server.payload_cache,
-                            request_session_id,
-                            request_path,
-                            deadline_monotonic=work_deadline,
-                        )
-                    loaded_at = monotonic()
-                    response, response_cache_status = _serve_daemon_response_with_cache(
-                        server=server,
-                        command=command,
-                        session_id=request_session_id,
-                        path=request_path,
-                        request=request,
-                        payload=payload,
-                        deadline_monotonic=work_deadline,
-                    )
-                    served_at = monotonic()
-                except Exception as exc:
-                    refresh_on_stale = bool(request.get("refresh_on_stale", False))
-                    if not refresh_on_stale:
-                        raise
-                    refresh_trigger = type(exc).__name__  # ANY error rebuilds; name it (disclosed)
-                    original_error = str(exc)
-                    load_started_at = monotonic()
-                    # Freshness, rebuilding, and inference share this request deadline.
-                    try:
-                        refresh_session(
-                            request_session_id,
-                            request_path,
-                            payload_cache=server.payload_cache,
-                            deadline_monotonic=work_deadline,
-                        )
-                        server.payload_cache.record_refresh()
-                        payload, cache_status = _load_payload_with_status_retry(
-                            server.payload_cache,
-                            request_session_id,
-                            request_path,
-                            deadline_monotonic=work_deadline,
-                        )
-                        loaded_at = monotonic()
-                        response, response_cache_status = _serve_daemon_response_with_cache(
-                            server=server,
-                            command=command,
-                            session_id=request_session_id,
-                            path=request_path,
-                            request=request,
-                            payload=payload,
-                            deadline_monotonic=work_deadline,
-                        )
-                        served_at = monotonic()
-                    except Exception as rebuild_exc:
-                        raise _DaemonRefreshFailed(
-                            refresh_trigger, original_error, str(rebuild_exc)
-                        ) from rebuild_exc
-                response["serve_cache"] = {
-                    "status": cache_status,
-                    "session_count": server.payload_cache.session_count,
-                    "root_count": server.payload_cache.root_count,
-                    **({"refresh_trigger": refresh_trigger} if refresh_trigger else {}),
-                }
-                # audit #113 (task #108: extended to 9): observability now covers all 9
-                # response-cacheable commands (the original context_render/context_edit_plan, the
-                # 5 symbol commands, and orient/agent) -- the SAME set _response_cache_key_for_
-                # command treats as cacheable. session_timing's build_metric naming below stays
-                # scoped to the original 2 (out of scope here).
-                if command in _ADDED_FILE_SENSITIVE_COMMANDS or command in {
-                    "context_edit_plan",
-                    "context_render",
-                }:
-                    response["daemon_response_cache"] = {
-                        "status": response_cache_status,
-                        "entries": server.response_cache.entry_count,
-                        "hits": server.response_cache.hits,
-                        "misses": server.response_cache.misses,
-                        "size_bytes": server.response_cache.size_bytes,
-                        "max_size_bytes": server.response_cache.max_size_bytes,
-                        "oversized_skips": server.response_cache.oversized_skips,
-                    }
-                if command in {"context_edit_plan", "context_render"}:
-                    build_metric = (
-                        "build_context_render_seconds"
-                        if command == "context_render"
-                        else "build_edit_plan_seconds"
-                    )
-                    response["session_timing"] = {
-                        "cache_status": cache_status,
-                        "response_cache_status": response_cache_status,
-                        "load_session_seconds": max(0.0, loaded_at - load_started_at),
-                        build_metric: max(0.0, served_at - loaded_at),
-                        "total_seconds": max(0.0, served_at - overall_started_at),
-                    }
-        except _DaemonRefreshFailed as failed:
-            response = {
-                "version": _SESSION_VERSION,
-                "session_id": request_session_id,
-                "error": _refresh_failed_error(failed),
-            }
-        except Exception as exc:
-            response = {
-                "version": _SESSION_VERSION,
-                "session_id": request_session_id,
-                "error": {"code": "invalid_request", "message": str(exc)},
-            }
-        finally:
-            _release_implicit_session_pin(
-                server, implicit_pin_receipt, deadline_monotonic=work_deadline
-            )
-            if inflight_incremented:
-                with server._request_lock:
-                    server.inflight_requests -= 1
-
-        self._write_response(response, work_deadline)
-
-
-def _run_daemon_lifecycle_monitor(
-    server: _ThreadedSessionDaemon, stop_event: threading.Event
-) -> None:
-    """Self-shutdown the daemon when it goes idle or exceeds its max uptime (audit I7)."""
-    idle_limit = _configured_lifecycle_seconds(
-        _DAEMON_IDLE_SHUTDOWN_SECONDS_ENV, _DEFAULT_DAEMON_IDLE_SHUTDOWN_SECONDS
-    )
-    max_uptime = _configured_lifecycle_seconds(
-        _DAEMON_MAX_UPTIME_SECONDS_ENV, _DEFAULT_DAEMON_MAX_UPTIME_SECONDS
-    )
-    if idle_limit <= 0 and max_uptime <= 0:
-        return
-    # tg-ledger step-0: piggyback a low-frequency demand-metrics flush on this same poll loop
-    # (~once per _DAEMON_METRICS_FLUSH_POLL_INTERVALS ticks) rather than a dedicated thread.
-    flush_countdown = _DAEMON_METRICS_FLUSH_POLL_INTERVALS
-    while not stop_event.wait(_DAEMON_LIFECYCLE_POLL_SECONDS):
-        flush_countdown -= 1
-        if flush_countdown <= 0:
-            flush_countdown = _DAEMON_METRICS_FLUSH_POLL_INTERVALS
-            _flush_demand_metrics_if_dirty(server)
-        now = monotonic()
-        with server._request_lock:
-            idle_for = now - server.last_activity_at
-            inflight = server.inflight_requests
-        uptime = now - server.started_at
-        idle_reached = idle_limit > 0 and idle_for >= idle_limit
-        uptime_reached = max_uptime > 0 and uptime >= max_uptime
-        if not (idle_reached or uptime_reached):
-            continue
-        # audit r8: never tear the daemon down while a request is in flight -- that resets the
-        # client mid-dispatch. Wait for in-flight work to drain. Bound the wait ONLY for the hard
-        # max-uptime cap (a wedged request must not postpone shutdown forever); the idle path has
-        # no such hard deadline, so it simply waits until inflight == 0.
-        if inflight > 0:
-            past_hard_drain = (
-                max_uptime > 0 and uptime >= max_uptime + _DAEMON_SHUTDOWN_DRAIN_GRACE_SECONDS
-            )
-            if not past_hard_drain:
-                continue
-        threading.Thread(target=server.shutdown, daemon=True).start()
-        return
-
-
-def run_session_daemon_server(path: str = ".") -> None:
-    root = _resolve_root(Path(path))
-    # audit S3: generate a per-daemon token and publish it (0600) so only local clients that can
-    # read daemon.json may issue commands.
-    token = secrets.token_urlsafe(32)
-    if _load_or_create_user_secret() is None:
-        reason = diagnose_user_secret() or "secret_unavailable"
-        raise RuntimeError(f"cannot establish per-user daemon secret ({reason}); refusing to serve")
-    with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
-        # tg-ledger step-0: load any prior demand-metrics history for this root before serving,
-        # so a daemon restart never clobbers the day-bucket counts a prior run already persisted.
-        server.demand_metrics.load(_read_demand_metrics_days(root))
-        host, port = cast(tuple[str, int], server.server_address)
-        _write_daemon_metadata(
-            root,
-            {
-                "version": _SESSION_VERSION,
-                # Task #94 PR-1: the installed tensor-grep PACKAGE version (distinct from
-                # `version` above, which is the payload-schema version) -- see the matching
-                # `_probe_daemon` skew check for why this is needed.
-                "package_version": _expected_tg_version(),
-                "root": str(root),
-                "host": host,
-                "port": int(port),
-                "pid": os.getpid(),
-                "started_at": datetime.now(UTC).isoformat(),
-                _DAEMON_TOKEN_FIELD: token,
-                **_attestation_fields(root, int(port)),  # HMAC proof of "this is the real daemon"
-            },
-        )
-        stop_event = threading.Event()
-        lifecycle_thread = threading.Thread(
-            target=_run_daemon_lifecycle_monitor,
-            args=(server, stop_event),
-            daemon=True,
-        )
-        lifecycle_thread.start()
-        try:
-            server.serve_forever(poll_interval=0.1)
-        finally:
-            stop_event.set()
-            _flush_demand_metrics_if_dirty(server, force=True)
-            # Task #143a-a: this daemon must only ever remove ITS OWN daemon.json on shutdown
-            # (idle timeout, max-uptime, or a cooperative "stop" command). If a client already
-            # rejected this daemon over a package_version mismatch and spawned a healthy
-            # replacement, that replacement's metadata is what is on disk by the time THIS daemon
-            # finally shuts itself down -- an unconditional unlink here would delete it out from
-            # under the replacement, orphaning it with no discoverable daemon.json.
-            _remove_daemon_metadata(root, expected_pid=os.getpid(), expected_port=int(port))
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root", required=True)
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv or sys.argv[1:])
-    run_session_daemon_server(args.root)
-    return 0
+_path_cache_key = _daemon_cache._path_cache_key
+_request_cache_value = _daemon_cache._request_cache_value
+_session_payload_fingerprint = _daemon_cache._session_payload_fingerprint
+_context_edit_plan_response_cache_key = _daemon_cache._context_edit_plan_response_cache_key
+_context_render_response_cache_key = _daemon_cache._context_render_response_cache_key
+_symbol_command_response_cache_key = _daemon_cache._symbol_command_response_cache_key
+_orient_response_cache_key = _daemon_cache._orient_response_cache_key
+_agent_response_cache_key = _daemon_cache._agent_response_cache_key
+_response_cache_key_for_command = _daemon_cache._response_cache_key_for_command
+_session_payload_is_possibly_truncated = _daemon_cache._session_payload_is_possibly_truncated
+_optional_positive_int = _daemon_cache._optional_positive_int
+_implicit_session_max_repo_files = _daemon_cache._implicit_session_max_repo_files
+_remove_implicit_session_payload = _daemon_cache._remove_implicit_session_payload
+_implicit_session_id_for_request = _daemon_cache._implicit_session_id_for_request
+_release_implicit_session_pin = _daemon_cache._release_implicit_session_pin
+_reacquire_missing_implicit_session = _daemon_cache._reacquire_missing_implicit_session
+_serve_daemon_response_with_cache = _daemon_cache._serve_daemon_response_with_cache
+_metrics_file_path = _daemon_metrics._metrics_file_path
+_metrics_target_hash = _daemon_metrics._metrics_target_hash
+_metrics_target_for_request = _daemon_metrics._metrics_target_for_request
+_utc_day_bucket = _daemon_metrics._utc_day_bucket
+_normalize_client_pid = _daemon_metrics._normalize_client_pid
+_DemandMetrics = _daemon_metrics._DemandMetrics
+_write_demand_metrics = _daemon_metrics._write_demand_metrics
+_flush_demand_metrics_if_dirty = _daemon_metrics._flush_demand_metrics_if_dirty
+_read_demand_metrics_days = _daemon_metrics._read_demand_metrics_days
+_demand_metrics_status_payload = _daemon_metrics._demand_metrics_status_payload
+_attach_demand_metrics = _daemon_metrics._attach_demand_metrics
+_ThreadedSessionDaemon = _daemon_server._ThreadedSessionDaemon
+_SessionDaemonHandler = _daemon_server._SessionDaemonHandler
+_run_daemon_lifecycle_monitor = _daemon_server._run_daemon_lifecycle_monitor
+run_session_daemon_server = _daemon_server.run_session_daemon_server
+_parse_args = _daemon_server._parse_args
+main = _daemon_server.main
 
 
 if __name__ == "__main__":
