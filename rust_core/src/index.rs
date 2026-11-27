@@ -1542,19 +1542,12 @@ fn extract_inner_literal_plan(hir: &Hir, ignore_case: bool) -> Option<RegexLiter
 }
 
 fn normalize_prefilter_literal(literal: &[u8], ignore_case: bool) -> Option<Vec<u8>> {
-    if ignore_case {
-        if !literal.is_ascii() {
-            return None;
-        }
-        Some(
-            literal
-                .iter()
-                .map(|byte| byte.to_ascii_lowercase())
-                .collect(),
-        )
-    } else {
-        Some(literal.to_vec())
+    if !ignore_case {
+        return Some(literal.to_vec());
     }
+    literal
+        .is_ascii()
+        .then(|| literal.iter().map(u8::to_ascii_lowercase).collect())
 }
 
 fn compare_regex_literal_plans(a: &RegexLiteralPlan, b: &RegexLiteralPlan) -> std::cmp::Ordering {

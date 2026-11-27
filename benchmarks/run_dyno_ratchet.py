@@ -569,12 +569,8 @@ def run_index_vs_rg(
     rg_stdout = str(rg_res.get("stdout") or "")
     raw_rg_sigs = _extract_rg_json_match_signatures(rg_stdout) if rg_stdout.strip() else []
     raw_tg_sigs = _extract_tg_match_signatures(tg_payload) if tg_payload is not None else []
-    rg_sigs = sorted(
-        (str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_rg_sigs
-    )
-    tg_sigs = sorted(
-        (str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_tg_sigs
-    )
+    rg_sigs = sorted((str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_rg_sigs)
+    tg_sigs = sorted((str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_tg_sigs)
     rg_files = _signature_files(rg_sigs)
     tg_files = _signature_files(tg_sigs)
 

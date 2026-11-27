@@ -84,7 +84,7 @@ mod search_files;
 mod search_flag_registry;
 mod top_level_help;
 use main_env::env_flag_enabled;
-use search_files::{format_broad_generated_scan_error, generated_scan_dir_names};
+use search_files::format_broad_generated_scan_error;
 use search_flag_registry::{
     raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
     SEARCH_PYTHON_PASSTHROUGH_FLAGS,

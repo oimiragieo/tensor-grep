@@ -3243,7 +3243,7 @@ def search_command(
         line_number = sys.stdout.isatty()
     if max_columns == 0:
         max_columns = None
-    elif max_columns is None and not json and not ndjson and not vimgrep and _stdout_isatty():
+    elif max_columns is None and not json and not ndjson and not vimgrep and _self._stdout_isatty():
         max_columns = 300
 
     from tensor_grep.core.config import SearchConfig
