@@ -95,16 +95,24 @@ def _seed_larger_candidates(
             timeout_s = min(timeout_s, max(0.1, deadline_monotonic - time.monotonic()))
         pattern = "|".join(re.escape(t) for t in terms)
         native_tg = resolve_native_tg_binary()
-        rg_bin = None if native_tg is not None else resolve_ripgrep_binary()
-        child_env = probe_env() if native_tg is not None else None
-        cmd = (
-            [str(native_tg), "search", "-i", "-l", pattern, str(root)]
-            if native_tg is not None
-            else (
-                [str(rg_bin), "-i", "-l", "--no-messages", pattern, str(root)] if rg_bin else None
-            )
-        )
-        if cmd is not None:
+        rg_bin = resolve_ripgrep_binary()
+        candidates: list[tuple[list[str], dict[str, str] | None, str | None]] = []
+        if native_tg is not None and native_tg.is_file():
+            candidates.append((
+                [str(native_tg), "search", "-i", "-l", pattern, str(root)],
+                probe_env(),
+                "tg",
+            ))
+        if rg_bin is not None and rg_bin.is_file():
+            candidates.append((
+                [str(rg_bin), "-i", "-l", "--no-messages", pattern, str(root)],
+                None,
+                "rg",
+            ))
+        active_kind: str | None = None
+        active_bin: Path | None = None
+        active_env: dict[str, str] | None = None
+        for cmd, child_env, kind in candidates:
             try:
                 proc = subprocess.run(
                     cmd,
@@ -117,6 +125,9 @@ def _seed_larger_candidates(
                 )
                 if proc.returncode in (0, 1):
                     lexical_ok = True
+                    active_kind = kind
+                    active_bin = native_tg if kind == "tg" else rg_bin
+                    active_env = child_env
                     for line in proc.stdout.splitlines():
                         c = line.strip()
                         if c:
@@ -124,40 +135,57 @@ def _seed_larger_candidates(
                             key = os.path.normcase(os.path.abspath(str(fp)))
                             if key in norm_to_path:
                                 lexical_hits.add(key)
+                    break
             except (OSError, subprocess.SubprocessError):
                 pass
-        if lexical_ok:
+        if not lexical_ok:
+            # Pure-Python bounded fallback when native tg / rg binaries are absent,
+            # cache-invalidated, or timed out under heavy CI load.
+            term_re = re.compile(pattern, re.IGNORECASE)
+            def_re = re.compile(
+                rf"\b(?:def|class|fn|func|function|struct|enum|trait|interface|type)\s+(?:{pattern})\b",
+                re.IGNORECASE,
+            )
+            for fp in context_files:
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    break
+                try:
+                    text = fp.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                if term_re.search(text):
+                    key = os.path.normcase(os.path.abspath(str(fp)))
+                    lexical_hits.add(key)
+                    if def_re.search(text):
+                        symbol_hits.add(key)
+            lexical_ok = True
+        elif active_bin is not None:
             def_pat = rf"\b(?:def|class|fn|func|function|struct|enum|trait|interface|type)\s+(?:{pattern})\b"
             def_cmd = (
-                [str(native_tg), "search", "-i", "-l", def_pat, str(root)]
-                if native_tg is not None
-                else (
-                    [str(rg_bin), "-i", "-l", "--no-messages", def_pat, str(root)]
-                    if rg_bin
-                    else None
-                )
+                [str(active_bin), "search", "-i", "-l", def_pat, str(root)]
+                if active_kind == "tg"
+                else [str(active_bin), "-i", "-l", "--no-messages", def_pat, str(root)]
             )
-            if def_cmd is not None:
-                try:
-                    def_proc = subprocess.run(
-                        def_cmd,
-                        env=child_env,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        timeout=timeout_s,
-                    )
-                    if def_proc.returncode in (0, 1):
-                        for line in def_proc.stdout.splitlines():
-                            c = line.strip()
-                            if c:
-                                fp = Path(c) if Path(c).is_absolute() else root / c
-                                key = os.path.normcase(os.path.abspath(str(fp)))
-                                if key in norm_to_path:
-                                    symbol_hits.add(key)
-                except (OSError, subprocess.SubprocessError):
-                    pass
+            try:
+                def_proc = subprocess.run(
+                    def_cmd,
+                    env=active_env,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=timeout_s,
+                )
+                if def_proc.returncode in (0, 1):
+                    for line in def_proc.stdout.splitlines():
+                        c = line.strip()
+                        if c:
+                            fp = Path(c) if Path(c).is_absolute() else root / c
+                            key = os.path.normcase(os.path.abspath(str(fp)))
+                            if key in norm_to_path:
+                                symbol_hits.add(key)
+            except (OSError, subprocess.SubprocessError):
+                pass
 
     if len(lexical_hits) > _LARGER_SEED_CAP and not symbol_hits:
         lexical_ok = False

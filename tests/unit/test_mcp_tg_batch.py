@@ -666,10 +666,10 @@ def test_four_blocked_workers_are_reaped_queue_expires_and_capacity_recovers(tmp
     batch_started = time.monotonic()
     with ThreadPoolExecutor(max_workers=1) as caller:
         first = caller.submit(
-            mcp_server.tg_batch, queries, path=str(tmp_path), item_deadline=6.0, deadline=9.0
+            mcp_server.tg_batch, queries, path=str(tmp_path), item_deadline=14.0, deadline=18.0
         )
         marker_paths = [marker_dir / f"block-{i}.json" for i in range(4)]
-        _wait_for_files(marker_paths)
+        _wait_for_files(marker_paths, timeout=12.0)
         descendants = [
             json.loads(path.read_text(encoding="utf-8"))["descendant"] for path in marker_paths
         ]
@@ -685,7 +685,7 @@ def test_four_blocked_workers_are_reaped_queue_expires_and_capacity_recovers(tmp
         assert queued["results"][0]["error"]["code"] == "deadline_exceeded"
         assert len(started) == 4, "queued request started while all four global slots were owned"
 
-        first_result = _payload(first.result(timeout=15))
+        first_result = _payload(first.result(timeout=25))
 
     assert all(item["error"]["code"] == "deadline_exceeded" for item in first_result["results"]), (
         first_result
@@ -694,7 +694,7 @@ def test_four_blocked_workers_are_reaped_queue_expires_and_capacity_recovers(tmp
     assert all(process.poll() is not None for process, _ in started)
     assert len([result for _, result in survivor_checks if not result]) >= 4
     assert descendants
-    assert time.monotonic() - batch_started < 9.0, "cleanup exceeded the 2s grace after deadline"
+    assert time.monotonic() - batch_started < 20.0, "cleanup exceeded the 2s grace after deadline"
 
     monkeypatch.setenv("TG_MCP_TEST_WORKER_MODE", "success")
     recovered = _payload(

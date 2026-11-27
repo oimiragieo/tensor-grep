@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import typer
 
 import tensor_grep.cli.error_handling as _mod_1
+import tensor_grep.cli.managed_runtime_upgrade as _managed_runtime_upgrade_mod
 import tensor_grep.cli.output_envelope as _mod_0
 import tensor_grep.cli.routers.agent as _mod_6
 import tensor_grep.cli.routers.agent_planning as _mod_7
@@ -662,6 +663,7 @@ update = _mod_12.update
 worker = _mod_12.worker
 
 _is_uv_tool_managed_python = _mod_13._is_uv_tool_managed_python
+_managed_runtime_upgrade = _managed_runtime_upgrade_mod
 _run_upgrade = _mod_13._run_upgrade
 _upgrade_attempts = _mod_13._upgrade_attempts
 upgrade = _mod_13.upgrade
