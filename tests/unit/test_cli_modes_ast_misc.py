@@ -76,29 +76,29 @@ def test_ast_selection_should_skip_pipeline_for_wrapper_backend(monkeypatch):
     assert isinstance(backend, _FakeDirectWrapperAstBackend)
 
 
-def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):
+def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch, tmp_path):
+    from pathlib import Path
+
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeCountOnlyAstPipeline)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+        encoding="utf-8",
+    )
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
-            encoding="utf-8",
-        )
-
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "All tests passed. cases=2" in result.output
@@ -183,37 +183,37 @@ def test_devices_command_should_fail_on_unsupported_format(monkeypatch):
     assert "must be one of: text, json" in result.output
 
 
-def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
+def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch, tmp_path):
+    from pathlib import Path
+
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/no_bad.yml").write_text(
+        "id: no-bad\nlanguage: python\nrule:\n  pattern: BAD\n",
+        encoding="utf-8",
+    )
+    Path("tests/no_bad_test.yml").write_text(
+        (
+            "tests:\n"
+            "  - id: no-bad-basic\n"
+            "    ruleId: no-bad\n"
+            "    valid:\n"
+            "      - 'all good'\n"
+            "    invalid:\n"
+            "      - 'contains BAD token'\n"
+        ),
+        encoding="utf-8",
+    )
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/no_bad.yml").write_text(
-            "id: no-bad\nlanguage: python\nrule:\n  pattern: BAD\n",
-            encoding="utf-8",
-        )
-        Path("tests/no_bad_test.yml").write_text(
-            (
-                "tests:\n"
-                "  - id: no-bad-basic\n"
-                "    ruleId: no-bad\n"
-                "    valid:\n"
-                "      - 'all good'\n"
-                "    invalid:\n"
-                "      - 'contains BAD token'\n"
-            ),
-            encoding="utf-8",
-        )
-
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "All tests passed. cases=2" in result.output
@@ -640,7 +640,7 @@ def test_app_help_should_expose_the_python_public_top_level_surface():
 def test_search_help_should_render_python_search_help_smoke() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["search", "--help"])
+    result = runner.invoke(app, ["search", "--help"], env={"COLUMNS": "160"})
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)

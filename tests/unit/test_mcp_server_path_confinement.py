@@ -1203,7 +1203,7 @@ def test_confinement_exempt_allowlist_has_no_unused_entries():
 
     all_param_names: set[str] = set()
     for tool in asyncio.run(mcp_server.mcp.list_tools()):
-        all_param_names.update(tool.inputSchema.get("properties", {}))
+        all_param_names.update(tool.input_schema.get("properties", {}))
 
     stale = set(CONFINEMENT_EXEMPT) - all_param_names
     assert not stale, f"CONFINEMENT_EXEMPT has stale/unused entries: {sorted(stale)}"

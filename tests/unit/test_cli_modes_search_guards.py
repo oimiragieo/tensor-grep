@@ -1506,17 +1506,19 @@ def test_new_rule_and_test_scaffolds_have_matching_placeholder_cases(tmp_path: P
     )
 
 
-def test_new_project_name_should_scaffold_named_directory() -> None:
+def test_new_project_name_should_scaffold_named_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = CliRunner()
 
-    with runner.isolated_filesystem():
-        result = runner.invoke(app, ["new", "project", "demo"])
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["new", "project", "demo"])
 
-        assert result.exit_code == 0, result.output
-        assert (Path("demo") / "sgconfig.yml").exists()
-        assert (Path("demo") / "rules" / "sample-rule.yml").exists()
-        assert (Path("demo") / "tests" / "sample-test.yml").exists()
-        assert not Path("sgconfig.yml").exists()
+    assert result.exit_code == 0, result.output
+    assert (Path("demo") / "sgconfig.yml").exists()
+    assert (Path("demo") / "rules" / "sample-rule.yml").exists()
+    assert (Path("demo") / "tests" / "sample-test.yml").exists()
+    assert not Path("sgconfig.yml").exists()
 
 
 def test_new_project_name_with_base_dir_should_scaffold_under_named_directory(

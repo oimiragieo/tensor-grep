@@ -82,7 +82,7 @@ def _call_checkpoint(tool: str, arguments: dict[str, object]) -> tuple[dict[str,
     result = asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
     if isinstance(result, types.CallToolResult):
         payload = cast(dict[str, Any], json.loads(result.content[0].text))
-        return payload, result.isError
+        return payload, result.is_error
     content, _metadata = result
     payload = cast(dict[str, Any], json.loads(cast(Any, content)[0].text))
     return payload, isinstance(payload.get("error"), dict) and bool(payload["error"])

@@ -51,7 +51,7 @@ async def _call(
     expected_error: bool = False,
 ) -> dict[str, Any]:
     result = await asyncio.wait_for(session.call_tool(name, arguments), timeout)
-    assert result.isError is expected_error
+    assert result.is_error is expected_error
     return json.loads(result.content[0].text)
 
 

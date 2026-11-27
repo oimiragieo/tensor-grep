@@ -108,10 +108,12 @@ def test_tg_coverage_error_sets_mcp_wire_error_flag(tmp_path: Path, monkeypatch)
 
     if not isinstance(accepted, types.CallToolResult):
         content, structured_content = accepted
-        accepted = types.CallToolResult(content=list(content), structuredContent=structured_content)
-    assert refused.isError is True
+        accepted = types.CallToolResult(
+            content=list(content), structured_content=structured_content
+        )
+    assert refused.is_error is True
     assert json.loads(refused.content[0].text)["error"]["code"] == "invalid_input"
-    assert accepted.isError is False
+    assert accepted.is_error is False
 
 
 def test_tg_coverage_does_not_load_parent_session_outside_mcp_root(

@@ -49,7 +49,12 @@ from tests.unit.test_cli_modes_shared import _FakeAstPipeline
     ],
 )
 def test_scan_secrets_basic_detects_aws_credentials_for_each_language(
-    monkeypatch, language: str, extension: str, content: str, expected_rule_ids: set[str]
+    monkeypatch,
+    tmp_path: Path,
+    language: str,
+    extension: str,
+    content: str,
+    expected_rule_ids: set[str],
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     fixture_path = f"fixture{extension}"
@@ -62,12 +67,12 @@ def test_scan_secrets_basic_detects_aws_credentials_for_each_language(
             yield fixture_path
 
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", FixtureScanner)
-    with CliRunner().isolated_filesystem():
-        Path(fixture_path).write_text(content, encoding="utf-8")
-        result = CliRunner().invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", language, "--path", ".", "--json"],
-        )
+    monkeypatch.chdir(tmp_path)
+    Path(fixture_path).write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", language, "--path", ".", "--json"],
+    )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
@@ -110,7 +115,7 @@ def test_scan_secrets_basic_detects_aws_credentials_for_each_language(
     ],
 )
 def test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
-    monkeypatch, language: str, extension: str, content: str
+    monkeypatch, tmp_path: Path, language: str, extension: str, content: str
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     fixture_path = f"fixture{extension}"
@@ -123,33 +128,33 @@ def test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
             yield fixture_path
 
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", FixtureScanner)
-    with CliRunner().isolated_filesystem():
-        positive_prefix = {
-            "python": "aws_secret_access_key = ",
-            "javascript": "const aws_secret_access_key = ",
-            "typescript": "const aws_secret_access_key = ",
-            "rust": "let aws_secret_access_key = ",
-        }[language]
-        positive_line = len(content.splitlines()) + 1
-        Path(fixture_path).write_text(
-            content + "\n" + positive_prefix + '"' + "A" * 40 + '"\n', encoding="utf-8"
-        )
-        Path("suppressions.json").write_text('{"entries": []}', encoding="utf-8")
-        result = CliRunner().invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "secrets-basic",
-                "--language",
-                language,
-                "--path",
-                ".",
-                "--json",
-                "--suppressions",
-                "suppressions.json",
-            ],
-        )
+    monkeypatch.chdir(tmp_path)
+    positive_prefix = {
+        "python": "aws_secret_access_key = ",
+        "javascript": "const aws_secret_access_key = ",
+        "typescript": "const aws_secret_access_key = ",
+        "rust": "let aws_secret_access_key = ",
+    }[language]
+    positive_line = len(content.splitlines()) + 1
+    Path(fixture_path).write_text(
+        content + "\n" + positive_prefix + '"' + "A" * 40 + '"\n', encoding="utf-8"
+    )
+    Path("suppressions.json").write_text('{"entries": []}', encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "secrets-basic",
+            "--language",
+            language,
+            "--path",
+            ".",
+            "--json",
+            "--suppressions",
+            "suppressions.json",
+        ],
+    )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
@@ -180,6 +185,7 @@ def test_scan_secrets_basic_does_not_flag_non_aws_credentials_for_each_language(
 @pytest.mark.parametrize("form", ["quoted", "unquoted", "quoted-eof", "unquoted-eof"])
 def test_scan_secrets_basic_detects_punctuated_aws_secret_keys_for_each_language(
     monkeypatch,
+    tmp_path: Path,
     language: str,
     extension: str,
     prefix: str,
@@ -201,12 +207,12 @@ def test_scan_secrets_basic_detects_punctuated_aws_secret_keys_for_each_language
     quoted = form.startswith("quoted")
     line = prefix + ('"' + candidate_value + '"' if quoted else candidate_value) + suffix
     content = line + ("" if form.endswith("eof") else "\n")
-    with CliRunner().isolated_filesystem():
-        Path(fixture_path).write_text(content, encoding="utf-8")
-        result = CliRunner().invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", language, "--path", ".", "--json"],
-        )
+    monkeypatch.chdir(tmp_path)
+    Path(fixture_path).write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", language, "--path", ".", "--json"],
+    )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)

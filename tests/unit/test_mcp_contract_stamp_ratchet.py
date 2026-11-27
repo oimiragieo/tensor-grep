@@ -197,8 +197,8 @@ _SUCCESS_FIXTURE_KINDS: dict[str, str] = {
 
 def _schema_derived_minimal_kwargs(tool) -> dict[str, object]:
     """Type-based minimal values for every REQUIRED param on a tool's live schema."""
-    props = tool.inputSchema.get("properties", {})
-    required = set(tool.inputSchema.get("required", []))
+    props = tool.input_schema.get("properties", {})
+    required = set(tool.input_schema.get("required", []))
     kwargs: dict[str, object] = {}
     for param_name, schema in props.items():
         if param_name not in required:

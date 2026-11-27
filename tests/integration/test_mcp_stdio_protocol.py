@@ -77,13 +77,13 @@ async def _stdio_protocol_roundtrip() -> None:
         read_stream, write_stream = streams
         async with ClientSession(read_stream, write_stream) as session:
             initialized = await session.initialize()
-            assert initialized.serverInfo.name == "tensor-grep"
+            assert initialized.server_info.name == "tensor-grep"
             # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
             # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
             # fields on tg_search); 1.7.0 -> 1.8.0 (P3, unified `incomplete` envelope via
             # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows); 1.9.0 -> 1.10.0 (K2); 1.10.0 -> 1.11.0 (G1, coverage_gap). Keep this comment in step with the assert below.
             assert (
-                initialized.serverInfo.version == _TG_MCP_SERVER_CONTRACT_VERSION
+                initialized.server_info.version == _TG_MCP_SERVER_CONTRACT_VERSION
             )  # task 336: budget_remediable on the repo_map-backed wire
 
             listed = await session.list_tools()
@@ -107,13 +107,13 @@ async def _stdio_protocol_roundtrip() -> None:
 
             query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
             assert query_tool.description
-            assert "action" in query_tool.inputSchema["properties"]
-            assert "paths_defaulted" not in query_tool.inputSchema["properties"]
+            assert "action" in query_tool.input_schema["properties"]
+            assert "paths_defaulted" not in query_tool.input_schema["properties"]
 
             unknown_action = await session.call_tool(
                 "tg_navigate", {"action": "bogus", "symbol": "Foo"}
             )
-            assert unknown_action.isError is True
+            assert unknown_action.is_error is True
             assert unknown_action.content[0].text == json.dumps(
                 {
                     "version": 1,
@@ -135,7 +135,7 @@ async def _stdio_protocol_roundtrip() -> None:
             )
 
             capabilities = await session.call_tool("tg_mcp_capabilities", {})
-            assert capabilities.isError is False
+            assert capabilities.is_error is False
             capabilities_payload = json.loads(capabilities.content[0].text)
             assert capabilities_payload["schema_version"] == capabilities_payload["version"]
             assert capabilities_payload["routing_reason"] == "mcp-capabilities"
@@ -154,7 +154,7 @@ async def _stdio_protocol_roundtrip() -> None:
                         "max_results": 1,
                     },
                 )
-                assert result.isError is False
+                assert result.is_error is False
                 payload = json.loads(result.content[0].text)
                 assert "error" not in payload
                 assert payload["total_matches"] > 0
@@ -193,10 +193,10 @@ async def _stdio_legacy_tools_roundtrip() -> None:
             query_tool = next(tool for tool in listed.tools if tool.name == "tg_query")
             assert '"search"' in query_tool.description
             search_tool = next(tool for tool in listed.tools if tool.name == "tg_search")
-            assert "paths_defaulted" not in search_tool.inputSchema["properties"]
+            assert "paths_defaulted" not in search_tool.input_schema["properties"]
 
             rulesets = await session.call_tool("tg_rulesets", {})
-            assert rulesets.isError is False
+            assert rulesets.is_error is False
             rulesets_payload = json.loads(rulesets.content[0].text)
             assert rulesets_payload["schema_version"] == rulesets_payload["version"]
             assert {rule["name"] for rule in rulesets_payload["rulesets"]} >= {"secrets-basic"}

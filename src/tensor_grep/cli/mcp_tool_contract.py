@@ -1,4 +1,4 @@
-"""Shared registration contracts for the FastMCP tool surface."""
+"""Shared registration contracts for the MCPServer tool surface."""
 
 import inspect
 import json
@@ -7,7 +7,7 @@ from functools import wraps
 from typing import Annotated, Any, TypeVar
 
 from mcp import types
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 ToolFunction = TypeVar("ToolFunction", bound=Callable[..., Any])
@@ -55,13 +55,13 @@ def _error_result(text: str) -> types.CallToolResult | None:
     if isinstance(payload, dict) and isinstance(payload.get("error"), dict) and payload["error"]:
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=text)],
-            structuredContent={"result": text},
-            isError=True,
+            structured_content={"result": text},
+            is_error=True,
         )
     return None
 
 
-def register_mcp_tool(server: FastMCP) -> Callable[[ToolFunction], ToolFunction]:
+def register_mcp_tool(server: MCPServer) -> Callable[[ToolFunction], ToolFunction]:
     """Register a tool while mapping top-level JSON errors to MCP's error flag."""
 
     def decorate(fn: ToolFunction) -> ToolFunction:

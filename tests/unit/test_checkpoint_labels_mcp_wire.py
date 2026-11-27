@@ -13,9 +13,9 @@ from unittest.mock import Mock
 
 import pytest
 from mcp import types
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.utilities.func_metadata import FuncMetadata
 
 from tensor_grep.cli import checkpoint_store, mcp_server
 from tensor_grep.cli.mcp_checkpoint_label_args import install_checkpoint_label_arguments
@@ -35,7 +35,9 @@ def _call(tool: str, arguments: dict[str, object]) -> dict[str, Any]:
     result = asyncio.run(mcp_server.mcp.call_tool(tool, arguments))
     if isinstance(result, types.CallToolResult):
         payload = cast(dict[str, Any], json.loads(result.content[0].text))
-        assert result.isError is (isinstance(payload.get("error"), dict) and bool(payload["error"]))
+        assert result.is_error is (
+            isinstance(payload.get("error"), dict) and bool(payload["error"])
+        )
         return payload
     content, _metadata = result
     return cast(dict[str, Any], json.loads(cast(Any, content)[0].text))
@@ -128,7 +130,7 @@ def test_real_meta_labels_are_refused_before_list_or_undo_dispatch(
 def test_checkpoint_label_schema_remains_optional_nullable_with_default_none() -> None:
     tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
     assert "tg_checkpoint_create" not in tools
-    schema = tools["tg_checkpoint"].inputSchema
+    schema = tools["tg_checkpoint"].input_schema
     label_schema = schema["properties"]["label"]
     assert set(label_schema["type"]) == {"string", "null"}
     assert "anyOf" not in label_schema
@@ -150,13 +152,13 @@ def test_legacy_checkpoint_create_wire_and_schema_contract(project: Path) -> Non
     script = (
         "import asyncio, json\n"
         "from pathlib import Path\n"
-        "from mcp.server.fastmcp.exceptions import ToolError\n"
+        "from mcp.server.mcpserver.exceptions import ToolError\n"
         "from tensor_grep.cli import checkpoint_store, mcp_server as m\n"
         f"project_dir = {str(project)!r}\n"
         f"printable_labels = {printable_labels!r}\n"
         f"nontext_labels = {nontext_labels!r}\n"
         "tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}\n"
-        "schemas = {n: tools[n].inputSchema for n in ('tg_checkpoint_create', 'tg_checkpoint')}\n"
+        "schemas = {n: tools[n].input_schema for n in ('tg_checkpoint_create', 'tg_checkpoint')}\n"
         "created_payloads = []\n"
         "for label in printable_labels:\n"
         "    res = asyncio.run(m.mcp.call_tool('tg_checkpoint_create', {'path': project_dir, 'label': label}))\n"
@@ -236,7 +238,7 @@ def test_label_adapter_leaves_other_argument_and_tool_parsing_unchanged() -> Non
 
 
 def test_adapter_supports_absent_legacy_tool_and_preserves_models_and_output_conversion() -> None:
-    server = FastMCP("checkpoint-label-fixture")
+    server = MCPServer("checkpoint-label-fixture")
 
     @server.tool()
     def tg_checkpoint(label: str | None = None) -> str:
@@ -253,7 +255,8 @@ def test_adapter_supports_absent_legacy_tool_and_preserves_models_and_output_con
     assert after.output_schema == before.output_schema
     assert after.wrap_output == before.wrap_output
     assert asyncio.run(server.call_tool("tg_checkpoint", {"label": "literal"})) == content_before
-    content, _metadata = asyncio.run(server.call_tool("tg_checkpoint", {"label": "null"}))
+    null_res = asyncio.run(server.call_tool("tg_checkpoint", {"label": "null"}))
+    content = null_res.content if isinstance(null_res, types.CallToolResult) else null_res[0]
     assert json.loads(cast(Any, content)[0].text)["label"] == "null"
     install_checkpoint_label_arguments(server)
     assert tool.fn_metadata is after
@@ -261,14 +264,14 @@ def test_adapter_supports_absent_legacy_tool_and_preserves_models_and_output_con
 
 def test_adapter_fails_closed_for_missing_meta_registration() -> None:
     with pytest.raises(RuntimeError, match="meta tool must be registered"):
-        install_checkpoint_label_arguments(FastMCP("missing-checkpoint-fixture"))
+        install_checkpoint_label_arguments(MCPServer("missing-checkpoint-fixture"))
 
 
 def test_adapter_fails_closed_for_unknown_metadata_shape() -> None:
     class UnsupportedMetadata(FuncMetadata):
         unsupported_field: int = 1
 
-    server = FastMCP("unsupported-checkpoint-fixture")
+    server = MCPServer("unsupported-checkpoint-fixture")
 
     @server.tool()
     def tg_checkpoint(label: str | None = None) -> str:
@@ -282,5 +285,5 @@ def test_adapter_fails_closed_for_unknown_metadata_shape() -> None:
         output_model=tool.fn_metadata.output_model,
         wrap_output=tool.fn_metadata.wrap_output,
     )
-    with pytest.raises(RuntimeError, match="Unsupported FastMCP checkpoint argument metadata"):
+    with pytest.raises(RuntimeError, match="Unsupported MCPServer checkpoint argument metadata"):
         install_checkpoint_label_arguments(server)

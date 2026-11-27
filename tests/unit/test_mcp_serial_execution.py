@@ -10,7 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp import types
+from mcp.server.mcpserver.exceptions import ToolError
 
 from tensor_grep.cli import (
     checkpoint_store,
@@ -23,7 +24,8 @@ from tensor_grep.cli import (
 
 
 def _payload(result: Any) -> dict[str, Any]:
-    return json.loads(result[0][0].text)
+    content = result.content if isinstance(result, types.CallToolResult) else result[0]
+    return json.loads(content[0].text)
 
 
 def test_blocked_create_keeps_loop_live_and_cancelled_queue_never_writes(

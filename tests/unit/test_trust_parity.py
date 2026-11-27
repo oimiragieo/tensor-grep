@@ -233,24 +233,24 @@ def test_scan_builtin_ruleset_json_without_new_flags_keeps_existing_contract(
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
 
     runner = CliRunner()
-    with runner.isolated_filesystem(temp_dir=tmp_path):
-        scan_root = Path.cwd().resolve()
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    scan_root = Path.cwd().resolve()
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+        ],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
