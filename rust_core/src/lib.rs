@@ -43,6 +43,7 @@ pub mod gpu_native;
 pub mod index;
 pub mod index_cache;
 pub mod index_lock;
+pub mod index_mmap;
 pub mod managed_runtime_acl_policy;
 #[cfg(windows)]
 pub mod managed_runtime_acl_reader;

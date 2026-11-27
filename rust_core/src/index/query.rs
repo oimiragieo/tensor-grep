@@ -12,7 +12,7 @@ type FileQueryMatches = (Vec<IndexQueryResult>, Option<(PathBuf, u64)>);
 #[cfg(test)]
 mod tests;
 
-enum SearchMatcher {
+pub(crate) enum SearchMatcher {
     Fixed {
         needle: String,
         lower_needle: Option<String>,
@@ -21,7 +21,7 @@ enum SearchMatcher {
 }
 
 impl SearchMatcher {
-    fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Result<Self> {
+    pub(crate) fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Result<Self> {
         if fixed_strings {
             return Ok(Self::Fixed {
                 needle: pattern.to_string(),
@@ -139,7 +139,7 @@ impl TrigramIndex {
     }
 }
 
-fn collect_matches(
+pub(crate) fn collect_matches(
     file: &Path,
     candidate_lines: Option<&[usize]>,
     matcher: &SearchMatcher,

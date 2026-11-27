@@ -537,8 +537,94 @@ def run_dyno_ratchet(
     return sign_dyno_promotion_report(report)
 
 
+def run_index_vs_rg(
+    *,
+    repo_root: Path,
+    pattern: str = "TrigramIndex",
+    runs: int = 3,
+    warmup: int = 1,
+    tg_bin: str = "tg",
+    rg_bin: str = "rg",
+) -> dict[str, Any]:
+    rg_available = shutil.which(rg_bin) is not None
+    tg_available = shutil.which(tg_bin) is not None
+    target = str(repo_root)
+
+    rg_res = (
+        _time_command([rg_bin, "--json", pattern, target], runs=runs, warmup=warmup)
+        if rg_available
+        else {"status": "UNAVAILABLE", "median_s": None, "stdout": ""}
+    )
+    tg_res = (
+        _time_command(
+            [tg_bin, "search", "--index", "--json", pattern, target],
+            runs=runs,
+            warmup=max(1, warmup),
+        )
+        if tg_available
+        else {"status": "UNAVAILABLE", "median_s": None, "stdout": ""}
+    )
+
+    tg_payload = _parse_tg_json_payload(str(tg_res.get("stdout") or ""))
+    rg_stdout = str(rg_res.get("stdout") or "")
+    raw_rg_sigs = _extract_rg_json_match_signatures(rg_stdout) if rg_stdout.strip() else []
+    raw_tg_sigs = _extract_tg_match_signatures(tg_payload) if tg_payload is not None else []
+    rg_sigs = sorted(
+        (str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_rg_sigs
+    )
+    tg_sigs = sorted(
+        (str(Path(f).as_posix()).lstrip("./"), ln, txt) for f, ln, txt in raw_tg_sigs
+    )
+    rg_files = _signature_files(rg_sigs)
+    tg_files = _signature_files(tg_sigs)
+
+    rg_median = rg_res.get("median_s")
+    tg_median = tg_res.get("median_s")
+    strictly_faster = (
+        _is_valid_positive_finite_seconds(rg_median)
+        and _is_valid_positive_finite_seconds(tg_median)
+        and float(tg_median) < float(rg_median)
+    )
+    speedup = (
+        round(float(rg_median) / float(tg_median), 3)
+        if _is_valid_positive_finite_seconds(rg_median)
+        and _is_valid_positive_finite_seconds(tg_median)
+        else None
+    )
+
+    return {
+        "benchmark": "dyno_ratchet_index_vs_rg",
+        "repo_root": target,
+        "pattern": pattern,
+        "rg": {
+            "status": rg_res["status"],
+            "exit_code": rg_res.get("exit_code"),
+            "median_s": rg_median,
+            "match_count": len(rg_sigs),
+            "file_count": len(rg_files),
+        },
+        "tg_index_warm": {
+            "status": tg_res["status"],
+            "exit_code": tg_res.get("exit_code"),
+            "median_s": tg_median,
+            "match_count": len(tg_sigs),
+            "file_count": len(tg_files),
+        },
+        "matches_equal": tg_payload is not None and tg_sigs == rg_sigs,
+        "files_equal": tg_payload is not None and tg_files == rg_files,
+        "strictly_faster": strictly_faster,
+        "speedup": speedup,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run dyno-ratchet GPU promotion gate benchmarks.")
+    parser.add_argument(
+        "--mode",
+        choices=["gpu-promotion", "index-vs-rg"],
+        default="gpu-promotion",
+        help="Benchmark mode to execute",
+    )
     parser.add_argument(
         "--sizes", default="1GB,5GB", help="Comma-separated corpus sizes (e.g. 1GB,5GB)"
     )
@@ -547,21 +633,33 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tg-bin", default="tg", help="Path to tg binary")
     parser.add_argument("--rg-bin", default="rg", help="Path to rg binary")
     parser.add_argument("--device-id", type=int, default=0, help="GPU device id")
+    parser.add_argument("--repo-root", default=".", help="Repo root for index-vs-rg mode")
+    parser.add_argument("--pattern", default="TrigramIndex", help="Pattern for index-vs-rg mode")
     parser.add_argument("--output", default="", help="Optional JSON output file path")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    sizes = _parse_sizes(args.sizes)
-    report = run_dyno_ratchet(
-        corpus_sizes=sizes,
-        runs=args.runs,
-        warmup=args.warmup,
-        tg_bin=args.tg_bin,
-        rg_bin=args.rg_bin,
-        device_id=args.device_id,
-    )
+    if args.mode == "index-vs-rg":
+        report = run_index_vs_rg(
+            repo_root=Path(args.repo_root),
+            pattern=args.pattern,
+            runs=args.runs,
+            warmup=args.warmup,
+            tg_bin=args.tg_bin,
+            rg_bin=args.rg_bin,
+        )
+    else:
+        sizes = _parse_sizes(args.sizes)
+        report = run_dyno_ratchet(
+            corpus_sizes=sizes,
+            runs=args.runs,
+            warmup=args.warmup,
+            tg_bin=args.tg_bin,
+            rg_bin=args.rg_bin,
+            device_id=args.device_id,
+        )
     rendered = json.dumps(report, indent=2)
     if args.output:
         out_path = Path(args.output)

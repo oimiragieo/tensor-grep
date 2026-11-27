@@ -10,7 +10,7 @@ use regex_syntax::{
 };
 use serde::{Deserialize, Serialize};
 mod bounded_json;
-mod query;
+pub(crate) mod query;
 use bounded_json::DecodeBudget;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -19,7 +19,7 @@ use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-const TRIGRAM_LEN: usize = 3;
+pub(crate) const TRIGRAM_LEN: usize = 3;
 // 1 GiB keeps about 73% headroom over the measured ~621 MB legacy JSON index for this repo.
 // The bounded reader keeps this raw-input buffer separate from the decoded-allocation budget.
 const MAX_INDEX_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
@@ -36,6 +36,13 @@ const MAX_REGEX_PREFILTER_LITERALS: usize = 64;
 const TREE_FINGERPRINT_TOP_LEVEL_CAP: usize = 32;
 
 type FileTrigramHits = Vec<([u8; 3], u32)>;
+pub(crate) type MmapIndexParts<'a> = (
+    &'a Path,
+    u64,
+    bool,
+    &'a [FileEntry],
+    &'a HashMap<[u8; 3], Vec<PostingEntry>>,
+);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IncrementalUpdateStats {
@@ -52,8 +59,8 @@ pub struct IncrementalUpdateResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RegexLiteralPlan {
-    literals: Vec<Vec<u8>>,
+pub(crate) struct RegexLiteralPlan {
+    pub(crate) literals: Vec<Vec<u8>>,
 }
 
 impl RegexLiteralPlan {
@@ -93,23 +100,23 @@ enum RegexCandidateSelection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct FileEntry {
+pub(crate) struct FileEntry {
     /// Canonical-root-RELATIVE path (audit M17 F2). Never a raw spelling: the build walks
     /// the canonical root and strips it, so re-joining with `canonical_root` is the only
     /// way an entry is ever dereferenced -- a relative spelling stored verbatim would
     /// resolve against the QUERY process's cwd and read a different tree's files while
     /// the canonical-root check passes. UTF-8-validated at build (M17 F5).
-    path: PathBuf,
-    mtime_ns: u128,
-    size: u64,
+    pub(crate) path: PathBuf,
+    pub(crate) mtime_ns: u128,
+    pub(crate) size: u64,
     #[serde(default)]
-    deleted: bool,
+    pub(crate) deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PostingEntry {
-    file_id: u32,
-    line: u32,
+pub(crate) struct PostingEntry {
+    pub(crate) file_id: u32,
+    pub(crate) line: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -457,7 +464,7 @@ pub struct IndexQueryResult {
 /// M17 F5: the canonical identity must be valid UTF-8 -- the index serializes it losslessly
 /// (strict on both read and write), so a non-UTF-8 root is rejected here at BUILD time instead
 /// of colliding with a different non-UTF-8 root after a lossy round trip.
-fn canonical_root_of(root: &Path) -> Result<PathBuf> {
+pub(crate) fn canonical_root_of(root: &Path) -> Result<PathBuf> {
     let canonical = root.canonicalize().with_context(|| {
         format!(
             "index root cannot be canonicalized (fail closed): {}",
@@ -481,7 +488,7 @@ fn canonical_root_of(root: &Path) -> Result<PathBuf> {
 /// serializer would otherwise collapse distinct non-UTF-8 names into one identity -- either
 /// aliasing two files or dereferencing a mangled name -- so such trees refuse to be indexed
 /// (plain text search is unaffected).
-fn relativize_entry(walked: &Path, canonical_root: &Path) -> Result<PathBuf> {
+pub(crate) fn relativize_entry(walked: &Path, canonical_root: &Path) -> Result<PathBuf> {
     let rel = walked.strip_prefix(canonical_root).with_context(|| {
         format!(
             "index walk produced a path outside the canonical root: {} (root {})",
@@ -505,7 +512,7 @@ fn relativize_entry(walked: &Path, canonical_root: &Path) -> Result<PathBuf> {
 /// absolute or escaping entry must be REJECTED (fail closed), never dereferenced outside the
 /// root. An empty path is allowed (a file-rooted index stores its single entry as the empty
 /// relative path; join("") is the root itself).
-fn validate_entry_rel_path(rel: &Path) -> Result<()> {
+pub(crate) fn validate_entry_rel_path(rel: &Path) -> Result<()> {
     use std::path::Component;
     if !rel.is_relative() {
         anyhow::bail!(
@@ -537,7 +544,7 @@ fn is_tg_index_owned_entry(name: &std::ffi::OsStr) -> bool {
     name == std::ffi::OsStr::new(".tg_index") || name.to_string_lossy().starts_with("..tg_index.")
 }
 
-fn index_walker(root: &Path, no_ignore: bool) -> ignore::WalkBuilder {
+pub(crate) fn index_walker(root: &Path, no_ignore: bool) -> ignore::WalkBuilder {
     let mut builder = ignore::WalkBuilder::new(root);
     builder.hidden(true).git_ignore(!no_ignore);
     if no_ignore {
@@ -579,7 +586,7 @@ where
     Ok(paths)
 }
 
-fn metadata_mtime_ns(meta: &fs::Metadata, path: &Path) -> Result<u128> {
+pub(crate) fn metadata_mtime_ns(meta: &fs::Metadata, path: &Path) -> Result<u128> {
     Ok(meta
         .modified()
         .with_context(|| format!("failed to read modification time for {}", path.display()))?
@@ -593,7 +600,7 @@ fn metadata_mtime_ns(meta: &fs::Metadata, path: &Path) -> Result<u128> {
         .as_nanos())
 }
 
-fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> Result<u64> {
+pub(crate) fn compute_tree_fingerprint(canonical_root: &Path, no_ignore: bool) -> Result<u64> {
     let mut hasher = Sha256::new();
     let mut builder = index_walker(canonical_root, no_ignore);
     builder.max_depth(Some(1));
@@ -1245,6 +1252,16 @@ impl TrigramIndex {
     pub fn total_postings(&self) -> usize {
         self.postings.values().map(|v| v.len()).sum()
     }
+
+    pub(crate) fn mmap_parts(&self) -> MmapIndexParts<'_> {
+        (
+            &self.canonical_root,
+            self.tree_fingerprint,
+            self.no_ignore,
+            &self.files,
+            &self.postings,
+        )
+    }
 }
 
 /// Writes `data` to `path` via write-temp-then-atomic-rename, mirroring
@@ -1401,7 +1418,7 @@ fn normalize_affected_postings(
 }
 
 /// TG-006: files above this size carry no postings, so `search` scans them directly.
-const MAX_INDEXED_FILE_BYTES: u64 = 10 * 1024 * 1024;
+pub(crate) const MAX_INDEXED_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
 fn extract_file_trigrams(path: &Path) -> Result<Vec<([u8; 3], u32)>> {
     extract_file_trigrams_with(
@@ -1459,7 +1476,10 @@ fn extract_file_trigrams_with(
 /// unbounded classes that do not leave behind another provable literal,
 /// empty/optional branches, or non-ASCII ignore-case literals fall back to a
 /// full scan so the index never introduces false negatives.
-fn select_regex_prefilter_literals(pattern: &str, ignore_case: bool) -> Option<RegexLiteralPlan> {
+pub(crate) fn select_regex_prefilter_literals(
+    pattern: &str,
+    ignore_case: bool,
+) -> Option<RegexLiteralPlan> {
     let hir = parse_regex_hir(pattern).ok()?;
 
     [
@@ -1544,7 +1564,7 @@ fn compare_regex_literal_plans(a: &RegexLiteralPlan, b: &RegexLiteralPlan) -> st
         .then_with(|| b.literals.len().cmp(&a.literals.len()))
 }
 
-fn extract_trigrams(pattern: &[u8]) -> Vec<[u8; 3]> {
+pub(crate) fn extract_trigrams(pattern: &[u8]) -> Vec<[u8; 3]> {
     if pattern.len() < TRIGRAM_LEN {
         return Vec::new();
     }
