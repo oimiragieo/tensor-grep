@@ -135,6 +135,53 @@ def _flags(search_args: Sequence[str]) -> Iterator[tuple[str, str | None]]:
             break
 
 
+def search_paths_directly_target_generated_root(
+    paths: Sequence[str], generated_names: AbstractSet[str]
+) -> bool:
+    """Return True if any explicit search path directly names a generated/cache/dep root."""
+    from pathlib import Path
+
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            if path.name.lower() in generated_names or resolved.name.lower() in generated_names:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def search_paths_include_generated_root(
+    paths: Sequence[str], generated_names: AbstractSet[str]
+) -> bool:
+    """Return True if any search path or immediate child directory is a generated/cache/dep root."""
+    from pathlib import Path
+
+    if search_paths_directly_target_generated_root(paths, generated_names):
+        return True
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in generated_names:
+                    return True
+        except OSError:
+            continue
+    return False
+
+
 def _cancelled_by(name: str) -> str | None:
     """The flag that switches ``name`` back off (rg's last-wins pairs): ``-F`` and
     ``--fixed-strings`` by ``--no-fixed-strings``, and every ``--no-X`` by ``--X`` (so

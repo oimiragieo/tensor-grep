@@ -1338,6 +1338,7 @@ def _execute_find(
     grounding: str = "local",
     rerank: str = "off",
     hybrid: bool = False,
+    verbose: bool = False,
 ) -> "SearchResult":
     """The `tg find` pipeline: whole-repo walk -> chunk -> BM25 [+ dense] [+ late MaxSim] rank via
     the shared `rank_chunks` core (`core/reranker.py`) -> `--limit` -> token-budget fit -> a
@@ -1525,7 +1526,8 @@ def _execute_find(
     available, unavailable_reason = dense_available()
     if not available:
         result.rank_fallback_reason = unavailable_reason
-        sys.stderr.write(f"tg: {unavailable_reason}\n")
+        if verbose:
+            sys.stderr.write(f"tg: {unavailable_reason}\n")
     else:
         try:
             model = load_dense_model(default_model_dir())
@@ -1533,7 +1535,8 @@ def _execute_find(
         except DenseUnavailableError as exc:
             message = _friendly_dense_unavailable_message(exc)
             result.rank_fallback_reason = message
-            sys.stderr.write(f"tg: {message}\n")
+            if verbose:
+                sys.stderr.write(f"tg: {message}\n")
         # BackendExecutionError (e.g. a corrupt model directory) deliberately propagates -- the
         # command boundary (C1) must catch it and exit 2, never degrade here.
 
@@ -1653,6 +1656,10 @@ def _execute_find(
     )
 
 
+def _stdout_isatty() -> bool:
+    return sys.stdout.isatty()
+
+
 def _deadline_option(help_text: str) -> Any:
     """The `--deadline` option, declared once.
 
@@ -1704,6 +1711,9 @@ def find(
     ndjson: bool = typer.Option(False, "--ndjson", help="Emit newline-delimited JSON per match."),
     citations: bool = typer.Option(False, "--citations", help="Emit citation ranges."),
     hybrid: bool = typer.Option(False, "--hybrid", help="Use FTS5 + adaptive IDF-weighted RRF."),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show verbose fallback and diagnostic notices."
+    ),
 ) -> None:
     """EXPERIMENTAL: whole-repo hybrid semantic search (BM25 + local CPU dense-embedding
     relevance, RRF-fused), ranked file:line results.
@@ -1737,6 +1747,7 @@ def find(
             grounding=grounding,
             rerank=rerank,
             hybrid=hybrid,
+            verbose=verbose,
         )
     except (FileNotFoundError, ConfigurationError) as exc:
         typer.echo(str(exc), err=True)
@@ -2126,19 +2137,21 @@ def _should_refuse_unbounded_generated_scan(
 ) -> tuple[bool, list[str]]:
     if allow_broad_generated_scan or _has_generated_scan_bound(config):
         return False, []
-    if not (
+    from tensor_grep.cli.scan_guardrails import generated_scan_dir_names
+
+    unrestricted = (
         (files_mode and config.hidden)
         or config.no_ignore
         or config.no_ignore_files
         or config.no_ignore_vcs
         or config.unrestricted > 0
-    ):
-        return False, []
-    from tensor_grep.cli.scan_guardrails import generated_scan_dir_names
-
-    generated_dirs = generated_scan_dir_names(
-        paths, _BROAD_GENERATED_SCAN_DIR_NAMES, include_child_dirs=files_mode
     )
+    generated_dirs = generated_scan_dir_names(
+        paths, _BROAD_GENERATED_SCAN_DIR_NAMES, include_child_dirs=files_mode and unrestricted
+    )
+    if not unrestricted:
+        # Direct generated roots (e.g. `tg search PAT .venv`) are refused even without --no-ignore.
+        return bool(generated_dirs), generated_dirs
     return bool(generated_dirs), generated_dirs
 
 
@@ -3253,6 +3266,10 @@ def search_command(
         line_number = False
     elif line_number is None:
         line_number = sys.stdout.isatty()
+    if max_columns == 0:
+        max_columns = None
+    elif max_columns is None and not json and not ndjson and not vimgrep and _stdout_isatty():
+        max_columns = 300
 
     from tensor_grep.core.config import SearchConfig
 
@@ -5122,11 +5139,10 @@ def context(
     if json_output:
         typer.echo(json.dumps(payload))
     else:
+        from tensor_grep.cli.formatters.human_fmt import format_context_human
+
         _emit_scan_incompleteness_banner(payload)
-        typer.echo(f"Context pack for {payload['path']}")
-        typer.echo(f"query={payload['query']}")
-        typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
-        typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+        typer.echo(format_context_human(payload))
 
     if _scan_incomplete(payload):
         raise typer.Exit(2)
@@ -6000,13 +6016,10 @@ def edit_plan(
             if json_output:
                 typer.echo(_detail_tier.dump_detail_json(daemon_payload, edit_detail))
             else:
+                from tensor_grep.cli.formatters.human_fmt import format_edit_plan_human
+
                 _emit_scan_incompleteness_banner(daemon_payload)
-                payload = daemon_payload
-                typer.echo(f"Edit plan for {payload['path']}")
-                typer.echo(f"query={payload['query']}")
-                typer.echo(
-                    f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
-                )
+                typer.echo(format_edit_plan_human(daemon_payload))
             if _scan_incomplete(daemon_payload):
                 raise typer.Exit(2)
             return
@@ -6035,12 +6048,10 @@ def edit_plan(
     if json_output:
         typer.echo(_detail_tier.dump_detail_json(payload, edit_detail))
     else:
+        from tensor_grep.cli.formatters.human_fmt import format_edit_plan_human
+
         _emit_scan_incompleteness_banner(payload)
-        typer.echo(f"Edit plan for {payload['path']}")
-        typer.echo(f"query={payload['query']}")
-        typer.echo(
-            f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
-        )
+        typer.echo(format_edit_plan_human(payload))
 
     if _scan_incomplete(payload):
         raise typer.Exit(2)
@@ -6361,7 +6372,7 @@ def route_test(
         help="Disable route-test's default 60s --deadline bound; let both routes run unbounded.",
     ),
     json_output: bool = typer.Option(
-        True, "--json/--text", help="Emit machine-readable JSON output (default)."
+        False, "--json/--text", help="Emit machine-readable JSON output."
     ),
 ) -> None:
     """Diagnose routing agreement between context-render and edit-plan for one query.
@@ -8236,12 +8247,9 @@ def blast_radius(
         leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
         if leading is not None:
             typer.echo(leading)
-        typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
-        typer.echo(
-            f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
-            f"files={len(payload['files'])} tests={len(payload['tests'])} "
-            f"import_consumers={len(payload.get('import_graph_consumers', []))}"
-        )
+        from tensor_grep.cli.formatters.human_fmt import format_blast_radius_human
+
+        typer.echo(format_blast_radius_human(payload))
         if trailing is not None:
             typer.echo(trailing)
 
@@ -8441,11 +8449,9 @@ def blast_radius_plan(
     # Shared 0/1/2 emitter (B-05, supersedes the F14 local gate): unknown symbol -> 1, scan
     # truncation -> 2 with result_incomplete. candidate_symbols stays in the JSON (additive-only).
     def _emit_text(current: dict[str, Any]) -> None:
-        typer.echo(f"Blast radius plan for {current['symbol']} in {current['path']}")
-        typer.echo(
-            f"files={len(current['files'])} tests={len(current['tests'])} "
-            f"symbols={len(current['symbols'])}"
-        )
+        from tensor_grep.cli.formatters.human_fmt import format_blast_radius_plan_human
+
+        typer.echo(format_blast_radius_plan_human(current))
 
     _emit_symbol_command_result(
         payload,
@@ -9762,7 +9768,7 @@ def classify(
     budgeted_lines, line_budget = _apply_classify_line_budget(lines, max_lines)
     results, classification_backend = _classify_lines_with_metadata(budgeted_lines)
 
-    if json_output or format_type in (None, "json"):
+    if json_output or format_type == "json":
         data = {
             "version": _json_output_version(),
             "schema_version": _json_output_version(),
@@ -9776,8 +9782,9 @@ def classify(
         }
         print(json.dumps(data))
     else:
-        for r in results:
-            print(f"{r['label']} ({r['confidence']:.2f})")
+        from tensor_grep.cli.formatters.human_fmt import format_classify_human
+
+        typer.echo(format_classify_human(results, budgeted_lines, line_budget))
 
 
 @app.command()
@@ -9944,6 +9951,9 @@ def scan(
             "multi-project workspace roots. Prefer scoped --path or --max-depth."
         ),
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show scan banners and zero-match rules."
+    ),
 ) -> None:
     """Scan code with tensor-grep's bounded AST rule/config surface."""
     from tensor_grep.backends.ast_backend import normalize_ast_language
@@ -10086,8 +10096,6 @@ def scan(
         if scan_paths:
             project_scan_fast_path = False
 
-    if not json_output and not sarif and not project_cfg.get("refusal_reason"):
-        typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
     try:
         payload = _self._run_ast_scan_payload(
             project_cfg,
@@ -10151,76 +10159,19 @@ def scan(
         typer.echo(f"warning: {cast(dict[str, object], payload['error'])['message']}")
         raise typer.Exit(1)
 
-    # Task #299 gave `scan` a `partial` / `partial_reason` / `remediation` / `unreadable_paths`
-    # payload, and #310's SARIF output carries it in-band -- but the DEFAULT text renderer read
-    # none of them. Measured on the shipped v1.101.4 against an ACL-denied fixture (denial
-    # asserted to bite first): `--json` reported `partial: true` with a 2-path `unreadable_paths`
-    # sample, while the same invocation's stdout printed `Scan completed. total_matches=2` and
-    # exited 0 -- silent about two secrets in a file no rule ever opened. On a SECURITY ruleset
-    # that is the worst shape in the product: an unread file is indistinguishable from a clean one.
-    #
-    # LEADING, not trailing. `codemap` is the sibling that already reads `remediation`, but it
-    # prints its `PARTIAL:` line AFTER the counts -- that ordering is exactly the task #329 defect
-    # and is not the half of the precedent worth copying. A disclosure must be read BEFORE the
-    # total it qualifies, or the reader has already formed the answer.
-    #
-    # The exit code deliberately stays 0; see the SARIF block above. `tg scan` has returned 0 on a
-    # disclosed partial since #299, and flipping it is a contract change with its own consumers,
-    # not a drive-by on a rendering fix.
-    if payload.get("partial"):
-        remediation = str(payload.get("remediation") or "").strip()
-        typer.echo(
-            f"warning: INCOMPLETE SCAN: {remediation}"
-            if remediation
-            else "warning: INCOMPLETE SCAN: part of the scope could not be read, so this result "
-            "does NOT prove those files are clean."
-        )
+    from tensor_grep.cli.formatters.human_fmt import format_scan_human
 
-    for finding in cast(list[dict[str, object]], payload["findings"]):
-        typer.echo(
-            f"[scan] rule={finding['rule_id']} lang={finding['language']} "
-            f"matches={finding['matches']} files={len(cast(list[str], finding['files']))}"
-        )
-
-    typer.echo(
-        "Scan completed. "
-        f"rules={payload['rule_count']} matched_rules={payload['matched_rules']} "
-        f"total_matches={payload['total_matches']} "
-        f"backends={','.join(cast(list[str], payload['backends'])) or 'none'}"
+    stdout_lines, stderr_lines = format_scan_human(
+        payload,
+        scan_banner=scan_banner,
+        config_path=project_cfg["config_path"],
+        refusal_reason=project_cfg.get("refusal_reason"),
+        verbose=verbose,
     )
-    if payload.get("baseline"):
-        baseline_summary = cast(dict[str, object], payload["baseline"])
-        typer.echo(
-            "Baseline compared. "
-            f"new={baseline_summary['new_findings']} "
-            f"existing={baseline_summary['existing_findings']} "
-            f"resolved={baseline_summary['resolved_findings']}"
-        )
-    if payload.get("baseline_written"):
-        baseline_written = cast(dict[str, object], payload["baseline_written"])
-        typer.echo(
-            f"Baseline written to {baseline_written['path']} (count={baseline_written['count']})."
-        )
-    if payload.get("suppressions"):
-        suppressions_summary = cast(dict[str, object], payload["suppressions"])
-        if suppressions_summary.get("path"):
-            typer.echo(
-                f"Suppressions applied from {suppressions_summary['path']} "
-                f"(suppressed={suppressions_summary['suppressed_findings']})."
-            )
-        if suppressions_summary.get("inline_suppressed_findings"):
-            typer.echo(
-                "Inline suppressions applied "
-                f"(suppressed={suppressions_summary['inline_suppressed_findings']})."
-            )
-        for warning in cast(list[str], suppressions_summary.get("warnings", [])):
-            typer.echo(f"Warning: {warning}", err=True)
-    if payload.get("suppressions_written"):
-        suppressions_written = cast(dict[str, object], payload["suppressions_written"])
-        typer.echo(
-            f"Suppressions written to {suppressions_written['path']} "
-            f"(count={suppressions_written['count']})."
-        )
+    for line in stdout_lines:
+        typer.echo(line)
+    for line in stderr_lines:
+        typer.echo(line, err=True)
 
 
 @app.command()
@@ -11628,7 +11579,14 @@ def audit_verify(
     except typer.Exit:
         raise
     except Exception as exc:
-        typer.echo(str(exc), err=True)
+        if json_output:
+            from tensor_grep.cli.formatters.human_fmt import audit_verify_error_payload
+
+            typer.echo(
+                json.dumps(audit_verify_error_payload(exc, manifest_path=manifest_path), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
     typer.echo(f"Manifest: {payload['manifest_path']}")
@@ -11687,6 +11645,10 @@ def audit_history(
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+
+    if not payload:
+        typer.echo("No audit manifests found.")
+        return
 
     for entry in payload:
         annotations: list[str] = []

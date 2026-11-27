@@ -36,6 +36,12 @@ class RipgrepFormatter(OutputFormatter):
             return True
         return "\0" in str(match.text)
 
+    def _truncate_text(self, text: str) -> str:
+        limit = self.config.max_columns
+        if limit is not None and limit > 0 and len(text) > limit:
+            return text[:limit] + "..."
+        return text
+
     def _binary_notice_for_match(self, match: MatchLine) -> str:
         if match.meta_variables and match.meta_variables.get("binary_notice") is True:
             return str(match.text)
@@ -188,13 +194,14 @@ class RipgrepFormatter(OutputFormatter):
             if self.config.line_number:
                 prefix_parts.append(str(match.line_number))
 
+            text = self._truncate_text(str(match.text))
             if match.rg_kind == "context":
                 # rg: context lines use `-` between fields and have no column
-                lines.append("-".join([*prefix_parts, str(match.text)]))
+                lines.append("-".join([*prefix_parts, text]))
             elif self.config.column:
                 columns = submatch_columns or [self._column_for_match(match)]
                 for column in columns:
-                    lines.append(":".join([*prefix_parts, str(column), str(match.text)]))
+                    lines.append(":".join([*prefix_parts, str(column), text]))
             else:
-                lines.append(":".join([*prefix_parts, str(match.text)]))
+                lines.append(":".join([*prefix_parts, text]))
         return "\n".join(lines)

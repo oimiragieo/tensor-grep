@@ -349,7 +349,12 @@ def run_command(
             lang=lang or "",
             path=path or ".",
         )
-        _safe_stdout_line(_inject_run_json_fields(rewrite_json, "rewrite-plan"))
+        if json_mode:
+            _safe_stdout_line(_inject_run_json_fields(rewrite_json, "rewrite-plan"))
+        else:
+            from tensor_grep.cli.formatters.human_fmt import format_rewrite_plan_human
+
+            _safe_stdout_line(format_rewrite_plan_human(rewrite_json))
         return exit_code
 
     if (apply or interactive) and not filter_regex and not interactive:

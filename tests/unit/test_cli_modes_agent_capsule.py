@@ -375,7 +375,7 @@ def test_route_test_json_compares_context_render_and_edit_plan_targets(tmp_path)
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["route-test", str(project), "create invoice tax"])
+    result = runner.invoke(app, ["route-test", "--json", str(project), "create invoice tax"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
@@ -439,7 +439,7 @@ def test_route_test_json_warns_on_disagreement_and_low_confidence(monkeypatch, t
     monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
     monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
 
-    result = runner.invoke(app, ["route-test", str(project), "ambiguous target"])
+    result = runner.invoke(app, ["route-test", "--json", str(project), "ambiguous target"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
@@ -483,7 +483,7 @@ def test_route_test_json_demotes_low_confidence_to_note_when_routes_agree(monkey
     monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
     monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
 
-    result = runner.invoke(app, ["route-test", str(project), "add invoice"])
+    result = runner.invoke(app, ["route-test", "--json", str(project), "add invoice"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
@@ -601,7 +601,7 @@ def test_route_test_default_deadline_matches_agent_cold_default(monkeypatch, tmp
     monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
 
     before = time.monotonic()
-    result = runner.invoke(app, ["route-test", str(project), "add invoice"])
+    result = runner.invoke(app, ["route-test", "--json", str(project), "add invoice"])
     after = time.monotonic()
 
     assert result.exit_code == 0, result.output
@@ -687,7 +687,9 @@ def test_route_test_json_stamps_partial_and_exits_2_when_a_side_truncates(monkey
     monkeypatch.setattr(repo_map, "build_context_render", fake_context_render)
     monkeypatch.setattr(repo_map, "build_context_edit_plan", fake_edit_plan)
 
-    result = runner.invoke(app, ["route-test", str(project), "add invoice", "--deadline", "5"])
+    result = runner.invoke(
+        app, ["route-test", "--json", str(project), "add invoice", "--deadline", "5"]
+    )
 
     assert result.exit_code == 2, result.output
     payload = json.loads(result.stdout)
@@ -758,7 +760,7 @@ def test_route_test_json_no_pressure_omits_partial_fields(tmp_path):
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["route-test", str(project), "create invoice tax"])
+    result = runner.invoke(app, ["route-test", "--json", str(project), "create invoice tax"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)

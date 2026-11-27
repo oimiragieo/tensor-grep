@@ -153,15 +153,34 @@ def resolve_signing_key_path(flag: str | Path | None) -> Path:
     return _default_signing_key_path()
 
 
+def _resolve_trusted_key_entry(entry: str) -> str:
+    candidate = Path(entry).expanduser()
+    looks_like_path = entry.endswith(".pub") or "/" in entry or "\\" in entry or candidate.is_file()
+    if not looks_like_path:
+        return entry
+    raw = _read_bounded_file_bytes(
+        candidate.resolve(), max_bytes=4096, description="Trusted public key file"
+    )
+    key_text = raw.decode("utf-8", errors="strict").strip()
+    if not key_text:
+        raise EvidenceSigningError(f"Trusted public key file is empty: {candidate}")
+    return key_text
+
+
 def resolve_trusted_public_keys(
     flag_values: list[str] | None, *, env_var: str = _TRUSTED_KEYS_ENV
 ) -> list[str]:
-    """Merge repeatable --trusted-key flag values with the comma-separated TG_EVIDENCE_TRUSTED_KEYS
-    env fallback into one ordered list of base64 Ed25519 public keys."""
-    values = list(flag_values) if flag_values else []
+    """Merge repeatable --trusted-key flag values (raw base64 or .pub file paths) with the
+    comma-separated TG_EVIDENCE_TRUSTED_KEYS env fallback into one ordered list of base64
+    Ed25519 public keys."""
+    values = [_resolve_trusted_key_entry(v) for v in flag_values] if flag_values else []
     env_value = os.environ.get(env_var)
     if env_value:
-        values.extend(part.strip() for part in env_value.split(",") if part.strip())
+        values.extend(
+            _resolve_trusted_key_entry(part.strip())
+            for part in env_value.split(",")
+            if part.strip()
+        )
     return values
 
 
