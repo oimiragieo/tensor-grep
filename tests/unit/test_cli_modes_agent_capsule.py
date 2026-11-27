@@ -497,7 +497,7 @@ def test_route_test_json_demotes_low_confidence_to_note_when_routes_agree(monkey
 def test_route_test_is_publicly_visible_in_top_level_help():
     runner = CliRunner()
 
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["--help-all"])
 
     assert result.exit_code == 0
     help_text = _strip_ansi(result.stdout)
