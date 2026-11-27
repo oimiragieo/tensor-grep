@@ -65,7 +65,7 @@ underlying services, while their public input and output contracts are documente
 the [harness API](harness_api.md). Running an MCP server does not by itself grant a
 client permission to apply every proposed change.
 
-By default, `tg mcp` starts a server exposing 15 tools (set `TG_MCP_LEGACY_TOOLS=1` for the full 61-tool legacy surface; `tg_discover_tools` searches the full catalog). The registered tool list is
+By default, `tg mcp` starts an `MCPServer` (`mcp>=2`) exposing 15 compact tools (set `TG_MCP_LEGACY_TOOLS=1` for the full 61-tool legacy surface; `tg_discover_tools` searches the full catalog, and `tg_batch` chains multi-step pipelines). The registered tool list is
 the source of truth; clients can discover it through MCP, and the
 [API reference](harness_api.md#mcp-tool-responses) describes the available operations.
 
@@ -107,8 +107,13 @@ size-capped; applications must bound input when they need a resource limit.
 
 | Area | Role |
 |---|---|
-| `rust_core/` | Native CLI, text-search routing, indexing, and native execution paths |
-| `src/tensor_grep/cli/` | Python command handlers and CLI workflows |
+| `rust_core/src/cli_app/` | Modular native CLI parser, command dispatch, help (`tg --help` / `--help-all`), and output formatting |
+| `rust_core/src/native_search/` | Modular native CPU search, directory walk, binary detection, and output emitters |
+| `src/tensor_grep/cli/routers/` | Python CLI command routers (`typer>=0.26` compatible) |
+| `src/tensor_grep/cli/navigation/` | Symbol lookup, callers, refs, and blast-radius handlers |
+| `src/tensor_grep/cli/agent/` | Orientation, context capsules, edit-plan, and `prepare` workflows |
+| `src/tensor_grep/cli/mcp/` | Modular `MCPServer` (`mcp>=2`) 15-tool compact surface and `tg_batch` |
+| `src/tensor_grep/cli/state/` | Sessions, rollback checkpoints, and `.tg_cache/` state management |
 | `src/tensor_grep/backends/` | Backend interfaces and implementations |
 | `src/tensor_grep/core/` | Shared Python core logic |
 | `tests/` | Tests for command contracts and behavior |

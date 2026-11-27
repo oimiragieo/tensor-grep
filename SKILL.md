@@ -155,6 +155,8 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 
 ## Core CLI Workflows
 
+`tg --help` shows the **12-command core workflow** (`search`, `find`, `run`, `scan`, `orient`, `defs`, `callers`, `blast-radius`, `prepare`, `diff-impact`, `checkpoint`, `mcp`). Run `tg --help-all` for all commands. Planning and orientation commands default to human-readable plain text when `--json` is omitted. `tg mcp` exposes 15 compact tools by default (including `tg_batch` step pipelines; `TG_MCP_LEGACY_TOOLS=1` for all 61). Modular Wave 8 sources live under `src/tensor_grep/cli/{routers,navigation,agent,mcp,state}/` and `rust_core/src/{cli_app,native_search}/`.
+
 | Task | Command |
 | --- | --- |
 | Basic search | `tg "pattern" [path]` |
@@ -166,9 +168,12 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 | Files with matches | `tg search "pattern" src --files-with-matches` |
 | AST search | `tg run --lang python function_definition src --json` |
 | AST language identifiers | `tg ast-info --json` |
+| Orient codebase | `tg orient src --json --compact` |
 | Source lookup | `tg source src someSymbol --json` |
-| Refs lookup | `tg refs src someSymbol --json` |
+| Callers / refs lookup | `tg callers src someSymbol --json` |
 | Blast radius | `tg blast-radius src someSymbol --json` |
+| One-call prepare | `tg prepare src "change invoice tax" --json` |
+| Diff impact | `tg diff-impact . --json` |
 | Context bundle | `tg context-render src "how routing works" --render-profile llm --json` |
 | Device inventory | `tg devices --json` |
 | MCP server | `tg mcp` |

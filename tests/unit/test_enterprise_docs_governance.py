@@ -181,20 +181,32 @@ def test_operational_runbooks_should_include_windows_safe_commands() -> None:
     assert "Remove-Item -LiteralPath .tg_cache -Recurse -Force" not in cache
 
 
-NATIVE_SEARCH_RS = Path("rust_core/src/native_search.rs")
+NATIVE_SEARCH_DIR = Path("rust_core/src/native_search")
+CLI_APP_DIR = Path("rust_core/src/cli_app")
 MAIN_RS = Path("rust_core/src/main.rs")
 REPO_MAP_PY = Path("src/tensor_grep/cli/repo_map.py")
+
+
+def _read_rs_family(base_dir: Path, fallback_file: Path | None = None) -> str:
+    paths = sorted(base_dir.glob("*.rs"))
+    if fallback_file is not None and fallback_file.exists():
+        paths.append(fallback_file)
+    assert paths, f"no .rs files found in {base_dir}"
+    return "\n".join(p.read_text(encoding="utf-8") for p in paths)
 
 
 def repo_map_family_source() -> str:
     """Every module the repo_map surface is spread across, concatenated.
 
-    repo_map.py was split into per-dialect / per-stage siblings, so a census pinned to the
-    one path silently stops covering whatever moved -- and reads GREEN while doing it. Glob
-    the family instead, and assert the glob found more than the base file so an empty or
-    single-file result can never pass for a completed scan.
+    repo_map.py was split into per-dialect / per-stage siblings and `cli/navigation/`, so a
+    census pinned to the one path silently stops covering whatever moved -- and reads GREEN while
+    doing it. Glob the family instead, and assert the glob found more than the base file so an
+    empty or single-file result can never pass for a completed scan.
     """
     paths = sorted(REPO_MAP_PY.parent.glob("repo_map*.py"))
+    nav_dir = REPO_MAP_PY.parent / "navigation"
+    if nav_dir.is_dir():
+        paths.extend(sorted(nav_dir.glob("*.py")))
     assert REPO_MAP_PY in paths, f"repo_map.py not found; the glob resolved {paths}"
     assert len(paths) > 1, (
         "expected repo_map.py plus its extracted siblings; found only "
@@ -231,8 +243,8 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
     grepped the doc for a phrase would pass just as happily against a native engine that had
     silently regressed.
     """
-    native_rs = NATIVE_SEARCH_RS.read_text(encoding="utf-8")
-    main_rs = MAIN_RS.read_text(encoding="utf-8")
+    native_rs = _read_rs_family(NATIVE_SEARCH_DIR)
+    main_rs = _read_rs_family(CLI_APP_DIR, MAIN_RS)
     contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
 
     # PREMISE -- the behaviour the doc now claims must actually be in the source. Without these,
@@ -311,7 +323,7 @@ def test_contracts_does_not_still_exclude_the_two_routes_that_have_landed() -> N
     the premise fails pointing at the Rust; let the exclusion return and the claim fails pointing
     at the doc.
     """
-    main_rs = MAIN_RS.read_text(encoding="utf-8")
+    main_rs = _read_rs_family(CLI_APP_DIR, MAIN_RS)
     contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
 
     # PREMISE -- both envelopes really do carry the triple now. Cited by SYMBOL: line numbers in
@@ -354,7 +366,7 @@ def test_contracts_incomplete_paths_count_is_documented_as_an_event_count() -> N
     be describing behaviour that no longer exists); let the prose drift back to "how many paths"
     and the claim assertions fire pointing at the doc.
     """
-    native_rs = NATIVE_SEARCH_RS.read_text(encoding="utf-8")
+    native_rs = _read_rs_family(NATIVE_SEARCH_DIR)
     contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
 
     # PREMISE -- roots are still added WITHOUT dedup, which is the whole reason one distinct
@@ -452,3 +464,70 @@ def test_contracts_documents_that_the_two_scan_count_fields_can_disagree() -> No
     assert "deadline_limit.files_scanned" in contracts
     # ...and must NOT advise comparing them, which is the wrong inference the names invite.
     assert "never a comparison between these two numbers" in contracts
+
+
+def test_readme_embeds_wave8_core_workflow_positioning_and_benchmarks() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "release_docs_current_tag:" in readme
+    assert "tg --help" in readme
+    assert "tg --help-all" in readme
+    for cmd in (
+        "search",
+        "find",
+        "run",
+        "scan",
+        "orient",
+        "defs",
+        "callers",
+        "blast-radius",
+        "prepare",
+        "diff-impact",
+        "checkpoint",
+        "mcp",
+    ):
+        assert cmd in readme, f"README.md missing core workflow command: {cmd}"
+
+    assert "tg_batch" in readme
+    assert "Why `tg` vs `rg` + `ast-grep` + IDE" in readme
+    assert "zero telemetry" in readme.lower()
+    assert "docs/benchmarks.md" in readme
+    assert "docs/tool_comparison.md" in readme
+    assert "docs/migration-v2.md" in readme
+    assert "[SECURITY.md](SECURITY.md)" in readme
+
+
+def test_wave8_docs_mkdocs_and_skills_are_aligned() -> None:
+    getting_started = Path("docs/getting-started.md").read_text(encoding="utf-8")
+    installation = Path("docs/installation.md").read_text(encoding="utf-8")
+    architecture = Path("docs/architecture.md").read_text(encoding="utf-8")
+    migration = Path("docs/migration-v2.md").read_text(encoding="utf-8")
+    mkdocs_text = MKDOCS_PATH.read_text(encoding="utf-8")
+    skill_text = Path("SKILL.md").read_text(encoding="utf-8")
+
+    assert "tg --help-all" in getting_started
+    assert "migration-v2.md" in installation
+    assert "macos-arm64" in installation
+    assert "linux-arm64" in installation
+
+    for mod in (
+        "src/tensor_grep/cli/routers/",
+        "src/tensor_grep/cli/navigation/",
+        "src/tensor_grep/cli/agent/",
+        "src/tensor_grep/cli/mcp/",
+        "src/tensor_grep/cli/state/",
+        "rust_core/src/cli_app/",
+        "rust_core/src/native_search/",
+    ):
+        assert mod in architecture, f"docs/architecture.md missing Wave 8 module: {mod}"
+
+    assert "v1.x" in migration
+    assert "v2.0" in migration
+    assert "tg --help-all" in migration
+    assert "TG_MCP_LEGACY_TOOLS=1" in migration
+
+    assert "!/migration-v2.md" in mkdocs_text
+    assert "migration-v2.md" in mkdocs_text
+
+    assert "tg --help-all" in skill_text
+    assert "tg_batch" in skill_text

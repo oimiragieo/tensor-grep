@@ -74,7 +74,11 @@ Download the CPU asset for your system from [GitHub Releases](https://github.com
 
 - Windows x64: `tg-windows-amd64-cpu.exe`
 - Linux x64: `tg-linux-amd64-cpu`
+- Linux ARM64 (`linux-arm64`): check [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases) or install via `python -m pip install tensor-grep` (Python 3.11+)
 - macOS x64: `tg-macos-amd64-cpu`
+- macOS Apple Silicon (`macos-arm64`): install via `python -m pip install tensor-grep` (or build from source; see [support matrix](SUPPORT_MATRIX.md))
+
+If you are upgrading from `v1.x`, see [Upgrading (v1.x to v2.0)](migration-v2.md) for human-first plain-text defaults, `tg --help` vs `tg --help-all`, `mcp>=2.0.0`, and `typer>=0.26` compatibility notes.
 
 Place it in a directory on your `PATH`, then verify it against that release's `CHECKSUMS.txt`. This route does not install the managed Python sidecar. Some Python-backed commands therefore need a Python package installation or an explicitly configured sidecar environment.
 

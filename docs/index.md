@@ -1,6 +1,8 @@
 # tensor-grep documentation
 
-`tensor-grep` (`tg`) helps you search text and code, inspect relationships between symbols, and prepare bounded context for a code change. Start with the [first-search guide](getting-started.md) if you are new to the command line.
+`tensor-grep` (`tg`) helps you search text and code, inspect relationships between symbols, and prepare bounded context for a code change. Start with the [first-search guide](getting-started.md) if you are new to the command line, or [Upgrading (v1.x to v2.0)](migration-v2.md) if you are moving from `v1.x`.
+
+Run `tg --help` for the **12-command core workflow** (`search`, `find`, `run`, `scan`, `orient`, `defs`, `callers`, `blast-radius`, `prepare`, `diff-impact`, `checkpoint`, `mcp`), or `tg --help-all` for the full command list. Planning and orientation commands default to concise plain text and accept `--json` (or `--json --compact` for `<= 4 KB` payloads) for automation.
 
 ## Choose a task
 

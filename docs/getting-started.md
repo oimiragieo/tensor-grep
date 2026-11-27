@@ -21,7 +21,9 @@ tg --version
 tg --help
 ```
 
-The first command prints the installed version. The second lists commands available from your installed front door. Python package installs and managed native installs can expose different implementation paths; [architecture](architecture.md) explains that distinction.
+The first command prints the installed version. The second shows the **12 core workflow commands** (`search`, `find`, `run`, `scan`, `orient`, `defs`, `callers`, `blast-radius`, `prepare`, `diff-impact`, `checkpoint`, `mcp`). Run `tg --help-all` when you want to see every command in the full catalog. Python package installs and managed native installs can expose different implementation paths; [architecture](architecture.md) explains that distinction.
+
+Most planning and orientation commands (`tg orient`, `tg prepare`, `tg edit-plan`) default to concise human-readable plain text; add `--json` when a script needs structured output, or `--json --compact` for a bounded `<= 4,000`-byte JSON payload.
 
 ## Create a small practice project
 

@@ -17,8 +17,8 @@ Native search can use ripgrep, CPU search, an index, or optional GPU paths.
 Python-backed commands may run through a sidecar. A successful sidecar invocation
 does not establish native execution.
 
-Inspect `rust_core/src/` for the native command parser and routing,
-`src/tensor_grep/cli/` for Python command handlers,
+Inspect `rust_core/src/cli_app/` and `rust_core/src/native_search/` for the modular native command parser, routing, and CPU search,
+`src/tensor_grep/cli/` (`routers/`, `navigation/`, `agent/`, `mcp/`, `state/`) for modular Python command handlers,
 `src/tensor_grep/backends/` for backend implementations, and
 `src/tensor_grep/core/` for shared logic.
 
