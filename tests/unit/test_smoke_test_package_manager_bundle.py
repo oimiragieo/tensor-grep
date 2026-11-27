@@ -51,7 +51,7 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
         "PackageLocale: en-US\n"
         "PackageName: tensor-grep\n"
         "Publisher: oimiragieo\n"
-        "License: MIT\n"
+        "License: Apache-2.0\n"
         "ShortDescription: Fast search for agent workflows\n"
         "Installers:\n"
         "  - Architecture: x64\n"

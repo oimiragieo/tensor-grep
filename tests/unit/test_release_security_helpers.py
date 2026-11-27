@@ -16,7 +16,13 @@ from verify_release_subject_attestations import (  # noqa: E402
     verify_release_subject_attestations,
 )
 
-NATIVE = ("tg-linux-amd64-cpu", "tg-macos-amd64-cpu", "tg-windows-amd64-cpu.exe")
+NATIVE = (
+    "tg-linux-amd64-cpu",
+    "tg-linux-arm64-cpu",
+    "tg-macos-amd64-cpu",
+    "tg-macos-arm64-cpu",
+    "tg-windows-amd64-cpu.exe",
+)
 requires_dir_fd = pytest.mark.skipif(
     not {os.open, os.stat, os.unlink}.issubset(os.supports_dir_fd),
     reason="release helper requires POSIX directory descriptors",
