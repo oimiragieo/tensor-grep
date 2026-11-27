@@ -514,10 +514,14 @@ fn test_apply_audit_manifest_refuses_symlink_at_manifest_path() {
     fs::write(&outside_target, b"UNTOUCHED").unwrap();
 
     let manifest_link = workdir.join("rewrite-audit.json");
-    if let Err(err) = std::os::windows::fs::symlink_file(&outside_target, &manifest_link) {
+    #[cfg(windows)]
+    let symlink_result = std::os::windows::fs::symlink_file(&outside_target, &manifest_link);
+    #[cfg(unix)]
+    let symlink_result = std::os::unix::fs::symlink(&outside_target, &manifest_link);
+    if let Err(err) = symlink_result {
         eprintln!(
             "skipping test_apply_audit_manifest_refuses_symlink_at_manifest_path: \
-             cannot create a Windows symlink in this environment: {err}"
+             cannot create a symlink in this environment: {err}"
         );
         return;
     }
@@ -646,10 +650,14 @@ fn test_batch_apply_audit_manifest_refuses_symlink_at_manifest_path() {
     fs::write(&outside_target, b"UNTOUCHED").unwrap();
 
     let manifest_link = dir.path().join("rewrite-audit.json");
-    if let Err(err) = std::os::windows::fs::symlink_file(&outside_target, &manifest_link) {
+    #[cfg(windows)]
+    let symlink_result = std::os::windows::fs::symlink_file(&outside_target, &manifest_link);
+    #[cfg(unix)]
+    let symlink_result = std::os::unix::fs::symlink(&outside_target, &manifest_link);
+    if let Err(err) = symlink_result {
         eprintln!(
             "skipping test_batch_apply_audit_manifest_refuses_symlink_at_manifest_path: \
-             cannot create a Windows symlink in this environment: {err}"
+             cannot create a symlink in this environment: {err}"
         );
         return;
     }

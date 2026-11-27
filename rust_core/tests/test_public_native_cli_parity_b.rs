@@ -11,7 +11,7 @@ use common::*;
 
 #[test]
 fn test_public_native_root_help_describes_python_passthrough_commands() {
-    let output = tg().arg("--help").output().unwrap();
+    let output = tg().arg("--help-all").output().unwrap();
 
     assert!(
         output.status.success(),
