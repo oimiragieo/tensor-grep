@@ -119,7 +119,7 @@ def large_billing_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     root = tmp_path_factory.mktemp("prepare_cuj_large") / "billing"
     _write_billing_fixture(root)
     padding_root = root / "bulk"
-    for project_index in range(60):
+    for project_index in range(450):
         project = padding_root / f"proj{project_index:03d}"
         project.mkdir(parents=True)
         for file_index in range(4):
