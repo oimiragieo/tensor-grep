@@ -114,29 +114,14 @@ def _validate_session_records(records: list[Any]) -> list[Any]:
 def _load_session_index(root: Path, floor: Path | None) -> list[Any]:
     from tensor_grep.cli import session_store
     from tensor_grep.cli._index_lock import record_from_entry
+    from tensor_grep.cli.symbols_cache_io import read_confined
 
     index_path = session_store._index_path(root)
     if not index_path.exists():
         return []
-    if floor is None:
-        try:
-            st = index_path.lstat()
-            if st.st_size > _SESSION_INDEX_LIMIT:
-                raise ValueError("session index exceeds size limit")
-            raw_payload = json.loads(index_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ValueError("session index is not valid JSON") from exc
-        if not isinstance(raw_payload, list):
-            raise ValueError("session index is not a JSON array")
-        try:
-            return _validate_session_records(session_store._load_index(root))
-        except (AttributeError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise ValueError("invalid session index entry") from exc
-    anchor = floor.resolve()
-    if not root.resolve().is_relative_to(anchor):
+    anchor = floor.resolve() if floor is not None else root.resolve()
+    if floor is not None and not root.resolve().is_relative_to(anchor):
         return []
-    from tensor_grep.cli.symbols_cache_io import read_confined
-
     try:
         raw = read_confined(anchor, index_path, _SESSION_INDEX_LIMIT)
     except OSError as exc:
@@ -301,7 +286,10 @@ def _unified_manifest_covers_scope(
         scope_files = files
     else:
         cap = repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT
-        walked = repo_map._iter_repo_files(cache_root, max_files=cap + 1)[:cap]
+        walked_all = repo_map._iter_repo_files(cache_root, max_files=cap + 1)
+        if len(walked_all) > cap:
+            return True, False
+        walked = walked_all[:cap]
         scope_files = [item for item in walked if repo_map._is_repo_context_file(item, cache_root)]
         if floor is not None:
             scope_files = [item for item in scope_files if _under_confinement(item, floor)]

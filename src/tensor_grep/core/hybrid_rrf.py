@@ -434,7 +434,6 @@ class HybridSQLiteIndex:
             c_hash = _content_hash(content)
             emb_blob = None if quantize_only else _pack_embedding(emb)
             bin_blob = pack_heaviside_1bit(emb)
-            self._content_cache[doc_id] = content
             normalized.append((
                 doc_id,
                 content,
@@ -561,7 +560,10 @@ class HybridSQLiteIndex:
                         )
                         continue
                 aliases = _extract_alias_tokens(content)
-                inline_val = None if file_id is not None else content
+                has_valid_offsets = bool(
+                    file_id is not None and start_line > 0 and end_line >= start_line
+                )
+                inline_val = None if has_valid_offsets else content
                 if prev is not None:
                     row_id = prev[0]
                     self._conn.execute("DELETE FROM documents_fts WHERE rowid = ?", (row_id,))
@@ -624,6 +626,8 @@ class HybridSQLiteIndex:
                     emb_blob,
                 )
             self._conn.commit()
+            for doc_id, content, *_ in normalized:
+                self._content_cache[doc_id] = content
         except BaseException:
             self._conn.rollback()
             raise
@@ -683,26 +687,14 @@ class HybridSQLiteIndex:
         ).fetchall()
         and_ids = [str(row[0]) for row in and_rows]
         seen_and = set(and_ids)
-        query_terms = {
-            part.lower()
-            for raw_tok in query.replace("\x00", "").split()
-            for part in split_code_identifiers(raw_tok)
-        }
-
-        scored_or: list[tuple[int, float, str]] = []
-        for doc_id, bm25_score, alias_tokens in or_rows:
+        scored_or: list[tuple[float, str]] = []
+        for doc_id, bm25_score, _alias_tokens in or_rows:
             doc_key = str(doc_id)
             if doc_key in seen_and:
                 continue
-            doc_tokens = {
-                part.lower()
-                for raw_tok in re.findall(r"[A-Za-z0-9_]+", str(alias_tokens))
-                for part in split_code_identifiers(raw_tok)
-            }
-            coverage = len(query_terms & doc_tokens)
-            scored_or.append((-coverage, float(bm25_score), doc_key))
+            scored_or.append((float(bm25_score), doc_key))
         scored_or.sort()
-        ordered = and_ids + [doc_id for _neg_cov, _bm25, doc_id in scored_or]
+        ordered = and_ids + [doc_id for _bm25, doc_id in scored_or]
         return {doc_id: rank for rank, doc_id in enumerate(ordered, start=1)}
 
     def _vector_rankings(
@@ -857,6 +849,7 @@ class HybridSQLiteIndex:
         if missing_ids:
             import os
 
+            from tensor_grep.core.retrieval_chunker import decode_text_with_bom
             from tensor_grep.io.confined import validate_confined_parent_prefix
             from tensor_grep.io.root_probe import open_regular_nontraversing_fd
 
@@ -881,10 +874,14 @@ class HybridSQLiteIndex:
                     confinement_root = db_p.parent.parent.parent
             file_lines_cache: dict[str, list[str]] = {}
             for row_doc_id, file_path_str, start_line, end_line, expected_hash, inline_val in rows:
-                if inline_val is not None:
-                    reconstructed[str(row_doc_id)] = str(inline_val)
+                if not expected_hash:
                     continue
-                if not file_path_str:
+                if inline_val is not None:
+                    inline_text = str(inline_val)
+                    if _content_hash(inline_text) == str(expected_hash):
+                        reconstructed[str(row_doc_id)] = inline_text
+                    continue
+                if not file_path_str or int(start_line) <= 0 or int(end_line) < int(start_line):
                     continue
                 lines = file_lines_cache.get(file_path_str)
                 if lines is None:
@@ -898,19 +895,14 @@ class HybridSQLiteIndex:
                             with os.fdopen(fd, "rb") as handle:
                                 raw_bytes = handle.read(16 * 1024 * 1024 + 1)
                             if len(raw_bytes) <= 16 * 1024 * 1024:
-                                lines = (
-                                    raw_bytes
-                                    .decode("utf-8", errors="replace")
-                                    .replace("\r\n", "\n")
-                                    .splitlines(keepends=True)
-                                )
+                                lines = decode_text_with_bom(raw_bytes).splitlines(keepends=True)
                     except OSError:
                         lines = []
                     file_lines_cache[file_path_str] = lines
                 s_idx = max(0, int(start_line) - 1)
                 e_idx = max(s_idx, int(end_line))
                 chunk_text = "".join(lines[s_idx:e_idx])
-                if expected_hash and _content_hash(chunk_text) != str(expected_hash):
+                if _content_hash(chunk_text) != str(expected_hash):
                     continue
                 reconstructed[str(row_doc_id)] = chunk_text
 

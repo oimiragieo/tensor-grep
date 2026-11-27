@@ -123,15 +123,21 @@ def chunk_file(
     return _chunk_file_line_windows(file_path, chunk_size=chunk_size, overlap=overlap)
 
 
-def _read_text_with_bom(file_path: Path) -> str:
-    data = file_path.read_bytes()
+def decode_text_with_bom(data: bytes) -> str:
+    """Decode text bytes supporting UTF-32/UTF-16 BOMs and normalizing line endings."""
     if data.startswith(b"\x00\x00\xfe\xff"):
-        return data.decode("utf-32-be", errors="replace").lstrip("\ufeff")
-    if data.startswith(b"\xff\xfe\x00\x00"):
-        return data.decode("utf-32-le", errors="replace").lstrip("\ufeff")
-    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        return data.decode("utf-16", errors="replace").lstrip("\ufeff")
-    return data.decode("utf-8", errors="replace")
+        text = data.decode("utf-32-be", errors="replace").lstrip("\ufeff")
+    elif data.startswith(b"\xff\xfe\x00\x00"):
+        text = data.decode("utf-32-le", errors="replace").lstrip("\ufeff")
+    elif data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        text = data.decode("utf-16", errors="replace").lstrip("\ufeff")
+    else:
+        text = data.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _read_text_with_bom(file_path: Path) -> str:
+    return decode_text_with_bom(file_path.read_bytes())
 
 
 def _chunk_file_line_windows(
@@ -403,8 +409,7 @@ def chunk_file_structural(
         # produced for the same lines. Row/column numbers from `tree`, parsed against the raw
         # bytes above, still line up: both `str.splitlines()` and tree-sitter's own row counting
         # treat a CRLF pair as a single line break.
-        with open(file_path, encoding="utf-8", errors="replace") as handle:
-            text = handle.read()
+        text = decode_text_with_bom(source_bytes)
         lines = text.splitlines(keepends=True)
         if not lines:
             return []

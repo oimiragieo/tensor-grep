@@ -210,23 +210,26 @@ def _open_tdad_db(repo_root: Path, *, create_dirs: bool) -> tuple[sqlite3.Connec
                 ).fetchall()
                 qc = conn.execute("PRAGMA quick_check").fetchone()
                 if tables == {"metadata", "source_test_deps"} and not triggers and qc == ("ok",):
-                    meta_cols = {
-                        row[1] for row in conn.execute("PRAGMA table_info(metadata)").fetchall()
-                    }
-                    dep_cols = {
-                        row[1]
+                    meta_info = [
+                        (str(row[1]), str(row[2]).upper(), int(row[3]), int(row[5]))
+                        for row in conn.execute("PRAGMA table_info(metadata)").fetchall()
+                    ]
+                    dep_info = [
+                        (str(row[1]), str(row[2]).upper(), int(row[3]), int(row[5]))
                         for row in conn.execute("PRAGMA table_info(source_test_deps)").fetchall()
-                    }
-                    required_dep_cols = {
-                        "source_file",
-                        "source_symbol",
-                        "test_file",
-                        "edge_kind",
-                        "weight",
-                    }
-                    if {"key", "value"}.issubset(meta_cols) and required_dep_cols.issubset(
-                        dep_cols
-                    ):
+                    ]
+                    expected_meta = [
+                        ("key", "TEXT", 0, 1),
+                        ("value", "TEXT", 1, 0),
+                    ]
+                    expected_deps = [
+                        ("source_file", "TEXT", 1, 1),
+                        ("source_symbol", "TEXT", 1, 2),
+                        ("test_file", "TEXT", 1, 3),
+                        ("edge_kind", "TEXT", 1, 4),
+                        ("weight", "REAL", 1, 0),
+                    ]
+                    if meta_info == expected_meta and dep_info == expected_deps:
                         ver_row = conn.execute(
                             "SELECT value FROM metadata WHERE key = 'schema_version'"
                         ).fetchone()

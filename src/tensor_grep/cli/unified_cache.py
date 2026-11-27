@@ -207,6 +207,14 @@ def _hash_confined_regular_artifact(repo_root: Path, path: Path) -> str | None:
     total = 0
     try:
         with os.fdopen(fd, "rb") as handle:
+            st = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(st.st_mode)
+                or st.st_nlink != 1
+                or st.st_size > _MAX_ARTIFACT_HASH_BYTES
+            ):
+                return None
+            validate_confined_parent_prefix(repo_root, path)
             while True:
                 chunk = handle.read(1024 * 1024)
                 if not chunk:
@@ -444,9 +452,6 @@ def save_unified_manifest(
                 ):
                     fp = compute_view_artifact_fingerprint(resolved_root, view_name)
                     recorded_fp = entry.get("artifact_fingerprint")
-                    if recorded_fp is None and entry.get("ready") is True and fp is not None:
-                        entry["artifact_fingerprint"] = fp
-                        recorded_fp = fp
                     if fp is None or not isinstance(recorded_fp, str) or recorded_fp != fp:
                         entry["ready"] = False
 
@@ -494,6 +499,11 @@ def update_view_states(
     now = time.time()
     views_payload: dict[str, dict[str, Any]] = {}
     for view_name, (ready, schema_ver) in view_updates.items():
+        fp = (
+            artifact_fingerprints.get(view_name)
+            if artifact_fingerprints is not None
+            else (compute_view_artifact_fingerprint(repo_root, view_name) if ready else None)
+        )
         views_payload[view_name] = ViewFreshnessRecord(
             name=view_name,
             merkle_root=merkle_root,
@@ -501,9 +511,7 @@ def update_view_states(
             schema_version=schema_ver,
             updated_at=now,
             ready=ready,
-            artifact_fingerprint=(
-                artifact_fingerprints.get(view_name) if artifact_fingerprints is not None else None
-            ),
+            artifact_fingerprint=fp,
         ).to_dict()
     return save_unified_manifest(
         repo_root,

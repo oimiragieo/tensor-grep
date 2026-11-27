@@ -358,8 +358,14 @@ def sync_incremental_ego_subgraph(
     max_nodes: int = 32,
 ) -> dict[str, Any]:
     """Incrementally sync file edges and extract a bounded ego subgraph around ``seed_file``."""
-    canonical_root = resolve_canonical_cache_root(cache_root)
-    sync_stats = sync_graph_edges(canonical_root, current_files, extract_edges_fn)
+    scope_root = Path(cache_root).expanduser().resolve()
+    canonical_root = resolve_canonical_cache_root(scope_root)
+    sync_stats = sync_graph_edges(
+        canonical_root,
+        current_files,
+        extract_edges_fn,
+        scope_root=scope_root,
+    )
     subgraph = extract_ego_subgraph(
         canonical_root,
         seed_file,

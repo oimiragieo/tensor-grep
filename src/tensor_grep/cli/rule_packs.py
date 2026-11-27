@@ -949,20 +949,6 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "high",
                     "message": "Avoid child_process.spawnSync(..., { ..., shell: true }) with untrusted input.",
                 },
-                {
-                    "id": "javascript-destructure-child-process-exec",
-                    "pattern": 'const { $$$A, exec, $$$B } = require("child_process")',
-                    "language": "javascript",
-                    "severity": "high",
-                    "message": "Avoid destructuring exec from child_process with untrusted commands.",
-                },
-                {
-                    "id": "javascript-destructure-child-process-exec-sync",
-                    "pattern": 'const { $$$A, execSync, $$$B } = require("child_process")',
-                    "language": "javascript",
-                    "severity": "high",
-                    "message": "Avoid destructuring execSync from child_process with untrusted commands.",
-                },
             ],
             "typescript": [
                 {
@@ -1034,20 +1020,6 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "typescript",
                     "severity": "high",
                     "message": "Avoid child_process.spawnSync(..., { ..., shell: true }) with untrusted input.",
-                },
-                {
-                    "id": "typescript-destructure-child-process-exec",
-                    "pattern": 'const { $$$A, exec, $$$B } = require("child_process")',
-                    "language": "typescript",
-                    "severity": "high",
-                    "message": "Avoid destructuring exec from child_process with untrusted commands.",
-                },
-                {
-                    "id": "typescript-destructure-child-process-exec-sync",
-                    "pattern": 'const { $$$A, execSync, $$$B } = require("child_process")',
-                    "language": "typescript",
-                    "severity": "high",
-                    "message": "Avoid destructuring execSync from child_process with untrusted commands.",
                 },
             ],
             "rust": [

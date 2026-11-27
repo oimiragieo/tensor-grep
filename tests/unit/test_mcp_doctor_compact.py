@@ -48,7 +48,7 @@ def test_tg_explore_doctor_defaults_to_fast_and_skips_slow_probes(
     raw = mcp_server.tg_explore(action="doctor", path=str(tmp_path), compact=True)
     elapsed = time.perf_counter() - t0
 
-    assert len(raw.encode("utf-8")) <= 4096
+    assert len(raw.encode("utf-8")) <= 4000
     assert elapsed < 1.0
     payload = json.loads(raw)
     assert payload["lsp"]["enabled"] is False

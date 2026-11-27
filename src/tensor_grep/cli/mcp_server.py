@@ -1805,7 +1805,7 @@ def tg_doctor(
             lives outside path must be copied in first (fail-closed, not a silent drop).
             Defaults to "sgconfig.yml".
         with_lsp: Include external LSP provider diagnostics. Defaults to true.
-        fast: Skip slow PyPI/LSP/CPU-GPU runtime probes. Defaults to true.
+        fast: Skip slow PyPI/LSP/CPU-GPU runtime probes. Defaults to false.
     """
     # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
     # root before any probe -- see tg_repo_map for the systemic-finding rationale.

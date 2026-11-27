@@ -332,6 +332,7 @@ def _validate_hybrid_sqlite_schema(work_db: Path) -> str | None:
             "files",
             "documents",
             "documents_fts",
+            "documents_fts_content",
             "documents_fts_data",
             "documents_fts_idx",
             "documents_fts_docsize",
@@ -413,31 +414,14 @@ def _run_cache_fts_query(
             if telemetry is not None:
                 telemetry["hybrid_cache_skipped"] = "exceeds_size_cap"
         else:
-            import os
-            import sqlite3
-            import tempfile
+            from tensor_grep.io.confined import publish_confined
 
-            from tensor_grep.io.confined import validate_confined_parent_prefix
-
-            def _backup_publish() -> None:
-                validate_confined_parent_prefix(resolved_root, db_path)
-                fd, tmp_name = tempfile.mkstemp(prefix=".tg_hybrid_tmp_", dir=db_path.parent)
-                os.close(fd)
-                tmp_path = Path(tmp_name)
-                try:
-                    src = sqlite3.connect(f"{index.db_path.resolve().as_uri()}?mode=ro", uri=True)
-                    dst = sqlite3.connect(str(tmp_path))
-                    try:
-                        src.backup(dst)
-                    finally:
-                        dst.close()
-                        src.close()
-                    os.replace(tmp_path, db_path)
-                except BaseException:
-                    tmp_path.unlink(missing_ok=True)
-                    raise
-
-            _with_hybrid_cache_lock(resolved_root, db_path, _backup_publish)
+            payload = index.db_path.read_bytes()
+            _with_hybrid_cache_lock(
+                resolved_root,
+                db_path,
+                lambda: publish_confined(resolved_root, db_path, payload),
+            )
     return fts_ranks
 
 
@@ -472,44 +456,34 @@ def hybrid_rerank(
                 telemetry=telemetry,
             )
     else:
-        from tensor_grep.io.confined import validate_confined_parent_prefix
+        from tensor_grep.io.confined import read_confined
 
         resolved_root = _canonical_hybrid_cache_root(cache_root)
         db_path = resolved_root / HYBRID_INDEX_REL_PATH
         _retry_hybrid_cache_io(lambda: prepare_directory(resolved_root, db_path.parent))
 
+        def _read_existing() -> tuple[bytes | None, str | None]:
+            try:
+                info = db_path.lstat()
+            except FileNotFoundError:
+                return None, None
+            if not stat.S_ISREG(info.st_mode) or (getattr(info, "st_file_attributes", 0) & 0x400):
+                raise OSError(f"symbol cache refuses non-regular source: {db_path}")
+            if info.st_size > MAX_HYBRID_INDEX_BYTES:
+                return None, "exceeds_size_cap"
+            try:
+                return read_confined(resolved_root, db_path, MAX_HYBRID_INDEX_BYTES), None
+            except OSError as exc:
+                if "exceeds" in str(exc):
+                    return None, "exceeds_size_cap"
+                raise
+
+        raw_bytes, rebuilt_reason = _with_hybrid_cache_lock(resolved_root, db_path, _read_existing)
         with tempfile.TemporaryDirectory(prefix="tg_hybrid_") as tmpdir:
             work_db = Path(tmpdir) / "hybrid.sqlite3"
-
-            def _backup_load() -> tuple[bool, str | None]:
-                validate_confined_parent_prefix(resolved_root, db_path)
-                try:
-                    info = db_path.lstat()
-                except FileNotFoundError:
-                    return False, None
-                if not stat.S_ISREG(info.st_mode) or (
-                    getattr(info, "st_file_attributes", 0) & 0x400
-                ):
-                    raise OSError(f"symbol cache refuses non-regular source: {db_path}")
-                if info.st_size > MAX_HYBRID_INDEX_BYTES:
-                    return False, "exceeds_size_cap"
-                try:
-                    src = sqlite3.connect(f"{db_path.resolve().as_uri()}?mode=ro", uri=True)
-                    dst = sqlite3.connect(str(work_db))
-                    try:
-                        src.backup(dst)
-                    finally:
-                        dst.close()
-                        src.close()
-                    return True, None
-                except sqlite3.DatabaseError:
-                    return True, "corrupt_index"
-
-            has_existing, rebuilt_reason = _with_hybrid_cache_lock(
-                resolved_root, db_path, _backup_load
-            )
-            needs_publish = not has_existing or rebuilt_reason is not None
-            if has_existing and rebuilt_reason is None:
+            needs_publish = raw_bytes is None
+            if raw_bytes is not None:
+                work_db.write_bytes(raw_bytes)
                 try:
                     rebuilt_reason = _validate_hybrid_sqlite_schema(work_db)
                 except (sqlite3.DatabaseError, struct.error, ValueError):
