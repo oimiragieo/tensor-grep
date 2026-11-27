@@ -7,11 +7,11 @@
     "tg": "bin/tg.js"
   },
   "optionalDependencies": {
-    "@tensor-grep/cli-win32-x64": "1.142.0",
-    "@tensor-grep/cli-darwin-arm64": "1.142.0",
-    "@tensor-grep/cli-darwin-x64": "1.142.0",
-    "@tensor-grep/cli-linux-x64": "1.142.0",
-    "@tensor-grep/cli-linux-arm64": "1.142.0"
+    "@tensor-grep/cli-win32-x64": "2.0.0",
+    "@tensor-grep/cli-darwin-arm64": "2.0.0",
+    "@tensor-grep/cli-darwin-x64": "2.0.0",
+    "@tensor-grep/cli-linux-x64": "2.0.0",
+    "@tensor-grep/cli-linux-arm64": "2.0.0"
   },
   "repository": {
     "type": "git",

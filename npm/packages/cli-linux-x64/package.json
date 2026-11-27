@@ -1,13 +1,19 @@
 {
   "name": "@tensor-grep/cli-linux-x64",
-  "version": "1.142.0",
+  "version": "2.0.0",
   "description": "Linux x64 native binary for tensor-grep",
-  "os": ["linux"],
-  "cpu": ["x64"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oimiragieo/tensor-grep.git"
   },
   "license": "Apache-2.0",
-  "files": ["bin/tg"]
+  "files": [
+    "bin/tg"
+  ]
 }

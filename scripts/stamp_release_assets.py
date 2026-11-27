@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -198,6 +199,47 @@ def stamp_assets(*, check_only: bool) -> int:
             changed = True
             if not check_only:
                 _write(doc_path, after)
+
+    npm_pkg_path = ROOT / "npm" / "package.json"
+    if npm_pkg_path.exists():
+        npm_before = _read(npm_pkg_path)
+        npm_data = json.loads(npm_before)
+        npm_data["version"] = version
+        if isinstance(npm_data.get("optionalDependencies"), dict):
+            for dep in list(npm_data["optionalDependencies"]):
+                npm_data["optionalDependencies"][dep] = version
+        npm_after = json.dumps(npm_data, indent=2) + "\n"
+        if npm_after != npm_before:
+            changed = True
+            if not check_only:
+                _write(npm_pkg_path, npm_after)
+
+    npm_lock_path = ROOT / "npm" / "package-lock.json"
+    if npm_lock_path.exists():
+        lock_before = _read(npm_lock_path)
+        lock_data = json.loads(lock_before)
+        lock_data["version"] = version
+        root_pkg = (lock_data.get("packages") or {}).get("")
+        if isinstance(root_pkg, dict):
+            root_pkg["version"] = version
+            if isinstance(root_pkg.get("optionalDependencies"), dict):
+                for dep in list(root_pkg["optionalDependencies"]):
+                    root_pkg["optionalDependencies"][dep] = version
+        lock_after = json.dumps(lock_data, indent=2) + "\n"
+        if lock_after != lock_before:
+            changed = True
+            if not check_only:
+                _write(npm_lock_path, lock_after)
+
+    for subpkg_path in sorted((ROOT / "npm" / "packages").glob("cli-*/package.json")):
+        sub_before = _read(subpkg_path)
+        sub_data = json.loads(sub_before)
+        sub_data["version"] = version
+        sub_after = json.dumps(sub_data, indent=2) + "\n"
+        if sub_after != sub_before:
+            changed = True
+            if not check_only:
+                _write(subpkg_path, sub_after)
 
     if check_only and changed:
         print("Release assets are not stamped to current pyproject version.")
