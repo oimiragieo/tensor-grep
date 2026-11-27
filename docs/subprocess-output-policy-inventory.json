@@ -849,7 +849,7 @@
     "identity": "cli/main.py:main_entry:subprocess.run:0241cf601f399a9ed8a04ae2868b61175a97c1679f09154b8867bb0f07204951:0",
     "path": "cli/main.py",
     "function": "main_entry",
-    "line": 719,
+    "line": 720,
     "column": 24,
     "target": "subprocess.run",
     "policy": "strict-protocol",
@@ -1370,12 +1370,12 @@
     "producer_fingerprint": "cad75bf53694f4a142e3db5df23b930c67f71ea0513d4ea3aaff298290add2dd"
   },
   {
-    "identity": "cli/routers/search_helpers.py:_delegate_to_native_tg_search:subprocess.run:c6de068d71c2934e83679429dc7984fdba89f397e69ccf1341b8c2a1aabb0862:0",
+    "identity": "cli/routers/search_helpers.py:_delegate_to_native_tg_search:injected.subprocess.run:c317f52ea676cf8127fe3f66c6c6ab571534fe2c4fafddcefcd39c5d23cea9c9:0",
     "path": "cli/routers/search_helpers.py",
     "function": "_delegate_to_native_tg_search",
     "line": 417,
     "column": 20,
-    "target": "subprocess.run",
+    "target": "injected.subprocess.run",
     "policy": "no-capture",
     "rationale": "The call does not capture stdout/stderr; no child output is decoded at this sink.",
     "text": null,
@@ -1386,8 +1386,8 @@
     "output_captured": false,
     "positional_options": false,
     "generated_from": null,
-    "call_fingerprint": "c6de068d71c2934e83679429dc7984fdba89f397e69ccf1341b8c2a1aabb0862",
-    "producer_fingerprint": "105ba6ebb19c465414d6e0bb9e926cf8b389f6f12d1dbad3476f63cadd8bb0d4"
+    "call_fingerprint": "c317f52ea676cf8127fe3f66c6c6ab571534fe2c4fafddcefcd39c5d23cea9c9",
+    "producer_fingerprint": "f7aec4e6d7cc47019d2f43e3075bc9068e85a4c335d05038c6af10de8e3f333e"
   },
   {
     "identity": "cli/routers/search_helpers.py:_run_rg_compatible_info_action:subprocess.run:9891dd13c873e4c34fee978a027174f8e60e825efe8070d38f2445bfb564e03d:0",

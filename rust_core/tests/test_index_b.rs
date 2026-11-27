@@ -334,13 +334,28 @@ fn test_tg_search_explicit_index_allows_passthrough_safe_flags_and_matches_basel
 const PYTHON_PASSTHROUGH_SENTINEL: &str = "TG_PYTHON_PASSTHROUGH_FRONTDOOR_SENTINEL";
 
 fn write_python_passthrough_sentinel(dir: &Path) -> std::path::PathBuf {
-    let script = dir.join("python-passthrough-sentinel.cmd");
-    fs::write(
-        &script,
-        format!("@echo off\r\necho {PYTHON_PASSTHROUGH_SENTINEL}\r\n"),
-    )
-    .unwrap();
-    script
+    #[cfg(windows)]
+    {
+        let script = dir.join("python-passthrough-sentinel.cmd");
+        fs::write(
+            &script,
+            format!("@echo off\r\necho {PYTHON_PASSTHROUGH_SENTINEL}\r\n"),
+        )
+        .unwrap();
+        script
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("python-passthrough-sentinel.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho {PYTHON_PASSTHROUGH_SENTINEL}\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
 }
 
 #[test]
