@@ -2,10 +2,15 @@
 name = "tensor_grep_rs"
 version = "1.142.0"
 edition = "2021"
-description = "Rust core engine for tensor-grep"
+description = "Rust core engine and native CLI for tensor-grep"
 license = "Apache-2.0"
+homepage = "https://github.com/oimiragieo/tensor-grep"
+documentation = "https://github.com/oimiragieo/tensor-grep"
 repository = "https://github.com/oimiragieo/tensor-grep"
 readme = "README.md"
+keywords = ["grep", "ripgrep", "search", "ast", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+default-run = "tg"
 
 [lib]
 name = "tensor_grep_rs"

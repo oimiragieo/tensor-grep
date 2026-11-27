@@ -1,0 +1,13 @@
+{
+  "name": "@tensor-grep/cli-win32-x64",
+  "version": "1.142.0",
+  "description": "Windows x64 native binary for tensor-grep",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oimiragieo/tensor-grep.git"
+  },
+  "license": "Apache-2.0",
+  "files": ["bin/tg.exe"]
+}

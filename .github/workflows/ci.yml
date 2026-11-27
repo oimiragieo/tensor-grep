@@ -1779,6 +1779,10 @@ jobs:
             acceleration: cpu
             cargo_args: --no-default-features
             asset_name: tg-linux-amd64-cpu
+          - os: ubuntu-24.04-arm
+            acceleration: cpu
+            cargo_args: --no-default-features
+            asset_name: tg-linux-arm64-cpu
           - os: ubuntu-latest
             acceleration: nvidia
             cargo_args: --features cuda
@@ -1795,6 +1799,10 @@ jobs:
             acceleration: cpu
             cargo_args: --no-default-features
             asset_name: tg-macos-amd64-cpu
+          - os: macos-14
+            acceleration: cpu
+            cargo_args: --no-default-features
+            asset_name: tg-macos-arm64-cpu
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
@@ -1852,6 +1860,51 @@ jobs:
           "$src" --version | tee version.txt
           grep -Fx "tg ${RELEASE_VERSION}" version.txt
           "$src" --help >/dev/null
+
+      - name: Sign Windows native binary (Authenticode)
+        if: ${{ runner.os == 'Windows' && (matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu') && secrets.WINDOWS_SIGNING_CERT_PFX != '' && secrets.WINDOWS_SIGNING_CERT_PASSWORD != '' }}
+        shell: pwsh
+        env:
+          SIGN_CERT_PFX: ${{ secrets.WINDOWS_SIGNING_CERT_PFX }}
+          SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+          NATIVE_ASSET_NAME: ${{ matrix.asset_name }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "tg-codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SIGN_CERT_PFX))
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool sign /f $certPath /p $env:SIGN_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "dist-native\$($env:NATIVE_ASSET_NAME)"
+          Remove-Item -LiteralPath $certPath -Force -ErrorAction SilentlyContinue
+
+      - name: Sign and notarize macOS native binary (Developer ID)
+        if: ${{ runner.os == 'macOS' && secrets.APPLE_DEVELOPER_ID_CERT_P12 != '' && secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD != '' }}
+        shell: bash
+        env:
+          APPLE_CERT_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_NOTARIZATION_APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NATIVE_ASSET_NAME: ${{ matrix.asset_name }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/tg-signing.keychain-db"
+          cert_path="$RUNNER_TEMP/tg-dev-id.p12"
+          echo "$APPLE_CERT_P12" | base64 --decode > "$cert_path"
+          security create-keychain -p "temp-pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "temp-pass" "$keychain"
+          security import "$cert_path" -k "$keychain" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "temp-pass" "$keychain"
+          codesign --force --options runtime --timestamp --keychain "$keychain" --sign "$APPLE_IDENTITY" "dist-native/${NATIVE_ASSET_NAME}"
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            zip_path="$RUNNER_TEMP/${NATIVE_ASSET_NAME}.zip"
+            ditto -c -k --keepParent "dist-native/${NATIVE_ASSET_NAME}" "$zip_path"
+            xcrun notarytool submit "$zip_path" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            rm -f "$zip_path"
+          fi
+          rm -f "$cert_path" "$keychain"
 
       - name: Upload native release front door
         if: matrix.acceleration == 'cpu' || env.RELEASE_NATIVE_ASSET_PROFILE == 'native-frontdoor-gpu'
@@ -1975,6 +2028,9 @@ jobs:
             --artifacts-dir artifacts \
             --expected-profile "$RELEASE_NATIVE_ASSET_PROFILE" \
             --repository "$GITHUB_REPOSITORY"
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
       - name: Sign release subjects with Sigstore
         uses: sigstore/gh-action-sigstore-python@f514d46b907ebcd5bedc05145c03b69c1edd8b46 # v3.0.0

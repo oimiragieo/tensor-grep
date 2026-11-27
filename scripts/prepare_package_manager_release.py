@@ -14,7 +14,9 @@ from pathlib import Path
 
 WINDOWS_NATIVE_ASSET = "tg-windows-amd64-cpu.exe"
 MACOS_NATIVE_ASSET = "tg-macos-amd64-cpu"
+MACOS_ARM64_NATIVE_ASSET = "tg-macos-arm64-cpu"
 LINUX_NATIVE_ASSET = "tg-linux-amd64-cpu"
+LINUX_ARM64_NATIVE_ASSET = "tg-linux-arm64-cpu"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parents[0]
@@ -181,14 +183,29 @@ def _asset_sha_from_checksums(checksums_path: Path | None, asset_name: str) -> s
     raise ValueError(f"Missing {asset_name} entry in {checksums_path}")
 
 
-def _stamp_homebrew_sha256(*, brew_content: str, mac_sha256: str, linux_sha256: str) -> str:
-    """Insert a ``sha256 "<digest>"`` line after each per-OS ``url`` in the formula so the
+def _stamp_homebrew_sha256(
+    *,
+    brew_content: str,
+    mac_sha256: str,
+    linux_sha256: str,
+    mac_arm64_sha256: str | None = None,
+    linux_arm64_sha256: str | None = None,
+) -> str:
+    """Insert a ``sha256 "<digest>"`` line after each per-OS/arch ``url`` in the formula so the
     published Homebrew formula verifies the downloaded binary (audit MED). The source template
     carries no sha256 (the binary digests only exist post-build); they are stamped here at bundle
     time from CHECKSUMS.txt, mirroring the winget InstallerSha256 stamping above.
     """
     content = brew_content
-    for asset, digest in ((MACOS_NATIVE_ASSET, mac_sha256), (LINUX_NATIVE_ASSET, linux_sha256)):
+    pairs: list[tuple[str, str]] = [
+        (MACOS_NATIVE_ASSET, mac_sha256),
+        (LINUX_NATIVE_ASSET, linux_sha256),
+    ]
+    if mac_arm64_sha256 is not None:
+        pairs.append((MACOS_ARM64_NATIVE_ASSET, mac_arm64_sha256))
+    if linux_arm64_sha256 is not None:
+        pairs.append((LINUX_ARM64_NATIVE_ASSET, linux_arm64_sha256))
+    for asset, digest in pairs:
         content = re.sub(
             r'(?m)^(\s*)(url "https://github\.com/oimiragieo/tensor-grep/releases/download/'
             rf'v[^"]+/{re.escape(asset)}")\s*$',
@@ -223,6 +240,17 @@ def prepare_bundle(
         print(f"ERROR: {exc}")
         return 1
 
+    macos_arm64_sha: str | None = None
+    linux_arm64_sha: str | None = None
+    try:
+        macos_arm64_sha = _asset_sha_from_checksums(release_checksums, MACOS_ARM64_NATIVE_ASSET)
+    except ValueError:
+        macos_arm64_sha = None
+    try:
+        linux_arm64_sha = _asset_sha_from_checksums(release_checksums, LINUX_ARM64_NATIVE_ASSET)
+    except ValueError:
+        linux_arm64_sha = None
+
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
     winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
     winget_src_dir = (
@@ -250,6 +278,8 @@ def prepare_bundle(
             brew_content=brew_content,
             mac_sha256=macos_native_sha,
             linux_sha256=linux_native_sha,
+            mac_arm64_sha256=macos_arm64_sha,
+            linux_arm64_sha256=linux_arm64_sha,
         )
     brew_dest.write_text(brew_content, encoding="utf-8")
     if winget_src_dir.is_dir():

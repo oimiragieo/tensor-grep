@@ -1,13 +1,41 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs Tensor-Grep with automatic GPU detection and Python 3.12 isolation via uv.
 #>
 
+param(
+    [string]$Version = "",
+    [switch]$VerifyCosign,
+    [switch]$Help
+)
+
+if ($Help) {
+    Write-Host @"
+tensor-grep installer (Windows)
+
+Usage:
+  install.ps1 [-Version <VER>] [-VerifyCosign] [-Help]
+
+Options:
+  -Version <VER>   Install a specific version-pinned release (e.g. 1.142.0)
+  -VerifyCosign    Require Cosign Sigstore bundle verification (fails if cosign missing)
+  -Help            Show this help message and exit
+
+Environment:
+  TENSOR_GREP_VERSION        Version to install (pinned tag v<VER>)
+  TENSOR_GREP_CHANNEL        stable (PyPI + release tag) or tag (git tag v<VER>)
+  TENSOR_GREP_VERIFY_COSIGN  1/true to require Cosign verification
+"@
+    exit 0
+}
+
 $ErrorActionPreference = "Stop"
 $originalPath = (Get-Location).Path
 $originalProcessPath = $env:Path
+$pinnedReleaseVersion = "1.142.0"
 $installChannel = if ($env:TENSOR_GREP_CHANNEL) { $env:TENSOR_GREP_CHANNEL } else { "stable" }
-$requestedVersion = $env:TENSOR_GREP_VERSION
+$requestedVersion = if ($Version) { $Version } else { $env:TENSOR_GREP_VERSION }
+$requireCosign = $VerifyCosign -or ($env:TENSOR_GREP_VERIFY_COSIGN -in @("1", "true", "TRUE"))
 
 function Convert-ToMsysPath {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -108,6 +136,35 @@ function Get-ExpectedAssetSha256 {
     return ""
 }
 
+function Test-CosignSignature {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$BundleUrl,
+        [Parameter(Mandatory = $true)][string]$BundleTempPath,
+        [Parameter(Mandatory = $true)][bool]$RequireCosign
+    )
+
+    $cosignCmd = Get-Command cosign -ErrorAction SilentlyContinue
+    if (-not $cosignCmd) {
+        if ($RequireCosign) {
+            throw "-VerifyCosign requested but 'cosign' is not installed on PATH."
+        }
+        return
+    }
+    Invoke-WebRequest -Uri $BundleUrl -OutFile $BundleTempPath
+    $oidcIssuer = "https://token.actions.githubusercontent.com"
+    $certIdentity = "https://github.com/oimiragieo/tensor-grep/.github/workflows/ci.yml@refs/heads/main"
+    & $cosignCmd.Source verify-blob `
+        --bundle $BundleTempPath `
+        --certificate-identity $certIdentity `
+        --certificate-oidc-issuer $oidcIssuer `
+        $FilePath | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cosign Sigstore bundle verification FAILED for $FilePath"
+    }
+    Write-Host "      Cosign Sigstore bundle verified OK."
+}
+
 function Install-NativeFrontdoorBinary {
     param(
         [Parameter(Mandatory = $true)][string]$frontdoorDir,
@@ -119,10 +176,6 @@ function Install-NativeFrontdoorBinary {
     $nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"
     $script:TensorGrepNativeFrontdoorFlavor = "cpu"
     $script:TensorGrepNativeFrontdoorAssetName = ""
-    if ($installChannel -eq "main") {
-        Write-Host "      Main-channel install: using Python front door until release-native assets exist."
-        return $nativeFrontdoorPath
-    }
 
     # Compare each downloaded asset with the release's CHECKSUMS.txt before use. The
     # unsigned manifest checks consistency only; an attacker who can replace both the
@@ -141,6 +194,7 @@ function Install-NativeFrontdoorBinary {
     foreach ($nativeAssetName in $nativeAssetCandidates) {
         $nativeDownloadUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/$nativeAssetName"
         $nativeTempPath = "$nativeFrontdoorPath.download"
+        $nativeBundlePath = "$nativeFrontdoorPath.sigstore.json"
         $nativeFlavor = if ($nativeAssetName -match "nvidia") { "nvidia" } else { "cpu" }
         Write-Host "      Downloading native tg front door asset flavor ${nativeFlavor}: $nativeAssetName"
         try {
@@ -153,6 +207,12 @@ function Install-NativeFrontdoorBinary {
             if ($expectedSha -ne $actualSha) {
                 throw "checksum MISMATCH for $nativeAssetName (expected $expectedSha, got $actualSha)"
             }
+            Test-CosignSignature `
+                -FilePath $nativeTempPath `
+                -BundleUrl "$nativeDownloadUrl.sigstore.json" `
+                -BundleTempPath $nativeBundlePath `
+                -RequireCosign $requireCosign
+            Remove-Item -LiteralPath $nativeBundlePath -Force -ErrorAction SilentlyContinue
             Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
             & $nativeFrontdoorPath --version | Out-Host
             if ($LASTEXITCODE -ne 0) {
@@ -537,8 +597,9 @@ try {
 
     # 4. Install PyTorch bindings and the tool
     Write-Host "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA)..."
-    $pkgSpec = if ($installChannel -eq "main") {
-        "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    $tagVersion = if ($requestedVersion) { $requestedVersion } else { $pinnedReleaseVersion }
+    $pkgSpec = if ($installChannel -eq "tag") {
+        "git+https://github.com/oimiragieo/tensor-grep.git@v$tagVersion"
     } elseif ($requestedVersion) {
         "tensor-grep==$requestedVersion"
     } else {
@@ -554,7 +615,7 @@ try {
         Invoke-CheckedNativeCommand -Description "Install PyTorch bindings" -Command {
             & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$stagingInstallDir\.venv\Scripts\python.exe"
         }
-        $pkgRequirement = if ($installChannel -eq "main") {
+        $pkgRequirement = if ($installChannel -eq "tag") {
             "tensor-grep[gpu-win,nlp,ast] @ $pkgSpec"
         } elseif ($requestedVersion) {
             "tensor-grep[gpu-win,nlp,ast]==$requestedVersion"
@@ -565,7 +626,7 @@ try {
             & $uvPath pip install $pkgRequirement --python "$stagingInstallDir\.venv\Scripts\python.exe"
         }
     } else {
-        $pkgRequirement = if ($installChannel -eq "main") {
+        $pkgRequirement = if ($installChannel -eq "tag") {
             "tensor-grep[ast,nlp] @ $pkgSpec"
         } elseif ($requestedVersion) {
             "tensor-grep[ast,nlp]==$requestedVersion"

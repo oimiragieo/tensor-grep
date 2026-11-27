@@ -6,8 +6,12 @@
     "tensor-grep": "bin/tg.js",
     "tg": "bin/tg.js"
   },
-  "scripts": {
-    "postinstall": "node install.js"
+  "optionalDependencies": {
+    "@tensor-grep/cli-win32-x64": "1.142.0",
+    "@tensor-grep/cli-darwin-arm64": "1.142.0",
+    "@tensor-grep/cli-darwin-x64": "1.142.0",
+    "@tensor-grep/cli-linux-x64": "1.142.0",
+    "@tensor-grep/cli-linux-arm64": "1.142.0"
   },
   "repository": {
     "type": "git",
@@ -26,7 +30,6 @@
   "license": "Apache-2.0",
   "files": [
     "bin/tg.js",
-    "install.js",
     "LICENSE",
     "NOTICE"
   ]

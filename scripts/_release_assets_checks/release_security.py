@@ -29,7 +29,12 @@ _PUBLISH_ACTIONS = (
 )
 _SCRIPT_PUBLISH = re.compile(r"\b(?:createRelease|uploadReleaseAsset|createOrUpdateRelease)\b")
 _SECRET_CONTEXT = re.compile(r"\bsecrets\b", re.IGNORECASE)
-_GITHUB_TOKEN_EXPRESSION = re.compile(r"\${{\s*secrets\s*\.\s*GITHUB_TOKEN\s*}}", re.IGNORECASE)
+_GITHUB_TOKEN_EXPRESSION = re.compile(
+    r"\bsecrets\s*\.\s*(?:GITHUB_TOKEN|WINDOWS_SIGNING_CERT_PFX|WINDOWS_SIGNING_CERT_PASSWORD|"
+    r"APPLE_DEVELOPER_ID_CERT_P12|APPLE_DEVELOPER_ID_CERT_PASSWORD|APPLE_DEVELOPER_ID_IDENTITY|"
+    r"APPLE_NOTARIZATION_APPLE_ID|APPLE_NOTARIZATION_PASSWORD|APPLE_TEAM_ID)\b",
+    re.IGNORECASE,
+)
 
 
 def _shell_commands(script: str) -> list[str]:
@@ -232,6 +237,7 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
         "Prepare release asset path list",
         "Generate SLSA provenance",
         "Verify SLSA provenance",
+        "Install Cosign",
         "Sign release subjects with Sigstore",
         "Upload GitHub release assets",
         "Verify GitHub release asset coverage",
@@ -258,6 +264,7 @@ def validate_ci_release_security_contract(*, ci_workflow: str) -> list[str]:
             {"ref": "v${{ needs.release.outputs.release_version }}"},
         ),
         "Install uv": ("astral-sh/setup-uv@v8.0.0", None),
+        "Install Cosign": ("sigstore/cosign-installer@v3.8.1", None),
         "Download native release front doors": (
             "actions/download-artifact@v8",
             {"pattern": "release-native-*", "path": "artifacts/native"},

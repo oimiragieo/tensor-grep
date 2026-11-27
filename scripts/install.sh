@@ -3,9 +3,64 @@
 set -e
 
 ORIGINAL_DIR="$(pwd)"
+PINNED_RELEASE_VERSION="1.142.0"
 INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
+VERIFY_COSIGN="${TENSOR_GREP_VERIFY_COSIGN:-auto}"
 UV_TMP_DIR=""
+
+show_help() {
+    cat << 'EOF'
+tensor-grep installer (Linux / macOS)
+
+Usage:
+  install.sh [OPTIONS]
+
+Options:
+  -v, --version <VER>   Install a specific version-pinned release (e.g. 1.142.0)
+      --verify-cosign   Require Cosign Sigstore bundle verification (fails if cosign missing)
+      --no-verify-cosign Skip Cosign bundle verification (SHA-256 still enforced)
+  -h, --help            Show this help message and exit
+
+Environment:
+  TENSOR_GREP_VERSION   Version to install (pinned tag v<VER>)
+  TENSOR_GREP_CHANNEL   stable (PyPI + release tag) or tag (git tag v<VER>)
+  TENSOR_GREP_VERIFY_COSIGN  auto (verify if cosign in PATH), 1/true (require), 0/false (skip)
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                echo "ERROR: --version requires a value (e.g. 1.142.0)" >&2
+                exit 1
+            fi
+            REQUESTED_VERSION="$2"
+            shift 2
+            ;;
+        --version=*)
+            REQUESTED_VERSION="${1#*=}"
+            shift
+            ;;
+        --verify-cosign)
+            VERIFY_COSIGN="1"
+            shift
+            ;;
+        --no-verify-cosign)
+            VERIFY_COSIGN="0"
+            shift
+            ;;
+        *)
+            echo "ERROR: Unknown option '$1'. Run with --help for usage." >&2
+            exit 1
+            ;;
+    esac
+done
 
 restore_original_dir() {
     if [ -n "${STAGING_INSTALL_DIR:-}" ] && [ -d "$STAGING_INSTALL_DIR" ]; then
@@ -71,6 +126,40 @@ _expected_asset_sha256() {
     # $1 = CHECKSUMS.txt path, $2 = asset name. Lines are "<sha256>  <asset>".
     [ -f "$1" ] || return 0
     awk -v asset="$2" '$NF == asset { print $1; exit }' "$1"
+    return 0
+}
+
+_verify_cosign_bundle() {
+    # $1 = file path, $2 = bundle URL, $3 = bundle temp path
+    local file_path="$1"
+    local bundle_url="$2"
+    local bundle_path="$3"
+    local oidc_issuer="https://token.actions.githubusercontent.com"
+    local cert_identity="https://github.com/oimiragieo/tensor-grep/.github/workflows/ci.yml@refs/heads/main"
+
+    if [ "$VERIFY_COSIGN" = "0" ] || [ "$VERIFY_COSIGN" = "false" ]; then
+        return 0
+    fi
+    if ! command -v cosign >/dev/null 2>&1; then
+        if [ "$VERIFY_COSIGN" = "1" ] || [ "$VERIFY_COSIGN" = "true" ]; then
+            echo "      ERROR: --verify-cosign requested but 'cosign' is not installed." >&2
+            return 1
+        fi
+        return 0
+    fi
+    if ! curl -fLsS "$bundle_url" -o "$bundle_path"; then
+        echo "      ERROR: Failed to download Sigstore bundle from $bundle_url" >&2
+        return 1
+    fi
+    if ! cosign verify-blob \
+        --bundle "$bundle_path" \
+        --certificate-identity "$cert_identity" \
+        --certificate-oidc-issuer "$oidc_issuer" \
+        "$file_path" >/dev/null 2>&1; then
+        echo "      ERROR: Cosign signature verification FAILED for $file_path" >&2
+        return 1
+    fi
+    echo "      Cosign Sigstore bundle verified OK."
     return 0
 }
 
@@ -195,8 +284,9 @@ cd "$STAGING_INSTALL_DIR"
 
 # 4. Install PyTorch bindings and the tool
 echo "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA/ROCm)..."
-if [ "$INSTALL_CHANNEL" = "main" ]; then
-    PKG_SPEC="git+https://github.com/oimiragieo/tensor-grep.git@main"
+TAG_VERSION="${REQUESTED_VERSION:-$PINNED_RELEASE_VERSION}"
+if [ "$INSTALL_CHANNEL" = "tag" ]; then
+    PKG_SPEC="git+https://github.com/oimiragieo/tensor-grep.git@v${TAG_VERSION}"
 elif [ -n "$REQUESTED_VERSION" ]; then
     PKG_SPEC="tensor-grep==$REQUESTED_VERSION"
 else
@@ -211,14 +301,14 @@ if [ "$HARDWARE_FLAG" != "cpu" ]; then
     "$UV_BIN_PATH" pip install torch torchvision torchaudio $INDEX_URL --python .venv/bin/python
     # For linux, we also install kvikio and cudf dependencies if NVIDIA
     if [ "$HARDWARE_FLAG" == "nvidia" ]; then
-        if [ "$INSTALL_CHANNEL" = "main" ]; then
+        if [ "$INSTALL_CHANNEL" = "tag" ]; then
             PKG_REQUIREMENT="tensor-grep[gpu,nlp,ast] @ $PKG_SPEC"
         else
             PKG_REQUIREMENT="$PKG_SPEC[gpu,nlp,ast]"
         fi
         "$UV_BIN_PATH" pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     else
-        if [ "$INSTALL_CHANNEL" = "main" ]; then
+        if [ "$INSTALL_CHANNEL" = "tag" ]; then
             PKG_REQUIREMENT="tensor-grep[gpu-win,nlp,ast] @ $PKG_SPEC"
         else
             PKG_REQUIREMENT="$PKG_SPEC[gpu-win,nlp,ast]"
@@ -226,7 +316,7 @@ if [ "$HARDWARE_FLAG" != "cpu" ]; then
         "$UV_BIN_PATH" pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     fi
 else
-    if [ "$INSTALL_CHANNEL" = "main" ]; then
+    if [ "$INSTALL_CHANNEL" = "tag" ]; then
         PKG_REQUIREMENT="tensor-grep[ast,nlp] @ $PKG_SPEC"
     else
         PKG_REQUIREMENT="$PKG_SPEC[ast,nlp]"
@@ -260,7 +350,7 @@ case "$TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR" in
         TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR="cpu"
         ;;
 esac
-if [ "$INSTALL_CHANNEL" != "main" ]; then
+if [ -n "$INSTALLED_VERSION" ]; then
     NATIVE_CHECKSUMS_FILE="$STAGING_INSTALL_DIR/bin/CHECKSUMS.txt"
     NATIVE_CHECKSUMS_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/CHECKSUMS.txt"
     if ! curl -fLsS "$NATIVE_CHECKSUMS_URL" -o "$NATIVE_CHECKSUMS_FILE"; then
@@ -276,8 +366,14 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
             Linux:x86_64:cpu|Linux:amd64:cpu)
                 NATIVE_ASSET="tg-linux-amd64-cpu"
                 ;;
+            Linux:aarch64:cpu|Linux:arm64:cpu)
+                NATIVE_ASSET="tg-linux-arm64-cpu"
+                ;;
             Darwin:x86_64:cpu|Darwin:amd64:cpu)
                 NATIVE_ASSET="tg-macos-amd64-cpu"
+                ;;
+            Darwin:arm64:cpu|Darwin:aarch64:cpu)
+                NATIVE_ASSET="tg-macos-arm64-cpu"
                 ;;
             Darwin:*:nvidia)
                 continue
@@ -301,6 +397,16 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
                 echo "      Native tg front-door checksum verification failed; using Python fallback." >&2
                 continue
             fi
+            if ! _verify_cosign_bundle "$STAGING_NATIVE_BINARY.tmp" "${NATIVE_URL}.sigstore.json" "$STAGING_NATIVE_BINARY.sigstore.json"; then
+                rm -f "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY.sigstore.json"
+                if [ "$NATIVE_FLAVOR" = "nvidia" ]; then
+                    echo "      Falling back to CPU native tg front-door asset after NVIDIA Cosign verification failed." >&2
+                    continue
+                fi
+                echo "      Native tg front-door Cosign verification failed; using Python fallback." >&2
+                continue
+            fi
+            rm -f "$STAGING_NATIVE_BINARY.sigstore.json"
             mv "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY"
             chmod +x "$STAGING_NATIVE_BINARY"
             if "$STAGING_NATIVE_BINARY" --version; then

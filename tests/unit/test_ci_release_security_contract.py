@@ -33,6 +33,7 @@ def _workflow() -> dict[str, object]:
         "Prepare release asset path list",
         "Generate SLSA provenance",
         "Verify SLSA provenance",
+        "Install Cosign",
         "Sign release subjects with Sigstore",
         "Upload GitHub release assets",
         "Verify GitHub release asset coverage",
@@ -92,6 +93,7 @@ uv pip sync --python .sbom-python-tools/bin/python --require-hashes \\
             "with": {"ref": "v${{ needs.release.outputs.release_version }}"},
         },
         "Install uv": {"uses": "astral-sh/setup-uv@v8.0.0"},
+        "Install Cosign": {"uses": "sigstore/cosign-installer@v3.8.1"},
         "Download native release front doors": {
             "uses": "actions/download-artifact@v8",
             "with": {"pattern": "release-native-*", "path": "artifacts/native"},
