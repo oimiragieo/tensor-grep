@@ -20,7 +20,7 @@ release_docs_current_tag: v1.142.0
 
 ## 30-second quickstart
 
-With Python 3.11+ (or the managed native installer in [docs/installation.md](docs/installation.md)):
+With Python 3.11+ on **Windows, macOS, and Linux** (or the managed native installer in [docs/installation.md](docs/installation.md)):
 
 ```bash
 python -m pip install tensor-grep

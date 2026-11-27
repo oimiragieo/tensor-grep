@@ -285,9 +285,13 @@ def validate_all() -> list[str]:
             expected_version=py_version,
         )
     )
+    args_rs_path = ROOT / "rust_core" / "src" / "cli_app" / "args.rs"
+    native_cli_sources = _read(ROOT / "rust_core" / "src" / "main.rs") + (
+        "\n" + _read(args_rs_path) if args_rs_path.exists() else ""
+    )
     errors.extend(
         validate_native_cli_contract(
-            main_rs_content=_read(ROOT / "rust_core" / "src" / "main.rs"),
+            main_rs_content=native_cli_sources,
             expected_version=py_version,
         )
     )
