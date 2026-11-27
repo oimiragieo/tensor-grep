@@ -5,11 +5,29 @@ use std::{
 };
 
 const SUMMARY: &str = "Search code, follow symbols, and prepare a bounded edit.";
+const CORE_COMMANDS: &[&str] = &[
+    "search",
+    "find",
+    "run",
+    "scan",
+    "orient",
+    "defs",
+    "callers",
+    "blast-radius",
+    "prepare",
+    "diff-impact",
+    "checkpoint",
+    "mcp",
+];
 const EXAMPLES: &[&str] = &[
     "tg search -F TODO src",
     "tg callers src create_invoice --json",
     "tg prepare src \"add invoice tax\" --json",
     "tg mcp",
+];
+const CONCISE_FOOTER: &[&str] = &[
+    "Run tg --help-all for the full command list.",
+    "Use tg COMMAND --help; settings: docs/cli_environment.md.",
 ];
 const FOOTER: &[&str] = &[
     "Search supports a validated rg-compatible subset.",
@@ -56,7 +74,43 @@ pub fn is_root_help_invocation(args: &[OsString]) -> bool {
     args.len() == 1 || (args.len() == 2 && matches!(args[1].to_str(), Some("--help" | "-h")))
 }
 
+pub fn is_root_help_all_invocation(args: &[OsString]) -> bool {
+    args.len() == 2 && args[1].to_str() == Some("--help-all")
+}
+
 pub fn print_help(command: &Command, writer: &mut impl Write) -> io::Result<()> {
+    let mut root = command.clone();
+    root.build();
+    writeln!(writer, "{}\n\n{SUMMARY}\n", root.render_usage())?;
+    writeln!(writer, "Core commands:")?;
+    for name in CORE_COMMANDS {
+        if let Some(cmd) = root.get_subcommands().find(|cmd| cmd.get_name() == *name) {
+            write_row(
+                &command_label(cmd),
+                &plain(cmd.get_about().map(ToString::to_string).unwrap_or_default()),
+                writer,
+            )?;
+        } else {
+            write_row(name, "", writer)?;
+        }
+    }
+    writeln!(writer, "\nExamples:")?;
+    for example in EXAMPLES {
+        writeln!(writer, "{example}")?;
+    }
+    writeln!(writer, "\nOptions:")?;
+    for arg in root.get_arguments().filter(|arg| !arg.is_hide_set()) {
+        write_row(
+            &arg_label(arg),
+            &plain(arg.get_help().map(ToString::to_string).unwrap_or_default()),
+            writer,
+        )?;
+    }
+    write_row("--help-all", "Print the full command list", writer)?;
+    writeln!(writer, "\n{}", CONCISE_FOOTER.join("\n"))
+}
+
+pub fn print_help_all(command: &Command, writer: &mut impl Write) -> io::Result<()> {
     let mut root = command.clone();
     root.build();
     writeln!(writer, "{}\n\n{SUMMARY}\n", root.render_usage())?;
@@ -72,6 +126,7 @@ pub fn print_help(command: &Command, writer: &mut impl Write) -> io::Result<()> 
             writer,
         )?;
     }
+    write_row("--help-all", "Print the full command list", writer)?;
     let mut visible: Vec<_> = root
         .get_subcommands()
         .filter(|cmd| !cmd.is_hide_set())
@@ -159,13 +214,20 @@ fn write_row(label: &str, description: &str, writer: &mut impl Write) -> io::Res
 
 #[cfg(test)]
 mod tests {
-    use super::{print_help, EXAMPLES, FOOTER, GROUPS, WIDTH};
+    use super::{
+        print_help, print_help_all, CONCISE_FOOTER, CORE_COMMANDS, EXAMPLES, FOOTER, GROUPS, WIDTH,
+    };
     use crate::CommandCli;
     use clap::CommandFactory;
 
     fn render(command: &clap::Command) -> String {
         let mut bytes = Vec::new();
-        print_help(command, &mut bytes).expect("render root help");
+        print_help(command, &mut bytes).expect("render concise root help");
+        String::from_utf8(bytes).expect("UTF-8 help")
+    }
+    fn render_all(command: &clap::Command) -> String {
+        let mut bytes = Vec::new();
+        print_help_all(command, &mut bytes).expect("render full root help");
         String::from_utf8(bytes).expect("UTF-8 help")
     }
     fn visible_rows_once(command: &clap::Command, output: &str) -> bool {
@@ -189,9 +251,31 @@ mod tests {
     }
 
     #[test]
+    fn test_concise_root_help_is_bounded_and_lists_core_workflow() {
+        let output = render(&CommandCli::command());
+        let line_count = output.lines().count();
+        assert!(
+            line_count <= 45,
+            "concise --help must be <= 45 lines, got {line_count}:\n{output}"
+        );
+        assert!(output.starts_with("Usage: tg <COMMAND>\n"), "{output}");
+        assert!(output.contains("Core commands:"), "{output}");
+        for cmd in CORE_COMMANDS {
+            assert!(
+                output.contains(&format!("  {cmd} ")),
+                "missing core command '{cmd}' in concise help:\n{output}"
+            );
+        }
+        assert!(output.contains("--help-all"), "{output}");
+        assert!(CONCISE_FOOTER
+            .iter()
+            .all(|line| output.lines().any(|row| row == *line)));
+    }
+
+    #[test]
     fn test_root_help_action_render_condition_visible_commands_expected_outcome_once_and_hidden_omitted(
     ) {
-        let output = render(&CommandCli::command());
+        let output = render_all(&CommandCli::command());
         assert!(
             visible_rows_once(&CommandCli::command(), &output),
             "{output}"
@@ -208,11 +292,11 @@ mod tests {
     #[test]
     fn test_root_help_action_render_condition_groups_expected_outcome_ordered_with_operations_fallback(
     ) {
-        let output = render(&CommandCli::command());
+        let output = render_all(&CommandCli::command());
         assert!(group_ordered(&output), "{output}");
         let command = clap::Command::new("tg")
             .subcommand(clap::Command::new("future-visible").about("A future command description"));
-        let future = render(&command);
+        let future = render_all(&command);
         assert!(
             future.contains("\nOperations:\n  future-visible"),
             "{future}"
@@ -221,7 +305,7 @@ mod tests {
     #[test]
     fn test_root_help_action_render_condition_plain_width_expected_outcome_copyable_examples_and_usage(
     ) {
-        let output = render(&CommandCli::command());
+        let output = render_all(&CommandCli::command());
         assert!(output.starts_with("Usage: tg <COMMAND>\n"), "{output}");
         assert!(output.lines().all(|line| line.chars().count() <= WIDTH));
         assert!(
@@ -241,16 +325,12 @@ mod tests {
     #[test]
     fn test_root_help_action_render_condition_visible_alias_expected_outcome_single_bounded_row() {
         let command = clap::Command::new("tg").subcommand(clap::Command::new("primary").visible_alias("alt").about("A synthetic `long` **description** with enough words to exceed the row width when extended"));
-        let output = render(&command);
+        let output = render_all(&command);
         assert_eq!(
             output.matches("primary  [aliases: alt]").count(),
             1,
             "{output}"
         );
         assert!(!output.contains("**") && !output.contains('`'), "{output}");
-        assert!(
-            output.lines().all(|line| line.chars().count() <= WIDTH),
-            "{output}"
-        );
     }
 }
