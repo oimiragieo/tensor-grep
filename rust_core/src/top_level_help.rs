@@ -259,7 +259,7 @@ mod tests {
             "concise --help must be <= 45 lines, got {line_count}:\n{output}"
         );
         assert!(output.starts_with("Usage: tg <COMMAND>\n"), "{output}");
-        assert!(output.contains("Core commands:"), "{output}");
+        assert!(output.contains("Core workflow:"), "{output}");
         for cmd in CORE_COMMANDS {
             assert!(
                 output.contains(&format!("  {cmd} ")),

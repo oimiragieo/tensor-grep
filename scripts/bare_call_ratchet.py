@@ -66,8 +66,22 @@ def load_pins(path: Path | None = None) -> dict[str, int]:
     return {str(k): int(v) for k, v in raw.get("bare_calls", {}).items()}
 
 
+EXTRACTED_GLOBS: dict[str, tuple[str, ...]] = {
+    "src/tensor_grep/cli/main.py": (
+        "src/tensor_grep/cli/routers/*.py",
+        "src/tensor_grep/cli/output_envelope.py",
+        "src/tensor_grep/cli/error_handling.py",
+    ),
+    "src/tensor_grep/cli/repo_map.py": (
+        "src/tensor_grep/cli/navigation/*.py",
+        "src/tensor_grep/cli/agent/*.py",
+    ),
+    "src/tensor_grep/cli/mcp_server.py": ("src/tensor_grep/cli/mcp/*.py",),
+}
+
+
 def measure(targets: list[tuple[str, str]] | None = None) -> dict[str, int]:
-    """Bare calls to patched symbols, per module. The measurement, with no policy."""
+    """Bare calls to patched symbols, per module (including extracted submodules)."""
     counts: dict[str, int] = {}
     for rel, dotted in targets if targets is not None else TARGETS:
         path = ROOT / rel
@@ -75,6 +89,11 @@ def measure(targets: list[tuple[str, str]] | None = None) -> dict[str, int]:
             continue
         symbols, _sites, _files = patch_sites(dotted)
         total, _per_symbol = bare_call_sites(path, symbols)
+        if targets is None:
+            for pattern in EXTRACTED_GLOBS.get(rel, ()):
+                for sub_path in sorted(ROOT.glob(pattern)):
+                    sub_total, _ = bare_call_sites(sub_path, symbols)
+                    total += sub_total
         counts[rel] = total
     return counts
 

@@ -25,9 +25,15 @@ def _mcp_requirement() -> Requirement:
 
 
 def test_mcp_allows_v2_without_upper_bound() -> None:
-    """`cli/mcp` is ported to `mcp.server.mcpserver`, so `mcp>=2.0.0` must be admitted."""
+    """`cli/mcp` is ported to `mcp.server.mcpserver`, so `mcp>=2.0.0` must be enforced."""
     requirement = _mcp_requirement()
 
+    assert not requirement.specifier.contains("1.30.0"), (
+        f"the declared mcp requirement ({requirement}) admits 1.30.0 (pre-2.0 API)"
+    )
+    assert not requirement.specifier.contains("1.99.0"), (
+        f"the declared mcp requirement ({requirement}) admits 1.x (pre-2.0 API)"
+    )
     assert requirement.specifier.contains("2.0.0"), (
         f"the declared mcp requirement ({requirement}) must admit 2.0.0+"
     )
