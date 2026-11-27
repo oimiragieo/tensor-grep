@@ -426,7 +426,7 @@ def test_mcp_citations_wire_wrapper_preserves_error_signal(tmp_path: Path, monke
         )
     )
     if isinstance(success, types.CallToolResult):
-        assert success.isError is False
+        assert success.is_error is False
         content = success.content
     else:
         content, _ = success
@@ -444,7 +444,7 @@ def test_mcp_citations_wire_wrapper_preserves_error_signal(tmp_path: Path, monke
         )
     )
     assert isinstance(refused, types.CallToolResult)
-    assert refused.isError is True
+    assert refused.is_error is True
     assert json.loads(refused.content[0].text)["error"]["code"] == "invalid_input"
 
 

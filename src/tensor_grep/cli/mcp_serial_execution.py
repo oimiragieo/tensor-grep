@@ -9,8 +9,8 @@ from functools import wraps
 from threading import BoundedSemaphore, Event
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 # A single worker preserves request order for stateful operations such as checkpoints.
 # At most 64 calls can be active or queued. Cancellation marks a queued job to skip
@@ -28,11 +28,11 @@ def _consume_abandoned_result(future: asyncio.Future[Any]) -> None:
         future.exception()
 
 
-def install_serial_tool_execution(server: FastMCP) -> None:
-    """Adapt registered sync callables after FastMCP has built their wire schemas.
+def install_serial_tool_execution(server: MCPServer) -> None:
+    """Adapt registered sync callables after MCPServer has built their wire schemas.
 
     The module-level Python functions remain synchronous and keep their signatures.
-    FastMCP still parses and validates arguments before invoking the adapted callable.
+    MCPServer still parses and validates arguments before invoking the adapted callable.
     """
     for tool in server._tool_manager._tools.values():
         if tool.is_async:

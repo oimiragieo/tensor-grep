@@ -451,7 +451,9 @@ def test_orchestration_hint_for_mixed_composite_is_wrapper() -> None:
     assert hints["backend_hints"]["mixed"] == "AstGrepWrapperBackend"
 
 
-def test_scan_mixed_shape_composite_routes_to_wrapper_and_counts_3(monkeypatch) -> None:
+def test_scan_mixed_shape_composite_routes_to_wrapper_and_counts_3(
+    monkeypatch, tmp_path: Path
+) -> None:
     """F3 CLI-level: a default `tg scan` of a mixed-shape composite (bare
     `alpha` + DSL `alpha(1)`) must route to the AST-GREP path (both members
     scanned) and count the three distinct nodes — the ast-grep `any` count.
@@ -472,18 +474,18 @@ def test_scan_mixed_shape_composite_routes_to_wrapper_and_counts_3(monkeypatch) 
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     try:
         runner = CliRunner()
-        with runner.isolated_filesystem():
-            Path("a.py").write_text("alpha(1); alpha(2)\n", encoding="utf-8")
-            Path("b.py").write_text("ok\n", encoding="utf-8")
-            inline = (
-                "id: mixed\n"
-                "language: python\n"
-                "rule:\n"
-                "  any:\n"
-                "    - pattern: alpha\n"
-                "    - pattern: 'alpha(1)'\n"
-            )
-            result = runner.invoke(app, ["scan", "--inline-rules", inline, "--path", "."])
+        monkeypatch.chdir(tmp_path)
+        Path("a.py").write_text("alpha(1); alpha(2)\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+        inline = (
+            "id: mixed\n"
+            "language: python\n"
+            "rule:\n"
+            "  any:\n"
+            "    - pattern: alpha\n"
+            "    - pattern: 'alpha(1)'\n"
+        )
+        result = runner.invoke(app, ["scan", "--inline-rules", inline, "--path", "."])
     finally:
         _SpanFakeWrapperBackend.search_many = original_search_many
 
@@ -493,7 +495,7 @@ def test_scan_mixed_shape_composite_routes_to_wrapper_and_counts_3(monkeypatch) 
     assert "backends=AstGrepWrapperBackend" in result.output
 
 
-def test_scan_project_composite_any_rule_counts_span_union(monkeypatch) -> None:
+def test_scan_project_composite_any_rule_counts_span_union(monkeypatch, tmp_path: Path) -> None:
     """F1 three-arm parity (Python iterative arm, node-granular): the fixture
     `alpha(1); alpha(2)` with members `alpha` + `alpha(1)` contains THREE
     distinct AST nodes (two identifier nodes, one call node) on ONE line.
@@ -510,36 +512,34 @@ def test_scan_project_composite_any_rule_counts_span_union(monkeypatch) -> None:
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/composite.yml").write_text(
-            "id: composite-rule\n"
-            "language: python\n"
-            "rule:\n"
-            "  any:\n"
-            "    - pattern: alpha\n"
-            "    - pattern: 'alpha(1)'\n",
-            encoding="utf-8",
-        )
-        # Scan root is a src/ subdir so the rules/config YAML (which contain
-        # the literal member strings) are NOT scanned by the wrapper fake.
-        Path("src").mkdir()
-        Path("src/a.py").write_text("alpha(1); alpha(2)\n", encoding="utf-8")
-        Path("src/b.py").write_text("ok\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/composite.yml").write_text(
+        "id: composite-rule\n"
+        "language: python\n"
+        "rule:\n"
+        "  any:\n"
+        "    - pattern: alpha\n"
+        "    - pattern: 'alpha(1)'\n",
+        encoding="utf-8",
+    )
+    # Scan root is a src/ subdir so the rules/config YAML (which contain
+    # the literal member strings) are NOT scanned by the wrapper fake.
+    Path("src").mkdir()
+    Path("src/a.py").write_text("alpha(1); alpha(2)\n", encoding="utf-8")
+    Path("src/b.py").write_text("ok\n", encoding="utf-8")
 
-        # Positional scan path turns the project fast path OFF so the iterative
-        # wrapper member loop (the code under test) runs.
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "src"])
+    # Positional scan path turns the project fast path OFF so the iterative
+    # wrapper member loop (the code under test) runs.
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "src"])
 
     assert result.exit_code == 0
     assert "[scan] rule=composite-rule lang=python matches=3 files=1" in result.output
     assert "Scan completed. rules=1 matched_rules=1 total_matches=3" in result.output
 
 
-def test_scan_inline_rules_composite_members_are_scanned(monkeypatch) -> None:
+def test_scan_inline_rules_composite_members_are_scanned(monkeypatch, tmp_path: Path) -> None:
     """F2 loop-level RED (pre-fix): `--inline-rules` dropped the composite rule
     at load (no spec -> no rules -> exit 1). GREEN (post-fix): both members are
     loaded AND scanned; two distinct nodes on one line each count."""
@@ -547,21 +547,23 @@ def test_scan_inline_rules_composite_members_are_scanned(monkeypatch) -> None:
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        Path("a.py").write_text("alpha(1); beta(2)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
-        inline = (
-            "id: comp\nlanguage: python\nrule:\n  any:\n    - pattern: alpha\n    - pattern: beta\n"
-        )
+    monkeypatch.chdir(tmp_path)
+    Path("a.py").write_text("alpha(1); beta(2)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
+    inline = (
+        "id: comp\nlanguage: python\nrule:\n  any:\n    - pattern: alpha\n    - pattern: beta\n"
+    )
 
-        result = runner.invoke(app, ["scan", "--inline-rules", inline, "--path", "."])
+    result = runner.invoke(app, ["scan", "--inline-rules", inline, "--path", "."])
 
     assert result.exit_code == 0
     assert "[scan] rule=comp lang=python matches=2 files=1" in result.output
     assert "Scan completed. rules=1 matched_rules=1 total_matches=2" in result.output
 
 
-def test_scan_project_composite_any_rule_json_carries_severity_and_message(monkeypatch) -> None:
+def test_scan_project_composite_any_rule_json_carries_severity_and_message(
+    monkeypatch, tmp_path: Path
+) -> None:
     """F1 loop-level RED: pre-fix the composite rule was dropped (no finding at
     all); post-fix the finding carries the rule's custom severity/message. Uses
     the plain fake (no spans) to also pin the (file, -1, line) fallback."""
@@ -569,25 +571,23 @@ def test_scan_project_composite_any_rule_json_carries_severity_and_message(monke
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/composite.yml").write_text(
-            "id: composite-rule\n"
-            "language: python\n"
-            "severity: high\n"
-            "message: avoid both\n"
-            "rule:\n"
-            "  any:\n"
-            "    - pattern: alpha\n"
-            "    - pattern: beta\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("alpha(1)\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/composite.yml").write_text(
+        "id: composite-rule\n"
+        "language: python\n"
+        "severity: high\n"
+        "message: avoid both\n"
+        "rule:\n"
+        "  any:\n"
+        "    - pattern: alpha\n"
+        "    - pattern: beta\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("alpha(1)\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "--json"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "--json"])
 
     assert result.exit_code == 0
     payload = json.loads(result.output)

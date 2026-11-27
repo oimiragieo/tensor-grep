@@ -29,9 +29,9 @@ def test_capabilities_error_shape_sets_wire_flag(monkeypatch, body, expected_err
     result = asyncio.run(mcp_server.mcp.call_tool("tg_mcp_capabilities", {}))
     if not isinstance(result, types.CallToolResult):
         content, structured_content = result
-        result = types.CallToolResult(content=list(content), structuredContent=structured_content)
+        result = types.CallToolResult(content=list(content), structured_content=structured_content)
 
-    assert result.isError is expected_error
+    assert result.is_error is expected_error
     payload = json.loads(result.content[0].text)
     if "error" in body:
         assert payload["error"] == body["error"]

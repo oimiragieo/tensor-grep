@@ -258,7 +258,7 @@ def test_mcp_checkpoint_label_schema_and_legacy_tool_call(
 
     project = _project(tmp_path / "project")
     monkeypatch.chdir(tmp_path)
-    schemas = {tool.name: tool.inputSchema for tool in asyncio.run(mcp_server.mcp.list_tools())}
+    schemas = {tool.name: tool.input_schema for tool in asyncio.run(mcp_server.mcp.list_tools())}
     schema = schemas["tg_checkpoint"]["properties"]["label"]
     raw_type = schema.get("type")
     types_seen = set(raw_type) if isinstance(raw_type, list) else {raw_type}
@@ -266,10 +266,15 @@ def test_mcp_checkpoint_label_schema_and_legacy_tool_call(
     assert "string" in types_seen
     assert "label" not in schemas["tg_checkpoint"].get("required", [])
 
-    meta_content, _meta = asyncio.run(
+    from mcp import types
+
+    meta_result = asyncio.run(
         mcp_server.mcp.call_tool(
             "tg_checkpoint", {"action": "create", "path": str(project), "label": "meta label"}
         )
+    )
+    meta_content = (
+        meta_result.content if isinstance(meta_result, types.CallToolResult) else meta_result[0]
     )
     meta_payload = json.loads(cast(Any, meta_content)[0].text)
     assert meta_payload["label"] == "meta label"
@@ -279,10 +284,12 @@ def test_mcp_checkpoint_label_schema_and_legacy_tool_call(
     env = {**os.environ, "TG_MCP_LEGACY_TOOLS": "1", "PYTHONPATH": str(repo_root / "src")}
     script = (
         "import asyncio, json\n"
+        "from mcp import types\n"
         "from tensor_grep.cli import mcp_server\n"
-        "schemas = {t.name: t.inputSchema for t in asyncio.run(mcp_server.mcp.list_tools())}\n"
-        "content, _ = asyncio.run(mcp_server.mcp.call_tool("
+        "schemas = {t.name: t.input_schema for t in asyncio.run(mcp_server.mcp.list_tools())}\n"
+        "res = asyncio.run(mcp_server.mcp.call_tool("
         f"'tg_checkpoint_create', {{'path': {str(project)!r}, 'label': 'mcp label'}}))\n"
+        "content = res.content if isinstance(res, types.CallToolResult) else res[0]\n"
         "print(json.dumps({'schema': schemas['tg_checkpoint_create'], 'payload': json.loads(content[0].text)}))\n"
     )
     done = subprocess.run(

@@ -64,7 +64,7 @@ class TopLevelHelpGroup(TyperGroup):
     """Render only root commands in five plain, task-oriented sections."""
 
     def format_help(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
-        click.Group.format_help(self, ctx, formatter)
+        super(TyperGroup, self).format_help(ctx, formatter)  # type: ignore[arg-type]
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
         grouped: dict[str, list[tuple[str, click.Command]]] = {

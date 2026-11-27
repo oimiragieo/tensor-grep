@@ -94,7 +94,7 @@ def _wait_for_files(paths: list[Path], timeout: float = 15.0) -> None:
 def test_tg_batch_discovery_schema_describes_queries_as_object_list() -> None:
     tools = asyncio.run(mcp_server.mcp.list_tools())
     tool = next(item for item in tools if item.name == "tg_batch")
-    queries_schema = tool.inputSchema["properties"]["queries"]
+    queries_schema = tool.input_schema["properties"]["queries"]
 
     assert queries_schema["type"] == "array"
     assert queries_schema["items"]["type"] == "object"
@@ -366,7 +366,7 @@ def test_tg_batch_rejects_invalid_top_level_queries(queries):
     result = asyncio.run(mcp_server.mcp.call_tool("tg_batch", {"queries": queries}))
 
     assert isinstance(result, types.CallToolResult)
-    assert result.isError is True
+    assert result.is_error is True
     assert _payload(result.content[0].text)["error"]["code"] == "invalid_input"
 
 

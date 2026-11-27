@@ -27,7 +27,7 @@ def test_meta_action_schemas_match_runtime_action_tuples() -> None:
     tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
 
     for name, valid_actions in action_tuples.items():
-        schema = tools[name].inputSchema["properties"]["action"]
+        schema = tools[name].input_schema["properties"]["action"]
         assert schema["enum"] == list(valid_actions)
 
 
@@ -39,13 +39,13 @@ def _call_tool(name: str, arguments: dict[str, object]) -> types.CallToolResult:
             return err
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=raw)],
-            isError=False,
+            is_error=False,
         )
     result = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
     if isinstance(result, types.CallToolResult):
         return result
     content, structured_content = result
-    return types.CallToolResult(content=list(content), structuredContent=structured_content)
+    return types.CallToolResult(content=list(content), structured_content=structured_content)
 
 
 def test_empty_search_pattern_sets_is_error_and_preserves_body() -> None:
@@ -74,14 +74,14 @@ def test_empty_search_pattern_sets_is_error_and_preserves_body() -> None:
         },
     }
 
-    assert result.isError is True
+    assert result.is_error is True
     assert result.content[0].text == json.dumps(expected, indent=2)
 
 
 def test_outside_root_search_sets_is_error(tmp_path: Path) -> None:
     result = _call_tool("tg_search", {"pattern": "needle", "path": str(tmp_path)})
 
-    assert result.isError is True
+    assert result.is_error is True
     payload = json.loads(result.content[0].text)
     assert payload["error"]["code"] == "invalid_input"
 
@@ -89,7 +89,7 @@ def test_outside_root_search_sets_is_error(tmp_path: Path) -> None:
 def test_unknown_meta_action_sets_is_error_and_keeps_envelope() -> None:
     result = _call_tool("tg_navigate", {"action": "bogus", "symbol": "Foo"})
 
-    assert result.isError is True
+    assert result.is_error is True
     assert result.content[0].text == json.dumps(
         {
             "version": 1,
@@ -119,7 +119,7 @@ def test_successful_search_stays_non_error() -> None:
         {"pattern": "KNOWN_COMMANDS", "path": "src/tensor_grep/cli/commands.py"},
     )
 
-    assert result.isError is False
+    assert result.is_error is False
     assert "error" not in json.loads(result.content[0].text)
 
 
@@ -135,7 +135,7 @@ def test_incomplete_response_without_error_stays_non_error(monkeypatch) -> None:
 
     assert payload["result_incomplete"] is True
     assert "error" not in payload
-    assert result.isError is False
+    assert result.is_error is False
 
 
 @pytest.mark.parametrize(
@@ -156,4 +156,4 @@ def test_error_result_requires_a_nonempty_top_level_error_dict(response: str) ->
 def test_error_result_marks_a_nonempty_top_level_error_dict() -> None:
     error_result = _error_result('{"error": {"code": "invalid_input"}}')
     assert error_result is not None
-    assert error_result.isError is True
+    assert error_result.is_error is True

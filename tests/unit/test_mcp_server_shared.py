@@ -252,14 +252,14 @@ def _call_mcp_tool_text(name: str, arguments: dict[str, object]) -> str:
     result = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
     if isinstance(result, types.CallToolResult):
         content = result.content
-        data = result.structuredContent
+        data = result.structured_content
         payload = json.loads(content[0].text)
         expected_error = (
             isinstance(payload, dict)
             and isinstance(payload.get("error"), dict)
             and bool(payload["error"])
         )
-        assert result.isError is expected_error
+        assert result.is_error is expected_error
     else:
         content, data = result
     assert data["result"] == content[0].text
@@ -740,7 +740,7 @@ _RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
 
 def _tool_string_param_names(tool) -> list[str]:
     """Every param name in `tool`'s live input schema typed `str` or `str | None`."""
-    properties = tool.inputSchema.get("properties", {})
+    properties = tool.input_schema.get("properties", {})
     names = []
     for param_name, schema in properties.items():
         types_seen: set[str] = set()
@@ -864,7 +864,7 @@ _PLURAL_RATCHET_BASE_KWARGS: dict[str, dict[str, object]] = {
 def _tool_array_string_param_names(tool) -> list[str]:
     """Every param name in `tool`'s live input schema typed as an array of strings
     (`list[str]` or `list[str] | None`)."""
-    properties = tool.inputSchema.get("properties", {})
+    properties = tool.input_schema.get("properties", {})
     names = []
     for param_name, schema in properties.items():
         candidates = [schema, *schema.get("anyOf", ())]

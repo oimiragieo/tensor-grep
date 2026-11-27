@@ -367,7 +367,7 @@ def _investigation_call(tool: str, **kwargs) -> str:
 @pytest.mark.parametrize("tool", _MCP_INVESTIGATION_TOOLS)
 @pytest.mark.parametrize("param", _MCP_INVESTIGATION_MODES)
 def test_mcp_investigation_mode_schema_is_a_closed_enum(tool: str, param: str) -> None:
-    schemas = {entry.name: entry.inputSchema for entry in asyncio.run(mcp_server.mcp.list_tools())}
+    schemas = {entry.name: entry.input_schema for entry in asyncio.run(mcp_server.mcp.list_tools())}
     field = schemas[tool]["properties"][param]
     assert field["type"] == "string"
     assert set(field["enum"]) == set(_MCP_INVESTIGATION_MODES[param])

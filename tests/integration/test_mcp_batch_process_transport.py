@@ -73,7 +73,7 @@ def test_batch_preserves_direct_results_and_partial_errors_over_stdio(tmp_path: 
                     "structured_json": False,
                 }
                 direct = await session.call_tool("tg_search", arguments)
-                assert not direct.isError
+                assert not direct.is_error
                 batch = await session.call_tool(
                     "tg_batch",
                     {
@@ -91,7 +91,7 @@ def test_batch_preserves_direct_results_and_partial_errors_over_stdio(tmp_path: 
                         ],
                     },
                 )
-                assert not batch.isError
+                assert not batch.is_error
                 payload = json.loads(batch.content[0].text)
                 good, bad = payload["results"]
                 assert good == {

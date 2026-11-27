@@ -50,7 +50,7 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
     from tensor_grep.cli import mcp_server
 
     mcp_server._apply_mcp_server_metadata(mcp_server.mcp)
-    options = mcp_server.mcp._mcp_server.create_initialization_options()
+    options = mcp_server.mcp._lowlevel_server.create_initialization_options()
 
     assert options.server_name == "tensor-grep"
     assert (

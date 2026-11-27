@@ -301,26 +301,23 @@ def test_cli_stats_prints_summary_when_no_matches(monkeypatch):
     assert "[stats] backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
 
 
-def test_scan_executes_rules_from_sgconfig(monkeypatch):
+def test_scan_executes_rules_from_sgconfig(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
@@ -349,21 +346,20 @@ def test_rulesets_json_lists_builtin_rule_packs():
     assert rulesets["auth-safe"]["rule_count"] >= 1
 
 
-def test_scan_executes_builtin_ruleset(monkeypatch):
+def test_scan_executes_builtin_ruleset(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "crypto-safe", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "crypto-safe", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert "Scanning project using built-in ruleset crypto-safe (python)" in result.output
@@ -433,30 +429,29 @@ def test_scan_ruleset_allows_depth_bounded_temp_root(monkeypatch, tmp_path: Path
     assert payload["total_matches"] >= 1
 
 
-def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
+def test_scan_builtin_ruleset_can_emit_json(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+        ],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -486,35 +481,34 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
-def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
+def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--include-evidence-snippets",
-                "--max-evidence-snippets-per-file",
-                "1",
-                "--max-evidence-snippet-chars",
-                "12",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--include-evidence-snippets",
+            "--max-evidence-snippets-per-file",
+            "1",
+            "--max-evidence-snippet-chars",
+            "12",
+        ],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -951,60 +945,59 @@ def test_scan_wrapper_runtime_errors_do_not_show_traceback(monkeypatch, tmp_path
     assert "Traceback" not in result.output
 
 
-def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
+def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        Path("old-baseline.json").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "kind": "ruleset-scan-baseline",
-                    "ruleset": "crypto-safe",
-                    "language": "python",
-                    "fingerprints": [
-                        hashlib.sha256(
-                            json.dumps(
-                                {
-                                    "rule_id": "python-hashlib-md5",
-                                    "language": "python",
-                                    "files": ["a.py"],
-                                },
-                                sort_keys=True,
-                            ).encode("utf-8")
-                        ).hexdigest(),
-                        "resolved-fingerprint",
-                    ],
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("old-baseline.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "kind": "ruleset-scan-baseline",
+                "ruleset": "crypto-safe",
+                "language": "python",
+                "fingerprints": [
+                    hashlib.sha256(
+                        json.dumps(
+                            {
+                                "rule_id": "python-hashlib-md5",
+                                "language": "python",
+                                "files": ["a.py"],
+                            },
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    "resolved-fingerprint",
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--baseline",
-                "old-baseline.json",
-                "--write-baseline",
-                "new-baseline.json",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--baseline",
+            "old-baseline.json",
+            "--write-baseline",
+            "new-baseline.json",
+        ],
+    )
 
-        written = json.loads(Path("new-baseline.json").read_text(encoding="utf-8"))
+    written = json.loads(Path("new-baseline.json").read_text(encoding="utf-8"))
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -1019,48 +1012,47 @@ def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
     assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
 
 
-def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch):
+def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
-        fingerprint = hashlib.sha256(
-            json.dumps(
-                {
-                    "rule_id": "python-hashlib-md5",
-                    "language": "python",
-                    "files": ["a.py"],
-                },
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        Path("suppressions.json").write_text(
-            json.dumps(
-                {"version": 1, "kind": "ruleset-scan-suppressions", "fingerprints": [fingerprint]},
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "rule_id": "python-hashlib-md5",
+                "language": "python",
+                "files": ["a.py"],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    Path("suppressions.json").write_text(
+        json.dumps(
+            {"version": 1, "kind": "ruleset-scan-suppressions", "fingerprints": [fingerprint]},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--suppressions",
-                "suppressions.json",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--suppressions",
+            "suppressions.json",
+        ],
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -1069,35 +1061,34 @@ def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch):
     assert payload["suppressions"]["suppressed_findings"] == 1
 
 
-def test_scan_builtin_ruleset_can_write_suppressions(monkeypatch):
+def test_scan_builtin_ruleset_can_write_suppressions(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--write-suppressions",
-                "written-suppressions.json",
-                "--justification",
-                "Approved suppression for fixture coverage.",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--write-suppressions",
+            "written-suppressions.json",
+            "--justification",
+            "Approved suppression for fixture coverage.",
+        ],
+    )
 
-        written = json.loads(Path("written-suppressions.json").read_text(encoding="utf-8"))
+    written = json.loads(Path("written-suppressions.json").read_text(encoding="utf-8"))
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -1108,51 +1099,51 @@ def test_scan_builtin_ruleset_can_write_suppressions(monkeypatch):
     assert written["entries"][0]["created_at"].endswith("Z")
 
 
-def test_scan_builtin_ruleset_write_suppressions_requires_justification(monkeypatch):
+def test_scan_builtin_ruleset_write_suppressions_requires_justification(
+    monkeypatch, tmp_path: Path
+):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "crypto-safe",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--write-suppressions",
-                "written-suppressions.json",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "crypto-safe",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--write-suppressions",
+            "written-suppressions.json",
+        ],
+    )
 
     assert result.exit_code == 1
     assert "justification" in result.output
 
 
-def test_scan_executes_secrets_ruleset(monkeypatch):
+def test_scan_executes_secrets_ruleset(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert "Scanning project using built-in ruleset secrets-basic (python)" in result.output
@@ -1172,7 +1163,7 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
     assert "Scan completed. rules=8 matched_rules=1 total_matches=1" in result.output
 
 
-def test_scan_ruleset_respects_filter(monkeypatch):
+def test_scan_ruleset_respects_filter(monkeypatch, tmp_path: Path):
     # audit #22: --filter was applied only on the sgconfig project-scan path (and explicitly
     # rejected for --rule) -- silently ignored for --ruleset, so a --ruleset run always scanned
     # every rule in the pack regardless of --filter.
@@ -1180,25 +1171,24 @@ def test_scan_ruleset_respects_filter(monkeypatch):
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
+    Path("a.py").write_text('password = "$SECRET"\n', encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "secrets-basic",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--filter",
-                "password",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "secrets-basic",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--filter",
+            "password",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert "[scan] rule=python-hardcoded-password" in result.output
@@ -1206,7 +1196,7 @@ def test_scan_ruleset_respects_filter(monkeypatch):
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
-def test_scan_inline_rules_respects_filter(monkeypatch):
+def test_scan_inline_rules_respects_filter(monkeypatch, tmp_path: Path):
     # audit #22: same uniform application as --ruleset, for --inline-rules.
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -1221,25 +1211,24 @@ def test_scan_inline_rules_respects_filter(monkeypatch):
     )
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        # `_FakeAstBackend.search` (via the patched Pipeline) matches on literal substring, so the
-        # fixture content matches the rule pattern text exactly.
-        Path("a.py").write_text("print($A)\n", encoding="utf-8")
+    # `_FakeAstBackend.search` (via the patched Pipeline) matches on literal substring, so the
+    # fixture content matches the rule pattern text exactly.
+    Path("a.py").write_text("print($A)\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            [
-                "scan",
-                "--inline-rules",
-                inline_rules,
-                "--path",
-                ".",
-                "--filter",
-                "no-print",
-            ],
-        )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--inline-rules",
+            inline_rules,
+            "--path",
+            ".",
+            "--filter",
+            "no-print",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     assert "[scan] rule=no-print" in result.output
@@ -1247,21 +1236,20 @@ def test_scan_inline_rules_respects_filter(monkeypatch):
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
-def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
+def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text('API_KEY = "$SECRET"\n', encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text('API_KEY = "$SECRET"\n', encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1270,20 +1258,19 @@ def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
     )
 
 
-def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch):
+def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.js").write_text('const apiKey = "$SECRET"\n', encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.js").write_text('const apiKey = "$SECRET"\n', encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "javascript", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "javascript", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1292,25 +1279,22 @@ def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch):
     )
 
 
-def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch):
+def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text(
-            'stripe_secret = "' + "sk_live_" + '1234567890abcdef"\n', encoding="utf-8"
-        )
-        Path("b.py").write_text(
-            "# leaked token " + "sk_live_" + "abcdef1234567890\n", encoding="utf-8"
-        )
+    Path("a.py").write_text(
+        'stripe_secret = "' + "sk_live_" + '1234567890abcdef"\n', encoding="utf-8"
+    )
+    Path("b.py").write_text("# leaked token " + "sk_live_" + "abcdef1234567890\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1318,23 +1302,22 @@ def test_scan_executes_secrets_ruleset_generic_provider_token_regex(monkeypatch)
     )
 
 
-def test_scan_executes_secrets_ruleset_prefixed_api_key_regex(monkeypatch):
+def test_scan_executes_secrets_ruleset_prefixed_api_key_regex(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text(
-            'OPENAI_API_KEY = "fake_test_key_123456"\nHEADER_NAME = "not-a-secret-value"\n',
-            encoding="utf-8",
-        )
+    Path("a.py").write_text(
+        'OPENAI_API_KEY = "fake_test_key_123456"\nHEADER_NAME = "not-a-secret-value"\n',
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1343,20 +1326,19 @@ def test_scan_executes_secrets_ruleset_prefixed_api_key_regex(monkeypatch):
     assert "HEADER_NAME" not in result.output
 
 
-def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch):
+def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text('fake_api_key = "fake_test_key_123456"\n', encoding="utf-8")
+    Path("a.py").write_text('fake_api_key = "fake_test_key_123456"\n', encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1385,16 +1367,16 @@ def test_scan_executes_secrets_ruleset_fake_api_key_snake_case(monkeypatch):
 )
 @pytest.mark.parametrize("trailing_newline", [False, True])
 def test_scan_secrets_basic_detects_aws_credentials(
-    monkeypatch, content: str, expected_rule_id: str, trailing_newline: bool
+    monkeypatch, content: str, expected_rule_id: str, trailing_newline: bool, tmp_path: Path
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
-    with CliRunner().isolated_filesystem():
-        Path("a.py").write_text(content + ("\n" if trailing_newline else ""), encoding="utf-8")
-        result = CliRunner().invoke(
-            app,
-            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", ".", "--json"],
-        )
+    monkeypatch.chdir(tmp_path)
+    Path("a.py").write_text(content + ("\n" if trailing_newline else ""), encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", ".", "--json"],
+    )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
@@ -1413,37 +1395,37 @@ def test_scan_secrets_basic_detects_aws_credentials(
 )
 @pytest.mark.parametrize("trailing_newline", [False, True])
 def test_scan_secrets_basic_does_not_flag_non_credentials(
-    monkeypatch, content: str, trailing_newline: bool
+    monkeypatch, content: str, trailing_newline: bool, tmp_path: Path
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
-    with CliRunner().isolated_filesystem():
-        negative_content = content + ("\n" if trailing_newline else "")
-        positive_line = len(negative_content.splitlines()) + 1
-        Path("a.py").write_text(
-            negative_content
-            + ("" if negative_content.endswith("\n") else "\n")
-            + 'AWS_SECRET_ACCESS_KEY = "'
-            + "A" * 40
-            + '"\n',
-            encoding="utf-8",
-        )
-        Path("suppressions.json").write_text('{"entries": []}', encoding="utf-8")
-        result = CliRunner().invoke(
-            app,
-            [
-                "scan",
-                "--ruleset",
-                "secrets-basic",
-                "--language",
-                "python",
-                "--path",
-                ".",
-                "--json",
-                "--suppressions",
-                "suppressions.json",
-            ],
-        )
+    monkeypatch.chdir(tmp_path)
+    negative_content = content + ("\n" if trailing_newline else "")
+    positive_line = len(negative_content.splitlines()) + 1
+    Path("a.py").write_text(
+        negative_content
+        + ("" if negative_content.endswith("\n") else "\n")
+        + 'AWS_SECRET_ACCESS_KEY = "'
+        + "A" * 40
+        + '"\n',
+        encoding="utf-8",
+    )
+    Path("suppressions.json").write_text('{"entries": []}', encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        [
+            "scan",
+            "--ruleset",
+            "secrets-basic",
+            "--language",
+            "python",
+            "--path",
+            ".",
+            "--json",
+            "--suppressions",
+            "suppressions.json",
+        ],
+    )
 
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
@@ -1457,21 +1439,20 @@ def test_scan_secrets_basic_does_not_flag_non_credentials(
     assert_no_negative_secret_lines(payload, positive_line)
 
 
-def test_scan_executes_tls_ruleset(monkeypatch):
+def test_scan_executes_tls_ruleset(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("ssl._create_unverified_context()\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("ssl._create_unverified_context()\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert "Scanning project using built-in ruleset tls-safe (python)" in result.output
@@ -1486,21 +1467,20 @@ def test_scan_executes_tls_ruleset(monkeypatch):
     assert "Scan completed. rules=3 matched_rules=1 total_matches=1" in result.output
 
 
-def test_scan_executes_tls_ruleset_requests_post_pattern(monkeypatch):
+def test_scan_executes_tls_ruleset_requests_post_pattern(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("requests.post($URL, verify=False)\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("requests.post($URL, verify=False)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(
-            app,
-            ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
-        )
+    result = runner.invoke(
+        app,
+        ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
+    )
 
     assert result.exit_code == 0
     assert (
@@ -1509,7 +1489,7 @@ def test_scan_executes_tls_ruleset_requests_post_pattern(monkeypatch):
     )
 
 
-def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
+def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
@@ -1517,21 +1497,18 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
     _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "GPU-Accelerated GNNs" not in result.output
@@ -1540,7 +1517,7 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
     assert _FakeAstScanner.walk_calls == 1
 
 
-def test_scan_json_should_use_wrapper_project_fast_path(monkeypatch):
+def test_scan_json_should_use_wrapper_project_fast_path(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
@@ -1548,20 +1525,17 @@ def test_scan_json_should_use_wrapper_project_fast_path(monkeypatch):
     _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "--json"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "--json"])
 
     assert result.exit_code == 0
     assert AstGrepWrapperBackend.search_project_calls == 1
@@ -1569,45 +1543,41 @@ def test_scan_json_should_use_wrapper_project_fast_path(monkeypatch):
     assert _FakeAstScanner.walk_calls == 1
 
 
-def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
+def test_scan_should_count_files_from_count_only_ast_results(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeCountOnlyAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
 
 
-def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
+def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
     _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["run", "ERROR", "."])
+    result = runner.invoke(app, ["run", "ERROR", "."])
 
     assert result.exit_code == 0
     assert "Warning:" not in result.output
@@ -1615,37 +1585,35 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     assert _FakeAstScanner.walk_calls == 0
 
 
-def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
+def test_run_should_report_ast_wrapper_backend_mode(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["run", "ERROR", "."])
+    result = runner.invoke(app, ["run", "ERROR", "."])
 
     assert result.exit_code == 0
     assert "Executing ast-grep structural matching run..." in result.output
     assert "GPU-Accelerated AST-Grep Run" not in result.output
 
 
-def test_run_should_use_native_first_ast_policy(monkeypatch):
+def test_run_should_use_native_first_ast_policy(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     _CapturingAstPipeline.seen_configs = []
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["run", "ERROR", "."])
+    result = runner.invoke(app, ["run", "ERROR", "."])
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
@@ -1653,25 +1621,24 @@ def test_run_should_use_native_first_ast_policy(monkeypatch):
     assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
 
 
-def test_run_should_report_native_ast_backend_mode_without_gnns(monkeypatch):
+def test_run_should_report_native_ast_backend_mode_without_gnns(monkeypatch, tmp_path: Path):
     _patch_direct_native_execution(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["run", "ERROR", "."])
+    result = runner.invoke(app, ["run", "ERROR", "."])
 
     assert result.exit_code == 0
     assert "Executing native AST matching run..." in result.output
     assert "GPU-Accelerated GNNs" not in result.output
 
 
-def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
+def test_run_should_emit_rewrite_plan_without_apply(monkeypatch, tmp_path: Path):
     from tensor_grep.cli import ast_workflows
 
     seen: dict[str, str] = {}
@@ -1697,20 +1664,19 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("a.py").write_text("def add(x, y): return x + y\n", encoding="utf-8")
-        args = [
-            "run",
-            "--lang",
-            "python",
-            "--rewrite",
-            "lambda $$$ARGS: $EXPR",
-            "def $F($$$ARGS): return $EXPR",
-            "a.py",
-        ]
-        result = runner.invoke(app, args)
+    Path("a.py").write_text("def add(x, y): return x + y\n", encoding="utf-8")
+    args = [
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "def $F($$$ARGS): return $EXPR",
+        "a.py",
+    ]
+    result = runner.invoke(app, args)
 
     assert result.exit_code == 0
     assert "--- a/a.py" in result.output and "-def add(x, y): return x + y" in result.output
@@ -1737,159 +1703,156 @@ def test_ast_rust_language_support_matrix(monkeypatch):
     assert backend_wrapper == "AstGrepWrapperBackend"
 
 
-def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
+def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
 
 
-def test_test_command_should_report_native_ast_backend_mode_without_gnns(monkeypatch):
+def test_test_command_should_report_native_ast_backend_mode_without_gnns(
+    monkeypatch, tmp_path: Path
+):
     _patch_direct_native_execution(monkeypatch)
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "Testing AST rules using native AST matching" in result.output
     assert "GPU-Accelerated GNNs" not in result.output
 
 
-def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch):
+def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch, tmp_path: Path):
     _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\n  - all good\ninvalid:\n  - ERROR in file\n  - another ERROR\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "id: error-test\nruleId: error-rule\nvalid:\n  - ok\n  - all good\ninvalid:\n  - ERROR in file\n  - another ERROR\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "All tests passed. cases=4" in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
 
 
-def test_test_command_should_batch_wrapper_backend_across_cases_for_same_rule(monkeypatch):
+def test_test_command_should_batch_wrapper_backend_across_cases_for_same_rule(
+    monkeypatch, tmp_path: Path
+):
     _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "tests:\n"
-            "  - id: error-test-1\n"
-            "    ruleId: error-rule\n"
-            "    valid:\n"
-            "      - ok\n"
-            "    invalid:\n"
-            "      - ERROR in file\n"
-            "  - id: error-test-2\n"
-            "    ruleId: error-rule\n"
-            "    valid:\n"
-            "      - still ok\n"
-            "    invalid:\n"
-            "      - another ERROR\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "tests:\n"
+        "  - id: error-test-1\n"
+        "    ruleId: error-rule\n"
+        "    valid:\n"
+        "      - ok\n"
+        "    invalid:\n"
+        "      - ERROR in file\n"
+        "  - id: error-test-2\n"
+        "    ruleId: error-rule\n"
+        "    valid:\n"
+        "      - still ok\n"
+        "    invalid:\n"
+        "      - another ERROR\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert "All tests passed. cases=4" in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
 
 
-def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
+def test_scan_should_prefer_native_ast_backend_policy(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     _CapturingAstPipeline.seen_configs = []
     _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
@@ -1897,31 +1860,30 @@ def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
     assert any(cfg and cfg.query_pattern == "ERROR" for cfg in _CapturingAstPipeline.seen_configs)
 
 
-def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
+def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch, tmp_path: Path):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     _CapturingAstPipeline.seen_configs = []
     _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/error.yml").write_text(
-            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
-            encoding="utf-8",
-        )
-        Path("tests/error.yml").write_text(
-            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/error.yml").write_text(
+        "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+        encoding="utf-8",
+    )
+    Path("tests/error.yml").write_text(
+        "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
@@ -1929,72 +1891,70 @@ def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
     assert any(cfg and cfg.query_pattern == "ERROR" for cfg in _CapturingAstPipeline.seen_configs)
 
 
-def test_scan_should_reuse_native_ast_backend_selection_for_multiple_native_patterns(monkeypatch):
+def test_scan_should_reuse_native_ast_backend_selection_for_multiple_native_patterns(
+    monkeypatch, tmp_path: Path
+):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     _CapturingAstPipeline.seen_configs = []
     _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
-        )
-        Path("rules").mkdir()
-        Path("rules/rule_a.yml").write_text(
-            "id: rule-a\nlanguage: python\nrule:\n  pattern: function_definition\n",
-            encoding="utf-8",
-        )
-        Path("rules/rule_b.yml").write_text(
-            "id: rule-b\nlanguage: python\nrule:\n  pattern: class_definition\n",
-            encoding="utf-8",
-        )
-        Path("a.py").write_text("function_definition\nclass_definition\n", encoding="utf-8")
-        Path("b.py").write_text("ok\n", encoding="utf-8")
+    Path("sgconfig.yml").write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+    Path("rules").mkdir()
+    Path("rules/rule_a.yml").write_text(
+        "id: rule-a\nlanguage: python\nrule:\n  pattern: function_definition\n",
+        encoding="utf-8",
+    )
+    Path("rules/rule_b.yml").write_text(
+        "id: rule-b\nlanguage: python\nrule:\n  pattern: class_definition\n",
+        encoding="utf-8",
+    )
+    Path("a.py").write_text("function_definition\nclass_definition\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
 
-        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.init_count == 1
 
 
 def test_test_command_should_reuse_wrapper_backend_selection_for_multiple_ast_grep_patterns(
-    monkeypatch,
+    monkeypatch, tmp_path: Path
 ):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     _CapturingAstPipeline.seen_configs = []
     _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
-    with runner.isolated_filesystem():
-        from pathlib import Path
+    monkeypatch.chdir(tmp_path)
 
-        Path("sgconfig.yml").write_text(
-            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
-            encoding="utf-8",
-        )
-        Path("rules").mkdir()
-        Path("tests").mkdir()
-        Path("rules/a.yml").write_text(
-            "id: rule-a\nlanguage: python\nrule:\n  pattern: 'def $FUNC():'\n",
-            encoding="utf-8",
-        )
-        Path("rules/b.yml").write_text(
-            "id: rule-b\nlanguage: python\nrule:\n  pattern: 'class $NAME:'\n",
-            encoding="utf-8",
-        )
-        Path("tests/a.yml").write_text(
-            "id: test-a\nruleId: rule-a\nvalid:\n  - ok\ninvalid:\n  - 'def $FUNC():'\n",
-            encoding="utf-8",
-        )
-        Path("tests/b.yml").write_text(
-            "id: test-b\nruleId: rule-b\nvalid:\n  - ok\ninvalid:\n  - 'class $NAME:'\n",
-            encoding="utf-8",
-        )
+    Path("sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    Path("rules").mkdir()
+    Path("tests").mkdir()
+    Path("rules/a.yml").write_text(
+        "id: rule-a\nlanguage: python\nrule:\n  pattern: 'def $FUNC():'\n",
+        encoding="utf-8",
+    )
+    Path("rules/b.yml").write_text(
+        "id: rule-b\nlanguage: python\nrule:\n  pattern: 'class $NAME:'\n",
+        encoding="utf-8",
+    )
+    Path("tests/a.yml").write_text(
+        "id: test-a\nruleId: rule-a\nvalid:\n  - ok\ninvalid:\n  - 'def $FUNC():'\n",
+        encoding="utf-8",
+    )
+    Path("tests/b.yml").write_text(
+        "id: test-b\nruleId: rule-b\nvalid:\n  - ok\ninvalid:\n  - 'class $NAME:'\n",
+        encoding="utf-8",
+    )
 
-        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+    result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.init_count == 1

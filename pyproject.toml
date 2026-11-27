@@ -198,33 +198,16 @@ description = "Fast local code search, symbol navigation, and token-budgeted AI 
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # Upper bound: typer 0.26 dropped click.testing.CliRunner inheritance, removing
-    # CliRunner.isolated_filesystem() that the CLI test suite relies on (49 usages). typer 0.25
-    # KEEPS that API (verified: full CLI suite green on 0.25.1) AND — unlike the older <0.25 pin —
-    # resolves on Python 3.14; pinning <0.25 forced py3.14 `pip`/`uv tool` installs to silently
-    # resolve DOWN to the stale 1.13.35 (the typer<0.25 range has no py3.14-compatible click). Allow
-    # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
-    "typer>=0.12,<0.26",
+    # Allow typer>=0.26 now that the CLI test suite uses tmp_path + monkeypatch.chdir
+    # instead of CliRunner.isolated_filesystem().
+    "typer>=0.12",
     "rich>=13.0",
     # GHSA-6q48-6c7w-9gw2: publish the patched CA bundle floor to core installers.
     "certifi>=2026.10.19",
-    # >=1.30.0: CVE-2026-59951 is fixed in this maintained 1.x release. Publish the floor
-    # here as well as updating uv.lock so fresh customer installs receive the security fix.
-    #
-    # <2: mcp 2.0.0 REMOVED `mcp.server.fastmcp`, which `cli/mcp_server.py:20` imports at module
-    # scope. Because `tg run --rewrite` lazily imports `mcp_server` (ast_workflows.py:64 ->
-    # execute_rewrite_plan_json), a fresh `pip install tensor-grep` resolving 2.x makes the rewrite
-    # path die with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` -- a USER-FACING
-    # break, not just a CI one. It went unnoticed for two releases because every in-repo consumer
-    # installs from uv.lock (pinned 1.28.1); the ONLY component that resolves fresh is the PyPI
-    # smoke venv, which is exactly what caught it (release runs 30363114542, 30375308409 -- both
-    # blocked `publish-pypi`, so v1.101.10 and v1.101.11 tagged without publishing).
-    #
-    # A cap, not a port, deliberately: the cap restores publishing today, and migrating to the 2.x
-    # API is a real change that deserves its own PR and its own tests. Lifting this cap REQUIRES
-    # porting `cli/mcp_server.py` off `mcp.server.fastmcp` first -- see the guard in
-    # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
-    "mcp>=1.30.0,<2",
+    # >=2.0.0: mcp 2.x removed `mcp.server.fastmcp`; cli/mcp/ and cli/mcp_server.py are
+    # ported to `mcp.server.mcpserver` (`MCPServer`), while preserving all 1.x CVE floors
+    # (CVE-2026-52870, CVE-2026-59951). See tests/unit/test_mcp_dependency_is_upper_bounded.py.
+    "mcp>=2.0.0",
     "pathspec>=1.0.4",
     "packaging>=24.1",
     "pyyaml>=6.0",
