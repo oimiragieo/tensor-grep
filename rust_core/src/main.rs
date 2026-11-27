@@ -10,6 +10,7 @@ mod native_multi_pattern;
 mod validation_rollback;
 mod version_info;
 use native_multi_pattern::collect_native_multi_pattern_matches;
+use tensor_grep_rs::rg_passthrough::generated_scan_dir_names;
 use validation_rollback::{
     collect_validation_rollback_snapshots, emit_rollback_status,
     restore_validation_rollback_snapshots, retained_validation_targets, ValidationRollbackSummary,
@@ -1475,12 +1476,19 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
         return Ok(None);
     }
     refuse_structured_pcre2(rg_args.pcre2, rg_args.json, false, explicit_rg_format);
-    if ripgrep_args_need_broad_generated_guard(&rg_args) {
-        let generated_dirs = generated_scan_dir_names(&rg_args.paths, rg_args.files);
-        if !generated_dirs.is_empty() {
-            eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
-            return Ok(Some(2));
-        }
+    let generated_dirs = if ripgrep_args_need_broad_generated_guard(&rg_args) {
+        generated_scan_dir_names(&rg_args.paths, rg_args.files)
+    } else if rg_args.max_depth.is_none()
+        && rg_args.globs.is_empty()
+        && rg_args.file_types.is_empty()
+    {
+        generated_scan_dir_names(&rg_args.paths, false)
+    } else {
+        Vec::new()
+    };
+    if !generated_dirs.is_empty() {
+        eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
+        return Ok(Some(2));
     }
 
     let exit_code = match execute_ripgrep_search(&rg_args) {
@@ -9554,7 +9562,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         require_ripgrep_or_exit(rg_available, "--pcre2");
     }
 
-    if search_args_need_broad_generated_guard(&args) {
+    if search_args_need_broad_generated_guard(&args)
+        || !search_args_have_generated_scan_bound(&args)
+    {
         let generated_dirs = generated_scan_dir_names(&request.paths, false);
         if !generated_dirs.is_empty() {
             eprintln!("{}", format_broad_generated_scan_error(&generated_dirs));
@@ -12402,7 +12412,11 @@ fn handle_ast_rewrite(
         return Ok(());
     }
 
-    if args.diff {
+    if !args.apply && !args.diff && args.json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
+    if args.diff || !args.apply {
         let diff = plan.generate_diff()?;
         if args.json {
             let payload = RewriteDiffJson {
@@ -12417,11 +12431,6 @@ fn handle_ast_rewrite(
         } else {
             print!("{diff}");
         }
-        return Ok(());
-    }
-
-    if !args.apply {
-        println!("{}", serde_json::to_string_pretty(&plan)?);
         return Ok(());
     }
 
@@ -13955,7 +13964,9 @@ fn handle_classify_command(args: ClassifyArgs) -> anyhow::Result<()> {
         eprintln!("Error: tg classify --json cannot be combined with --format");
         std::process::exit(2);
     }
-    let format = args.format.unwrap_or_else(|| "json".to_string());
+    let format = args
+        .format
+        .unwrap_or_else(|| if args.json { "json" } else { "text" }.to_string());
     let sidecar_args = vec![
         "--format".to_string(),
         format,

@@ -277,6 +277,69 @@ pub struct RipgrepSearchArgs {
 // implicit-path search on a huge root) too.
 pub const IMPLICIT_SEARCH_WALK_FILE_CEILING: usize = 1500;
 
+const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
+    "__pycache__",
+    ".claude",
+    ".cache",
+    ".cargo",
+    ".git",
+    ".gradle",
+    ".mypy_cache",
+    ".npm",
+    ".nuget",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".rustup",
+    ".tox",
+    ".venv",
+    "appdata",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+];
+
+pub fn generated_scan_dir_names(paths: &[String], include_child_dirs: bool) -> Vec<String> {
+    let mut found = std::collections::BTreeSet::new();
+    for raw_path in paths {
+        if raw_path.is_empty() || raw_path == "-" || raw_path.starts_with('-') {
+            continue;
+        }
+        let path = Path::new(raw_path);
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if BROAD_GENERATED_SCAN_DIR_NAMES
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(name))
+            {
+                found.insert(name.to_string());
+            }
+        }
+        if !include_child_dirs {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if BROAD_GENERATED_SCAN_DIR_NAMES
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case(&name))
+                    {
+                        found.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
 /// Bounded WALK probe: walks `paths` honoring the SAME max-depth / no-ignore / hidden traversal
 /// settings the real search would use, counting every FILE the walker VISITS (NOT filtered by
 /// the search glob -- a file glob does not prune the walk, so walk cost is glob-independent),
@@ -672,6 +735,18 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.vimgrep {
         command.arg("--vimgrep");
+    }
+    {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal()
+            && !args.json
+            && !args.files
+            && !args.count
+            && !args.count_matches
+            && !args.vimgrep
+        {
+            command.arg("--max-columns").arg("300");
+        }
     }
     if args.passthru {
         command.arg("--passthru");

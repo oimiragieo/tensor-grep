@@ -1689,7 +1689,10 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
             "lang": lang,
             "path": path,
         })
-        return '{"total_edits": 1, "edits": []}', 0
+        return (
+            '{"total_edits": 1, "edits": [{"file": "a.py", "line": 1, "original_text": "def add(x, y): return x + y", "replacement_text": "lambda x, y: x + y"}]}',
+            0,
+        )
 
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)
 
@@ -1698,22 +1701,20 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
         from pathlib import Path
 
         Path("a.py").write_text("def add(x, y): return x + y\n", encoding="utf-8")
-        result = runner.invoke(
-            app,
-            [
-                "run",
-                "--lang",
-                "python",
-                "--rewrite",
-                "lambda $$$ARGS: $EXPR",
-                "def $F($$$ARGS): return $EXPR",
-                "a.py",
-            ],
-        )
+        args = [
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "def $F($$$ARGS): return $EXPR",
+            "a.py",
+        ]
+        result = runner.invoke(app, args)
 
     assert result.exit_code == 0
-    assert '"total_edits": 1' in result.output
-    assert "Executing " not in result.output
+    assert "--- a/a.py" in result.output and "-def add(x, y): return x + y" in result.output
+    assert "+lambda x, y: x + y" in result.output and "Executing " not in result.output
     assert seen == {
         "pattern": "def $F($$$ARGS): return $EXPR",
         "replacement": "lambda $$$ARGS: $EXPR",

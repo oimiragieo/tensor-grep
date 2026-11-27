@@ -792,30 +792,6 @@ def _path_has_project_marker(path: Path) -> bool:
     return path_has_project_marker(path)
 
 
-def _search_paths_include_generated_root(paths: list[str]) -> bool:
-    for raw_path in paths:
-        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
-            continue
-        path = Path(raw_path)
-        try:
-            if not path.is_dir():
-                continue
-            try:
-                resolved = path.resolve()
-            except OSError:
-                resolved = path
-            if path.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
-                return True
-            if resolved.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
-                return True
-            for child in path.iterdir():
-                if child.is_dir() and child.name.lower() in _BROAD_GENERATED_SCAN_DIR_NAMES:
-                    return True
-        except OSError:
-            continue
-    return False
-
-
 def _search_paths_include_workspace_root(paths: list[str]) -> bool:
     from tensor_grep.io.scan_limits import (
         BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD,
@@ -962,7 +938,11 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
 
 
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
-    from tensor_grep.cli.bootstrap_search_guards import effective_rg_follow
+    from tensor_grep.cli.bootstrap_search_guards import (
+        effective_rg_follow,
+        search_paths_directly_target_generated_root,
+        search_paths_include_generated_root,
+    )
 
     if _flag_present(search_args, {"--allow-broad-generated-scan"}):  # (P) not as a pattern/value
         return False
@@ -976,9 +956,11 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
         return True
     if paths_defaulted and _search_paths_include_oversized_implicit_root(paths, search_args):
         return True
+    if search_paths_directly_target_generated_root(paths, _BROAD_GENERATED_SCAN_DIR_NAMES):
+        return True
     return _search_args_request_unrestricted_generated_scan(
         search_args
-    ) and _search_paths_include_generated_root(paths)
+    ) and search_paths_include_generated_root(paths, _BROAD_GENERATED_SCAN_DIR_NAMES)
 
 
 def _regex_patterns_from_search_args(search_args: list[str]) -> list[str]:

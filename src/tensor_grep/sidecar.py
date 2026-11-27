@@ -298,8 +298,9 @@ def _classify_payload(args: Sequence[str], payload: dict[str, Any] | None) -> tu
             0,
         )
 
-    rendered = "".join(f"{item['label']} ({item['confidence']:.2f})\n" for item in results)
-    return rendered, "", 0
+    from tensor_grep.cli.formatters.human_fmt import format_classify_human
+
+    return format_classify_human(results, budgeted_lines, line_budget) + "\n", "", 0
 
 
 def _dispatch_cli(command: str, args: list[str]) -> tuple[str, str, int]:

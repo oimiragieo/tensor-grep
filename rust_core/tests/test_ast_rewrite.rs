@@ -297,41 +297,6 @@ fn test_apply_rewrites_rejects_stale_file_without_writing_other_files() {
 }
 
 #[test]
-fn test_tg_run_rewrite_dry_run_emits_json_plan() {
-    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
-        .arg("run")
-        .arg("--lang")
-        .arg("python")
-        .arg("--rewrite")
-        .arg("lambda $$$ARGS: $EXPR")
-        .arg("def $F($$$ARGS): return $EXPR")
-        .arg(&file_path)
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(plan["edits"][0]["replacement_text"], "lambda x, y: x + y");
-    assert_eq!(
-        plan["edits"][0]["original_text"],
-        "def add(x, y): return x + y"
-    );
-
-    let content = fs::read_to_string(&file_path).unwrap();
-    assert!(
-        content.contains("def add"),
-        "dry-run should not modify file"
-    );
-}
-
-#[test]
 fn test_tg_run_rewrite_apply_modifies_file() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 
@@ -365,12 +330,14 @@ fn test_tg_run_rewrite_no_matches_reports_nothing() {
     let (_dir, file_path) = write_source_file("py", "x = 1\n");
 
     let output = Command::new(env!("CARGO_BIN_EXE_tg"))
-        .arg("run")
-        .arg("--lang")
-        .arg("python")
-        .arg("--rewrite")
-        .arg("lambda $$$ARGS: $EXPR")
-        .arg("def $F($$$ARGS): return $EXPR")
+        .args([
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "def $F($$$ARGS): return $EXPR",
+        ])
         .arg(&file_path)
         .output()
         .unwrap();
@@ -449,12 +416,15 @@ fn test_rewrite_plan_json_contract_fields() {
     let (_dir, file_path) = write_source_file("py", source);
 
     let output = Command::new(env!("CARGO_BIN_EXE_tg"))
-        .arg("run")
-        .arg("--lang")
-        .arg("python")
-        .arg("--rewrite")
-        .arg("lambda $$$ARGS: $EXPR")
-        .arg("def $F($$$ARGS): return $EXPR")
+        .args([
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+        ])
         .arg(&file_path)
         .output()
         .unwrap();
@@ -919,12 +889,15 @@ fn test_tg_run_rewrite_skips_large_files_with_warning_and_processes_other_files(
     create_sparse_file(&large_path, 100_u64 * 1024 * 1024 + 1);
 
     let output = Command::new(env!("CARGO_BIN_EXE_tg"))
-        .arg("run")
-        .arg("--lang")
-        .arg("python")
-        .arg("--rewrite")
-        .arg("lambda $$$ARGS: $EXPR")
-        .arg("def $F($$$ARGS): return $EXPR")
+        .args([
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+        ])
         .arg(dir.path())
         .output()
         .unwrap();
