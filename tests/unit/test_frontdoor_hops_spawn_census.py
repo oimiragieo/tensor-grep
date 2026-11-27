@@ -215,10 +215,10 @@ def test_census_is_not_vacuous() -> None:
     native_stamped = {(r["module"], r["func"]) for r in rows if r["native"] and r["stamped"]}
     # Positive controls: the sites this PR fixed MUST be seen as native-capable AND stamped.
     for expected in (
-        ("cli/main.py", "_delegate_to_native_tg_search"),
-        ("cli/main.py", "_run_rg_compatible_info_action"),
-        ("cli/main.py", "calibrate"),
-        ("cli/main.py", "worker"),
+        ("cli/routers/search_helpers.py", "_delegate_to_native_tg_search"),
+        ("cli/routers/search_helpers.py", "_run_rg_compatible_info_action"),
+        ("cli/routers/ops.py", "calibrate"),
+        ("cli/routers/ops.py", "worker"),
         ("cli/main.py", "main_entry"),
         ("cli/runtime_paths.py", "_native_tg_version"),
         ("cli/doctor_report.py", "_doctor_rust_binary_version"),

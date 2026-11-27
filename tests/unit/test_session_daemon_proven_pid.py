@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import os
+import socketserver
 import subprocess
 import sys
 import threading
@@ -28,7 +29,7 @@ from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 _DAEMON_REQUEST_FUNCTION = sd._daemon_request
-_DAEMON_REQUEST_CALL_LINES = {537: "connect", 542: "send", 544: "read"}
+_DAEMON_REQUEST_CALL_LINES = {641: "connect", 646: "send", 648: "read"}
 
 
 def _request_failure_stage(error: BaseException, request_function: Callable[..., Any]) -> str:
@@ -148,7 +149,7 @@ class _FirstCreationGate:
                 raise AssertionError("creation gate expired")
         if (
             event == "return"
-            and frame.f_code is sd.socketserver.ThreadingMixIn.process_request_thread.__code__
+            and frame.f_code is socketserver.ThreadingMixIn.process_request_thread.__code__
         ):
             self.finished.set()
         return self.trace

@@ -459,9 +459,11 @@ def test_typer_app_commands_match_source_of_truth() -> None:
 
 
 def test_rust_core_uses_source_of_truth() -> None:
-    rust_main = Path(__file__).resolve().parents[2] / "rust_core" / "src" / "main.rs"
-    content = rust_main.read_text(encoding="utf-8")
-    assert 'include_str!("../../src/tensor_grep/cli/commands.py")' in content, (
+    rust_dispatch = (
+        Path(__file__).resolve().parents[2] / "rust_core" / "src" / "cli_app" / "dispatch.rs"
+    )
+    content = rust_dispatch.read_text(encoding="utf-8")
+    assert 'include_str!("../../../src/tensor_grep/cli/commands.py")' in content, (
         "Rust core must include commands.py as source of truth"
     )
 

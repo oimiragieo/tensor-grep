@@ -29,7 +29,7 @@ _ALLOWED = {
     # routing predicate "does the native count lack an input for this flag" -- not a case decision
     ("core/pipeline.py", "_count_needs_rg_semantics"),
     # re-emits the user's own -i / -s argv for the native binary (which resolves precedence)
-    ("cli/main.py", "_build_native_tg_search_command"),
+    ("cli/routers/search_helpers.py", "_build_native_tg_search_command"),
     # forwards the raw smart_case bool to the rg passthrough as-is
     ("backends/rust_backend.py", "search"),
 }

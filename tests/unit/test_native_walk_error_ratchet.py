@@ -43,7 +43,7 @@ _DISCARD_PATTERN = re.compile(r"\.filter_map\(\s*(?:\|e\|\s*e\.ok\(\)|Result::ok
 #
 # file name -> number of error-discarding walks currently present.
 KNOWN_DISCARD_SITES: dict[str, int] = {
-    "backend_ast_workflow.rs": 3,
+    "backend_ast_workflow/orchestrator.rs": 3,
     # 6 -> 4: this PR's `replace_in_place` hardening removed two error-discarding walks in
     # directory mode (the `WalkDir::new(...).filter_map(|e| e.ok())` plus the `let _ = ...`
     # per-child replace), so walk failures and per-child write failures now propagate as
@@ -66,10 +66,10 @@ KNOWN_DISCARD_SITES: dict[str, int] = {
 def _census() -> dict[str, int]:
     """Count error-discarding walk sites per Rust source file."""
     found: dict[str, int] = {}
-    for path in sorted(RUST_SRC.glob("*.rs")):
+    for path in sorted(RUST_SRC.rglob("*.rs")):
         hits = len(_DISCARD_PATTERN.findall(path.read_text(encoding="utf-8", errors="replace")))
         if hits:
-            found[path.name] = hits
+            found[path.relative_to(RUST_SRC).as_posix()] = hits
     return found
 
 

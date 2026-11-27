@@ -127,12 +127,17 @@ def test_install_dense_registered_in_all_four_sites() -> None:
     # Site 4: rust_core/src/main.rs -- not a flat string array (a clap enum variant + a dispatch
     # match arm), so extract_members does not apply; direct text search instead (mirrors
     # test_cli_bootstrap.py::test_rust_core_uses_source_of_truth's raw-text-read pattern).
-    rust_main = (repo_root / "rust_core" / "src" / "main.rs").read_text(encoding="utf-8")
-    assert '#[command(name = "install-dense", disable_help_flag = true)]' in rust_main
-    assert "InstallDense {" in rust_main
+    rust_args = (repo_root / "rust_core" / "src" / "cli_app" / "args.rs").read_text(
+        encoding="utf-8"
+    )
+    rust_dispatch = (repo_root / "rust_core" / "src" / "cli_app" / "dispatch.rs").read_text(
+        encoding="utf-8"
+    )
+    assert '#[command(name = "install-dense", disable_help_flag = true)]' in rust_args
+    assert "InstallDense {" in rust_args
     assert (
         'Commands::InstallDense { args } => handle_python_passthrough("install-dense", args)'
-        in rust_main
+        in rust_dispatch
     )
 
 
@@ -445,7 +450,7 @@ def test_find_gate_b_degrade_message_names_install_dense_end_to_end(
         encoding="utf-8",
     )
 
-    result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json"])
+    result = CliRunner().invoke(app, ["find", "invoice", str(tmp_path), "--json", "--verbose"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)

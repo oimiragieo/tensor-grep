@@ -142,7 +142,10 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # unchanged. The docstring on `iter_top_level_vendored_dirs` documents this as an
     # intentional fail-open diagnostic probe (not a completeness-bearing result), matching the
     # already-accepted FALLBACK-ASSIGN/BROAD-SCAN-GUARDRAIL families above.
-    "main.py": 3,
+    # RELOCATION (Wave 8 modularization): main.py's 3 broad-scan-guardrail handlers moved into
+    # error_handling.py. Measured: main.py 3->0, error_handling.py 0->3, TOTAL unchanged.
+    "main.py": 0,
+    "error_handling.py": 3,
     "root_probe.py": 1,
     "doctor_report.py": 5,
     "windows_launcher.py": 4,

@@ -103,13 +103,20 @@ def test_repo_map_emits_the_flag_at_both_unified_cause_sites() -> None:
     # is the control: a glob that finds only the base file is a scan that did not run.
     from pathlib import Path as _Path
 
-    _paths = sorted(_Path(source).parent.glob("repo_map*.py"))
+    _paths = sorted([
+        *_Path(source).parent.glob("repo_map*.py"),
+        *(_Path(source).parent / "navigation").glob("*.py"),
+    ])
     assert len(_paths) > 1, f"census lost its subject: {[p.name for p in _paths]}"
     text = "\n".join(p.read_text(encoding="utf-8") for p in _paths)
 
     # One unified scan_limit block plus one output_limit block. Behavioral controls below
     # cover both input scopes and prevent a count-only edit from hiding a lost route.
-    assert text.count('"budget_remediable": budget_remediable(_cause)') == 1
+    assert (
+        text.count('"budget_remediable": _repo_map.budget_remediable(_cause)')
+        + text.count('"budget_remediable": budget_remediable(_cause)')
+        == 1
+    )
     assert text.count('"budget_remediable": budget_remediable("project-files")') == 1
     assert "from tensor_grep.cli.incompleteness import budget_remediable" in text
 
@@ -131,7 +138,10 @@ def test_repo_map_scan_limit_gates_on_capped_not_on_possibly_truncated() -> None
     # is the control: a glob that finds only the base file is a scan that did not run.
     from pathlib import Path as _Path
 
-    _paths = sorted(_Path(source).parent.glob("repo_map*.py"))
+    _paths = sorted([
+        *_Path(source).parent.glob("repo_map*.py"),
+        *(_Path(source).parent / "navigation").glob("*.py"),
+    ])
     assert len(_paths) > 1, f"census lost its subject: {[p.name for p in _paths]}"
     text = "\n".join(p.read_text(encoding="utf-8") for p in _paths)
 
@@ -142,7 +152,11 @@ def test_repo_map_scan_limit_gates_on_capped_not_on_possibly_truncated() -> None
     # CONTROL: never gated on the narrow flag.
     assert '{"budget_remediable": budget_remediable(_cause)} if _truncated' not in text
     # TREATMENT: gated on the broad one in the unified file/directory emitter.
-    assert text.count('{"budget_remediable": budget_remediable(_cause)} if _capped else {}') == 1
+    assert (
+        text.count('{"budget_remediable": _repo_map.budget_remediable(_cause)} if _capped else {}')
+        + text.count('{"budget_remediable": budget_remediable(_cause)} if _capped else {}')
+        == 1
+    )
 
 
 @pytest.mark.parametrize("file_scope", [False, True], ids=["directory", "file"])

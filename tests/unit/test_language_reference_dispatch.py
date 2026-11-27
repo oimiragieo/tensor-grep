@@ -130,7 +130,9 @@ def test_the_seam_contains_no_string_comparison_at_all() -> None:
     suffix, by anything spellable as a string -- trips it. The legitimate registry lookup compares
     only against ``None``, which is an ``ast.Constant`` of NoneType and therefore untouched.
     """
-    source = Path(repo_map.__file__).read_text(encoding="utf-8")
+    from tensor_grep.cli.navigation import parsers_registry
+
+    source = Path(parsers_registry.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
     fns = [
         n

@@ -25,9 +25,15 @@ EXTRACTORS = {
 DISPOSITIONS: dict[tuple[str, str], str] = {
     # build_repo_map and friends: the universe gaps are computed from the same files
     # (_language_coverage_gaps_for_universe -> source_coverage_gaps).
-    ("cli/repo_map.py", "_imports_and_symbols_for_path"): "wired: universe gaps (same files)",
-    ("cli/repo_map.py", "build_repo_map"): "wired: universe gaps (same files)",
-    ("cli/repo_map.py", "build_file_imports"): "wired: attach_target_gaps",
+    ("cli/navigation/parsers_registry.py", "_imports_and_symbols_for_path"): (
+        "wired: universe gaps (same files)"
+    ),
+    ("cli/navigation/symbol_graph.py", "build_repo_map"): "wired: universe gaps (same files)",
+    ("cli/navigation/imports.py", "build_file_imports"): "wired: attach_target_gaps",
+    ("cli/prepare_larger.py", "_expand_larger_ego_files"): (
+        "incremental LARGER ego-subgraph hydration in tg prepare; caller build_prepare_payload "
+        "computes universe/target coverage gaps"
+    ),
     ("cli/repo_map_graph.py", "confirm_edges"): "wired: candidate evidence uncertainty gaps",
     (
         "cli/repo_map_graph.py",

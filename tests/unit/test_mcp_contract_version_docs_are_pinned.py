@@ -35,7 +35,9 @@ _DOCS = ("docs/harness_api.md", "docs/architecture.md")
 
 
 def _live_contract_version() -> str:
-    source = (_ROOT / "src" / "tensor_grep" / "cli" / "mcp_server.py").read_text(encoding="utf-8")
+    source = (_ROOT / "src" / "tensor_grep" / "cli" / "mcp" / "server.py").read_text(
+        encoding="utf-8"
+    )
     match = re.search(r'^_TG_MCP_SERVER_CONTRACT_VERSION\s*=\s*"([^"]+)"', source, re.MULTILINE)
     assert match, "could not find _TG_MCP_SERVER_CONTRACT_VERSION; update this guard with it"
     return match.group(1)

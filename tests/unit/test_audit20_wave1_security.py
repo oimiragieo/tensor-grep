@@ -175,6 +175,7 @@ def test_upgrade_detached_helper_starts_from_interpreter_directory(tmp_path, mon
     import importlib.metadata
 
     from tensor_grep.cli import main
+    from tensor_grep.cli.routers import upgrade as cli_upgrade
 
     executable = tmp_path / "trusted" / "python.exe"
     monkeypatch.setattr(sys, "executable", str(executable))
@@ -183,12 +184,14 @@ def test_upgrade_detached_helper_starts_from_interpreter_directory(tmp_path, mon
     monkeypatch.setattr(main, "_upgrade_running_session_daemon_snapshot", lambda: None)
     monkeypatch.setattr(main, "_managed_native_frontdoor_path", lambda: None)
     monkeypatch.setattr(
-        main._managed_runtime_upgrade, "handle_managed_windows_upgrade", lambda *_a: False
+        cli_upgrade._managed_runtime_upgrade,
+        "handle_managed_windows_upgrade",
+        lambda *_a: False,
     )
     monkeypatch.setattr(main, "_run_upgrade", Mock(side_effect=RuntimeError("WinError 32")))
     popen = Mock()
     monkeypatch.setattr(main.subprocess, "Popen", popen)
-    main.upgrade()
+    cli_upgrade.upgrade()
     popen.assert_called_once()
     assert popen.call_args.kwargs.get("cwd") == str(executable.parent)
 

@@ -34,7 +34,7 @@ from tensor_grep.cli import main as cli_main
 from tensor_grep.core import result as result_contract
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_RUST_MAIN = REPO_ROOT / "rust_core" / "src" / "main.rs"
+_RUST_MAIN = REPO_ROOT / "rust_core" / "src" / "cli_app" / "args.rs"
 _PATTERN = re.compile(r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;")
 
 
