@@ -20,7 +20,7 @@ def _probe_tools_list(env_overrides: dict[str, str] | None = None) -> dict[str, 
     script = (
         "import asyncio, json; from tensor_grep.cli import mcp_server as m; "
         "tools = asyncio.run(m.mcp.list_tools()); "
-        "payload = [t.model_dump(mode='json', exclude_none=True) for t in tools]; "
+        "payload = [t.model_dump(mode='json', by_alias=True, exclude_none=True) for t in tools]; "
         "std_raw = json.dumps({'tools': payload}).encode('utf-8'); "
         "min_raw = json.dumps({'tools': payload}, separators=(',', ':')).encode('utf-8'); "
         "print(json.dumps({"

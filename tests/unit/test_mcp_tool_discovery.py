@@ -93,7 +93,7 @@ def test_compact_mcp_list_tools_payload_under_20kb_budget() -> None:
     script = (
         "import asyncio, json; from tensor_grep.cli import mcp_server as m; "
         "tools = asyncio.run(m.mcp.list_tools()); "
-        "payload = [t.model_dump(mode='json', exclude_none=True) for t in tools]; "
+        "payload = [t.model_dump(mode='json', by_alias=True, exclude_none=True) for t in tools]; "
         "raw = json.dumps({'tools': payload}).encode('utf-8'); "
         "print(json.dumps({'count': len(tools), 'bytes': len(raw), 'has_output_schema': any('outputSchema' in p for p in payload)}))"
     )

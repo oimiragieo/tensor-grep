@@ -528,7 +528,7 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
         return result_json
     if not isinstance(payload, dict):
         return result_json
-    payload["mcp_contract_version"] = _TG_MCP_SERVER_CONTRACT_VERSION
+    payload["mcp_contract_version"] = _self._TG_MCP_SERVER_CONTRACT_VERSION
     payload.setdefault("schema_version", _json_output_version())
     # AGT-07 Task 09: construct the typed CompletenessEvidence record internally and project
     # back out via to_legacy_dict() for this tool's existing external `incomplete` shape --
@@ -560,7 +560,7 @@ def tg_mcp_capabilities(summary: bool = False) -> str:
             native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
             summary_payload = build_capabilities_summary_payload(
                 version=_json_output_version(),
-                mcp_contract_version=_TG_MCP_SERVER_CONTRACT_VERSION,
+                mcp_contract_version=_self._TG_MCP_SERVER_CONTRACT_VERSION,
                 cli_version=_mcp_server_version(),
                 native_available=native_tg is not None,
                 embedded_rewrite_available=bool(_self._embedded_rewrite_available()),

@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import time
-from datetime import timedelta
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -63,9 +62,7 @@ def test_batch_preserves_direct_results_and_partial_errors_over_stdio(tmp_path: 
             env=env,
         )
         async with stdio_client(server) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=90)
-            ) as session:
+            async with ClientSession(read, write, read_timeout_seconds=90.0) as session:
                 await session.initialize()
                 arguments = {
                     "path": str(tmp_path),
@@ -184,11 +181,9 @@ def test_cancelling_batch_over_stdio_reaps_workers_and_restores_capacity(
             env=env,
         )
         async with stdio_client(server) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=90)
-            ) as session:
+            async with ClientSession(read, write, read_timeout_seconds=90.0) as session:
                 await session.initialize()
-                request_id = session._request_id
+                request_id = session._dispatcher._next_id + 1
                 pending = asyncio.create_task(
                     session.call_tool(
                         "tg_batch",
@@ -211,12 +206,10 @@ def test_cancelling_batch_over_stdio_reaps_workers_and_restores_capacity(
                 await asyncio.to_thread(_wait_for_files, marker_paths, 10.0)
                 cancel_started = time.monotonic()
                 await session.send_notification(
-                    types.ClientNotification(
-                        types.CancelledNotification(
-                            params=types.CancelledNotificationParams(
-                                requestId=request_id,
-                                reason="transport cancellation regression",
-                            )
+                    types.CancelledNotification(
+                        params=types.CancelledNotificationParams(
+                            requestId=request_id,
+                            reason="transport cancellation regression",
                         )
                     )
                 )

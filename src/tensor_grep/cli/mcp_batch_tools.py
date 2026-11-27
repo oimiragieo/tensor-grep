@@ -54,6 +54,7 @@ BatchQueriesWire = Annotated[
                     "kind": {"type": "string", "enum": sorted(_KIND_TO_TOOL)},
                 },
                 "required": ["id", "kind"],
+                "additionalProperties": True,
             },
             "maxItems": 16,
         },

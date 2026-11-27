@@ -505,8 +505,14 @@ from tensor_grep.cli.mcp.session import (  # noqa: E402
 from tensor_grep.cli.mcp.session import (  # noqa: E402
     tg_session_show as tg_session_show,
 )
+from tensor_grep.cli.incompleteness import (  # noqa: E402, F401
+    incomplete_class_fragment as _incomplete_class_fragment,
+)
 from tensor_grep.cli.mcp.query import (  # noqa: E402
     _FIND_ROUTING_BACKEND as _FIND_ROUTING_BACKEND,
+)
+from tensor_grep.cli.mcp.query import (  # noqa: E402
+    _MAX_WORKSPACE_ROOTS as _MAX_WORKSPACE_ROOTS,
 )
 from tensor_grep.cli.mcp.query import (  # noqa: E402
     _FIND_ROUTING_REASON as _FIND_ROUTING_REASON,

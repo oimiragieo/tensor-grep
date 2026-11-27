@@ -7,7 +7,6 @@ import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +93,7 @@ def test_checkpoint_stdio_create_list_undo_is_scoped_and_reusable(
 
     async def exercise() -> None:
         async with stdio_client(server) as (read, write):
-            async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=30)) as s:
+            async with ClientSession(read, write, read_timeout_seconds=30.0) as s:
                 await s.initialize()
                 names = {tool.name for tool in (await s.list_tools()).tools}
                 assert {
@@ -192,9 +191,7 @@ def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: P
                 encoding_error_handler="replace",
             )
             async with stdio_client(server) as (read, write):
-                async with ClientSession(
-                    read, write, read_timeout_seconds=timedelta(seconds=10)
-                ) as session:
+                async with ClientSession(read, write, read_timeout_seconds=10.0) as session:
                     await session.initialize()
                     sent_calls: asyncio.Queue[int] = asyncio.Queue()
 
@@ -204,7 +201,7 @@ def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: P
 
                         async def send(self, message: Any) -> None:
                             await self.delegate.send(message)
-                            request = message.message.root
+                            request = getattr(message.message, "root", message.message)
                             if (
                                 isinstance(request, types.JSONRPCRequest)
                                 and request.method == "tools/call"
@@ -214,7 +211,9 @@ def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: P
                         def __getattr__(self, name: str) -> Any:
                             return getattr(self.delegate, name)
 
-                    session._write_stream = RequestProbe(session._write_stream)
+                    session._dispatcher._write_stream = RequestProbe(
+                        session._dispatcher._write_stream
+                    )
                     first = asyncio.create_task(
                         session.call_tool(
                             "tg_checkpoint_create", {"path": str(project), "label": "active"}
@@ -237,22 +236,16 @@ def test_stdio_ping_and_cancellation_while_checkpoint_worker_is_held(tmp_path: P
                             second_id = await asyncio.wait_for(sent_calls.get(), 10)
                             await asyncio.wait_for(session.send_ping(), 5)
                             await session.send_notification(
-                                types.ClientNotification(
-                                    types.CancelledNotification(
-                                        params=types.CancelledNotificationParams(
-                                            requestId=second_id
-                                        )
-                                    )
+                                types.CancelledNotification(
+                                    params=types.CancelledNotificationParams(requestId=second_id)
                                 )
                             )
                             second.cancel()
                             with pytest.raises(asyncio.CancelledError):
                                 await second
                             await session.send_notification(
-                                types.ClientNotification(
-                                    types.CancelledNotification(
-                                        params=types.CancelledNotificationParams(requestId=first_id)
-                                    )
+                                types.CancelledNotification(
+                                    params=types.CancelledNotificationParams(requestId=first_id)
                                 )
                             )
                             first.cancel()
@@ -293,9 +286,7 @@ def test_stdio_doctor_returns_after_worker_dispatch(tmp_path: Path, offline: boo
 
     async def exercise() -> None:
         async with stdio_client(server) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=30)
-            ) as session:
+            async with ClientSession(read, write, read_timeout_seconds=30.0) as session:
                 await session.initialize()
                 doctor = await _call(
                     session,

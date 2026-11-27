@@ -32,7 +32,6 @@ from tensor_grep.cli.mcp.security import (
     _confine_mcp_path,
     _confine_read_path,
     _log_tool_exception,
-    _mcp_broad_root_scan_refusal,
     _mcp_root,
     _meta_invalid_input_error,
     _sanitized_tool_error,
@@ -181,7 +180,7 @@ def tg_ast_search(
         all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
         try:
             # H3: apply tg_search's walk/deadline safeguards; AST always uses the large-root probe.
-            refusal_message, _scanner, walker = _mcp_broad_root_scan_refusal(
+            refusal_message, _scanner, walker = _self._mcp_broad_root_scan_refusal(
                 path,
                 config,
                 normalized_max_repo_files=normalized_max_repo_files,

@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -34,9 +33,7 @@ def test_stdio_ast_missing_path_is_refused_and_session_recovers(tmp_path: Path) 
 
     async def exercise() -> None:
         async with stdio_client(server) as (read, write):
-            async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=30)
-            ) as session:
+            async with ClientSession(read, write, read_timeout_seconds=30.0) as session:
                 await session.initialize()
                 for name, arguments in (
                     ("tg_ast_search", {}),
