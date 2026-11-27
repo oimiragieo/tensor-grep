@@ -864,7 +864,7 @@ fn assert_native_root_help_fallback(args: &[&str], timed_out: bool) {
         stdout.contains("Search code, follow symbols, and prepare a bounded edit."),
         "{stdout}"
     );
-    assert!(stdout.contains("Core commands:"), "{stdout}");
+    assert!(stdout.contains("Core workflow:"), "{stdout}");
     assert!(stdout.contains("--help-all"), "{stdout}");
     assert!(
         stdout.lines().count() <= 45,
