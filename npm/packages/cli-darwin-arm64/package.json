@@ -1,6 +1,6 @@
 {
   "name": "@tensor-grep/cli-darwin-arm64",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "macOS Apple Silicon (arm64) native binary for tensor-grep",
   "os": [
     "darwin"

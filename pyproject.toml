@@ -193,7 +193,7 @@ template_dir = "scripts/release-templates"
 
 [project]
 name = "tensor-grep"
-version = "2.0.0"
+version = "2.0.1"
 description = "Fast local code search, symbol navigation, and token-budgeted AI context (Rust + tree-sitter + MCP; zero API key required, GPU experimental)"
 readme = "README.md"
 requires-python = ">=3.11"
