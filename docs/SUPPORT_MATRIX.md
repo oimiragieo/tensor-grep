@@ -7,9 +7,10 @@ As of 2026-10-06, this page separates tested build environments from published i
 | Platform | Evidence and practical limits |
 |---|---|
 | Linux x64 | Main CI tests Linux builds. A CPU native release asset is published. Other glibc-compatible distributions are best-effort and depend on compatibility with that asset and the Python dependencies. |
+| Linux ARM64 (`linux-arm64`) | Supported via Python (`pip` / `uv` with Python 3.11+) and source builds; native ARM64 release asset availability depends on the release build matrix. |
 | Windows x64 | Main CI tests Windows builds. A CPU native release asset is published. Windows Server variants are best-effort and are not separately exhaustive. |
 | macOS x64 | Native build and CPU release asset are covered by release workflows. |
-| macOS arm64 (Apple Silicon) | CI provides native build coverage, but there is no arm64 release asset in the current published CPU asset set. Use a supported Python install or build from source; the x64 asset under Rosetta is another operator-managed option. |
+| macOS arm64 (`macos-arm64`, Apple Silicon) | CI provides native build coverage, but there is no arm64 release asset in the current published CPU asset set. Use a supported Python install or build from source; the x64 asset under Rosetta is another operator-managed option. |
 
 The default native asset profile is CPU. The CI workflow has a separate `native-frontdoor-gpu` profile that gates GPU asset build steps; that profile is not the default release profile. GPU support is experimental and depends on build options, compatible hardware, drivers, and the route actually selected. See [experimental features](EXPERIMENTAL.md) and the [GPU runbook](runbooks/gpu-troubleshooting.md).
 

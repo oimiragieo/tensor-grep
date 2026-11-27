@@ -1,3 +1,7 @@
+<!--
+release_docs_current_tag: v1.142.0
+-->
+
 <div align="center">
   <img src="docs/assets/logo.jpg" alt="tensor-grep" width="640"/>
 </div>
@@ -10,138 +14,88 @@
 
 **Find the code. Understand the change.**
 
-Search code and logs, follow symbols, and gather the context for your next change from
-one command-line interface. `tensor-grep` combines text and structural search with
-repository maps, ranked context, and tools for AI-assisted development.
+`tensor-grep` (`tg`) is a local-first code search, symbol-navigation, and AI context CLI. It combines regex and structural AST search with repository orientation, caller/blast-radius analysis, diff-impact slicing, rollback checkpoints, and an MCP server—with **zero telemetry** and **no API key required** for core workflows.
 
-Use it to investigate an unfamiliar project, trace a log message back to its source,
-or give a coding assistant a focused set of files instead of an entire repository.
-Core local workflows need no API key or GPU.
+[Get started](docs/getting-started.md) · [Installation](docs/installation.md) · [Upgrading (v1.x to v2.0)](docs/migration-v2.md) · [How it works](docs/architecture.md) · [Releases](https://github.com/oimiragieo/tensor-grep/releases)
 
-[Get started](docs/getting-started.md) · [Installation](docs/installation.md) ·
-[How it works](docs/architecture.md) · [Releases](https://github.com/oimiragieo/tensor-grep/releases)
+## 30-second quickstart
 
-## Get started
-
-With Python 3.11 or later:
+With Python 3.11+ (or the managed native installer in [docs/installation.md](docs/installation.md)):
 
 ```bash
 python -m pip install tensor-grep
 tg --version
 ```
 
-Then, from a project directory:
+From any repository:
 
 ```bash
-# Find a literal marker and show its line number.
-tg search -F -n "TODO" .
+# 1. Find literal text or regex matches with line numbers
+tg search -F -n "TODO" src
 
-# Get an overview of the project's central files and likely entry points.
-tg orient .
+# 2. Orient yourself in an unfamiliar codebase
+tg orient src
 
-# Gather relevant code for a question, within a context budget (or --compact for <=4KB JSON).
-tg context . "how are invoices calculated?" --max-tokens 2000
-tg edit-plan . "how are invoices calculated?" --json --compact
+# 3. Trace callers and prepare an edit-readiness capsule (add --json or --json --compact)
+tg callers src create_invoice --json
+tg prepare src "add invoice tax validation" --json --compact
 
-# Search by keywords and relevance locally (SQLite FTS5 + adaptive IDF-weighted RRF, no GPU/API key).
-tg find --hybrid "invoice calculation" . --json
+# 4. Inspect git diff blast radius before committing
+tg diff-impact . --json
 ```
 
-Use `tg --help` for grouped command examples and `tg COMMAND --help` for options. Environment overrides are documented in [CLI environment settings](docs/cli_environment.md).
+Commands default to concise human-readable text when `--json` is omitted; pass `--json` for machine output or `--json --compact` for a bounded `<= 4,000`-byte JSON payload.
 
-New to command-line tools? The [first-search walkthrough](docs/getting-started.md)
-uses a small sample project and explains each command and result.
+## 12-command core workflow (`tg --help` vs `tg --help-all`)
 
-Windows, macOS, and Linux have supported installation paths. The Python package starts
-through a Python entry point; the managed installers also set up a native CPU front door.
-Some native commands call a Python sidecar, a separate process that supplies the rest of
-the tool's features. See [docs/installation.md](docs/installation.md) and the
-[support matrix](docs/SUPPORT_MATRIX.md) to choose a channel. npm, Homebrew, and winget
-packages are not published yet.
+`tg --help` highlights the **12 core workflow commands** so humans and agents can start without noise. Run `tg --help-all` for the complete command catalog.
 
-## What you can do
-
-| Task | Start here | What you get |
+| Stage | Core commands | What it gives you |
 |---|---|---|
-| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; `--rank` matches the pattern first and ranks matched lines/files by BM25 relevance (use `tg find` for multi-term natural-language queries) |
-| Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
-| Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
-| Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits (`--detail compact` for compact JSON) |
-| Inspect environment health | `tg doctor --fast`, `tg file-api PATH` | Fast local/launcher/proof-gate diagnostics without slow network probes, and single-file API signatures |
-| Prepare and verify a change | `tg context`, `tg agent`, `tg prepare`, `tg diff-impact` | Relevant code, possible edit targets, diff blast radius, minimal change slices, and suggested validation commands |
-| Repeat a workflow | `tg search --index`, `tg session`, `tg checkpoint` | Unified `.tg_cache/` indexes/graphs (auto-gitignored), reusable repository context, and scoped rollback snapshots restored by ID |
-| Connect your tools | `tg mcp`, JSON/NDJSON output | 15-tool compact default MCP surface (`TG_MCP_LEGACY_TOOLS=1` for all 61), `tg_batch` step pipelines, and structured CLI envelopes |
+| Search & structure | `search`, `find`, `run`, `scan` | Regex/literal search (`--index`, `--rank`), local hybrid BM25+RRF (`find --hybrid`), structural AST patterns (`run`), and bounded AST rulesets (`scan`) |
+| Understand & trace | `orient`, `defs`, `callers`, `blast-radius` | Central files and entry points (`orient`), symbol definitions (`defs`), call sites (`callers`), and transitive file/test impact (`blast-radius`) |
+| Prepare, edit & verify | `prepare`, `diff-impact`, `checkpoint` | One-call edit-readiness capsule (`prepare`), git diff blast radius + change slice (`diff-impact`), and scoped rollback snapshots (`checkpoint`) |
+| Connect assistants | `mcp` | 15-tool compact default MCP server (`< 12 KB` `tools/list`, `tg_batch` step pipelines; `TG_MCP_LEGACY_TOOLS=1` for all 61 legacy tools) |
 
-An **AST** is a parsed representation of source code. Structural search can match a
-function call as code rather than as a particular arrangement of spaces and text.
-For a Python package installation, first add the structural-search dependency with
-`python -m pip install "tensor-grep[scan]"`. The native binary supports this example directly.
-
-This searches Python files for calls to `print`:
+For AST structural search and rulesets via PyPI, install `python -m pip install "tensor-grep[ast,scan]"` (the managed native binary supports `tg run` directly). In PowerShell, wrap patterns containing `$VALUE` in single quotes:
 
 ```bash
-tg run -p 'print($VALUE)' --lang python .
+tg run -p 'print($VALUE)' --lang python src
 ```
 
-Keep the single quotes around AST patterns in PowerShell so `$VALUE` reaches the tool
-unchanged. Search is read-only; applying a rewrite is a separate, explicit operation.
+## Why `tg` vs `rg` + `ast-grep` + IDE
 
-## Give an assistant useful context
+- **`rg` (ripgrep)** is the cold exact-text search baseline. `tg` does not replace `rg`; it routes compatible cold text searches through `rg` or its native CPU engine, and adds warm trigram indexing (`tg search --index`), symbol graphs, and bounded AI context on top.
+- **`ast-grep` (`sg`)** has the broader structural-rule surface. `tg run` and `tg scan` expose a validated AST search/rewrite slice alongside symbol navigation, diff impact, and checkpoints in one CLI.
+- **IDEs** hold rich semantic state interactively, but scripts, CI gates, and coding assistants need headless, deterministic, token-budgeted CLI/MCP outputs (`--json`, `--json --compact`, `tg_batch`, and `tg review-bundle verify --require-change-slice`) without GUI startup or cloud telemetry.
+- **Zero-telemetry, local-first**: Core search, indexing (`.tg_cache/`), symbol graphs, sessions, and checkpoints run 100% locally with no API key and no outbound telemetry.
 
-`tg prepare` brings together a possible edit target, confidence and limitations,
-caller evidence, and validation commands. Its JSON output lets a client inspect the
-recommendation before deciding what to do:
+## Benchmark & verification surfaces
 
-```bash
-tg prepare . "add invoice tax validation" --json
-```
+Performance and accuracy claims in `tensor-grep` are **benchmark-governed** and workload-specific. Rather than quoting cherry-picked numbers, each surface has a reproducible harness in `benchmarks/` documented in [docs/benchmarks.md](docs/benchmarks.md) and [docs/tool_comparison.md](docs/tool_comparison.md):
 
-> **Migration note:** `tg prepare` now defaults to concise human-readable text when
-> `--json` is omitted. Use `--json` for machine consumers, or `--json --compact` for a
-> bounded `<= 4 KB` JSON payload.
+| Surface | Reproducible script | Verified behavior / contract |
+|---|---|---|
+| Text search (`rg` vs native CPU vs `TrigramIndex`) | `benchmarks/run_benchmarks.py`, `benchmarks/run_hot_query_benchmarks.py` | Cold exact-text baseline is `rg`; warm trigram indexes (`.tg_cache/index_v1/*.tg_index`) report `routing_reason: "index-accelerated"` (`tg search --index`) |
+| Agent localization & edit loop | `benchmarks/run_repo_retrieval_benchmarks.py`, `benchmarks/run_agent_workflow_benchmarks.py` | `tg prepare`, `tg agent` (context capsule), and `tg orient --compact` bound JSON output to `<= 4,000` bytes and reuse warm `.tg_cache/` views (`manifest_v1.json`, `symbols_v1/`, `graph_v1/tdad_tests.sqlite3`) |
+| MCP schema & pipeline budget | `tests/unit/test_mcp_compact_parity.py` | Default `tg mcp` exposes 15 compact tools (`< 12 KB` `tools/list`, vs 61 with `TG_MCP_LEGACY_TOOLS=1`) and `tg_batch` (`$prev` / `$steps[i]`) |
+| Security & AST rulesets (`tg scan`) | `benchmarks/run_ast_benchmarks.py` | Built-in rulesets (e.g., `secrets`) via `tensor-grep[scan]`; fails closed when `ast-grep` is absent and discloses `partial` / `partial_reason` |
+| Native GPU (experimental) | `benchmarks/run_gpu_native_benchmarks.py` | Explicit `--gpu-device-ids` only; never inferred from fallback/sidecar rows ([docs/gpu_crossover.md](docs/gpu_crossover.md)) |
 
-A **context capsule** is a structured collection of relevant files, symbols and snippets.
-It saves callers from assembling that information through separate searches. Sessions
-can reuse repository context across requests, and `tg mcp` exposes 15 compact tools by
-default (including `tg_batch` `$prev`/`$steps[i]` step pipelines; set
-`TG_MCP_LEGACY_TOOLS=1` for all 61 legacy tools). Optional audit manifests, signed
-evidence receipts, and minimal change-slice verification
-(`tg review-bundle verify --require-change-slice`) support review workflows; they are
-not generated or signed automatically for every run.
+Bounded scans can return partial results. Confidence scores and caller graphs are evidence to review, not proof that a change is safe or that a symbol is unused.
 
-For automation, start with [docs/harness_api.md](docs/harness_api.md) and the working
-recipes in [docs/harness_cookbook.md](docs/harness_cookbook.md). The
-[review-bundle guide](docs/enterprise_review_bundle_ci.md) covers evidence checks in CI.
+## Installation & platform channels
 
-## Choose the right search
-
-- **Known text or a regular expression:** use `tg search`. It supports a validated
-  ripgrep-compatible subset; `--format rg` requests ripgrep-shaped output.
-- **A code pattern:** use the structural search commands. The supported AST slice is
-  useful for focused rules and rewrites; `ast-grep` has a broader surface.
-- **A task or question:** use `tg context` or `tg prepare`. Experimental `tg find`
-  also offers whole-repository relevance search, with optional local dense matching.
-- **Repeated searches:** evaluate indexes and sessions against your workload.
-
-The native CPU engine is one execution path, alongside delegated engines and Python-owned
-commands. `rg` remains the cold text-search baseline. Performance claims are
-benchmark-governed and workload-specific; the [comparison](docs/tool_comparison.md)
-and [benchmarks](docs/benchmarks.md) explain what was measured.
-
-Bounded scans can return partial results. Confidence scores and caller graphs are evidence
-to review, not proof that a change is safe or that a symbol is unused. GPU paths and other
-opt-in features have separate requirements and limitations in
-[docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md).
+Windows (x64), macOS (x64 / Apple Silicon), and Linux (x64 / ARM64) installation options are documented in [docs/installation.md](docs/installation.md) and the [support matrix](docs/SUPPORT_MATRIX.md). npm, Homebrew, and Winget manifests exist in the repository but are not published to their registries yet.
 
 ## Canonical docs
 
 | Guide | Purpose |
 |---|---|
-| [First search](docs/getting-started.md) | A sample project, explained results, and a glossary |
-| [Architecture](docs/architecture.md) | How the CLI, search engines, Python services, and stored state fit together |
-| [docs/installation.md](docs/installation.md) | Install, verify, and troubleshoot the launcher |
-| [Native Windows handles](docs/native-managed-handles.md) | Inactive native Windows trust primitives and their verification boundary |
-| [Managed runtime selection](docs/managed-runtime-selection.md) | Proposed runtime layout and implemented record codec; update activation remains pending |
+| [First search](docs/getting-started.md) | Sample project, 12-command core workflow, and glossary |
+| [Installation](docs/installation.md) | Install, verify, and troubleshoot the launcher |
+| [Upgrading (v1.x to v2.0)](docs/migration-v2.md) | Step-by-step migration guide from `v1.x` to `v2.0.0` |
+| [Architecture](docs/architecture.md) | Rust `cli_app/` + `native_search/`, Python `cli/` modules, and `.tg_cache/` |
 | [docs/harness_api.md](docs/harness_api.md) | Machine-readable CLI and MCP contracts (15-tool compact default + `tg_batch`) |
 | [docs/harness_cookbook.md](docs/harness_cookbook.md) | End-to-end CLI, MCP, and diff-impact automation recipes |
 | [docs/runbooks/cache-management.md](docs/runbooks/cache-management.md) | Unified `.tg_cache/` layout, sessions, and rollback checkpoints |
@@ -154,6 +108,7 @@ opt-in features have separate requirements and limitations in
 | [docs/CONTRACTS.md](docs/CONTRACTS.md) | Compatibility and output guarantees |
 | [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) | Testing, releases, and dependency maintenance |
 | [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) | Patch and rollback procedures |
+| [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) | Opt-in GPU, dense retrieval, and experimental surfaces |
 
 ## Contribute and get help
 

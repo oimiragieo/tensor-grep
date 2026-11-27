@@ -6,8 +6,8 @@ description: Search a repository, inspect symbols and callers, and prepare a bou
 # Use tensor-grep
 
 Use `tg` to find relevant files and inspect the evidence before editing. Start with
-`tg --version` and `tg --help`; installed entry points and optional dependencies
-affect available features.
+`tg --version` and `tg --help` (which shows the 12-command core workflow: `search`, `find`, `run`, `scan`, `orient`, `defs`, `callers`, `blast-radius`, `prepare`, `diff-impact`, `checkpoint`, `mcp`; run `tg --help-all` for all commands); installed entry points and optional dependencies
+affect available features. Planning/orientation commands default to plain text unless `--json` is passed.
 
 This guidance was checked against v1.142.0. Native `--version` prints `tg X.Y.Z`;
 the Python launcher prints `tensor-grep X.Y.Z`. Record the artifact and package

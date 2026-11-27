@@ -4,7 +4,10 @@ There is no single universal winner: one benchmark is never enough.
 
 Choose a comparator for the workload being measured. `ripgrep` is the text-search
 baseline, `ast-grep` the structural-search baseline, and `git grep --no-index` a
-useful additional text-search comparator. Policy scanning and repository-scale
+useful additional text-search comparator. Compared to standalone `rg` + `ast-grep` + IDE
+workflows, `tg` pairs those search primitives with a 12-command core workflow (`tg --help`;
+`tg --help-all` for all commands), human-first plain-text defaults (`--json` for scripts),
+and token-budgeted context/impact capsules. Policy scanning and repository-scale
 indexed search require their own corpora, correctness definitions, and tool setup.
 
 This page makes no current head-to-head speed or competitor language-count claim.

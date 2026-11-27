@@ -63,6 +63,7 @@ exclude_docs: |
   !/installation.md
   !/investigation.md
   !/managed-runtime-selection.md
+  !/migration-v2.md
   !/native-managed-handles.md
   !/multi_agent_context_plane.md
   !/package_manager_publish.md
@@ -117,6 +118,7 @@ nav:
   - Getting Started:
     - Installation: installation.md
     - First Search: getting-started.md
+    - Upgrading (v1.x to v2.0): migration-v2.md
     - Support Matrix: SUPPORT_MATRIX.md
   - Daily Workflows:
     - Automation Recipes: harness_cookbook.md
